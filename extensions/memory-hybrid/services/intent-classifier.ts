@@ -100,12 +100,36 @@ export type IntentClassifierConfig = {
 type SessionCache = Map<string, IntentClassification>;
 
 const sessionCaches = new Map<string, SessionCache>();
+const sessionLastActivity = new Map<string, number>();
 const MAX_TRACKED_SESSIONS = 200;
+const STALE_SESSION_TTL_MS = 30 * 60 * 1000;
 
 function evictOldestSession() {
   if (sessionCaches.size <= MAX_TRACKED_SESSIONS) return;
   const oldest = sessionCaches.keys().next().value;
-  if (oldest) sessionCaches.delete(oldest);
+  if (oldest) {
+    sessionCaches.delete(oldest);
+    sessionLastActivity.delete(oldest);
+  }
+}
+
+function sweepStaleSessions() {
+  const now = Date.now();
+  const cutoff = now - STALE_SESSION_TTL_MS;
+  for (const [sessionId, lastActive] of sessionLastActivity) {
+    if (lastActive < cutoff) {
+      sessionCaches.delete(sessionId);
+      sessionLastActivity.delete(sessionId);
+    }
+  }
+}
+
+let staleSweepTimer: ReturnType<typeof setInterval> | null = null;
+
+function ensureStaleSweepTimer() {
+  if (staleSweepTimer === null) {
+    staleSweepTimer = setInterval(sweepStaleSessions, 5 * 60 * 1000);
+  }
 }
 
 function queryHash(query: string): string {
@@ -131,12 +155,14 @@ export async function classifyQueryIntent(
 
   const cacheKey = queryHash(query);
   if (opts?.sessionId) {
+    ensureStaleSweepTimer();
     let cache = sessionCaches.get(opts.sessionId);
     if (!cache) {
       evictOldestSession();
       cache = new Map();
       sessionCaches.set(opts.sessionId, cache);
     }
+    sessionLastActivity.set(opts.sessionId, Date.now());
     const cached = cache.get(cacheKey);
     if (cached) return cached;
   }
@@ -176,6 +202,15 @@ export async function classifyQueryIntent(
 
 /** Clear session intent cache (for tests). */
 export function clearIntentSessionCache(sessionId?: string): void {
-  if (sessionId) sessionCaches.delete(sessionId);
-  else sessionCaches.clear();
+  if (sessionId) {
+    sessionCaches.delete(sessionId);
+    sessionLastActivity.delete(sessionId);
+  } else {
+    sessionCaches.clear();
+    sessionLastActivity.clear();
+  }
+  if (staleSweepTimer !== null) {
+    clearInterval(staleSweepTimer);
+    staleSweepTimer = null;
+  }
 }

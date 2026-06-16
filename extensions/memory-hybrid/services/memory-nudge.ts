@@ -83,7 +83,10 @@ export function formatMemoryNudgeBlock(nudge: MemoryNudgePayload): string {
 }
 
 const suppressUntilBySession = new Map<string, number>();
+const lastNudgeBySession = new Map<string, number>();
+const sessionLastActivity = new Map<string, number>();
 const MAX_TRACKED_SESSIONS = 200;
+const STALE_SESSION_TTL_MS = 30 * 60 * 1000;
 
 function evictOldestSession() {
   if (suppressUntilBySession.size > MAX_TRACKED_SESSIONS) {
@@ -91,16 +94,41 @@ function evictOldestSession() {
     if (oldest) {
       suppressUntilBySession.delete(oldest);
       lastNudgeBySession.delete(oldest);
+      sessionLastActivity.delete(oldest);
     }
   }
 }
 
+function sweepStaleSessions() {
+  const now = Date.now();
+  const cutoff = now - STALE_SESSION_TTL_MS;
+  for (const [sessionId, lastActive] of sessionLastActivity) {
+    if (lastActive < cutoff) {
+      suppressUntilBySession.delete(sessionId);
+      lastNudgeBySession.delete(sessionId);
+      sessionLastActivity.delete(sessionId);
+    }
+  }
+}
+
+let staleSweepTimer: ReturnType<typeof setInterval> | null = null;
+
+function ensureStaleSweepTimer() {
+  if (staleSweepTimer === null) {
+    staleSweepTimer = setInterval(sweepStaleSessions, 5 * 60 * 1000);
+  }
+}
+
 export function suppressNudgeForSession(sessionId: string, hours: number): void {
+  ensureStaleSweepTimer();
   evictOldestSession();
   suppressUntilBySession.set(sessionId, Date.now() + hours * 3600_000);
+  sessionLastActivity.set(sessionId, Date.now());
 }
 
 export function isNudgeSuppressed(sessionId: string): boolean {
+  ensureStaleSweepTimer();
+  sessionLastActivity.set(sessionId, Date.now());
   const until = suppressUntilBySession.get(sessionId);
   if (!until) return false;
   if (Date.now() > until) {
@@ -110,9 +138,9 @@ export function isNudgeSuppressed(sessionId: string): boolean {
   return true;
 }
 
-const lastNudgeBySession = new Map<string, number>();
-
 export function shouldEmitNudge(sessionId: string, throttleHours: number): boolean {
+  ensureStaleSweepTimer();
+  sessionLastActivity.set(sessionId, Date.now());
   if (isNudgeSuppressed(sessionId)) return false;
   const last = lastNudgeBySession.get(sessionId) ?? 0;
   const elapsed = Date.now() - last;
@@ -121,12 +149,19 @@ export function shouldEmitNudge(sessionId: string, throttleHours: number): boole
 }
 
 export function recordNudgeEmission(sessionId: string): void {
+  ensureStaleSweepTimer();
   evictOldestSession();
   lastNudgeBySession.set(sessionId, Date.now());
+  sessionLastActivity.set(sessionId, Date.now());
 }
 
 /** Clear nudge state (tests). */
 export function resetNudgeState(): void {
   suppressUntilBySession.clear();
   lastNudgeBySession.clear();
+  sessionLastActivity.clear();
+  if (staleSweepTimer !== null) {
+    clearInterval(staleSweepTimer);
+    staleSweepTimer = null;
+  }
 }

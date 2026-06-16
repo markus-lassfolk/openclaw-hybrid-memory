@@ -30,6 +30,7 @@ import { emitRecallVerboseLog } from "../services/recall-verbose-log.js";
 import { createRecallSpan, createRecallTimingLogger } from "../services/recall-timing.js";
 import { sanitizePromptInjection } from "../services/skill-prompt-injection.js";
 import { extractAssistantMessageText } from "../utils/llm-message.js";
+import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
 import {
   estimateTokens,
   estimateTokensForDisplay,
@@ -269,7 +270,7 @@ async function runInjection(
           agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? null,
           attribution: attr,
         });
-        const queryText = extractLastUserMessageText(messages) ?? "";
+        const queryText = extractLastUserMessageText(event) ?? "";
         logRecallEvent(ctx.factsDb.getRawDb(), {
           sessionKey: api.context?.sessionKey ?? api.context?.sessionId ?? null,
           agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? null,
