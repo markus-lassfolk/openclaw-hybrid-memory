@@ -128,6 +128,9 @@ function mergeJobFromSqliteRow(row: {
 }): Record<string, unknown> {
   const config = parseJsonObject(row.job_json, {});
   const state = parseJsonObject(row.state_json, {});
+  if (typeof state.lastRunStatus === "string" && state.lastStatus == null) {
+    state.lastStatus = state.lastRunStatus;
+  }
   const job: Record<string, unknown> = { ...config, state };
   if (job.id == null && row.job_id) job.id = row.job_id;
   if (job.name == null && row.name) job.name = row.name;
