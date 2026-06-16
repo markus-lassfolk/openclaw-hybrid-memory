@@ -149,6 +149,8 @@ export interface PluginRuntime {
     maintenanceStartupTimeout: { value: ReturnType<typeof setTimeout> | null };
     /** Workboard bidirectional sync timer. */
     workboardSync?: { value: ReturnType<typeof setInterval> | null };
+    /** Plugin service shutdown flag (Issue #1893 re-arm abort guard). */
+    shuttingDownRef: { value: boolean };
   };
 }
 
@@ -166,6 +168,7 @@ export function createTimers(): PluginRuntime["timers"] {
     watchdogTimer: { value: null },
     maintenanceTick: { value: null },
     maintenanceStartupTimeout: { value: null },
+    shuttingDownRef: { value: false },
   };
 }
 
