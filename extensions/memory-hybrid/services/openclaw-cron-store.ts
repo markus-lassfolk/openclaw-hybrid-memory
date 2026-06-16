@@ -125,11 +125,21 @@ function mergeJobFromSqliteRow(row: {
   schedule_expr: string | null;
   job_id: string;
   name: string;
+  last_run_at_ms: number | null;
+  next_run_at_ms: number | null;
+  last_run_status: string | null;
 }): Record<string, unknown> {
   const config = parseJsonObject(row.job_json, {});
   const state = parseJsonObject(row.state_json, {});
   if (typeof state.lastRunStatus === "string" && state.lastStatus == null) {
     state.lastStatus = state.lastRunStatus;
+  }
+  // Indexed columns are authoritative for runtime fields (state_json can lag).
+  if (row.last_run_at_ms != null) state.lastRunAtMs = row.last_run_at_ms;
+  if (row.next_run_at_ms != null) state.nextRunAtMs = row.next_run_at_ms;
+  if (row.last_run_status != null) {
+    state.lastRunStatus = row.last_run_status;
+    if (state.lastStatus == null) state.lastStatus = row.last_run_status;
   }
   const job: Record<string, unknown> = { ...config, state };
   if (job.id == null && row.job_id) job.id = row.job_id;
@@ -160,7 +170,8 @@ function readCronStoreFromSqlite(sqlitePath: string, storeKey: string): OpenClaw
     if (!sqliteHasCronJobsTable(db)) return { version: 1, jobs: [] };
     const rows = db
       .prepare(
-        `SELECT job_id, name, enabled, schedule_expr, job_json, state_json
+        `SELECT job_id, name, enabled, schedule_expr, job_json, state_json,
+                last_run_at_ms, next_run_at_ms, last_run_status
          FROM cron_jobs
          WHERE store_key = ?
          ORDER BY sort_order ASC, updated_at ASC, job_id ASC`,
@@ -172,6 +183,9 @@ function readCronStoreFromSqlite(sqlitePath: string, storeKey: string): OpenClaw
       schedule_expr: string | null;
       job_json: string;
       state_json: string | null;
+      last_run_at_ms: number | null;
+      next_run_at_ms: number | null;
+      last_run_status: string | null;
     }>;
     return {
       version: 1,

@@ -233,10 +233,6 @@ export function registerMaintenanceHealthCommands(maintenance: Chainable, cfg: H
         try {
           const snapshot = readOpenClawCronStore(openclawDir);
           cronStore = snapshot.store;
-          if ((snapshot.store.jobs?.length ?? 0) === 0 && snapshot.backend === "json") {
-            console.warn("⚠ Cron store not found — maintenance jobs not installed. Run: hybrid-mem install");
-            return;
-          }
         } catch {
           console.warn("⚠ Could not read cron store — skipping health check.");
           return;
