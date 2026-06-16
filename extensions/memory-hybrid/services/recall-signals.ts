@@ -113,7 +113,31 @@ export function aggregateRecallStats(db: DatabaseSync, windowDays = 30): Map<str
     s.distinctDays = dayTracker.get(factId)?.size ?? 0;
   }
 
+  enrichReferenceCountsFromFacts(db, stats);
+
   return stats;
+}
+
+/** Map confirmed access (full injection / explicit recall) onto recall-event surface stats. */
+export function enrichReferenceCountsFromFacts(
+  db: DatabaseSync,
+  stats: Map<string, FactRecallStats>,
+): void {
+  const factIds = [...stats.keys()];
+  if (factIds.length === 0) return;
+
+  const BATCH = 500;
+  for (let i = 0; i < factIds.length; i += BATCH) {
+    const batch = factIds.slice(i, i + BATCH);
+    const placeholders = batch.map(() => "?").join(",");
+    const rows = db
+      .prepare(`SELECT id, COALESCE(access_count, 0) AS access_count FROM facts WHERE id IN (${placeholders})`)
+      .all(...batch) as Array<{ id: string; access_count: number }>;
+    for (const row of rows) {
+      const s = stats.get(row.id);
+      if (s) s.referenceCount = row.access_count;
+    }
+  }
 }
 
 export function getSnoozeCandidates(

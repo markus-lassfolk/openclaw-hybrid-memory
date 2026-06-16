@@ -18,6 +18,8 @@ import {
   buildEdictBlock,
   DEFAULT_EDICT_BUDGET_FRACTION,
 } from "../services/recalled-context-assembler.js";
+import { scanInjectionFilter, type InjectionFilterMode } from "../services/injection-filter.js";
+import { emitRecallVerboseLog } from "../services/recall-verbose-log.js";
 import { createRecallSpan, createRecallTimingLogger } from "../services/recall-timing.js";
 import { sanitizePromptInjection } from "../services/skill-prompt-injection.js";
 import { extractAssistantMessageText } from "../utils/llm-message.js";
@@ -193,6 +195,28 @@ async function runInjection(
   } = r;
   const recalledAmbient = issueBlock + narrativeBlock + hotBlock;
 
+  const injectionFilterMode: InjectionFilterMode =
+    ctx.cfg.retrieval?.contextBoundary?.injectionFilter ?? "audit";
+  let injectionFilteredCount = 0;
+
+  const sanitizeFactForInjection = (raw: string): string => {
+    const cleaned = sanitizePromptInjection(sanitizeRecallFactText(raw));
+    if (!cleaned || injectionFilterMode === "off") return cleaned;
+    const scan = scanInjectionFilter(cleaned);
+    if (scan.allowed) return cleaned;
+    if (injectionFilterMode === "audit") {
+      emitRecallVerboseLog({
+        evt: "injection.would_drop",
+        feature: "injection_filter",
+        layer: scan.layer,
+        reason: scan.reason,
+      });
+      return cleaned;
+    }
+    injectionFilteredCount++;
+    return "";
+  };
+
   const edictMaxTokens = Math.max(
     0,
     Math.min(maxTokens, Math.floor((r.totalBudget ?? maxTokens) * DEFAULT_EDICT_BUDGET_FRACTION)),
@@ -251,11 +275,12 @@ async function runInjection(
       if (x.entry.key) {
         title = sanitizePromptInjection(`${x.entry.entity ? `${x.entry.entity}: ` : ""}${x.entry.key}`);
       } else if (x.entry.summary) {
-        title = sanitizePromptInjection(sanitizeRecallFactText(x.entry.summary));
+        title = sanitizeFactForInjection(x.entry.summary);
       } else {
         const truncated = x.entry.text.length > 60 ? `${x.entry.text.slice(0, 60).trim()}…` : x.entry.text;
-        title = sanitizePromptInjection(sanitizeRecallFactText(truncated));
+        title = sanitizeFactForInjection(truncated);
       }
+      if (!title) continue;
       const tokenCost = estimateTokensForDisplay(x.entry.summary || x.entry.text);
       const pos = startPosition + indexEntries.length;
       const category = sanitizePromptInjection(x.entry.category);
@@ -305,7 +330,8 @@ async function runInjection(
     let pinnedTokens = estimateTokens(pinnedHeader);
     const pinnedBudget = Math.min(memoryTokenBudget, Math.floor(memoryTokenBudget * 0.6));
     for (const x of pinned) {
-      let text = sanitizePromptInjection(useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text);
+      let text = sanitizeFactForInjection(useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text);
+      if (!text) continue;
       if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars)
         text = `${text.slice(0, maxPerMemoryChars).trim()}…`;
       const category = sanitizePromptInjection(x.entry.category);
@@ -418,7 +444,8 @@ async function runInjection(
   const lines: string[] = [];
   const injectedIds: string[] = [];
   for (const x of candidates) {
-    let text = sanitizePromptInjection(useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text);
+    let text = sanitizeFactForInjection(useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text);
+    if (!text) continue;
     if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars) text = `${text.slice(0, maxPerMemoryChars).trim()}…`;
     const category = sanitizePromptInjection(x.entry.category);
     const line =

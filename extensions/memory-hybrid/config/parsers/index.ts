@@ -1,4 +1,5 @@
 import { pluginLogger } from "../../utils/logger.js";
+import { parseVaultsConfig } from "../vaults.js";
 import type { ConfigMode, EmbeddingModelConfig, HybridMemoryConfig } from "../types/index.js";
 import { PRESET_OVERRIDES, getMemoryCategories, setMemoryCategories } from "../utils.js";
 import {
@@ -779,6 +780,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     },
     lanceDbPath: typeof cfg.lanceDbPath === "string" ? cfg.lanceDbPath : DEFAULT_LANCE_PATH,
     sqlitePath: typeof cfg.sqlitePath === "string" ? cfg.sqlitePath : DEFAULT_SQLITE_PATH,
+    vaults: parseVaultsConfig(cfg.vaults),
     autoCapture: cfg.autoCapture !== false,
     autoRecall: parseAutoRecallConfig(cfg),
     captureMaxChars,

@@ -30,6 +30,7 @@ import { registerChangeNotifyHandler } from "./stage-change-notify.js";
 import { registerChangeRevertHandler } from "./stage-change-revert.js";
 import { registerGoalStewardshipInjection, resolvedGoalsDirForLifecycle } from "./stage-goal-stewardship.js";
 import { registerGoalSubagentHandlers } from "./stage-goal-subagent.js";
+import { registerMemoryNudgeInjection } from "./stage-memory-nudge.js";
 import { runInjectionStage } from "./stage-injection.js";
 import { buildDegradedFtsHotRecallStage } from "./stage-recall/degraded-recall.js";
 import { runRecallStage } from "./stage-recall.js";
@@ -211,6 +212,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     );
 
     registerActiveTaskInjection(api, ctx, resolvedActiveTaskPath, workspaceRoot);
+    registerMemoryNudgeInjection(api, ctx);
     registerGoalSubagentHandlers(api, ctx, resolvedGoalsDir);
     registerCleanupHandlers(api, ctx, sessionState, resolvedActiveTaskPath, workspaceRoot);
     // Guard experimental/optional features at the registration point — avoids registering

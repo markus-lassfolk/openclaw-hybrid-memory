@@ -643,6 +643,8 @@ export type HybridMemoryConfig = {
   };
   lanceDbPath: string;
   sqlitePath: string;
+  /** Optional named vault paths (Issue #1917). */
+  vaults?: import("./vaults.js").VaultsConfig;
   autoCapture: boolean;
   autoRecall: AutoRecallConfig;
   /** Max characters per captured/stored fact (filter and truncation). Default 5000. */

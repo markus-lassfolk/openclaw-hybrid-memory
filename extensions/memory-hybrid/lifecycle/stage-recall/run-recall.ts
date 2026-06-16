@@ -30,6 +30,9 @@ import {
   sanitizeProcedureText,
 } from "../../services/recalled-context-assembler.js";
 import { resolveInteractiveRecallPolicy } from "../../services/retrieval-mode-policy.js";
+import { applyRetrievalV2, DEFAULT_RETRIEVAL_V2_CONFIG } from "../../services/retrieval-v2.js";
+import { recordIntentDistribution } from "../../services/recall-timing-stats.js";
+import { getFocusTopic } from "../../services/focus-topic.js";
 import { sanitizePromptInjection } from "../../services/skill-prompt-injection.js";
 import type { ScopeFilter } from "../../types/memory.js";
 import type { SearchResult } from "../../types/memory.js";
@@ -1000,6 +1003,44 @@ export async function runRecall(
       );
     }
 
+    // Retrieval v2 post-processing on interactive hot path (#1910).
+    if (!shouldAbortRecall() && candidates.length > 0) {
+      const retrievalCfg = ctx.cfg.retrieval;
+      const v2Config = {
+        intentRouter: retrievalCfg.intentRouter ?? DEFAULT_RETRIEVAL_V2_CONFIG.intentRouter,
+        compositeScore: {
+          version: (retrievalCfg.compositeScore?.v ?? 1) as 1 | 2,
+          pinBoostDefault: retrievalCfg.compositeScore?.pinBoostDefault ?? 0.3,
+          pinBoostCap: retrievalCfg.compositeScore?.pinBoostCap ?? 1.0,
+        },
+        diversity: retrievalCfg.diversity ?? DEFAULT_RETRIEVAL_V2_CONFIG.diversity,
+        bypass: retrievalCfg.bypass ?? DEFAULT_RETRIEVAL_V2_CONFIG.bypass,
+      };
+      const focusState = getFocusTopic(sessionKey);
+      const ftsResults = candidates.filter((c) => c.backend === "sqlite");
+      try {
+        const v2 = await applyRetrievalV2({
+          query: e.prompt,
+          results: candidates,
+          ftsResults: ftsResults.length > 0 ? ftsResults : candidates,
+          getEntry: (id) => ctx.factsDb.getById(id),
+          config: v2Config,
+          recallId: recallSpan,
+          sessionId: sessionKey,
+          openai: ctx.openai,
+          focusTopic: focusState?.topic,
+        });
+        candidates = v2.results;
+        recordIntentDistribution(v2.intent.intent);
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "auto-recall",
+          operation: "retrieval-v2",
+        });
+        api.logger.debug?.(`memory-hybrid: retrieval v2 post-process skipped: ${String(err)}`);
+      }
+    }
+
     const {
       maxPerMemoryChars,
       useSummaryInInjection,
@@ -1104,7 +1145,11 @@ export async function runRecall(
     }
     if (shouldAbortRecall()) {
       const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
-      return completeStage(finishEmptyRecallPrepend(ctx, combinedContext));
+      if (candidates.length > 0 && !isRecallContextSuperseded(ctx)) {
+        // Abort after main pipeline: keep partial recall, skip ambient/enrichment only.
+      } else {
+        return completeStage(finishEmptyRecallPrepend(ctx, combinedContext));
+      }
     }
 
     setRecallProbePhase("finalize");

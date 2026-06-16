@@ -15,7 +15,7 @@
  */
 
 import type OpenAI from "openai";
-import type { RerankingConfig } from "../config.js";
+import type { CrossEncoderRerankConfig, RerankingConfig } from "../config.js";
 import { chatComplete } from "./chat.js";
 import { CostFeature } from "./cost-feature-labels.js";
 import { extractJsonArray } from "./json-array-parser.js";
@@ -109,19 +109,19 @@ export async function rerankResults(
   facts: ScoredFact[],
   config: RerankingConfig,
   openai: OpenAI,
-  crossEncoderEndpoint?: string,
+  crossEncoder?: CrossEncoderRerankConfig,
 ): Promise<ScoredFact[]> {
   const kind = config.kind ?? (config.enabled ? "llm" : "off");
   if (kind === "off" || !config.enabled || facts.length === 0) return facts;
 
-  if (kind === "cross-encoder" && crossEncoderEndpoint) {
+  if (kind === "cross-encoder" && crossEncoder?.endpoint) {
     return rerankWithCrossEncoder(
       query,
       facts,
       {
-        endpoint: crossEncoderEndpoint,
-        model: config.crossEncoder?.model ?? DEFAULT_CROSS_ENCODER_CONFIG.model,
-        timeoutMs: config.crossEncoder?.timeoutMs ?? DEFAULT_CROSS_ENCODER_CONFIG.timeoutMs,
+        endpoint: crossEncoder.endpoint,
+        model: crossEncoder.model ?? DEFAULT_CROSS_ENCODER_CONFIG.model,
+        timeoutMs: crossEncoder.timeoutMs ?? DEFAULT_CROSS_ENCODER_CONFIG.timeoutMs,
       },
       config.outputCount,
     );

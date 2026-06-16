@@ -2,7 +2,18 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { formatTimestampUtcFromMs } from "../utils/dates.js";
 import { listMaintenanceRuns } from "../services/maintenance-job-run/run-catalog.js";
+
+function recentMaintenanceDayDir(root: string, offsetMs = 0): { dayDir: string; dayStamp: string; iso: string } {
+  const at = Date.now() - offsetMs;
+  const dayStamp = formatTimestampUtcFromMs(at).slice(0, 10).replace(/-/g, "");
+  return {
+    dayDir: join(root, dayStamp),
+    dayStamp,
+    iso: new Date(at).toISOString(),
+  };
+}
 
 describe("maintenance run catalog", () => {
   let root: string | null = null;
@@ -16,7 +27,8 @@ describe("maintenance run catalog", () => {
 
   it("lists standalone JobRun summaries without misclassifying them as orchestrator runs", () => {
     root = mkdtempSync(join(tmpdir(), "run-catalog-"));
-    const standaloneDir = join(root, "job-runs-standalone", "20260605", "generate-proposals-abc123");
+    const { dayDir, iso } = recentMaintenanceDayDir(root);
+    const standaloneDir = join(dayDir, "job-runs-standalone", "generate-proposals-abc123");
     mkdirSync(standaloneDir, { recursive: true });
     writeFileSync(
       join(standaloneDir, "summary.json"),
@@ -24,7 +36,7 @@ describe("maintenance run catalog", () => {
         schemaVersion: 1,
         jobRunId: "generate-proposals-abc123",
         command: "generate-proposals",
-        startedAt: "2026-06-05T12:00:00.000Z",
+        startedAt: iso,
         semanticOutcome: "partial",
         phases: [],
         artifactPaths: { summary: join(standaloneDir, "summary.json") },
@@ -40,14 +52,16 @@ describe("maintenance run catalog", () => {
 
   it("lists orchestrator summaries separately from standalone job runs", () => {
     root = mkdtempSync(join(tmpdir(), "run-catalog-orch-"));
-    const dayDir = join(root, "20260605");
+    const { dayDir, iso } = recentMaintenanceDayDir(root, 60 * 60 * 1000);
     mkdirSync(dayDir, { recursive: true });
+    const startedAt = iso;
+    const finishedAt = new Date(Date.parse(iso) + 60 * 60 * 1000).toISOString();
     writeFileSync(
       join(dayDir, "maintenance-nightly-xyz.summary.json"),
       JSON.stringify({
         runId: "maintenance-nightly-xyz",
-        startedAt: "2026-06-05T02:00:00.000Z",
-        finishedAt: "2026-06-05T03:00:00.000Z",
+        startedAt,
+        finishedAt,
         exitCode: 0,
       }),
       "utf-8",

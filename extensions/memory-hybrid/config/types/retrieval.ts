@@ -251,9 +251,13 @@ export type ContextBoundaryConfig = {
 
 /** Recall feedback loop (Issue #1916). */
 export type RecallFeedbackConfig = {
+  /** Max pinned facts before memory_pin is rejected (default 10). */
+  pinQuota?: number;
   nudge: {
     enabled: boolean;
     snoozeCandidateThreshold: number;
+    duplicateCandidateThreshold?: number;
+    neverReferencedThreshold?: number;
     throttleHours: number;
   };
 };

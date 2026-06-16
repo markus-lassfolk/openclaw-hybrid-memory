@@ -4,7 +4,7 @@
 
 import { Type } from "@sinclair/typebox";
 import type { HybridMemoryConfig } from "../../config.js";
-import { pinFact, resolveFactByIdOrQuery, snoozeFact } from "../../services/fact-lifecycle-verbs.js";
+import { pinFact, resolveFactByIdOrQuery, snoozeFact, checkPinQuota, DEFAULT_PIN_QUOTA } from "../../services/fact-lifecycle-verbs.js";
 import { createRecallSpan } from "../../services/recall-timing.js";
 import { recordIntentDistribution } from "../../services/recall-timing-stats.js";
 import { runExplicitDeepRetrieval } from "../../services/retrieval-orchestrator.js";
@@ -117,6 +117,18 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
         });
         const fact = resolveFactByIdOrQuery(factsDb, key, scopeFilter);
         if (!fact) return { content: [{ type: "text", text: "No matching fact found." }] };
+        const quota = cfg.retrieval?.recallFeedback?.pinQuota ?? DEFAULT_PIN_QUOTA;
+        const { allowed, current } = checkPinQuota(factsDb, quota);
+        if (!allowed) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Pin quota exceeded (${current}/${quota}). Unpin stale facts before pinning more.`,
+              },
+            ],
+          };
+        }
         pinFact(factsDb, fact.id, args.reason ?? "agent pin");
         return { content: [{ type: "text", text: `Pinned fact ${fact.id}` }] };
       },

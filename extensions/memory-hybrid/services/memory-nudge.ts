@@ -61,6 +61,22 @@ export function buildMemoryNudge(
     });
   }
 
+  const neverRef = db
+    .prepare(
+      `SELECT COUNT(*) AS cnt FROM facts
+       WHERE superseded_at IS NULL
+         AND COALESCE(indexed_count, 0) >= 3
+         AND COALESCE(access_count, 0) = 0`,
+    )
+    .get() as { cnt: number } | undefined;
+  const neverRefCount = neverRef?.cnt ?? 0;
+  if (neverRefCount >= config.neverReferencedThreshold) {
+    actions.push({
+      label: `${neverRefCount} surfaced facts were never referenced by the agent`,
+      toolCall: 'memory_snooze(idOrQuery="…") on stale facts',
+    });
+  }
+
   if (actions.length === 0) return null;
   return { actions: actions.slice(0, 3) };
 }

@@ -91,10 +91,15 @@ function parseRecallFeedbackConfig(retrievalRaw: Record<string, unknown> | undef
   const raw = retrievalRaw?.recallFeedback as Record<string, unknown> | undefined;
   const nudge = raw?.nudge as Record<string, unknown> | undefined;
   return {
+    pinQuota: typeof raw?.pinQuota === "number" ? raw.pinQuota : undefined,
     nudge: {
       enabled: nudge?.enabled === true,
       snoozeCandidateThreshold:
         typeof nudge?.snoozeCandidateThreshold === "number" ? nudge.snoozeCandidateThreshold : 5,
+      duplicateCandidateThreshold:
+        typeof nudge?.duplicateCandidateThreshold === "number" ? nudge.duplicateCandidateThreshold : 5,
+      neverReferencedThreshold:
+        typeof nudge?.neverReferencedThreshold === "number" ? nudge.neverReferencedThreshold : 10,
       throttleHours: typeof nudge?.throttleHours === "number" ? nudge.throttleHours : 24,
     },
   };

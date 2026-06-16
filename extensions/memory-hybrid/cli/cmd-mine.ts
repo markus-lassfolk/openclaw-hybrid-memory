@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
-import { estimateMineCostUsd, readTranscriptFile } from "../services/transcript-importers/index.js";
+import { estimateMineCostUsd, readTranscriptFile, redactSecretsInText } from "../services/transcript-importers/index.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import type { Chainable } from "./shared.js";
 
@@ -40,17 +40,34 @@ export function registerMineCommand(
     .command("mine <path>")
     .description("Import conversation transcripts as structured memory facts")
     .option("--name <collection>", "Collection name for imported batch")
-    .option("--source <format>", "claude-code|chatgpt|text|jsonl")
+    .option("--source <format>", "claude-code|chatgpt|claude-ai|slack|text|jsonl")
     .option("--embed", "Generate embeddings after import")
     .option("--synthesize", "Extract decision/preference facts via LLM")
     .option("--dry-run", "Preview without writing")
     .option("--confirm-budget", "Confirm LLM budget for --synthesize")
-    .action(async (path: string, opts: MineOptions) => {
+    .option("--undo <batchId>", "Soft-delete facts from a prior mine batch")
+    .action(async (path: string, opts: MineOptions & { undo?: string }) => {
+      if (opts.undo) {
+        const db = factsDb.getRawDb();
+        const now = Math.floor(Date.now() / 1000);
+        const result = db
+          .prepare(
+            `UPDATE facts SET superseded_at = ?, superseded_by = 'mine-undo'
+             WHERE mine_batch_id = ? AND superseded_at IS NULL`,
+          )
+          .run(now, opts.undo);
+        console.log(`Undid mine batch ${opts.undo}: ${result.changes} fact(s) superseded.`);
+        return;
+      }
+      if (!path) {
+        console.error("Path is required unless using --undo.");
+        process.exit(1);
+      }
       if (!existsSync(path)) {
         console.error(`File not found: ${path}`);
         process.exit(1);
       }
-      const conversations = readTranscriptFile(path);
+      const conversations = readTranscriptFile(path, opts.source);
       if (conversations.length === 0) {
         console.error("No conversations parsed from file.");
         process.exit(1);
@@ -76,7 +93,10 @@ export function registerMineCommand(
       }
       let written = 0;
       let skipped = 0;
+      let redactedTotal = 0;
+      const redactionCategories: Record<string, number> = {};
       const db = factsDb.getRawDb();
+      const sourceLabel = conversations[0]?.source ?? opts.source ?? "unknown";
       for (const conv of conversations) {
         const existing = db
           .prepare("SELECT id FROM facts WHERE content_dedup_hash = ? AND superseded_at IS NULL LIMIT 1")
@@ -85,10 +105,15 @@ export function registerMineCommand(
           skipped++;
           continue;
         }
-        const text = conv.messages
+        const rawText = conv.messages
           .map((m) => `${m.role}: ${m.content}`)
           .join("\n\n")
           .slice(0, 50_000);
+        const { text, redacted, categories } = redactSecretsInText(rawText);
+        redactedTotal += redacted;
+        for (const [k, v] of Object.entries(categories)) {
+          redactionCategories[k] = (redactionCategories[k] ?? 0) + v;
+        }
         const result = factsDb.storeWithResult({
           text,
           category: "conversation",
@@ -134,7 +159,20 @@ export function registerMineCommand(
           }
         }
       }
-      console.log(`Mine complete: batch=${batchId} written=${written} skipped=${skipped}`);
+      console.log(
+        [
+          `source: ${sourceLabel}`,
+          `files: 1`,
+          `conversations: ${conversations.length}`,
+          `facts created: ${written} (conversation)`,
+          `credentials redacted: ${redactedTotal}`,
+          `mine_batch_id: ${batchId}`,
+        ].join("\n"),
+      );
+      if (Object.keys(redactionCategories).length > 0) {
+        console.log(`redaction categories: ${JSON.stringify(redactionCategories)}`);
+      }
+      if (skipped > 0) console.log(`skipped (dedupe): ${skipped}`);
       if (opts.embed && (!vectorDb || !embeddings)) {
         console.log(
           "Note: --embed requires configured vectorDb and embeddings. Run storage re-index or wait for background embed to vectorize new facts.",

@@ -4,9 +4,11 @@
  */
 
 import type { HybridMemoryConfig } from "../config.js";
+import type { DatabaseSync } from "node:sqlite";
 import { nowIso } from "../utils/dates.js";
 import { is429OrWrapped } from "./chat.js";
 import { generateOrchestratorRunId } from "./maintenance-job-run/orchestrator-summary.js";
+import { recordMaintenanceStepRun } from "./maintenance-audit-journal.js";
 import {
   parseSemanticTokenFromSummary,
   reflectRulesStepSummaryIndicatesFailure,
@@ -80,6 +82,8 @@ export interface MaintenanceOrchestratorContext {
   runners: Map<string, MaintenanceStepRunner>;
   logger?: { info: (msg: string) => void; warn: (msg: string) => void };
   oneTimeMarkerExists?: (markerPath: string) => boolean;
+  /** When set, each step attempt is recorded in maintenance_runs (#1913). */
+  journalDb?: DatabaseSync;
 }
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -478,9 +482,22 @@ export async function runMaintenanceOrchestrator(
   let deferRemainingLlm = false;
   let lastWasLlmStep = false;
 
+  const pushStepResult = (result: StepResult): void => {
+    results.push(result);
+    if (ctx.journalDb) {
+      try {
+        recordMaintenanceStepRun(ctx.journalDb, result);
+      } catch (err) {
+        logger?.warn?.(
+          `maintenance-orchestrator: journal write failed for ${result.name}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  };
+
   for (const step of steps) {
     if (maxRuntimeMs !== undefined && Date.now() - startedAtMs >= maxRuntimeMs) {
-      results.push({
+      pushStepResult({
         name: step.name,
         status: "deferred",
         summary: "time budget exceeded",
@@ -490,7 +507,7 @@ export async function runMaintenanceOrchestrator(
     }
 
     if (step.featureGate && !step.featureGate(cfg)) {
-      results.push({
+      pushStepResult({
         name: step.name,
         status: "skipped_gate",
         summary: "feature disabled",
@@ -500,7 +517,7 @@ export async function runMaintenanceOrchestrator(
     }
 
     if (step.oneTimeMarkerPath && ctx.oneTimeMarkerExists?.(step.oneTimeMarkerPath)) {
-      results.push({
+      pushStepResult({
         name: step.name,
         status: "skipped_guard",
         summary: "one-time marker exists",
@@ -510,7 +527,7 @@ export async function runMaintenanceOrchestrator(
     }
 
     if (!dependenciesMet(step, completedThisRun)) {
-      results.push({
+      pushStepResult({
         name: step.name,
         status: "skipped_dep",
         summary: `waiting for ${step.dependsOn?.join(", ")} in this run`,
@@ -524,7 +541,7 @@ export async function runMaintenanceOrchestrator(
       const guard = stepGuardEligible(step.name, guardMs, openclawDir);
       if (!guard.eligible) {
         const agoH = guard.lastRunMs ? Math.round((Date.now() - guard.lastRunMs) / HOUR_MS) : 0;
-        results.push({
+        pushStepResult({
           name: step.name,
           status: "skipped_guard",
           summary: `guard (ran ${agoH}h ago)`,
@@ -536,7 +553,7 @@ export async function runMaintenanceOrchestrator(
 
     const runner = runners.get(step.name);
     if (!runner) {
-      results.push({
+      pushStepResult({
         name: step.name,
         status: "skipped_missing_runner",
         summary: "no runner registered",
@@ -546,7 +563,7 @@ export async function runMaintenanceOrchestrator(
     }
 
     if (deferRemainingLlm && isLlmProviderStep(step.llmTier)) {
-      results.push({
+      pushStepResult({
         name: step.name,
         status: "deferred",
         summary: "rate-limit circuit breaker",
@@ -556,7 +573,7 @@ export async function runMaintenanceOrchestrator(
     }
 
     if (options.dryRun) {
-      results.push({
+      pushStepResult({
         name: step.name,
         status: "ok",
         summary: "dry-run (would execute)",
@@ -576,7 +593,7 @@ export async function runMaintenanceOrchestrator(
       const meta = parseStepRunnerMetadata(summary);
       if (step.name === "reflect-rules" && reflectRulesStepSummaryIndicatesFailure(summary)) {
         logger?.warn?.(`maintenance-orchestrator: ${step.name} semantic failure (summary diagnostics): ${summary}`);
-        results.push({
+        pushStepResult({
           name: step.name,
           status: "failed",
           summary,
@@ -589,7 +606,7 @@ export async function runMaintenanceOrchestrator(
       }
       if (stepSemanticBlocksGuard(meta.semanticOutcome)) {
         logger?.warn?.(`maintenance-orchestrator: ${step.name} semantic failure (${meta.semanticOutcome}): ${summary}`);
-        results.push({
+        pushStepResult({
           name: step.name,
           status: "failed",
           summary,
@@ -602,7 +619,7 @@ export async function runMaintenanceOrchestrator(
       if (!options.dryRun && guardMs >= 0) {
         writeStepGuardTimestampMs(step.name, Date.now(), openclawDir);
       }
-      results.push({
+      pushStepResult({
         name: step.name,
         status: "ok",
         summary,
@@ -620,7 +637,7 @@ export async function runMaintenanceOrchestrator(
           deferRemainingLlm = true;
         }
         logger?.warn?.(`maintenance-orchestrator: ${step.name} rate-limited: ${message}`);
-        results.push({
+        pushStepResult({
           name: step.name,
           status: "rate_limited",
           summary: message,
@@ -629,7 +646,7 @@ export async function runMaintenanceOrchestrator(
       } else {
         logger?.warn?.(`maintenance-orchestrator: ${step.name} failed: ${message}`);
         const meta = parseStepRunnerMetadata(message);
-        results.push({
+        pushStepResult({
           name: step.name,
           status: "failed",
           summary: message,

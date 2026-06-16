@@ -83,9 +83,11 @@ describe("user-friendly CLI registration", () => {
       "examples",
       "focus",
       "health",
+      "list-vaults",
       "mine",
       "providers",
       "setup",
+      "vault-sync",
     ]);
   });
 

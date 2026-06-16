@@ -69,7 +69,7 @@ export function detectRecommendedEmbeddingSetup(
   const ollamaInstalled =
     existsSync(join(homedir(), ".ollama")) ||
     readString(process.env.OLLAMA_HOST) !== undefined ||
-    spawnSync("ollama", ["--version"], { stdio: "ignore" }).status === 0;
+    spawnSync("ollama", ["--version"], { stdio: "ignore", timeout: 2_000 }).status === 0;
   if (ollamaInstalled) {
     return {
       provider: "ollama",

@@ -12,6 +12,7 @@ import { registerDemoCommand } from "./cmd-demo.js";
 import { registerDoctorCommand } from "./cmd-doctor.js";
 import { registerExamplesCommand } from "./cmd-examples.js";
 import { registerFocusCommands } from "./cmd-focus.js";
+import { registerVaultCommands } from "./cmd-vaults.js";
 import { registerHealthCommand } from "./cmd-health.js";
 import { registerMineCommand } from "./cmd-mine.js";
 import { registerProvidersCommand } from "./cmd-providers.js";
@@ -69,4 +70,5 @@ export function registerUserFriendlyCommands(mem: Chainable, ctx: UserFriendlyCo
   registerIfMissing(mem, "mine", () => registerMineCommand(mem, ctx.cfg, ctx.factsDb, ctx.vectorDb, ctx.embeddings));
   registerIfMissing(mem, "bootstrap", () => registerBootstrapCommand(mem, ctx.cfg, ctx.factsDb));
   registerIfMissing(mem, "focus", () => registerFocusCommands(mem));
+  registerIfMissing(mem, "list-vaults", () => registerVaultCommands(mem, ctx.cfg));
 }

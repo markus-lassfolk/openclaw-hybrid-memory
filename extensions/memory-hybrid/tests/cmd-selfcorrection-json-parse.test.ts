@@ -14,7 +14,7 @@
  *  - First-batch non-parse LLM failure → status: "failed", zero batches completed
  */
 
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -57,6 +57,28 @@ function listSelfCorrectionBatchStateFiles(workspace: string): string[] {
   if (!existsSync(stateDir)) return [];
   return readdirSync(stateDir).filter((name) => name.startsWith(SELF_CORRECTION_BATCH_STATE_PREFIX));
 }
+
+function walkFiles(root: string, out: string[]): void {
+  if (!existsSync(root)) return;
+  for (const name of readdirSync(root)) {
+    const full = join(root, name);
+    try {
+      const st = statSync(full);
+      if (st.isDirectory()) walkFiles(full, out);
+      else out.push(full);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function listJobRunCheckpointFiles(logRoot: string): string[] {
+  const files: string[] = [];
+  walkFiles(logRoot, files);
+  return files.filter((f) => f.endsWith("checkpoint.json"));
+}
+
+const jobRunOpts = () => ({ workspace: tmpDir, jobRunLogRoot: tmpDir, applyTools: false });
 
 function makeOpenAIMock(responseText: string) {
   return {
@@ -536,14 +558,13 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
       analysisBatchSize: 1,
     };
     const first = await runSelfCorrectionRunForCli(ctxFirst, {
+      ...jobRunOpts(),
       incidents: manyIncidents,
-      workspace: tmpDir,
-      applyTools: false,
     });
     expect(first.error).toBeDefined();
-    const stateFiles = listSelfCorrectionBatchStateFiles(tmpDir);
-    expect(stateFiles).toHaveLength(1);
-    const statePath = join(resolveSelfCorrectionBatchStateDir(tmpDir), stateFiles[0] as string);
+    const checkpointFiles = listJobRunCheckpointFiles(tmpDir);
+    expect(checkpointFiles).toHaveLength(1);
+    const statePath = checkpointFiles[0] as string;
     expect(existsSync(statePath)).toBe(true);
     expect(JSON.parse(readFileSync(statePath, "utf-8")).completedBatchIndexes).toEqual([0]);
 
@@ -563,9 +584,8 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
       analysisBatchSize: 1,
     };
     const second = await runSelfCorrectionRunForCli(ctxSecond, {
+      ...jobRunOpts(),
       incidents: manyIncidents,
-      workspace: tmpDir,
-      applyTools: false,
     });
 
     expect(second.status).toBe("success_analyzed");
@@ -644,14 +664,13 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     };
 
     await runSelfCorrectionRunForCli(ctxPartial, {
+      ...jobRunOpts(),
       incidents,
-      workspace: tmpDir,
       model: "model-a",
-      applyTools: false,
     });
 
-    const stateFilesA = listSelfCorrectionBatchStateFiles(tmpDir);
-    expect(stateFilesA).toHaveLength(1);
+    const checkpointFilesA = listJobRunCheckpointFiles(tmpDir);
+    expect(checkpointFilesA).toHaveLength(1);
 
     const openaiB = {
       chat: {
@@ -670,16 +689,13 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     };
 
     await runSelfCorrectionRunForCli(ctxB, {
+      ...jobRunOpts(),
       incidents,
-      workspace: tmpDir,
       model: "model-b",
-      applyTools: false,
     });
 
     expect(openaiB.chat.completions.create).toHaveBeenCalledTimes(2);
-    const stateFilesB = listSelfCorrectionBatchStateFiles(tmpDir);
-    expect(stateFilesB).toHaveLength(0);
-    expect(stateFilesA[0]).toMatch(new RegExp(`^${SELF_CORRECTION_BATCH_STATE_PREFIX}`));
+    expect(listJobRunCheckpointFiles(tmpDir)).toHaveLength(0);
   });
 
   it("#1715: uses heavy-tier fallback chain when llm.heavy has a single model", async () => {
@@ -854,15 +870,15 @@ describe("self-correction-run — partial batch failure and AGENTS_RULE mapping"
     };
 
     const res = await runSelfCorrectionRunForCli(ctx, {
+      ...jobRunOpts(),
       incidents: [SAMPLE_INCIDENT, incident2],
-      workspace: tmpDir,
     });
 
     expect(res.status).toBe("failed_partial");
     expect(res.batchesCompleted).toBe(1);
     expect(res.totalBatches).toBe(2);
     expect(res.analysed).toBeGreaterThan(0);
-    expect(listSelfCorrectionBatchStateFiles(tmpDir).length).toBeGreaterThan(0);
+    expect(listJobRunCheckpointFiles(tmpDir).length).toBeGreaterThan(0);
   });
 
   it("returns failed when the first batch hits a non-parse LLM error", async () => {
@@ -876,8 +892,8 @@ describe("self-correction-run — partial batch failure and AGENTS_RULE mapping"
     const ctx = makeCtx(openai);
 
     const res = await runSelfCorrectionRunForCli(ctx, {
+      ...jobRunOpts(),
       incidents: [SAMPLE_INCIDENT],
-      workspace: tmpDir,
     });
 
     expect(res.status).toBe("failed");
@@ -886,7 +902,7 @@ describe("self-correction-run — partial batch failure and AGENTS_RULE mapping"
     expect(res.totalBatches).toBe(1);
     expect(res.analysed).toBe(0);
     expect(res.autoFixed).toBe(0);
-    expect(listSelfCorrectionBatchStateFiles(tmpDir).length).toBeGreaterThan(0);
+    expect(listJobRunCheckpointFiles(tmpDir).length).toBeGreaterThan(0);
   });
 
   it("AGENTS_RULE proposal uses source incident from batch order", async () => {

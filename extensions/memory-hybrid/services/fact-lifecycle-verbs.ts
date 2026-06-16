@@ -4,6 +4,13 @@
 
 import type { FactsDB } from "../backends/facts-db.js";
 
+export const DEFAULT_PIN_QUOTA = 10;
+
+export function checkPinQuota(factsDb: FactsDB, quota = DEFAULT_PIN_QUOTA): { allowed: boolean; current: number } {
+  const current = countPinnedFacts(factsDb);
+  return { allowed: current < quota, current };
+}
+
 export function pinFact(factsDb: FactsDB, factId: string, reason: string): boolean {
   const db = factsDb.getRawDb();
   const now = Math.floor(Date.now() / 1000);

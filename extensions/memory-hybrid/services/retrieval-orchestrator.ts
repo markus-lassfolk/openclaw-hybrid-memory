@@ -838,7 +838,7 @@ export async function runExplicitDeepRetrieval(
         scoredFacts,
         rerankingConfig,
         rerankingOpenai,
-        config.crossEncoder?.endpoint,
+        config.crossEncoder,
       );
       const orderedEntriesReranked = reranked
         .map((fact) => ({ factId: fact.factId, entry: fusedEntryMap.get(fact.factId)! }))
@@ -1207,7 +1207,7 @@ export async function runExplicitDeepRetrieval(
             scoredFacts,
             rerankingConfig,
             rerankingOpenai,
-            config.crossEncoder?.endpoint,
+            config.crossEncoder,
           );
           const rerankedOrder = new Map(reranked.map((fact, index) => [fact.factId, index]));
           orderedEntries.sort(

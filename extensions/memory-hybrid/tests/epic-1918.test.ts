@@ -15,7 +15,15 @@ import { evaluateBm25Bypass } from "../services/retrieval-v2.js";
 import { scanInjectionFilter, filterFactTextsForInjection } from "../services/injection-filter.js";
 import { buildVaultContextBlock, extractPromptNgrams } from "../services/vault-context.js";
 import { getHalfLifeForContentType, effectiveHalfLifeDays } from "../services/semantic-lifecycle.js";
-import { parseClaudeCodeJsonl, parsePlainTextTranscript, hashConversation } from "../services/transcript-importers/index.js";
+import {
+  parseChatGptExport,
+  parsePlainTextTranscript,
+  parseSlackExport,
+  redactSecretsInText,
+  hashConversation,
+} from "../services/transcript-importers/index.js";
+import { mapStepToMaintenanceRunStatus } from "../services/maintenance-audit-journal.js";
+import { checkPinQuota, DEFAULT_PIN_QUOTA } from "../services/fact-lifecycle-verbs.js";
 import { checkEntityContamination, isDuplicateDraft } from "../services/contamination-guard.js";
 import { computeCrossDomainBoost, isNeverReferencedCandidate } from "../services/recall-signals.js";
 import { buildMemoryNudge, resetNudgeState } from "../services/memory-nudge.js";
@@ -205,5 +213,44 @@ describe("recall timing stats (#1910)", () => {
     const snap = getRecallStatsSnapshot();
     expect(snap.stages.intent?.count).toBe(10);
     expect(snap.stages.intent?.p95).toBeGreaterThanOrEqual(90);
+  });
+});
+
+describe("maintenance journal (#1913)", () => {
+  it("maps orchestrator statuses", () => {
+    expect(mapStepToMaintenanceRunStatus("ok", "ran")).toBe("ran");
+    expect(mapStepToMaintenanceRunStatus("rate_limited", "429")).toBe("skipped:rate");
+    expect(mapStepToMaintenanceRunStatus("skipped_guard", "quiet window")).toBe("skipped:quiet");
+  });
+});
+
+describe("transcript importers (#1915)", () => {
+  it("parses ChatGPT export", () => {
+    const raw = JSON.stringify([
+      {
+        title: "Test chat",
+        mapping: {
+          a: { message: { author: { role: "user" }, content: { parts: ["hello"] } } },
+        },
+      },
+    ]);
+    const convs = parseChatGptExport(raw);
+    expect(convs.length).toBe(1);
+    expect(convs[0].messages[0].content).toBe("hello");
+  });
+
+  it("redacts secrets in mine text", () => {
+    const { text, redacted } = redactSecretsInText("key is sk-abcdefghijklmnopqrstuvwxyz1234567890");
+    expect(redacted).toBeGreaterThan(0);
+    expect(text).toContain("[REDACTED:");
+  });
+});
+
+describe("pin quota (#1911)", () => {
+  it("exports default quota constant", () => {
+    expect(DEFAULT_PIN_QUOTA).toBe(10);
+    expect(checkPinQuota({ getRawDb: () => ({ prepare: () => ({ get: () => ({ cnt: 10 }) }) }) } as never, 10).allowed).toBe(
+      false,
+    );
   });
 });

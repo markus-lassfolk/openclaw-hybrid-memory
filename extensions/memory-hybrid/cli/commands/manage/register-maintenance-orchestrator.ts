@@ -75,6 +75,7 @@ export function registerMaintenanceOrchestratorCommands(maintenance: Chainable, 
         openclawDir,
         logger: { info: log, warn },
         oneTimeMarkerExists: (path) => existsSync(join(memoryDir, path)),
+        journalDb: b.factsDb.getRawDb(),
       },
       {
         tiers,

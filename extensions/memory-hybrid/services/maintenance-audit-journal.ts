@@ -4,6 +4,25 @@
 
 import type { DatabaseSync } from "node:sqlite";
 
+export type OrchestratorStepStatus =
+  | "ok"
+  | "skipped_guard"
+  | "skipped_gate"
+  | "skipped_dep"
+  | "skipped_missing_runner"
+  | "deferred"
+  | "failed"
+  | "rate_limited";
+
+export type OrchestratorStepJournalInput = {
+  name: string;
+  status: OrchestratorStepStatus;
+  summary: string;
+  durationMs: number;
+  jobRunId?: string;
+  semanticOutcome?: string;
+};
+
 export type MaintenanceRunStatus =
   | "ran"
   | "skipped:quiet"
@@ -72,6 +91,36 @@ export function getLastRunForJob(db: DatabaseSync, job: string): MaintenanceRunR
       )
       .get(job) as MaintenanceRunRow | undefined) ?? null
   );
+}
+
+/** Map orchestrator step outcome to journal status. */
+export function mapStepToMaintenanceRunStatus(
+  status: OrchestratorStepStatus,
+  summary: string,
+): MaintenanceRunStatus {
+  if (status === "ok") return "ran";
+  if (status === "failed") return "failed";
+  if (status === "rate_limited") return "skipped:rate";
+  const lower = summary.toLowerCase();
+  if (lower.includes("lease")) return "skipped:lease";
+  if (lower.includes("quiet") || lower.includes("rate")) return "skipped:quiet";
+  return "skipped:quiet";
+}
+
+/** Record one orchestrator step attempt in maintenance_runs. */
+export function recordMaintenanceStepRun(db: DatabaseSync, step: OrchestratorStepJournalInput): number {
+  return insertMaintenanceRun(db, {
+    job: step.name,
+    status: mapStepToMaintenanceRunStatus(step.status, step.summary),
+    itemsProcessed: step.status === "ok" ? 1 : undefined,
+    errorSummary: step.status === "failed" || step.status === "rate_limited" ? step.summary : undefined,
+    metadata: {
+      durationMs: step.durationMs,
+      orchestratorStatus: step.status,
+      jobRunId: step.jobRunId,
+      semanticOutcome: step.semanticOutcome,
+    },
+  });
 }
 
 /** Jobs not run in the last N hours (for doctor warning). */
