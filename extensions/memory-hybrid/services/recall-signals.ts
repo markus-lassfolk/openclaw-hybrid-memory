@@ -18,6 +18,8 @@ export const DEFAULT_RECALL_SIGNAL_CONFIG: RecallSignalConfig = {
   neverReferencedWindowDays: 30,
 };
 
+type RecallEventRow = { fact_ids: string; query: string | null; occurred_at: number };
+
 /** Cross-domain relevance boost when fact surfaced by ≥ N distinct queries. */
 export function computeCrossDomainBoost(distinctQueryCount: number, minQueries: number): number {
   if (distinctQueryCount < minQueries) return 0;
@@ -42,13 +44,14 @@ export type FactRecallStats = {
   referenceCount: number;
 };
 
-/** Aggregate recall_events stats per fact (last N days). */
-export function aggregateRecallStats(db: DatabaseSync, windowDays = 30): Map<string, FactRecallStats> {
+function fetchRecallEventRows(db: DatabaseSync, windowDays: number): RecallEventRow[] {
   const cutoff = Math.floor(Date.now() / 1000) - windowDays * 86_400;
-  const rows = db
+  return db
     .prepare("SELECT fact_ids, query, occurred_at FROM recall_events WHERE occurred_at >= ? AND hit = 1")
-    .all(cutoff) as Array<{ fact_ids: string; query: string | null; occurred_at: number }>;
+    .all(cutoff) as RecallEventRow[];
+}
 
+function buildRecallStatsFromRows(rows: RecallEventRow[], db: DatabaseSync): Map<string, FactRecallStats> {
   const stats = new Map<string, FactRecallStats>();
   for (const row of rows) {
     let ids: string[] = [];
@@ -57,7 +60,6 @@ export function aggregateRecallStats(db: DatabaseSync, windowDays = 30): Map<str
     } catch {
       continue;
     }
-    const _day = Math.floor(row.occurred_at / 86_400);
     for (const factId of ids) {
       let s = stats.get(factId);
       if (!s) {
@@ -118,6 +120,11 @@ export function aggregateRecallStats(db: DatabaseSync, windowDays = 30): Map<str
   return stats;
 }
 
+/** Aggregate recall_events stats per fact (last N days). */
+export function aggregateRecallStats(db: DatabaseSync, windowDays = 30): Map<string, FactRecallStats> {
+  return buildRecallStatsFromRows(fetchRecallEventRows(db, windowDays), db);
+}
+
 /** Map confirmed access (full injection / explicit recall) onto recall-event surface stats. */
 export function enrichReferenceCountsFromFacts(
   db: DatabaseSync,
@@ -140,11 +147,11 @@ export function enrichReferenceCountsFromFacts(
   }
 }
 
-export function getSnoozeCandidates(
-  db: DatabaseSync,
+/** Filter snooze candidates from pre-aggregated stats. */
+export function snoozeCandidatesFromStats(
+  stats: Map<string, FactRecallStats>,
   config: RecallSignalConfig = DEFAULT_RECALL_SIGNAL_CONFIG,
 ): string[] {
-  const stats = aggregateRecallStats(db, config.neverReferencedWindowDays);
   const candidates: string[] = [];
   for (const s of stats.values()) {
     if (isNeverReferencedCandidate(s.surfaceCount, s.referenceCount, config.neverReferencedThreshold)) {
@@ -152,6 +159,14 @@ export function getSnoozeCandidates(
     }
   }
   return candidates;
+}
+
+export function getSnoozeCandidates(
+  db: DatabaseSync,
+  config: RecallSignalConfig = DEFAULT_RECALL_SIGNAL_CONFIG,
+): string[] {
+  const stats = aggregateRecallStats(db, config.neverReferencedWindowDays);
+  return snoozeCandidatesFromStats(stats, config);
 }
 
 export type RecallSignalsSnapshot = {
@@ -169,7 +184,15 @@ export function getRecallSignalsSnapshot(
   windowDays = 7,
   config: RecallSignalConfig = DEFAULT_RECALL_SIGNAL_CONFIG,
 ): RecallSignalsSnapshot {
-  const stats = aggregateRecallStats(db, windowDays);
+  const fetchWindow = Math.max(windowDays, config.neverReferencedWindowDays);
+  const rows = fetchRecallEventRows(db, fetchWindow);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const snapshotCutoff = nowSec - windowDays * 86_400;
+  const snoozeCutoff = nowSec - config.neverReferencedWindowDays * 86_400;
+
+  const snapshotRows = fetchWindow === windowDays ? rows : rows.filter((r) => r.occurred_at >= snapshotCutoff);
+  const stats = buildRecallStatsFromRows(snapshotRows, db);
+
   let crossDomainHubs = 0;
   let neverReferencedSurfaced = 0;
   for (const s of stats.values()) {
@@ -178,7 +201,16 @@ export function getRecallSignalsSnapshot(
       neverReferencedSurfaced++;
     }
   }
-  const snoozeCandidateIds = getSnoozeCandidates(db, config);
+
+  const snoozeStats =
+    windowDays === config.neverReferencedWindowDays
+      ? stats
+      : buildRecallStatsFromRows(
+          fetchWindow === config.neverReferencedWindowDays ? rows : rows.filter((r) => r.occurred_at >= snoozeCutoff),
+          db,
+        );
+  const snoozeCandidateIds = snoozeCandidatesFromStats(snoozeStats, config);
+
   return {
     schemaVersion: 1,
     windowDays,
