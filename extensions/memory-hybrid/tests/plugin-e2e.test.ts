@@ -373,6 +373,32 @@ describe("Store and recall e2e (real FactsDB + VectorDB, mock embeddings)", () =
     expect(recallResult.details?.count ?? 0).toBe(0);
   });
 
+  it("memory_store stores technical token-budget facts that only match broad patterns (#1896)", async () => {
+    registerTools(buildE2EContext({ tmpDir, factsDb, vectorDb, cfg, api }) as never, api as never);
+
+    const storeTool = api.getTool("memory_store");
+    const recallTool = api.getTool("memory_recall");
+
+    const storeResult = (await storeTool?.execute("call-token-budget", {
+      text: "M3 has 5.1B tokens monthly budget",
+      entity: "minimax-quota",
+      category: "technical",
+      importance: 0.9,
+    })) as { details?: { action?: string; id?: string } };
+
+    expect(storeResult.details?.action).toBe("created");
+    expect(storeResult.details?.id).toBeTruthy();
+
+    const recallResult = (await recallTool?.execute("call-token-budget-recall", {
+      query: "minimax quota token budget",
+      limit: 5,
+    })) as { details?: { count?: number; memories?: { text: string }[] } };
+
+    expect(recallResult.details?.count).toBeGreaterThanOrEqual(1);
+    const texts = (recallResult.details?.memories ?? []).map((m) => m.text);
+    expect(texts.some((t) => t.includes("tokens monthly budget"))).toBe(true);
+  });
+
   it("memory_recall exposes constrained-recall mode with filter and rank explanation", async () => {
     registerTools(buildE2EContext({ tmpDir, factsDb, vectorDb, cfg, api }) as never, api as never);
 
