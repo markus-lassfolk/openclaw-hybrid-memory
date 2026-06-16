@@ -29,9 +29,10 @@ export async function indexFactFragments(opts: {
   if (!cfg.enabled) return { fragmentsStored: 0, skipped: true };
   if (parentFact.text.length < cfg.minChars) return { fragmentsStored: 0, skipped: true };
 
-  const existing = factsDb.getRawDb().prepare("SELECT COUNT(*) AS c FROM facts WHERE parent_fact_id = ?").get(parentFact.id) as
-    | { c: number }
-    | undefined;
+  const existing = factsDb
+    .getRawDb()
+    .prepare("SELECT COUNT(*) AS c FROM facts WHERE parent_fact_id = ?")
+    .get(parentFact.id) as { c: number } | undefined;
   if ((existing?.c ?? 0) > 0) return { fragmentsStored: 0, skipped: true };
 
   const chunks = chunkMarkdown(parentFact.text, { chunkSize: 2000, chunkOverlap: 200 });
@@ -65,7 +66,10 @@ export async function indexFactFragments(opts: {
     }
 
     try {
-      factsDb.getRawDb().prepare("UPDATE facts SET parent_fact_id = ? WHERE id = ?").run(parentFact.id, result.entry.id);
+      factsDb
+        .getRawDb()
+        .prepare("UPDATE facts SET parent_fact_id = ? WHERE id = ?")
+        .run(parentFact.id, result.entry.id);
     } catch {
       /* column may be missing on very old DBs until migration */
     }
