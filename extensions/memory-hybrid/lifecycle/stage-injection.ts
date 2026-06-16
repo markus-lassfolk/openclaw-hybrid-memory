@@ -196,7 +196,7 @@ async function runInjection(
   const recalledAmbient = issueBlock + narrativeBlock + hotBlock;
 
   const injectionFilterMode: InjectionFilterMode =
-    ctx.cfg.retrieval?.contextBoundary?.injectionFilter ?? "audit";
+    ctx.cfg.retrieval?.contextBoundary?.injectionFilter ?? "enforce";
   let injectionFilteredCount = 0;
 
   const sanitizeFactForInjection = (raw: string): string => {

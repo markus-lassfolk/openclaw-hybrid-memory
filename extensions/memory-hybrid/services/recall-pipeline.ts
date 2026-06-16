@@ -451,6 +451,7 @@ export async function runRecallPipelineQuery(
               if (!entry) return null;
               if (entry.supersededAt != null) return null;
               if (entry.expiresAt != null && entry.expiresAt <= nowSec) return null;
+              if (entry.snoozedUntil != null && entry.snoozedUntil > nowSec) return null;
               return entry;
             },
             recallOpts.scopeFilter,

@@ -96,6 +96,7 @@ export function mergeResults(
       if (!entry) return true;
       if (entry.supersededAt != null) return true;
       if (entry.expiresAt != null && entry.expiresAt <= nowSec) return true;
+      if (entry.snoozedUntil != null && entry.snoozedUntil > nowSec) return true;
       return false;
     }
     const norm = result.entry.text.toLowerCase();

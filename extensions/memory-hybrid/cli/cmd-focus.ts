@@ -11,27 +11,27 @@ export function registerFocusCommands(program: Chainable): void {
   focus
     .command("set <topic>")
     .description("Set focus topic for a session")
-    .option("--session-id <id>", "Session id", "default")
-    .action((topic: string, opts: { sessionId?: string }) => {
-      const state = setFocusTopic(opts.sessionId ?? "default", topic);
+    .requiredOption("--session-id <id>", "Session id (must match the runtime session key used during recall)")
+    .action((topic: string, opts: { sessionId: string }) => {
+      const state = setFocusTopic(opts.sessionId, topic);
       console.log(`Focus set: "${state.topic}" for session ${state.sessionId}`);
     });
 
   focus
     .command("clear")
     .description("Clear focus topic")
-    .option("--session-id <id>", "Session id", "default")
-    .action((opts: { sessionId?: string }) => {
-      const cleared = clearFocusTopic(opts.sessionId ?? "default");
+    .requiredOption("--session-id <id>", "Session id (must match the runtime session key used during recall)")
+    .action((opts: { sessionId: string }) => {
+      const cleared = clearFocusTopic(opts.sessionId);
       console.log(cleared ? "Focus cleared." : "No focus topic set.");
     });
 
   focus
     .command("show")
     .description("Show current focus topic")
-    .option("--session-id <id>", "Session id", "default")
-    .action((opts: { sessionId?: string }) => {
-      const state = getFocusTopic(opts.sessionId ?? "default");
+    .requiredOption("--session-id <id>", "Session id (must match the runtime session key used during recall)")
+    .action((opts: { sessionId: string }) => {
+      const state = getFocusTopic(opts.sessionId);
       if (!state) {
         console.log("No focus topic.");
         return;
