@@ -47,6 +47,12 @@ export function resolveVaultLancePath(sqlitePath: string): string {
   return `${sqlitePath}.lance`;
 }
 
+/** Per-vault WAL path colocated with the vault sqlite file (Issue #1917). */
+export function resolveVaultWalPath(sqlitePath: string): string {
+  if (sqlitePath.endsWith(".db")) return `${sqlitePath.slice(0, -3)}.wal`;
+  return `${sqlitePath}.wal`;
+}
+
 export function listConfiguredVaultNames(vaults: VaultsConfig | undefined): string[] {
   return vaults ? Object.keys(vaults) : [];
 }

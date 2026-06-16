@@ -104,6 +104,7 @@ function selectMemoryCoreToolsContext(ctx: ToolsContext): MemoryToolsContext {
     issueStore,
     resolveVault,
     resolveAllVaults,
+    resolveVaultWal,
   } = ctx;
 
   return {
@@ -134,6 +135,7 @@ function selectMemoryCoreToolsContext(ctx: ToolsContext): MemoryToolsContext {
     issueStore,
     resolveVault,
     resolveAllVaults,
+    resolveVaultWal,
   };
 }
 

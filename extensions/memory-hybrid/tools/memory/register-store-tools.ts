@@ -35,7 +35,7 @@ import { storeAliases } from "../../services/retrieval-aliases.js";
 import { validateScopedClassificationTarget } from "../../services/classification-scope.js";
 import { shouldAutoVerify } from "../../services/verification-store.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../../services/vector-maintenance.js";
-import { isWalWriteFailure } from "../../services/wal-helpers.js";
+import { isWalWriteFailure, walRemove as walRemoveEntry, walWrite as walWriteEntry } from "../../services/wal-helpers.js";
 import type { MemoryEntry } from "../../types/memory.js";
 import { MEMORY_SCOPES } from "../../types/memory.js";
 import { detectFutureDate } from "../../utils/date-detector.js";
@@ -48,7 +48,7 @@ import {
 } from "../../services/recalled-context-assembler.js";
 import { extractTags } from "../../utils/tags.js";
 import type { MemoryToolRuntime } from "./runtime.js";
-import { resolveToolVaultBackends } from "./vault-resolve.js";
+import { resolveToolVaultBackends, resolveToolVaultWal } from "./vault-resolve.js";
 
 export function registerStoreTools(runtime: MemoryToolRuntime): void {
   const {
@@ -70,9 +70,6 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
     pendingLLMWarnings,
     variantQueue,
     buildToolScopeFilter,
-    wal,
-    walWrite,
-    walRemove,
     findSimilarByEmbedding,
     auditStore,
     api,
@@ -209,6 +206,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             runtime,
             typeof vaultParam === "string" ? vaultParam : undefined,
           );
+          const storeWal = resolveToolVaultWal(runtime, typeof vaultParam === "string" ? vaultParam : undefined);
 
           // --- Early input validation (must run before any side effects) ---
           if (text.trim().length === 0) {
@@ -705,7 +703,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                   warnMessage: `memory-hybrid: blocked cross-scope or unknown memory_store UPDATE target ${classification.targetId}`,
                 });
                 if (oldFact) {
-                  const walEntryId = await walWrite(
+                  const walEntryId = await walWriteEntry(storeWal,
                     "update",
                     {
                       text: textToStore,
@@ -727,7 +725,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     api.logger,
                     classification.targetId,
                   );
-                  if (isWalWriteFailure(wal, walEntryId)) {
+                  if (isWalWriteFailure(storeWal, walEntryId)) {
                     return walWriteFailedResponse();
                   }
 
@@ -760,7 +758,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     updateStoreResult.newlyStored === false &&
                     !updateStoreResult.embeddingStale
                   ) {
-                    if (walEntryId) await walRemove(walEntryId, api.logger);
+                    if (walEntryId) await walRemoveEntry(storeWal,walEntryId, api.logger);
                     return {
                       content: [
                         {
@@ -796,7 +794,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     } catch (err) {
                       api.logger.warn(`memory-hybrid: UPDATE merge vector refresh failed: ${err}`);
                     }
-                    if (walEntryId) await walRemove(walEntryId, api.logger);
+                    if (walEntryId) await walRemoveEntry(storeWal,walEntryId, api.logger);
                     return {
                       content: [
                         {
@@ -874,7 +872,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     api.logger.info?.(
                       `memory-hybrid: UPDATE — superseded ${classification.targetId} with ${newEntry.id}: ${classification.reason}`,
                     );
-                    if (walEntryId) await walRemove(walEntryId, api.logger);
+                    if (walEntryId) await walRemoveEntry(storeWal,walEntryId, api.logger);
                     return {
                       content: [
                         {
@@ -894,7 +892,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     };
                   }
                   // WAL cleanup for skipped update path
-                  if (walEntryId) await walRemove(walEntryId, api.logger);
+                  if (walEntryId) await walRemoveEntry(storeWal,walEntryId, api.logger);
                   return {
                     content: [
                       {
@@ -921,7 +919,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
 
           // Scope was resolved above (before classify-before-write) for WAL and classification consistency.
 
-          const walEntryId = await walWrite(
+          const walEntryId = await walWriteEntry(storeWal,
             "store",
             {
               text: textToStore,
@@ -942,7 +940,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             },
             api.logger,
           );
-          if (isWalWriteFailure(wal, walEntryId)) {
+          if (isWalWriteFailure(storeWal, walEntryId)) {
             return walWriteFailedResponse();
           }
           const decayFreezeUntil =
@@ -975,7 +973,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
           });
           const entry = storeResult.entry;
           if (!storeResult.skipped && storeResult.newlyStored === false && !storeResult.embeddingStale) {
-            if (walEntryId) await walRemove(walEntryId, api.logger);
+            if (walEntryId) await walRemoveEntry(storeWal,walEntryId, api.logger);
             return {
               content: [
                 {
@@ -1254,7 +1252,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               context: { category },
             });
 
-            if (walEntryId) await walRemove(walEntryId, api.logger);
+            if (walEntryId) await walRemoveEntry(storeWal,walEntryId, api.logger);
             return {
               content: [
                 {
@@ -1288,7 +1286,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             };
           }
           // WAL cleanup and return for skipped store path (Bug fix #1560, #1561)
-          if (walEntryId) await walRemove(walEntryId, api.logger);
+          if (walEntryId) await walRemoveEntry(storeWal,walEntryId, api.logger);
           return {
             content: [
               {

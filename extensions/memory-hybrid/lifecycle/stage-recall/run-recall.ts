@@ -18,6 +18,7 @@ import { loadKnownEntitySurfaces, matchEntitySurfacesInText } from "../../servic
 import { capturePluginError } from "../../services/error-reporter.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
 import { type RecallPipelineDeps, runRecallPipelineQuery } from "../../services/recall-pipeline.js";
+import { mergeSearchResultsByBestScore } from "../../services/merge-results.js";
 import { createRecallSpan, createRecallTimingLogger } from "../../services/recall-timing.js";
 import { filterCandidatesByInteractiveGrading } from "../../services/interactive-recall-grader.js";
 import { trimBlockToBudget } from "../../services/context-block-trim.js";
@@ -487,11 +488,34 @@ export async function runRecall(
       logger: api.logger,
       registrationGeneration: ctx.registrationGeneration,
     };
-    const recallPipeline = (
+    const vaultHandles =
+      ctx.cfg.retrieval.multiVaultFanOut === true && ctx.resolveAllVaults ? ctx.resolveAllVaults() : [];
+    const fanOutAutoRecall = vaultHandles.length > 1;
+    const recallPipeline = async (
       query: string,
       limitNum: number,
       extra?: Omit<NonNullable<Parameters<typeof runRecallPipelineQuery>[4]>, "stageSignal">,
-    ) => runRecallPipelineQuery(query, limitNum, pipelineDeps, hydeUsedRef, { ...extra, stageSignal: signal });
+    ) => {
+      if (!fanOutAutoRecall) {
+        return runRecallPipelineQuery(query, limitNum, pipelineDeps, hydeUsedRef, { ...extra, stageSignal: signal });
+      }
+      const perVault = await Promise.all(
+        vaultHandles.map((handle) =>
+          runRecallPipelineQuery(
+            query,
+            limitNum,
+            {
+              ...pipelineDeps,
+              factsDb: handle.factsDb,
+              vectorDb: handle.vectorDb,
+            },
+            hydeUsedRef,
+            { ...extra, stageSignal: signal },
+          ),
+        ),
+      );
+      return mergeSearchResultsByBestScore(perVault.flat()).slice(0, limitNum);
+    };
 
     const ambientCfg = ctx.cfg.ambient;
     const sessionKey = sessionScopeKey;

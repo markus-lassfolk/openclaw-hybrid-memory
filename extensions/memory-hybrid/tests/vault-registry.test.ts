@@ -9,6 +9,8 @@ import { homedir } from "node:os";
 import { FactsDB } from "../backends/facts-db.js";
 import { VectorDB } from "../backends/vector-db.js";
 import { createVaultRegistry } from "../services/vault-registry.js";
+import { resolveVaultWalPath } from "../config/vaults.js";
+import { WriteAheadLog } from "../backends/wal.js";
 import { recordInjectionAttribution } from "../services/injection-attribution-store.js";
 
 describe("vault registry (#1917)", () => {
@@ -22,14 +24,16 @@ describe("vault registry (#1917)", () => {
       const registry = createVaultRegistry({
         cfg: {
           vaults: { project: join(dir, "project.db") },
+          wal: { enabled: false, maxAge: 60_000 },
           store: { fuzzyDedupe: false },
           vector: { autoRepair: false },
         } as never,
-        api: { resolvePath: (p: string) => p, logger: { warn: () => {} } } as never,
+        api: { resolvePath: (p: string) => p, logger: { warn: () => {}, info: () => {} } } as never,
         defaultFactsDb: factsDb,
         defaultVectorDb: vectorDb,
         defaultSqlitePath: sqlitePath,
         defaultLancePath: lancePath,
+        defaultWal: null,
         vectorDim: 8,
       });
       const def = registry.resolve();
@@ -51,18 +55,83 @@ describe("vault registry (#1917)", () => {
       const registry = createVaultRegistry({
         cfg: {
           vaults: { project: join(dir, "project.db") },
+          wal: { enabled: false, maxAge: 60_000 },
           store: { fuzzyDedupe: false },
           vector: { autoRepair: false },
         } as never,
-        api: { resolvePath: (p: string) => p, logger: { warn: () => {} } } as never,
+        api: { resolvePath: (p: string) => p, logger: { warn: () => {}, info: () => {} } } as never,
         defaultFactsDb: factsDb,
         defaultVectorDb: vectorDb,
         defaultSqlitePath: sqlitePath,
         defaultLancePath: lancePath,
+        defaultWal: null,
         vectorDim: 8,
       });
       const all = registry.resolveAll();
       expect(all.map((h) => h.name)).toEqual(["default", "project"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("closeAll tears down lazy named vault facts and vector handles", () => {
+    const dir = mkdtempSync(join(homedir(), ".hm-vault-close-"));
+    try {
+      const sqlitePath = join(dir, "facts.db");
+      const lancePath = join(dir, "facts.lance");
+      const factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false, storeConfig: {} });
+      const vectorDb = new VectorDB(lancePath, 8, false);
+      const projectDbPath = join(dir, "project.db");
+      const registry = createVaultRegistry({
+        cfg: {
+          vaults: { project: projectDbPath },
+          wal: { enabled: true, maxAge: 60_000 },
+          store: { fuzzyDedupe: false },
+          vector: { autoRepair: false },
+        } as never,
+        api: { resolvePath: (p: string) => p, logger: { warn: () => {}, info: () => {} } } as never,
+        defaultFactsDb: factsDb,
+        defaultVectorDb: vectorDb,
+        defaultSqlitePath: sqlitePath,
+        defaultLancePath: lancePath,
+        defaultWal: null,
+        vectorDim: 8,
+      });
+      const named = registry.resolve("project");
+      expect(named.name).toBe("project");
+      registry.closeAll();
+      expect(() => named.factsDb.getRawDb().prepare("SELECT 1").get()).toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolveWal returns vault-specific WAL path", () => {
+    const dir = mkdtempSync(join(homedir(), ".hm-vault-wal-"));
+    try {
+      const sqlitePath = join(dir, "facts.db");
+      const lancePath = join(dir, "facts.lance");
+      const factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false, storeConfig: {} });
+      const vectorDb = new VectorDB(lancePath, 8, false);
+      const projectDbPath = join(dir, "project.db");
+      const registry = createVaultRegistry({
+        cfg: {
+          vaults: { project: projectDbPath },
+          wal: { enabled: true, maxAge: 60_000 },
+          store: { fuzzyDedupe: false },
+          vector: { autoRepair: false },
+        } as never,
+        api: { resolvePath: (p: string) => p, logger: { warn: () => {}, info: () => {} } } as never,
+        defaultFactsDb: factsDb,
+        defaultVectorDb: vectorDb,
+        defaultSqlitePath: sqlitePath,
+        defaultLancePath: lancePath,
+        defaultWal: new WriteAheadLog(join(dir, "default.wal"), 60_000),
+        vectorDim: 8,
+      });
+      const wal = registry.resolveWal("project");
+      expect(wal).toBeInstanceOf(WriteAheadLog);
+      expect(wal?.getPath()).toBe(resolveVaultWalPath(projectDbPath));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

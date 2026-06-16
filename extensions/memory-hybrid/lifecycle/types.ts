@@ -101,6 +101,8 @@ export interface LifecycleContext {
   proposalsDb?: ProposalsDB | null;
   crystallizationStore?: CrystallizationStore | null;
   toolProposalStore?: ToolProposalStore | null;
+  /** Multi-vault fan-out for auto-recall (#1917). */
+  resolveAllVaults?: () => import("../services/vault-registry.js").VaultHandle[];
 }
 
 /** Per-session state shared across stages (owned by dispatcher). */
