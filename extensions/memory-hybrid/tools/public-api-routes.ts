@@ -123,6 +123,9 @@ function readLeakVerdictFromHints(leakHints: string[]): "likely_leak" | "watch" 
 }
 
 const HEAP_SNAPSHOT_DIR = "memory/heap-snapshots";
+const AUTO_SNAPSHOT_COOLDOWN_MS = 3_600_000; // 1 hour
+
+let lastAutoSnapshotTimestamp = 0;
 
 function resolveHeapSnapshotDir(): string {
   const override = getEnv("OPENCLAW_HEAP_SNAPSHOT_DIR");
@@ -608,12 +611,21 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     );
     const leakVerdict = readLeakVerdictFromHints(diag.leakHints);
     const autoMode = (getEnv("OPENCLAW_HEAP_SNAPSHOT_AUTO") ?? "").trim().toLowerCase();
-    const shouldAutoSnapshot = !heapSnapshotRequested && autoMode === "critical" && leakVerdict === "likely_leak";
+    const now = Date.now();
+    const timeSinceLastAuto = now - lastAutoSnapshotTimestamp;
+    const shouldAutoSnapshot =
+      !heapSnapshotRequested &&
+      autoMode === "critical" &&
+      leakVerdict === "likely_leak" &&
+      timeSinceLastAuto >= AUTO_SNAPSHOT_COOLDOWN_MS;
     if (heapSnapshotRequested || shouldAutoSnapshot) {
       const snap = writeV8HeapSnapshotWithMeta({
         trigger: shouldAutoSnapshot ? "auto_critical_leak" : "manual_query",
         verdict: leakVerdict,
       });
+      if (shouldAutoSnapshot && snap) {
+        lastAutoSnapshotTimestamp = now;
+      }
       return toJson(200, { ...diag, heapSnapshot: snap });
     }
     return toJson(200, diag);
