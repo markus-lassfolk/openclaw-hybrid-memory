@@ -319,7 +319,7 @@ export function parseRetrievalConfig(cfg: Record<string, unknown>): RetrievalCon
       retrievalRaw?.defaultRecallMode === "hybrid" ||
       retrievalRaw?.defaultRecallMode === "keyword"
         ? retrievalRaw.defaultRecallMode
-        : "hybrid",
+        : "semantic",
     recallLatencyWarnMs:
       typeof retrievalRaw?.recallLatencyWarnMs === "number" && retrievalRaw.recallLatencyWarnMs > 0
         ? Math.floor(retrievalRaw.recallLatencyWarnMs)

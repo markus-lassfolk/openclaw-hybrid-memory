@@ -308,6 +308,7 @@ export function buildEpisodeCausalChain(
 
   while (queue.length > 0) {
     const { id, depth: d } = queue.shift()!;
+    if (visited.has(id)) continue;
     if (d >= depth) continue;
 
     if (!includeExplicitOnly) {

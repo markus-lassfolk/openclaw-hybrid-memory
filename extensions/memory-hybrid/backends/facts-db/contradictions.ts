@@ -1426,7 +1426,13 @@ export function queryContradictionSurface(
     contradictingFactId: r.fact_id_old as string,
     contradictionId: r.id as string,
     score: typeof r.heuristic_score === "number" ? (r.heuristic_score as number) : 0,
-    heuristicSignals: r.heuristic_signals ? (JSON.parse(String(r.heuristic_signals)) as string[]) : [],
+    heuristicSignals: (() => {
+      try {
+        return r.heuristic_signals ? (JSON.parse(String(r.heuristic_signals)) as string[]) : [];
+      } catch {
+        return [];
+      }
+    })(),
     createdAt: r.detected_at as string,
     preview: truncatePreview(String(r.old_text ?? r.old_value ?? "")),
     resolved: (r.resolved as number) === 1,
