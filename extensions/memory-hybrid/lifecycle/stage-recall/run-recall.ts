@@ -1019,15 +1019,14 @@ export async function runRecall(
           pinBoostCap: retrievalCfg.compositeScore?.pinBoostCap ?? 1.0,
         },
         diversity: retrievalCfg.diversity ?? DEFAULT_RETRIEVAL_V2_CONFIG.diversity,
-        bypass: retrievalCfg.bypass ?? DEFAULT_RETRIEVAL_V2_CONFIG.bypass,
+        bypass: { enabled: false, bm25MinScore: 0, bm25MinGap: 0 },
       };
       const focusState = getFocusTopic(sessionKey);
-      const ftsResults = candidates.filter((c) => c.backend === "sqlite");
       try {
         const v2 = await applyRetrievalV2({
           query: e.prompt,
           results: candidates,
-          ftsResults: ftsResults.length > 0 ? ftsResults : candidates,
+          ftsResults: candidates,
           getEntry: (id) => ctx.factsDb.getById(id),
           config: v2Config,
           recallId: recallSpan,
