@@ -3,6 +3,24 @@ import { collectStatus } from "../routes/dashboard-server.js";
 import { getDashboardUrl } from "./cmd-install.js";
 import { type Chainable, withExit } from "./shared.js";
 
+type DashboardStatus = Awaited<ReturnType<typeof collectStatus>>;
+
+export type StatusHeadline = "OK" | "DEGRADED" | "FAILING";
+
+export function computeStatusHeadline(status: DashboardStatus): StatusHeadline {
+  const failingJobs = status.cronJobs.filter((j) => j.enabled && (j.consecutiveErrors ?? 0) >= 3);
+  if (failingJobs.length > 0) return "FAILING";
+
+  const needsAttention = status.cronJobs.filter(
+    (job) => job.enabled && ((job.consecutiveErrors ?? 0) > 0 || job.lastRunAt == null),
+  );
+  const auditFailureCount = status.audit.recentFailures.length;
+  const agentAlerts = status.agentHealth.alerts.length;
+  if (needsAttention.length > 0 || auditFailureCount > 0 || agentAlerts > 0) return "DEGRADED";
+
+  return "OK";
+}
+
 export type StatusContext = {
   factsDb: import("../backends/facts-db.js").FactsDB;
   vectorDb: import("../backends/vector-db.js").VectorDB;
@@ -37,8 +55,10 @@ export async function runStatusForCli(ctx: StatusContext, opts?: { format?: "tex
     },
   });
 
+  const headline = computeStatusHeadline(status);
+
   if (opts?.format === "json") {
-    console.log(JSON.stringify({ dashboardUrl, status }, null, 2));
+    console.log(JSON.stringify({ dashboardUrl, headline, status }, null, 2));
     return;
   }
 
@@ -50,6 +70,7 @@ export async function runStatusForCli(ctx: StatusContext, opts?: { format?: "tex
   const activeTask = status.taskQueue.current;
 
   console.log("Hybrid Memory status");
+  console.log(`Health: ${headline}`);
   console.log(`Dashboard: ${dashboardUrl}`);
   console.log("");
   console.log("Memory");

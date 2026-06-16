@@ -11,6 +11,7 @@ import { getCronModelConfig, getDefaultCronModel } from "../../config/index.js";
 import type { MemoryCategory } from "../../config.js";
 import "../../config.js";
 import { detectCredentialPatterns } from "../../services/auto-capture.js";
+import { checkCaptureDedupWindow, computeCaptureDedupHash } from "../../services/capture-dedup.js";
 import {
   abortCredentialVaultWriteOnPointerDedupe,
   buildCredentialPointerText,
@@ -366,6 +367,25 @@ export async function runCapture(
               outcome: "skipped",
               sessionId: captureProvenance.sessionId ?? undefined,
               context: { category },
+            });
+            continue;
+          }
+          const dedupWindow = ctx.cfg.store.dedupWindowMinutes ?? 30;
+          const dedupInput = {
+            text: textToStore,
+            entity: extracted.entity,
+            key: extracted.key,
+            sessionId: captureProvenance.sessionId ?? null,
+          };
+          const dedupCheck = checkCaptureDedupWindow(ctx.factsDb.getRawDb(), dedupInput, dedupWindow);
+          if (dedupCheck.skip) {
+            ctx.auditStore?.append({
+              agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+              action: "auto-capture:dedup-window",
+              target: textToStore.slice(0, 80),
+              outcome: "skipped",
+              sessionId: captureProvenance.sessionId ?? undefined,
+              context: { category, existingId: dedupCheck.existingId },
             });
             continue;
           }
@@ -754,6 +774,18 @@ export async function runCapture(
             continue;
           }
           const storedEntry = storeResult.entry;
+          if (storeResult.newlyStored !== false) {
+            const dedupHash = computeCaptureDedupHash({
+              text: textToStore,
+              entity: extracted.entity,
+              key: extracted.key,
+              sessionId: captureProvenance.sessionId ?? null,
+            });
+            ctx.factsDb
+              .getRawDb()
+              .prepare("UPDATE facts SET content_dedup_hash = ? WHERE id = ?")
+              .run(dedupHash, storedEntry.id);
+          }
           // Guard: skip post-store ops when pre-store guard blocked the write (#1560, #1561)
           if (!storeResult.skipped) {
             await cleanupEvictedVector({

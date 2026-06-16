@@ -334,6 +334,19 @@ export function buildCliMaintenanceRunners(
     return assertActiveTasksMaintainSummaryDoesNotBlock(await b.runActiveTasksMaintain());
   });
 
+  set("evolution-pass", async () => {
+    const { runEvolutionPass } = await import("../../../services/evolution-pass.js");
+    const r = runEvolutionPass(b.factsDb.getRawDb(), 200);
+    return `scanned=${r.scanned} evolved=${r.evolved} semantic=success`;
+  });
+
+  set("per-folder-context", async () => {
+    const { regeneratePerFolderContext } = await import("../../../services/per-folder-context.js");
+    const memoryDir = dirname(b.resolvedSqlitePath);
+    const r = regeneratePerFolderContext(b.factsDb, memoryDir, { days: 7 });
+    return `written=${r.pathsWritten} facts=${r.factsScanned} semantic=success`;
+  });
+
   // --- Nightly staggered ---
   set("extract-daily", async () => {
     if (!b.runExtractDaily) throw new Error("extract-daily unavailable");

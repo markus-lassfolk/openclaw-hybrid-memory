@@ -12,6 +12,7 @@ import { registerDemoCommand } from "./cmd-demo.js";
 import { registerDoctorCommand } from "./cmd-doctor.js";
 import { registerExamplesCommand } from "./cmd-examples.js";
 import { registerFocusCommands } from "./cmd-focus.js";
+import { registerNudgeCommands } from "./cmd-nudge.js";
 import { registerVaultCommands } from "./cmd-vaults.js";
 import { registerHealthCommand } from "./cmd-health.js";
 import { registerMineCommand } from "./cmd-mine.js";
@@ -81,5 +82,6 @@ export function registerUserFriendlyCommands(mem: Chainable, ctx: UserFriendlyCo
     }),
   );
   registerIfMissing(mem, "focus", () => registerFocusCommands(mem));
+  registerIfMissing(mem, "nudge", () => registerNudgeCommands(mem));
   registerIfMissing(mem, "list-vaults", () => registerVaultCommands(mem, ctx.cfg));
 }

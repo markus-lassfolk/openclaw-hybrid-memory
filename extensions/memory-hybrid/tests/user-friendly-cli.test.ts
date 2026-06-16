@@ -85,6 +85,7 @@ describe("user-friendly CLI registration", () => {
       "health",
       "list-vaults",
       "mine",
+      "nudge",
       "providers",
       "setup",
       "vault-sync",

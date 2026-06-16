@@ -24,7 +24,7 @@ All memory-hybrid tools use **underscore** names: `memory_store`, `memory_recall
 ## When to call tools explicitly
 
 - **Save something that must survive a new session or compaction:** use `memory_store` (and update `memory/` if the user wants a human-readable log).
-- **Search or verify what is stored:** use `memory_recall` with a clear query; narrow with category/tags if the config supports it.
+- **Search or verify what is stored:** prefer `memory_retrieve` for intent-routed recall (compact summaries, auto-routing); use `memory_recall` when you need explicit hybrid/semantic search or full control over mode and scope.
 - **List people, or everything tied to a company/org:** use `memory_directory` (`list_contacts` or `org_view` with `org_name`) for **structured** results; use `memory_recall` when you need semantic search ranking.
 - **User asks to forget or correct a bad fact:** use the appropriate forget/update flow (e.g. `memory_forget` or supersede via store) per plugin behavior.
 
@@ -143,7 +143,7 @@ All tools use **underscore** names. Below is a compact index — not every deplo
 
 | Category | Tools |
 | --- | --- |
-| **Core memory** | `memory_store`, `memory_recall`, `memory_forget`, `memory_directory`, `memory_link`, `memory_promote`, `memory_prune`, `memory_health`, `memory_gaps` |
+| **Core memory** | `memory_store`, `memory_retrieve`, `memory_recall`, `memory_pin`, `memory_snooze`, `memory_forget`, `memory_directory`, `memory_link`, `memory_promote`, `memory_prune`, `memory_health`, `memory_gaps` |
 | **Episodes & timeline** | `memory_record_episode`, `memory_search_episodes`, `memory_recall_timeline`, `memory_checkpoint` |
 | **Procedures & reflection** | `memory_recall_procedures`, `memory_reflect`, `memory_reflect_rules`, `memory_reflect_meta`, `memory_procedure_feedback` |
 | **Graph & documents** | `memory_graph`, `memory_clusters`, `memory_ingest_document`, `memory_ingest_folder`, `memory_path` |
