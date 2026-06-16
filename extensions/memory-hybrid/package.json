@@ -107,7 +107,7 @@
     "knip": "^5.0.0",
     "tsdown": "^0.22.0",
     "typescript": "^5.9.3",
-    "unrun": "0.3.0",
+    "unrun": "0.3.1",
     "vitest": "^4.0.18"
   },
   "overrides": {
@@ -118,7 +118,7 @@
     "ip-address": ">=10.1.1",
     "opusscript": "0.1.1",
     "tar": ">=7.5.11",
-    "unrun": "0.3.0",
+    "unrun": "0.3.1",
     "yauzl": ">=3.2.1"
   },
   "engines": {
