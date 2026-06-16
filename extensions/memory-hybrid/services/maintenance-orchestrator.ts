@@ -102,7 +102,7 @@ export const MAINTENANCE_GUARD_INTERVALS = {
 } as const;
 
 export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
-  // --- Cycle tier (12) ---
+  // --- Cycle tier (10) ---
   { name: "prune", tier: "cycle", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h1, llmTier: "none" },
   { name: "compact", tier: "cycle", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20, llmTier: "none" },
   {
@@ -162,8 +162,6 @@ export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
     featureGate: (cfg) => cfg.credentials?.enabled === true,
   },
   { name: "active-tasks-maintain", tier: "cycle", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20, llmTier: "none" },
-  { name: "evolution-pass", tier: "cycle", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20, llmTier: "none" },
-  { name: "per-folder-context", tier: "cycle", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.d5, llmTier: "none" },
 
   // --- Nightly tier — staggered (14) ---
   { name: "extract-daily", tier: "nightly", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20, llmTier: "nano" },

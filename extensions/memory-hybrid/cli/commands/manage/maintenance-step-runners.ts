@@ -334,19 +334,6 @@ export function buildCliMaintenanceRunners(
     return assertActiveTasksMaintainSummaryDoesNotBlock(await b.runActiveTasksMaintain());
   });
 
-  set("evolution-pass", async () => {
-    const { runEvolutionPass } = await import("../../../services/evolution-pass.js");
-    const r = runEvolutionPass(b.factsDb, { limit: 200 });
-    return `reinforced=${r.reinforced} skipped=${r.skipped} semantic=success`;
-  });
-
-  set("per-folder-context", async () => {
-    const { generateProjectContextFiles } = await import("../../../services/per-folder-context.js");
-    const memoryDir = dirname(b.resolvedSqlitePath);
-    const r = generateProjectContextFiles(b.factsDb, memoryDir, { limit: 50 });
-    return `written=${r.written} skipped=${r.skipped} semantic=success`;
-  });
-
   // --- Nightly staggered ---
   set("extract-daily", async () => {
     if (!b.runExtractDaily) throw new Error("extract-daily unavailable");
@@ -911,19 +898,6 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
       assertActiveTasksMaintainSummaryDoesNotBlock(await deps.runActiveTasksMaintain!()),
     );
   }
-
-  runners.set("evolution-pass", async () => {
-    const { runEvolutionPass } = await import("../../../services/evolution-pass.js");
-    const r = runEvolutionPass(deps.factsDb, { limit: 200 });
-    return `reinforced=${r.reinforced} skipped=${r.skipped} semantic=success`;
-  });
-
-  runners.set("per-folder-context", async () => {
-    const { generateProjectContextFiles } = await import("../../../services/per-folder-context.js");
-    const memoryDir = dirname(deps.resolvedSqlitePath);
-    const r = generateProjectContextFiles(deps.factsDb, memoryDir, { limit: 50 });
-    return `written=${r.written} skipped=${r.skipped} semantic=success`;
-  });
 
   return runners;
 }

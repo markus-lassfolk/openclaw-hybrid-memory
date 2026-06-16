@@ -106,7 +106,14 @@ export function finalizeInjectionMemoryContent(
     return spoBlock ? `${spoBlock}\n\n${plainMemoryContent}` : plainMemoryContent;
   }
 
-  const facts: VaultFactLine[] = entriesToVaultFactLines(candidates.map((c) => c.entry));
+  const injectionFilterMode: InjectionFilterMode = boundary?.injectionFilter ?? "audit";
+  const rawFacts: VaultFactLine[] = entriesToVaultFactLines(candidates.map((c) => c.entry));
+  const facts: VaultFactLine[] = rawFacts
+    .map((fact) => {
+      const { allowed } = filterFactTextsForInjection([fact.text], injectionFilterMode);
+      return allowed.length > 0 ? { ...fact, text: allowed[0] } : null;
+    })
+    .filter((f): f is VaultFactLine => f !== null);
   if (plainMemoryContent.trim() && facts.length === 0) {
     facts.push({ text: plainMemoryContent, contentType: "recall" });
   }

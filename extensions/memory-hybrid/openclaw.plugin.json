@@ -1003,6 +1003,11 @@
             "type": "string",
             "description": "Model for classify-before-write. When unset, uses nano-tier default; set explicitly if that model often wraps JSON in prose or markdown so batch classification stays on the fast path"
           },
+          "dedupWindowMinutes": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Time window in minutes for deduplication checks. Facts within this window are compared for similarity."
+          },
           "sourceProfiles": {
             "type": "object",
             "description": "Per-source dedupe and daily write quotas. Keys are exact fact source strings or glob patterns (e.g. seed:*, implicit-feedback).",
