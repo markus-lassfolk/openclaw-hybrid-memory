@@ -25,6 +25,164 @@ export type MineOptions = {
 
 const DEFAULT_MAX_BUDGET_USD = 5;
 
+export async function executeMineCommand(
+  path: string,
+  opts: MineOptions & { undo?: string },
+  factsDb: FactsDB,
+  vectorDb?: {
+    store: (entry: {
+      text: string;
+      vector: number[];
+      importance: number;
+      category: string;
+      id: string;
+    }) => Promise<unknown>;
+  },
+  embeddings?: { embed: (text: string) => Promise<number[]>; modelName: string },
+): Promise<void> {
+  if (opts.undo) {
+    const db = factsDb.getRawDb();
+    const now = Math.floor(Date.now() / 1000);
+    const result = db
+      .prepare(
+        `UPDATE facts SET superseded_at = ?, superseded_by = 'mine-undo'
+         WHERE mine_batch_id = ? AND superseded_at IS NULL`,
+      )
+      .run(now, opts.undo);
+    console.log(`Undid mine batch ${opts.undo}: ${result.changes} fact(s) superseded.`);
+    return;
+  }
+  if (!path) {
+    console.error("Path is required unless using --undo.");
+    process.exit(1);
+  }
+  if (!existsSync(path)) {
+    console.error(`File not found: ${path}`);
+    process.exit(1);
+  }
+  const conversations = readTranscriptFile(path, opts.source);
+  if (conversations.length === 0) {
+    console.error("No conversations parsed from file.");
+    process.exit(1);
+  }
+  const batchId = randomUUID();
+  const byteCount = conversations.reduce((n, c) => n + c.messages.reduce((m, msg) => m + msg.content.length, 0), 0);
+  const estCost = estimateMineCostUsd(byteCount);
+  console.log(`Parsed ${conversations.length} conversation(s), ~${byteCount} bytes`);
+  if (opts.synthesize) {
+    console.log(`Estimated synthesize cost: $${estCost.toFixed(3)}`);
+    if (estCost > DEFAULT_MAX_BUDGET_USD && !opts.confirmBudget) {
+      console.error(`Estimated cost exceeds $${DEFAULT_MAX_BUDGET_USD}. Pass --confirm-budget to proceed.`);
+      process.exit(1);
+    }
+  }
+  if (opts.dryRun) {
+    for (const c of conversations.slice(0, 3)) {
+      console.log(`\n[${c.source}] ${c.title} (${c.messages.length} messages)`);
+      console.log(c.messages[0]?.content.slice(0, 120) ?? "");
+    }
+    console.log("\nDry run — no facts written.");
+    return;
+  }
+  let written = 0;
+  let skipped = 0;
+  let redactedTotal = 0;
+  const redactionCategories: Record<string, number> = {};
+  const db = factsDb.getRawDb();
+  const sourceLabel = conversations[0]?.source ?? opts.source ?? "unknown";
+  const mineScope = "global";
+  const mineScopeTarget = null;
+  for (const conv of conversations) {
+    const existing = db
+      .prepare(
+        "SELECT id FROM facts WHERE content_dedup_hash = ? AND superseded_at IS NULL AND scope = ? AND (scope_target IS ? OR scope_target IS NULL) LIMIT 1",
+      )
+      .get(conv.contentHash, mineScope, mineScopeTarget) as { id: string } | undefined;
+    if (existing) {
+      skipped++;
+      continue;
+    }
+    const rawText = conv.messages
+      .map((m) => `${m.role}: ${m.content}`)
+      .join("\n\n")
+      .slice(0, 50_000);
+    const { text, redacted, categories } = redactSecretsInText(rawText);
+    redactedTotal += redacted;
+    for (const [k, v] of Object.entries(categories)) {
+      redactionCategories[k] = (redactionCategories[k] ?? 0) + v;
+    }
+    const result = factsDb.storeWithResult({
+      text,
+      category: "conversation",
+      importance: 0.5,
+      entity: null,
+      key: opts.name ?? conv.title,
+      value: null,
+      source: `mine:${conv.source}`,
+      confidence: 0.8,
+      scope: mineScope,
+      scopeTarget: mineScopeTarget,
+    });
+    if (result.skipped) {
+      skipped++;
+      continue;
+    }
+    db.prepare("UPDATE facts SET content_dedup_hash = ?, mine_batch_id = ? WHERE id = ?").run(
+      conv.contentHash,
+      batchId,
+      result.entry.id,
+    );
+    written++;
+
+    if (result.evictedFactId && vectorDb) {
+      await cleanupEvictedVector({
+        vectorDb,
+        evictedFactId: result.evictedFactId,
+        context: "mine",
+      });
+    }
+
+    if (opts.embed && vectorDb && embeddings) {
+      try {
+        const vector = await embeddings.embed(text.slice(0, 8000));
+        factsDb.setEmbeddingModel(result.entry.id, embeddings.modelName);
+        await vectorDb.store({
+          text,
+          vector,
+          importance: 0.5,
+          category: "conversation",
+          id: result.entry.id,
+        });
+      } catch (err) {
+        console.warn(`Failed to embed fact ${result.entry.id}: ${err}`);
+      }
+    }
+  }
+  console.log(
+    [
+      `source: ${sourceLabel}`,
+      `files: 1`,
+      `conversations: ${conversations.length}`,
+      `facts created: ${written} (conversation)`,
+      `credentials redacted: ${redactedTotal}`,
+      `mine_batch_id: ${batchId}`,
+    ].join("\n"),
+  );
+  if (Object.keys(redactionCategories).length > 0) {
+    console.log(`redaction categories: ${JSON.stringify(redactionCategories)}`);
+  }
+  if (skipped > 0) console.log(`skipped (dedupe): ${skipped}`);
+  if (opts.embed && (!vectorDb || !embeddings)) {
+    console.log(
+      "Note: --embed requires configured vectorDb and embeddings. Run storage re-index or wait for background embed to vectorize new facts.",
+    );
+  } else if (opts.embed && embeddings) {
+    console.log(`Embedded ${written} facts using ${embeddings.modelName}`);
+  }
+  if (opts.synthesize)
+    console.log("Note: --synthesize invokes multi-pass-extractor in a follow-up maintenance job.");
+}
+
 export function registerMineCommand(
   program: Chainable,
   _cfg: HybridMemoryConfig,
@@ -51,146 +209,6 @@ export function registerMineCommand(
     .option("--confirm-budget", "Confirm LLM budget for --synthesize")
     .option("--undo <batchId>", "Soft-delete facts from a prior mine batch")
     .action(async (path: string, opts: MineOptions & { undo?: string }) => {
-      if (opts.undo) {
-        const db = factsDb.getRawDb();
-        const now = Math.floor(Date.now() / 1000);
-        const result = db
-          .prepare(
-            `UPDATE facts SET superseded_at = ?, superseded_by = 'mine-undo'
-             WHERE mine_batch_id = ? AND superseded_at IS NULL`,
-          )
-          .run(now, opts.undo);
-        console.log(`Undid mine batch ${opts.undo}: ${result.changes} fact(s) superseded.`);
-        return;
-      }
-      if (!path) {
-        console.error("Path is required unless using --undo.");
-        process.exit(1);
-      }
-      if (!existsSync(path)) {
-        console.error(`File not found: ${path}`);
-        process.exit(1);
-      }
-      const conversations = readTranscriptFile(path, opts.source);
-      if (conversations.length === 0) {
-        console.error("No conversations parsed from file.");
-        process.exit(1);
-      }
-      const batchId = randomUUID();
-      const byteCount = conversations.reduce((n, c) => n + c.messages.reduce((m, msg) => m + msg.content.length, 0), 0);
-      const estCost = estimateMineCostUsd(byteCount);
-      console.log(`Parsed ${conversations.length} conversation(s), ~${byteCount} bytes`);
-      if (opts.synthesize) {
-        console.log(`Estimated synthesize cost: $${estCost.toFixed(3)}`);
-        if (estCost > DEFAULT_MAX_BUDGET_USD && !opts.confirmBudget) {
-          console.error(`Estimated cost exceeds $${DEFAULT_MAX_BUDGET_USD}. Pass --confirm-budget to proceed.`);
-          process.exit(1);
-        }
-      }
-      if (opts.dryRun) {
-        for (const c of conversations.slice(0, 3)) {
-          console.log(`\n[${c.source}] ${c.title} (${c.messages.length} messages)`);
-          console.log(c.messages[0]?.content.slice(0, 120) ?? "");
-        }
-        console.log("\nDry run — no facts written.");
-        return;
-      }
-      let written = 0;
-      let skipped = 0;
-      let redactedTotal = 0;
-      const redactionCategories: Record<string, number> = {};
-      const db = factsDb.getRawDb();
-      const sourceLabel = conversations[0]?.source ?? opts.source ?? "unknown";
-      const mineScope = "global";
-      const mineScopeTarget = null;
-      for (const conv of conversations) {
-        const existing = db
-          .prepare(
-            "SELECT id FROM facts WHERE content_dedup_hash = ? AND superseded_at IS NULL AND scope = ? AND (scope_target IS ? OR scope_target IS NULL) LIMIT 1",
-          )
-          .get(conv.contentHash, mineScope, mineScopeTarget) as { id: string } | undefined;
-        if (existing) {
-          skipped++;
-          continue;
-        }
-        const rawText = conv.messages
-          .map((m) => `${m.role}: ${m.content}`)
-          .join("\n\n")
-          .slice(0, 50_000);
-        const { text, redacted, categories } = redactSecretsInText(rawText);
-        redactedTotal += redacted;
-        for (const [k, v] of Object.entries(categories)) {
-          redactionCategories[k] = (redactionCategories[k] ?? 0) + v;
-        }
-        const result = factsDb.storeWithResult({
-          text,
-          category: "conversation",
-          importance: 0.5,
-          entity: null,
-          key: opts.name ?? conv.title,
-          value: null,
-          source: `mine:${conv.source}`,
-          confidence: 0.8,
-          scope: mineScope,
-          scopeTarget: mineScopeTarget,
-        });
-        if (result.skipped) {
-          skipped++;
-          continue;
-        }
-        db.prepare("UPDATE facts SET content_dedup_hash = ?, mine_batch_id = ? WHERE id = ?").run(
-          conv.contentHash,
-          batchId,
-          result.entry.id,
-        );
-        written++;
-
-        if (result.evictedFactId && vectorDb) {
-          await cleanupEvictedVector({
-            vectorDb,
-            evictedFactId: result.evictedFactId,
-            context: "mine",
-          });
-        }
-
-        if (opts.embed && vectorDb && embeddings) {
-          try {
-            const vector = await embeddings.embed(text.slice(0, 8000));
-            factsDb.setEmbeddingModel(result.entry.id, embeddings.modelName);
-            await vectorDb.store({
-              text,
-              vector,
-              importance: 0.5,
-              category: "conversation",
-              id: result.entry.id,
-            });
-          } catch (err) {
-            console.warn(`Failed to embed fact ${result.entry.id}: ${err}`);
-          }
-        }
-      }
-      console.log(
-        [
-          `source: ${sourceLabel}`,
-          `files: 1`,
-          `conversations: ${conversations.length}`,
-          `facts created: ${written} (conversation)`,
-          `credentials redacted: ${redactedTotal}`,
-          `mine_batch_id: ${batchId}`,
-        ].join("\n"),
-      );
-      if (Object.keys(redactionCategories).length > 0) {
-        console.log(`redaction categories: ${JSON.stringify(redactionCategories)}`);
-      }
-      if (skipped > 0) console.log(`skipped (dedupe): ${skipped}`);
-      if (opts.embed && (!vectorDb || !embeddings)) {
-        console.log(
-          "Note: --embed requires configured vectorDb and embeddings. Run storage re-index or wait for background embed to vectorize new facts.",
-        );
-      } else if (opts.embed && embeddings) {
-        console.log(`Embedded ${written} facts using ${embeddings.modelName}`);
-      }
-      if (opts.synthesize)
-        console.log("Note: --synthesize invokes multi-pass-extractor in a follow-up maintenance job.");
+      await executeMineCommand(path, opts, factsDb, vectorDb, embeddings);
     });
 }

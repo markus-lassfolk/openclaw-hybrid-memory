@@ -17,6 +17,7 @@ import { PLUGIN_ID } from "../utils/constants.js";
 import { type ActiveTaskContext, registerActiveTaskCommands } from "./active-tasks.js";
 import { registerBenchmarkCommands } from "./benchmark.js";
 import { registerHelpCommand } from "./cmd-help.js";
+import { executeMineCommand } from "./cmd-mine.js";
 import { registerStatusCommands } from "./cmd-status.js";
 import { registerUserFriendlyCommands, type UserFriendlyContext } from "./cmd-user-friendly.js";
 import { type DistillContext } from "./distill.js";
@@ -676,6 +677,9 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       runConfigSet: ctx.runConfigSet,
       runConfigMode: ctx.runConfigMode,
       runInstall: ctx.runInstall,
+      runMine: async (path: string) => {
+        await executeMineCommand(path, {}, ctx.factsDb, ctx.vectorDb, ctx.embeddings);
+      },
     };
     registerUserFriendlyCommands(mem, userFriendlyContext);
   } catch (err) {
