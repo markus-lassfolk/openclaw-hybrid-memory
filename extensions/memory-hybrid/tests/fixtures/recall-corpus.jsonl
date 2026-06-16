@@ -1,0 +1,5 @@
+{"query":"why did we pick sqlite for facts storage","intent":"WHY","expected_fact_ids":["fact-db-choice"]}
+{"query":"when was the last production deploy","intent":"WHEN","expected_fact_ids":["deploy-2026"]}
+{"query":"who owns the authentication service","intent":"ENTITY","expected_fact_ids":["auth-owner"]}
+{"query":"what is our default embedding model","intent":"WHAT","expected_fact_ids":["embed-default"]}
+{"query":"hybrid memory configuration notes","intent":"GENERAL","expected_fact_ids":["config-notes"]}

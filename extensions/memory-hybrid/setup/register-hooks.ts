@@ -30,6 +30,7 @@ import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js
 import { sanitizePromptInjection } from "../services/skill-prompt-injection.js";
 import { estimateTokens } from "../utils/text.js";
 import { recordStartupMemoryCheckpoint } from "../services/startup-memory-attribution.js";
+import { initHmVerboseFromEnv } from "../services/recall-verbose-log.js";
 import { WorkflowTracker } from "../services/workflow-tracker.js";
 import {
   buildUnsupportedPerAgentCompactionWarning,
@@ -110,6 +111,7 @@ function emitCompactionModelWatchdogAlert(
  * Returns a handle for cleanup (dispose).
  */
 export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi): LifecycleHooksHandle {
+  initHmVerboseFromEnv();
   let firstAgentEndCompactionCaptured = false;
   const registrationGeneration = ctx.registrationGeneration ?? -1;
   const currentRegistrationGenerationRef = ctx.currentRegistrationGenerationRef;

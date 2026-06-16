@@ -6,6 +6,8 @@
 import { capturePluginError } from "./error-reporter.js";
 import { trimBlockToBudget } from "./context-block-trim.js";
 import { RECALLED_CONTEXT_BOUNDARY, sanitizePromptInjection } from "./skill-prompt-injection.js";
+import { buildVaultContextBlock, type VaultFactLine } from "./vault-context.js";
+import { filterFactTextsForInjection, type InjectionFilterMode } from "./injection-filter.js";
 import { truncateForStorage } from "../utils/text.js";
 import type { LifecycleContext } from "../lifecycle/types.js";
 
@@ -52,17 +54,32 @@ export function wrapUntrustedMemoryContent(memoryContent: string): string {
   return wrapRecalledContext("", trimmed);
 }
 
-/** Wrap memory content with optional edicts and the untrusted-data boundary. */
+/** Wrap memory content with vault-context structure (#1912) inside recalled-context boundary. */
 export function wrapRecalledContext(edicts: string, memoryContent: string): string {
   if (!edicts && !memoryContent) return "";
   const parts: string[] = ["<recalled-context>"];
   if (edicts) parts.push(edicts);
   if (memoryContent) {
     parts.push(RECALLED_CONTEXT_BOUNDARY);
-    parts.push(memoryContent);
+    const factLines: VaultFactLine[] = memoryContent
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((text) => ({ text }));
+    const vaultBlock = buildVaultContextBlock({ facts: factLines });
+    parts.push(vaultBlock || memoryContent);
   }
   parts.push("</recalled-context>");
   return parts.join("\n");
+}
+
+/** Filter fact lines through 5-layer injection filter before injection. */
+export function filterMemoryLinesForInjection(
+  lines: string[],
+  mode: InjectionFilterMode,
+): { lines: string[]; filtered: number } {
+  const { allowed, stats } = filterFactTextsForInjection(lines, mode);
+  return { lines: allowed, filtered: stats.filtered };
 }
 
 export type AssembleRecallPrependOptions = {

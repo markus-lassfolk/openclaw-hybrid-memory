@@ -10,6 +10,7 @@ import { registerDirectoryTools } from "./memory/register-directory-tools.js";
 import { registerEdictTools } from "./memory/register-edict-tools.js";
 import { registerEpisodeTools } from "./memory/register-episode-tools.js";
 import { registerRecallTools } from "./memory/register-recall-tools.js";
+import { registerAgentVerbTools } from "./memory/register-agent-verb-tools.js";
 import { registerStoreTools } from "./memory/register-store-tools.js";
 import { resolveMemoryToolsContext } from "./memory/helpers.js";
 import type { BoundWalRemoveFn, BoundWalWriteFn, MemoryToolsContext } from "./memory/types.js";
@@ -48,6 +49,7 @@ export function registerMemoryTools(
   );
   const runtime = buildMemoryToolRuntime(resolvedContext, api);
   registerRecallTools(runtime);
+  registerAgentVerbTools(runtime);
   registerStoreTools(runtime);
   registerDirectoryTools(runtime);
   registerCheckpointTools(runtime);

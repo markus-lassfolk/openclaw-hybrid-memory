@@ -14,6 +14,9 @@ import type { HybridMemoryConfig } from "../config.js";
 import { getWalCircuitBreakerState } from "../services/wal-helpers.js";
 import { detectAvailableProviders } from "../utils/provider-detection.js";
 import { formatBytes, WAL_SIZE_WARN_BYTES } from "../utils/format.js";
+import { getRecallStatsSnapshot } from "../services/recall-timing-stats.js";
+import { getStaleMaintenanceJobs } from "../services/maintenance-audit-journal.js";
+import { countPinnedFacts } from "../services/fact-lifecycle-verbs.js";
 
 interface DiagnosticCheck {
   name: string;
@@ -377,6 +380,54 @@ export function registerDoctorCommand(
           name: "FTS Index/Triggers",
           status: "warn",
           message: `Could not run FTS consistency check: ${error}`,
+        });
+      }
+
+      try {
+        const recallStats = getRecallStatsSnapshot();
+        const intentKeys = Object.keys(recallStats.intentDistribution);
+        const bypassPct = (recallStats.bypassRate * 100).toFixed(1);
+        const intentP95 = recallStats.stages.intent?.p95 ?? 0;
+        checks.push({
+          name: "Retrieval health",
+          status: "pass",
+          message: `intent samples=${intentKeys.length} bypass=${bypassPct}% intent_p95=${intentP95}ms`,
+        });
+      } catch (err) {
+        checks.push({
+          name: "Retrieval health",
+          status: "warn",
+          message: `Stats unavailable: ${String(err)}`,
+        });
+      }
+
+      try {
+        const stale = getStaleMaintenanceJobs(factsDb.getRawDb(), 48);
+        if (stale.length > 0) {
+          checks.push({
+            name: "Maintenance health",
+            status: "warn",
+            message: `Stale jobs (≥48h): ${stale.join(", ")}`,
+            fix: "Run maintenance orchestrator or check cron schedule",
+          });
+        } else {
+          checks.push({
+            name: "Maintenance health",
+            status: "pass",
+            message: "No stale maintenance jobs in audit journal",
+          });
+        }
+        const pinned = countPinnedFacts(factsDb);
+        checks.push({
+          name: "Pin/snooze totals",
+          status: "pass",
+          message: `${pinned} pinned facts`,
+        });
+      } catch (err) {
+        checks.push({
+          name: "Maintenance health",
+          status: "warn",
+          message: `Audit journal unavailable: ${String(err)}`,
         });
       }
 

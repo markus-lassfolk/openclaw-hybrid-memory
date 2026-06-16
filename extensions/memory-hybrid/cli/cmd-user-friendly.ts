@@ -14,6 +14,9 @@ import { registerExamplesCommand } from "./cmd-examples.js";
 import { registerHealthCommand } from "./cmd-health.js";
 import { registerProvidersCommand } from "./cmd-providers.js";
 import { registerSetupCommand } from "./cmd-setup.js";
+import { registerMineCommand } from "./cmd-mine.js";
+import { registerBootstrapCommand } from "./cmd-bootstrap.js";
+import { registerFocusCommands } from "./cmd-focus.js";
 
 export interface UserFriendlyContext {
   cfg: HybridMemoryConfig;
@@ -63,4 +66,7 @@ export function registerUserFriendlyCommands(mem: Chainable, ctx: UserFriendlyCo
   );
   registerIfMissing(mem, "demo", () => registerDemoCommand(mem, ctx.factsDb, ctx.vectorDb, ctx.embeddings));
   registerIfMissing(mem, "examples", () => registerExamplesCommand(mem));
+  registerIfMissing(mem, "mine", () => registerMineCommand(mem, ctx.cfg, ctx.factsDb));
+  registerIfMissing(mem, "bootstrap", () => registerBootstrapCommand(mem, ctx.cfg, ctx.factsDb));
+  registerIfMissing(mem, "focus", () => registerFocusCommands(mem));
 }

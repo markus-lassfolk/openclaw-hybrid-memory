@@ -21,6 +21,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added (Epic #1918 — ClawMem-inspired memory cycle)
+
+- **#1910 Retrieval v2**: intent classifier (`WHY`/`WHEN`/`ENTITY`/`WHAT`/`GENERAL`), composite score (v1 shadow / v2 active), BM25 strong-signal bypass, MMR diversity demotion, position-aware cross-encoder rerank blend, `OPENCLAW_HM_VERBOSE` structured logging, recall stage stats + `/api/viewer/recall-stats`, labeled corpus + `tests/perf/recall-benchmark.ts`.
+- **#1911 Agent verbs**: `memory_retrieve`, `memory_pin`, `memory_snooze`, `diary_write`, `diary_read` with `pinned_at` / `snoozed_until` columns.
+- **#1912 Context boundary**: 5-layer injection filter, structured `<vault-context>` wrapper inside recalled-context blocks, vault-facts SPO helpers.
+- **#1913 Maintenance lane**: `maintenance_runs` audit journal, doctor maintenance-health warnings.
+- **#1914 Semantic lifecycle**: per-content-type half-life table, `quality_score` / evolution / dedup columns on facts.
+- **#1915 Conversation mining**: `hybrid-mem mine <path>` CLI with transcript parsers and idempotent content-hash ingest.
+- **#1916 Recall feedback**: recall signals, memory nudge system, contamination guard for synthesis drafts.
+- **#1917 Operator DX**: doctor retrieval-health block, `hybrid-mem bootstrap`, `hybrid-mem focus`, multi-vault path validation helpers.
+
+### Notes
+
+- All behavioral features ship behind conservative config defaults (`compositeScore.v: 1`, `bypass.enabled: false`, `diversity.enabled: false`, `reranker.kind: llm`).
+- Cross-encoder rerank defaults to `Qwen3-Reranker-0.6B-Q8_0` (Apache 2.0) when `reranker.kind: cross-encoder` is set.
+
 ---
 
 ## [2026.6.55] - 2026-06-05

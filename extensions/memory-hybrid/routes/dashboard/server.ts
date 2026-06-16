@@ -16,6 +16,7 @@ import { pluginLogger } from "../../utils/logger.js";
 import { execFile as execFileCb } from "../../utils/process-runner.js";
 import { parseTags } from "../../utils/tags.js";
 import { collectGraphPayload, collectGraphRecallPayload, getGraphExplorerHtml } from "../dashboard-graph.js";
+import { getRecallStatsSnapshot } from "../../services/recall-timing-stats.js";
 
 const _execFile = promisify(execFileCb);
 const _require = createRequire(import.meta.url);
@@ -210,7 +211,6 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
       return;
     }
 
-    // Memory Viewer routes (Issue #1023)
     // GET /api/viewer/stats
     if (pathname === "/api/viewer/stats") {
       collectMemoryViewerStats(ctx)
@@ -222,6 +222,18 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           res.writeHead(500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: String(err) }));
         });
+      return;
+    }
+
+    if (pathname === "/api/viewer/recall-stats") {
+      try {
+        const stats = getRecallStatsSnapshot();
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify(stats));
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
       return;
     }
 
