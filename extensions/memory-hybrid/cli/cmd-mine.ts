@@ -14,6 +14,7 @@ import {
 } from "../services/transcript-importers/index.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { deleteVectorsForFactIds } from "../services/vector-maintenance.js";
+import { createTransaction } from "../utils/sqlite-transaction.js";
 import type { Chainable } from "./shared.js";
 
 export type MineOptions = {
@@ -116,7 +117,7 @@ export async function executeMineCommand(
     const { text, redacted, categories } = redactSecretsInText(rawText);
     const storedContentHash = hashStoredTranscriptText(text);
 
-    const importOne = db.transaction(() => {
+    const importOne = createTransaction(db, () => {
       const existing = db
         .prepare(
           "SELECT id FROM facts WHERE content_dedup_hash = ? AND superseded_at IS NULL AND scope = ? AND (scope_target IS ? OR scope_target IS NULL) LIMIT 1",
