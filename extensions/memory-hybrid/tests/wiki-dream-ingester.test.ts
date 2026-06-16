@@ -240,10 +240,7 @@ describe("wiki-dream-ingester", () => {
   it("does not increment findingsIngested when storeWithResult skips duplicate", async () => {
     const runDir = join(tempDir, "run-dedup");
     mkdirSync(runDir);
-    writeFileSync(
-      join(runDir, "consolidation.json"),
-      JSON.stringify({ stage: "consolidation", factsCreated: 3 }),
-    );
+    writeFileSync(join(runDir, "consolidation.json"), JSON.stringify({ stage: "consolidation", factsCreated: 3 }));
 
     const factsDb = createMockFactsDb();
     factsDb.storeWithResult.mockReturnValue({

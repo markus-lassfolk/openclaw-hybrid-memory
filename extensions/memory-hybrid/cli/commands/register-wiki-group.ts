@@ -5,9 +5,7 @@ import { syncWikiWorkspaceExport, WIKI_WORKSPACE_EXPORT_SUBDIR } from "../../ser
 import { resolveOpenClawWorkspaceRoot } from "../../utils/openclaw-workspace.js";
 
 export function registerWikiGroup(mem: Chainable, ctx: ManageContext): void {
-  const wiki = mem
-    .command("wiki")
-    .description("Wiki integration utilities (Dreaming UI / memory-wiki bridge)");
+  const wiki = mem.command("wiki").description("Wiki integration utilities (Dreaming UI / memory-wiki bridge)");
 
   wiki
     .command("export")
@@ -54,9 +52,7 @@ export function registerWikiGroup(mem: Chainable, ctx: ManageContext): void {
             operation: "wiki-export",
           });
           if (opts?.json) {
-            console.log(
-              JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) }),
-            );
+            console.log(JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) }));
           }
           throw err;
         }

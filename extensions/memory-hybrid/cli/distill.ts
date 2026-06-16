@@ -371,7 +371,9 @@ function registerDistillCommandsOnParent(
           }
           const readFailures = result.readFailures ?? 0;
           const semantic = readFailures > 0 ? "partial" : "success";
-          console.log(`extract-procedures sessions=${result.sessionsScanned} readFailures=${readFailures} semantic=${semantic}`);
+          console.log(
+            `extract-procedures sessions=${result.sessionsScanned} readFailures=${readFailures} semantic=${semantic}`,
+          );
           if (readFailures > 0) {
             process.exitCode = 2;
           }

@@ -102,7 +102,6 @@ export function reflectRulesStepSummaryIndicatesFailure(summary: string): boolea
   if (/\bstatus=ok\b/i.test(summary) && !/\bparse_success=false\b/i.test(summary)) return false;
   const parseFailed = /\bparse_success=false\b/i.test(summary);
   const rulesStored =
-    parseMetricFromMaintenanceSummary(summary, "rulesStored") ??
-    parseMetricFromMaintenanceSummary(summary, "stored");
+    parseMetricFromMaintenanceSummary(summary, "rulesStored") ?? parseMetricFromMaintenanceSummary(summary, "stored");
   return parseFailed || rulesStored === 0;
 }

@@ -1,4 +1,7 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import { mkdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { writeHeapSnapshot } from "node:v8";
 import type { AuditStore } from "../backends/audit-store.js";
 import type { EventLog } from "../backends/event-log.js";
 import type { FactsDB } from "../backends/facts-db.js";
@@ -6,7 +9,11 @@ import type { NarrativesDB } from "../backends/narratives-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig } from "../config.js";
 import { isNonActionableSubagentPlaceholderTask } from "../services/active-task.js";
-import { buildGatewayMemoryDiagnostics, buildProcessMemorySnapshot, sanitizePublicMemoryDiagnostics } from "../services/gateway-memory-diagnostics.js";
+import {
+  buildGatewayMemoryDiagnostics,
+  buildProcessMemorySnapshot,
+  sanitizePublicMemoryDiagnostics,
+} from "../services/gateway-memory-diagnostics.js";
 import { buildPublicExportBundle } from "../services/public-export-bundle.js";
 import {
   applyActiveTaskProjectionFilters,
@@ -19,6 +26,7 @@ import { pluginLogger } from "../utils/logger.js";
 import type { ScopeFilter } from "../types/memory.js";
 import { parseDuration } from "../utils/duration.js";
 import { nowIso } from "../utils/dates.js";
+import { getEnv } from "../utils/env-manager.js";
 import { resolveWorkspacePath } from "../utils/path.js";
 import { versionInfo } from "../versionInfo.js";
 import type { HttpRequestHandler, HttpRouteOptions } from "./http-route-types.js";
@@ -100,6 +108,91 @@ function parseBooleanParam(raw: string | null): boolean {
   if (!raw) return false;
   const normalized = raw.trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
+/**
+ * Derive leak verdict from `leakHints` strings emitted by buildLeakHints.
+ * `likely_leak` when repeated teardown or high native RSS hints are present.
+ */
+function readLeakVerdictFromHints(leakHints: string[]): "likely_leak" | "watch" | "ok" | "unknown" {
+  if (!Array.isArray(leakHints) || leakHints.length === 0) return "ok";
+  const hasRepeatedTeardown = leakHints.some((h) => h.startsWith("repeated_lance_sqlite_teardown"));
+  const hasHighNativeRss = leakHints.some((h) => h.startsWith("native_rss_high_with_db_reuse"));
+  if (hasRepeatedTeardown || hasHighNativeRss) return "likely_leak";
+  return "watch";
+}
+
+const HEAP_SNAPSHOT_DIR = "memory/heap-snapshots";
+
+function resolveHeapSnapshotDir(): string {
+  const override = getEnv("OPENCLAW_HEAP_SNAPSHOT_DIR");
+  const base = override && override.trim().length > 0 ? override.trim() : HEAP_SNAPSHOT_DIR;
+  return resolveWorkspacePath(base);
+}
+
+function timestampSlug(): string {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+export interface HeapSnapshotMeta {
+  path: string;
+  bytes: number;
+  trigger: "manual_query" | "auto_critical_leak";
+  verdict: "likely_leak" | "watch" | "ok" | "unknown";
+  pid: number;
+  generatedAt: string;
+  durationMs: number;
+}
+
+/**
+ * Trigger a V8 heap snapshot and return metadata about it. No-ops (returns
+ * null) on write failure so the diagnostics call still succeeds — a failing
+ * snapshot should never break the operator's diagnostic view. Errors are
+ * logged via pluginLogger so the operator can find them in the gateway log.
+ */
+function writeV8HeapSnapshotWithMeta(opts: {
+  trigger: HeapSnapshotMeta["trigger"];
+  verdict: HeapSnapshotMeta["verdict"];
+}): HeapSnapshotMeta | null {
+  const started = Date.now();
+  let dir: string;
+  try {
+    dir = resolveHeapSnapshotDir();
+    mkdirSync(dir, { recursive: true });
+  } catch (err) {
+    pluginLogger.warn(
+      `memory-diagnostics: failed to create heap snapshot dir: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
+  }
+  const filename = `${timestampSlug()}-${process.pid}.heapsnapshot`;
+  const fullPath = join(dir, filename);
+  let actualPath: string = fullPath;
+  try {
+    actualPath = writeHeapSnapshot(fullPath);
+  } catch (err) {
+    pluginLogger.warn(
+      `memory-diagnostics: v8.writeHeapSnapshot failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
+  }
+  let bytes = 0;
+  try {
+    // v8.writeHeapSnapshot may rename the file with a sequence suffix on
+    // collision; read the actual file size from whatever path it returned.
+    bytes = statSync(actualPath).size;
+  } catch {
+    bytes = 0;
+  }
+  return {
+    path: actualPath,
+    bytes,
+    trigger: opts.trigger,
+    verdict: opts.verdict,
+    pid: process.pid,
+    generatedAt: nowIso(),
+    durationMs: Date.now() - started,
+  };
 }
 
 function resolveActiveTaskConfig(cfg: PublicApiConfig): ActiveTaskConfigSubset {
@@ -501,6 +594,8 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     if (!ctx.vectorDb) {
       return toJson(503, { error: "vector_db_unavailable" });
     }
+    const url = parseReqUrl(req.url);
+    const heapSnapshotRequested = parseBooleanParam(url.searchParams.get("heapSnapshot"));
     const diag = sanitizePublicMemoryDiagnostics(
       await buildGatewayMemoryDiagnostics({
         factsDb: ctx.factsDb,
@@ -511,6 +606,16 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
         variantQueuePending: ctx.variantQueue?.queueLength,
       }),
     );
+    const leakVerdict = readLeakVerdictFromHints(diag.leakHints);
+    const autoMode = (getEnv("OPENCLAW_HEAP_SNAPSHOT_AUTO") ?? "").trim().toLowerCase();
+    const shouldAutoSnapshot = !heapSnapshotRequested && autoMode === "critical" && leakVerdict === "likely_leak";
+    if (heapSnapshotRequested || shouldAutoSnapshot) {
+      const snap = writeV8HeapSnapshotWithMeta({
+        trigger: shouldAutoSnapshot ? "auto_critical_leak" : "manual_query",
+        verdict: leakVerdict,
+      });
+      return toJson(200, { ...diag, heapSnapshot: snap });
+    }
     return toJson(200, diag);
   });
 
@@ -558,7 +663,9 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
               ...scopeFieldsFromEntry(existing),
             });
             ctx.factsDb.supersede(factId, stored.id);
-            pluginLogger.info(`memory-hybrid: fact ${factId} updated (superseded → ${stored.id}) via HTTP /fact/mutate`);
+            pluginLogger.info(
+              `memory-hybrid: fact ${factId} updated (superseded → ${stored.id}) via HTTP /fact/mutate`,
+            );
             return toJson(200, {
               ok: true,
               superseded: factId,
