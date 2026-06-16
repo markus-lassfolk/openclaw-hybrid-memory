@@ -98,7 +98,11 @@ export function mapStepToMaintenanceRunStatus(
   status: OrchestratorStepStatus,
   summary: string,
 ): MaintenanceRunStatus {
-  if (status === "ok") return "ran";
+  if (status === "ok") {
+    const lower = summary.toLowerCase();
+    if (lower.includes("dry-run")) return "skipped:quiet";
+    return "ran";
+  }
   if (status === "failed") return "failed";
   if (status === "rate_limited") return "skipped:rate";
   const lower = summary.toLowerCase();

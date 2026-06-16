@@ -589,6 +589,7 @@ function buildCachedResult(
       if (entry.supersededAt != null) continue;
       if (entry.expiresAt != null && entry.expiresAt <= effectiveNow) continue;
     }
+    if (entry.snoozedUntil != null && entry.snoozedUntil > effectiveNow) continue;
 
     orderedEntries.push({ factId, entry });
     fused.push({
@@ -1112,6 +1113,7 @@ export async function runExplicitDeepRetrieval(
         if (entry.supersededAt != null) continue;
         if (entry.expiresAt != null && entry.expiresAt <= effectiveNow) continue;
       }
+      if (entry.snoozedUntil != null && entry.snoozedUntil > effectiveNow) continue;
       factMetaMap.set(result.factId, {
         id: entry.id,
         confidence: entry.confidence,
