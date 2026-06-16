@@ -18,7 +18,6 @@ export function computeCaptureDedupHash(input: CaptureDedupInput): string {
     input.text.trim().toLowerCase().replace(/\s+/g, " "),
     (input.entity ?? "").trim().toLowerCase(),
     (input.key ?? "").trim().toLowerCase(),
-    (input.sessionId ?? "").trim(),
   ].join("|");
   return createHash("sha256").update(payload).digest("hex");
 }

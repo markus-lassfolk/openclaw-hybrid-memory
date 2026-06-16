@@ -21,6 +21,7 @@ export function runEvolutionPass(db: DatabaseSync, limit = 500): EvolutionPassRe
        FROM facts
        WHERE superseded_at IS NULL
          AND COALESCE(access_count, 0) >= 2
+         AND id NOT IN (SELECT fact_id FROM verified_facts)
        ORDER BY access_count DESC
        LIMIT ?`,
     )
@@ -37,7 +38,7 @@ export function runEvolutionPass(db: DatabaseSync, limit = 500): EvolutionPassRe
   const update = db.prepare(
     `UPDATE facts SET quality_score = ?, evolution_version = COALESCE(evolution_version, 0) + 1,
      evolution_reason = ?, revision_count = COALESCE(revision_count, 0) + 1
-     WHERE id = ?`,
+     WHERE id = ? AND id NOT IN (SELECT fact_id FROM verified_facts)`,
   );
 
   for (const row of rows) {

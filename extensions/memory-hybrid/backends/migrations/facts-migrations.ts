@@ -1564,8 +1564,8 @@ function migrateCaptureDedupColumns(db: DatabaseSync): void {
   const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
   if (!cols.some((c) => c.name === "content_dedup_hash")) {
     db.exec("ALTER TABLE facts ADD COLUMN content_dedup_hash TEXT");
-    db.exec("CREATE INDEX IF NOT EXISTS idx_facts_dedup_hash ON facts(content_dedup_hash)");
   }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_facts_dedup_hash ON facts(content_dedup_hash)");
 }
 
 /**
