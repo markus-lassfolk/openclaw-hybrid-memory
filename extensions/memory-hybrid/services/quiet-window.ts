@@ -15,16 +15,22 @@ export function parseHmToMinutes(hm: string): number | null {
 }
 
 export function localMinutesInTimeZone(at: Date, timeZone: string): number {
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone: timeZone || "UTC",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-  const parts = formatter.formatToParts(at);
-  const hour = Number.parseInt(parts.find((p) => p.type === "hour")?.value ?? "0", 10);
-  const minute = Number.parseInt(parts.find((p) => p.type === "minute")?.value ?? "0", 10);
-  return hour * 60 + minute;
+  try {
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: timeZone || "UTC",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      hourCycle: "h23",
+    });
+    const parts = formatter.formatToParts(at);
+    let hour = Number.parseInt(parts.find((p) => p.type === "hour")?.value ?? "0", 10);
+    const minute = Number.parseInt(parts.find((p) => p.type === "minute")?.value ?? "0", 10);
+    if (hour === 24) hour = 0;
+    return hour * 60 + minute;
+  } catch {
+    return at.getUTCHours() * 60 + at.getUTCMinutes();
+  }
 }
 
 /** Returns true when wall-clock time in `qw.tz` is inside [start, end). */

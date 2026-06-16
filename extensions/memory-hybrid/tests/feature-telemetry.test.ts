@@ -32,4 +32,19 @@ describe("feature-telemetry", () => {
     expect(info).toHaveBeenCalledTimes(1);
     expect(warn).not.toHaveBeenCalled();
   });
+
+  it("does not warn when contradiction detection succeeds with hits (#1902)", () => {
+    const warn = vi.fn();
+    const info = vi.fn();
+    emitFeatureTelemetry({ warn, info }, {
+      feature: "contradiction",
+      operation: "memory_store_detect",
+      durationMs: 5,
+      warnBudgetMs: 20,
+      outcome: "ok",
+      fields: { hit_count: 2 },
+    });
+    expect(info).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+  });
 });

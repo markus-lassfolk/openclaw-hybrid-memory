@@ -15,6 +15,8 @@ import { searchFts } from "../services/fts-search.js";
 import { buildEpisodeCausalChain } from "../services/episode-causal-inference.js";
 import { scoreFactContradiction, repairUndetectedContradictions } from "../backends/facts-db/contradictions.js";
 import { parseRetrievalConfig } from "../config/parsers/retrieval.js";
+import { resolveRecallRrfStrategies } from "../services/recall-rrf-strategies.js";
+import { emitFeatureTelemetry } from "../services/feature-telemetry.js";
 
 const { FactsDB } = _testing;
 
@@ -68,6 +70,20 @@ describe("recall mode config (#1901 risk 3)", () => {
   it("allows hybrid via config", () => {
     const cfg = parseRetrievalConfig({ retrieval: { defaultRecallMode: "hybrid" } });
     expect(cfg.defaultRecallMode).toBe("hybrid");
+  });
+
+  it("keeps all configured strategies for default hybrid mode", () => {
+    const strategies = resolveRecallRrfStrategies("hybrid", ["semantic", "fts5"], false);
+    expect(strategies).toEqual(["semantic", "fts5"]);
+  });
+
+  it("uses semantic-only strategies unless legacy tag shortcut needs keyword fallback", () => {
+    expect(resolveRecallRrfStrategies("semantic", ["semantic", "fts5"], false)).toEqual(["semantic"]);
+    expect(resolveRecallRrfStrategies("semantic", ["semantic", "fts5"], true)).toEqual(["fts5"]);
+  });
+
+  it("keyword mode drops semantic strategy", () => {
+    expect(resolveRecallRrfStrategies("keyword", ["semantic", "fts5"], false)).toEqual(["fts5"]);
   });
 });
 

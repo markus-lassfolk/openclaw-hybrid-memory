@@ -10,6 +10,7 @@ import { capturePluginError } from "../../services/error-reporter.js";
 import { expandGraph, formatLinkPath } from "../../services/graph-retrieval.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
 import { QueryExpander } from "../../services/query-expander.js";
+import { resolveRecallRrfStrategies } from "../../services/recall-rrf-strategies.js";
 import {
   resolveConstrainedRetrievalPolicy,
   resolveExplicitDeepRetrievalPolicy,
@@ -487,7 +488,8 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
           : undefined;
       const entry = factsDb.getById(hit.factId, getByIdOpts);
       if (entry) {
-        out.push({ entry, score: Math.abs(hit.rank), backend: "sqlite" });
+        // FTS5 rank is negative (closer to 0 is better); invert for descending sort.
+        out.push({ entry, score: -hit.rank, backend: "sqlite" });
       }
     }
     return out.slice(0, recallLimit);
@@ -720,8 +722,10 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         scopeFilter,
       });
       if (!includeCold && results.length > 0) {
+        const coldFilterOpts =
+          asOfSec != null || scopeFilter ? { asOf: asOfSec, scopeFilter } : undefined;
         results = results.filter((r) => {
-          const full = factsDb.getById(r.entry.id);
+          const full = factsDb.getById(r.entry.id, coldFilterOpts);
           return full && full.tier !== "cold";
         });
       }
@@ -827,16 +831,12 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
     // because tag/entity/category/etc. are applied before ranking inside the candidate set.
     let results: SearchResult[] = [];
     try {
-      const useLegacyTagShortcut = Boolean(tag && !shouldUseConstrainedMode);
-      let rrfStrategies =
-        recallMode === "semantic"
-          ? cfg.retrieval.strategies.filter((s) => s === "semantic")
-          : recallMode === "hybrid"
-            ? cfg.retrieval.strategies
-            : cfg.retrieval.strategies.filter((s) => s !== "semantic");
-      if (recallMode === "semantic" && !rrfStrategies.includes("semantic")) {
-        rrfStrategies = ["semantic"];
-      }
+      const useLegacyTagShortcut = Boolean(tag && !shouldUseConstrainedMode && recallMode !== "semantic");
+      const rrfStrategies = resolveRecallRrfStrategies(
+        recallMode,
+        cfg.retrieval.strategies,
+        useLegacyTagShortcut,
+      );
       const rrfConfig = { ...cfg.retrieval, strategies: rrfStrategies };
       // interactive-recall uses a different policy with its own vector prep; skip for other modes
       const effectivePolicy =
@@ -1210,7 +1210,10 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         if (!query) {
           return { content: [{ type: "text", text: "Provide a query." }], details: { count: 0 } };
         }
-        const limit = typeof params.limit === "number" && params.limit > 0 ? Math.floor(params.limit) : 10;
+        const limit =
+          typeof params.limit === "number" && params.limit > 0
+            ? Math.min(100, Math.floor(params.limit))
+            : 10;
         const entity = typeof params.entity === "string" ? params.entity.trim() : undefined;
         const tag = Array.isArray(params.tags) && params.tags.length > 0 ? String(params.tags[0]) : undefined;
         const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);

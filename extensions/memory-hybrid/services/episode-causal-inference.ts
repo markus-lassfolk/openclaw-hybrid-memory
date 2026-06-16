@@ -5,7 +5,8 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import { rowToEpisode } from "../backends/facts-db/episodes.js";
-import type { Episode, EpisodeOutcome } from "../types/memory.js";
+import { episodeCandidateScopeClause, scopedRowMatchesFilter } from "../backends/facts-db/scope-sql.js";
+import type { Episode, EpisodeOutcome, ScopeFilter } from "../types/memory.js";
 
 export type CausalLinkCandidate = {
   episodeId: string;
@@ -185,12 +186,13 @@ export function inferCausalLinks(db: DatabaseSync, newEpisode: Episode): InferCa
   const sinceSec = nowSec - LOOKBACK_DAYS * 86400;
   const { freq, total } = loadEntityFrequencies(db, sinceSec);
   const newSignals = extractEpisodeSignals(db, newEpisode);
+  const { clause: scopeClause, params: scopeParams } = episodeCandidateScopeClause(newEpisode);
 
   const rows = db
     .prepare(
-      `SELECT * FROM episodes WHERE created_at >= ? AND id != ? ORDER BY timestamp DESC LIMIT ?`,
+      `SELECT * FROM episodes WHERE created_at >= ? AND id != ?${scopeClause} ORDER BY timestamp DESC LIMIT ?`,
     )
-    .all(sinceSec, newEpisode.id, MAX_CANDIDATES * 2) as Array<Record<string, unknown>>;
+    .all(sinceSec, newEpisode.id, ...scopeParams, MAX_CANDIDATES * 2) as Array<Record<string, unknown>>;
 
   const advisory: CausalLinkCandidate[] = [];
   const persisted: CausalLinkCandidate[] = [];
@@ -284,7 +286,22 @@ export function buildEpisodeCausalChain(
   episodeId: string,
   depth = 5,
   includeExplicitOnly = false,
+  scopeFilter?: ScopeFilter | null,
 ): CausalChainItem[] {
+  const startRow = db.prepare("SELECT scope, scope_target FROM episodes WHERE id = ?").get(episodeId) as
+    | { scope: string; scope_target: string | null }
+    | undefined;
+  if (!startRow) return [];
+  if (
+    !scopedRowMatchesFilter(
+      startRow.scope as Episode["scope"],
+      startRow.scope_target,
+      scopeFilter,
+    )
+  ) {
+    return [];
+  }
+
   const visited = new Set<string>();
   const bestByEpisode = new Map<string, CausalChainItem>();
   const queue: Array<{ id: string; depth: number }> = [{ id: episodeId, depth: 0 }];
@@ -296,7 +313,7 @@ export function buildEpisodeCausalChain(
     if (!includeExplicitOnly) {
       const inferred = db
         .prepare(
-          `SELECT ecl.*, e.event, e.outcome FROM episode_causal_links ecl
+          `SELECT ecl.*, e.event, e.outcome, e.scope, e.scope_target FROM episode_causal_links ecl
            JOIN episodes e ON e.id = ecl.source_episode_id
            WHERE ecl.target_episode_id = ? AND ecl.confidence >= 0.2`,
         )
@@ -305,6 +322,9 @@ export function buildEpisodeCausalChain(
       for (const row of inferred) {
         const sourceId = row.source_episode_id as string;
         if (visited.has(sourceId)) continue;
+        const epScope = row.scope as Episode["scope"] | undefined;
+        const epTarget = row.scope_target as string | null | undefined;
+        if (!scopedRowMatchesFilter(epScope ?? "global", epTarget, scopeFilter)) continue;
         const conf = row.confidence as number;
         const item: CausalChainItem = {
           episodeId: sourceId,
@@ -322,7 +342,7 @@ export function buildEpisodeCausalChain(
 
     const explicit = db
       .prepare(
-        `SELECT er.*, e.event, e.outcome FROM episode_relations er
+        `SELECT er.*, e.event, e.outcome, e.scope, e.scope_target FROM episode_relations er
          JOIN episodes e ON e.id = er.episode_id
          WHERE er.target_id = ? AND er.relation_type IN ('CAUSED_BY', 'PART_OF')`,
       )
@@ -331,6 +351,9 @@ export function buildEpisodeCausalChain(
     for (const row of explicit) {
       const sourceId = row.episode_id as string;
       if (visited.has(sourceId)) continue;
+      const epScope = row.scope as Episode["scope"] | undefined;
+      const epTarget = row.scope_target as string | null | undefined;
+      if (!scopedRowMatchesFilter(epScope ?? "global", epTarget, scopeFilter)) continue;
       const strength = (row.strength as number) ?? 0.8;
       const item: CausalChainItem = {
         episodeId: sourceId,

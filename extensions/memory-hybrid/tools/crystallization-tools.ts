@@ -60,7 +60,7 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
           autoApproveOverride: false,
           leaseContext: {
             db: factsDb.getRawDb(),
-            ownerSessionId: api.context?.sessionId ?? `crystallize-${process.pid}`,
+            ownerSessionId: `plugin-${process.pid}`,
             workerLeases: cfg.maintenance.orchestrator?.workerLeases,
             logger: api.logger,
           },

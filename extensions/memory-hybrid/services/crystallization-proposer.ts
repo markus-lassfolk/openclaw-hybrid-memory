@@ -155,6 +155,7 @@ export class CrystallizationProposer {
     db: DatabaseSync;
     ownerSessionId: string;
     workerLeases: WorkerLeasesConfig;
+    lastHeartbeatAtMs: number;
   } | null = null;
 
   constructor(
@@ -214,6 +215,7 @@ export class CrystallizationProposer {
           db: leaseContext.db,
           ownerSessionId: leaseContext.ownerSessionId,
           workerLeases,
+          lastHeartbeatAtMs: Date.now(),
         };
       }
       return this.runCycleInner(opts?.autoApproveOverride);
@@ -312,12 +314,17 @@ export class CrystallizationProposer {
     for (const candidate of batch) {
       try {
         if (this.activeLease) {
-          heartbeatLease(
-            this.activeLease.db,
-            "crystallization",
-            this.activeLease.ownerSessionId,
-            this.activeLease.workerLeases.defaultTtlSeconds,
-          );
+          const heartbeatMs = this.activeLease.workerLeases.heartbeatIntervalSeconds * 1000;
+          const nowMs = Date.now();
+          if (nowMs - this.activeLease.lastHeartbeatAtMs >= heartbeatMs) {
+            heartbeatLease(
+              this.activeLease.db,
+              "crystallization",
+              this.activeLease.ownerSessionId,
+              this.activeLease.workerLeases.defaultTtlSeconds,
+            );
+            this.activeLease.lastHeartbeatAtMs = nowMs;
+          }
         }
         if (
           this.cfg.excludeSystemGoals !== false &&

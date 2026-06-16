@@ -50,6 +50,7 @@ import {
   renderActiveTaskMarkdownFile,
 } from "../services/task-ledger-facts.js";
 import { runTaskQueueWatchdog } from "../services/task-queue-watchdog.js";
+import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
 import { deleteVectorsForFactIds } from "../services/vector-maintenance.js";
 import type { VerificationStore } from "../services/verification-store.js";
 import { registerWorkerLeaseShutdown } from "../services/worker-lease.js";

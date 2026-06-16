@@ -1325,12 +1325,14 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
         ),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
+        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
         const rows = factsDb.queryContradictionSurface({
           since: typeof params.since === "string" ? params.since : undefined,
           entity: typeof params.entity === "string" ? params.entity : undefined,
           limit:
             typeof params.limit === "number" && params.limit > 0 ? Math.min(200, Math.floor(params.limit)) : 50,
           resolved: typeof params.resolved === "boolean" ? params.resolved : undefined,
+          scopeFilter,
         });
         return {
           content: [

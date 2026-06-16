@@ -118,7 +118,6 @@ export function acquireLease(
   } = {},
 ): boolean {
   const ttl = opts.ttlSeconds ?? 120;
-  const heartbeatInterval = opts.heartbeatIntervalSeconds ?? 30;
   const now = nowSec();
   const expiresAt = now + ttl;
   const pid = process.pid;
@@ -135,9 +134,8 @@ export function acquireLease(
       | undefined;
 
     if (existing) {
-      const heartbeatStale = existing.last_heartbeat_at < now - heartbeatInterval;
       const expired = existing.expires_at <= now;
-      if (!expired && !heartbeatStale) {
+      if (!expired) {
         db.exec("ROLLBACK");
         return false;
       }

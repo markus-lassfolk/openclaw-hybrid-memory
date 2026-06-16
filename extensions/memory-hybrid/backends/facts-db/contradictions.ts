@@ -7,11 +7,12 @@ import type { SQLInputValue } from "node:sqlite";
 import type { DatabaseSync } from "node:sqlite";
 
 import { capturePluginError } from "../../services/error-reporter.js";
-import type { MemoryEntry } from "../../types/memory.js";
+import type { MemoryEntry, ScopeFilter } from "../../types/memory.js";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { nowIso } from "../../utils/dates.js";
 import { parseTags, serializeTags } from "../../utils/tags.js";
 import { rowToMemoryEntry } from "./row-mapper.js";
+import { scopeFilterClauseForAlias, scopeFilterClausePositional } from "./scope-sql.js";
 import type { MemoryLinkType } from "./types.js";
 
 export interface ContradictionDetectionResult {
@@ -1309,17 +1310,28 @@ export function detectEpisodeFailureContradictions(
   db: DatabaseSync,
   eventText: string,
   procedureId?: string | null,
+  scopeFilter?: ScopeFilter | null,
 ): Array<{
   factId: string;
   score: number;
   heuristicSignals: string[];
   preview: string;
 }> {
-  const conditions = ["superseded_at IS NULL", "category IN ('procedure', 'workflow')"];
-  const params: SQLInputValue[] = [];
+  const nowSec = Math.floor(Date.now() / 1000);
+  const conditions = [
+    "superseded_at IS NULL",
+    "(expires_at IS NULL OR expires_at > ?)",
+    "category IN ('procedure', 'workflow')",
+  ];
+  const params: SQLInputValue[] = [nowSec];
   if (procedureId?.trim()) {
     conditions.push("(id = ? OR entity = ? OR key = ?)");
     params.push(procedureId.trim(), procedureId.trim(), procedureId.trim());
+  }
+  const scope = scopeFilterClausePositional(scopeFilter);
+  if (scope.clause) {
+    conditions.push(scope.clause.trim().replace(/^ AND /, ""));
+    params.push(...scope.params);
   }
   const rows = db
     .prepare(
@@ -1354,6 +1366,7 @@ export function queryContradictionSurface(
     entity?: string;
     limit?: number;
     resolved?: boolean;
+    scopeFilter?: ScopeFilter | null;
   } = {},
 ): Array<{
   factId: string;
@@ -1381,6 +1394,16 @@ export function queryContradictionSurface(
   if (options.entity?.trim()) {
     conditions.push("(LOWER(f_new.entity) = LOWER(?) OR LOWER(f_old.entity) = LOWER(?))");
     params.push(options.entity.trim(), options.entity.trim());
+  }
+  const newScope = scopeFilterClauseForAlias(options.scopeFilter, "f_new");
+  const oldScope = scopeFilterClauseForAlias(options.scopeFilter, "f_old");
+  if (newScope.clause) {
+    conditions.push(newScope.clause.trim().replace(/^ AND /, ""));
+    params.push(...newScope.params);
+  }
+  if (oldScope.clause) {
+    conditions.push(oldScope.clause.trim().replace(/^ AND /, ""));
+    params.push(...oldScope.params);
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
