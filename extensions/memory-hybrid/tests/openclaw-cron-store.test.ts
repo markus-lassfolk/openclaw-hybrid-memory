@@ -290,4 +290,67 @@ describe("openclaw-cron-store (#1923)", () => {
     const reread = readOpenClawCronStore(openclawDir);
     expect(reread.store.jobs?.length).toBe(1);
   });
+
+  it("preserves fresher gateway runtime state when writing config updates (#1923)", () => {
+    homeDir = mkdtempSync(join(tmpdir(), "oc-cron-store-"));
+    const openclawDir = join(homeDir, ".openclaw");
+    const legacyPath = resolveLegacyCronJobsPath(openclawDir);
+    const sqlitePath = resolveOpenClawStateSqlitePath(openclawDir);
+    mkdirSync(join(openclawDir, "state"), { recursive: true });
+    const db = new DatabaseSync(sqlitePath);
+    db.exec(CRON_JOBS_DDL);
+    const storeKey = cronStorePartitionKey(legacyPath);
+
+    const gatewayRuntimeTimestamp = Date.now() + 10_000;
+    const oldInMemoryTimestamp = Date.now();
+    db.prepare(
+      `INSERT INTO cron_jobs (
+        store_key, job_id, name, enabled, created_at_ms, updated_at, session_target, wake_mode,
+        schedule_kind, schedule_expr, payload_kind, payload_message, delivery_mode,
+        last_run_at_ms, next_run_at_ms, last_run_status, consecutive_errors,
+        state_json, runtime_updated_at_ms, sort_order, job_json
+      ) VALUES (?, ?, ?, 1, ?, ?, 'main', 'now', 'cron', '0 2 * * *', 'agentTurn', 'old message', 'none', ?, ?, ?, ?, '{}', ?, 0, ?)`,
+    ).run(
+      storeKey,
+      "test-job",
+      "Test Job",
+      Date.now(),
+      Date.now(),
+      1_700_000_000_000,
+      1_700_100_000_000,
+      "success",
+      5,
+      gatewayRuntimeTimestamp,
+      JSON.stringify({ id: "test-job", payload: { kind: "agentTurn", message: "old message" } }),
+    );
+    db.close();
+
+    const snapshot = readOpenClawCronStore(openclawDir);
+    expect(snapshot.store.jobs?.length).toBe(1);
+    const jobs = snapshot.store.jobs as Array<Record<string, unknown>>;
+    const job = jobs[0];
+
+    const gatewayLastRunAt = (job.state as { lastRunAtMs?: number }).lastRunAtMs;
+    const gatewayNextRunAt = (job.state as { nextRunAtMs?: number }).nextRunAtMs;
+    expect(gatewayLastRunAt).toBe(1_700_000_000_000);
+    expect(gatewayNextRunAt).toBe(1_700_100_000_000);
+
+    job.payload = { kind: "agentTurn", message: "updated message" };
+    job.updatedAtMs = oldInMemoryTimestamp;
+    (job.state as Record<string, unknown>).lastRunAtMs = 1_699_000_000_000;
+    (job.state as Record<string, unknown>).nextRunAtMs = 1_699_100_000_000;
+    (job.state as Record<string, unknown>).consecutiveErrors = 0;
+
+    writeOpenClawCronStore(openclawDir, { jobs }, snapshot.backend);
+
+    const after = readOpenClawCronStore(openclawDir);
+    const updatedJob = (after.store.jobs as Array<Record<string, unknown>>)[0];
+    const updatedPayload = updatedJob.payload as { message?: string };
+    expect(updatedPayload.message).toBe("updated message");
+
+    const updatedState = updatedJob.state as Record<string, unknown>;
+    expect(updatedState.lastRunAtMs).toBe(1_700_000_000_000);
+    expect(updatedState.nextRunAtMs).toBe(1_700_100_000_000);
+    expect(updatedState.consecutiveErrors).toBe(5);
+  });
 });

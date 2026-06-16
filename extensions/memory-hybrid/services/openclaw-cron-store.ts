@@ -589,6 +589,42 @@ function writeCronStoreToSqlite(sqlitePath: string, storeKey: string, store: Ope
       incomingIds.add(jobId);
       const row = bindCronJobInsertRow(storeKey, rawJob, sortOrder);
       if (row) {
+        const existing = existingByJobId.get(jobId);
+        if (existing) {
+          const existingRuntimeTs = numOrNull(existing.runtime_updated_at_ms);
+          const newRuntimeTs = numOrNull(row.runtime_updated_at_ms);
+          if (existingRuntimeTs != null && (newRuntimeTs == null || existingRuntimeTs > newRuntimeTs)) {
+            row.runtime_updated_at_ms = existingRuntimeTs;
+            row.next_run_at_ms = existing.next_run_at_ms as number | null;
+            row.running_at_ms = existing.running_at_ms as number | null;
+            row.last_run_at_ms = existing.last_run_at_ms as number | null;
+            row.last_run_status = existing.last_run_status as string | null;
+            row.last_error = existing.last_error as string | null;
+            row.last_duration_ms = existing.last_duration_ms as number | null;
+            row.consecutive_errors = existing.consecutive_errors as number | null;
+            row.consecutive_skipped = existing.consecutive_skipped as number | null;
+            row.schedule_error_count = existing.schedule_error_count as number | null;
+            row.last_delivery_status = existing.last_delivery_status as string | null;
+            row.last_delivery_error = existing.last_delivery_error as string | null;
+            row.last_delivered = existing.last_delivered as number | null;
+            row.last_failure_alert_at_ms = existing.last_failure_alert_at_ms as number | null;
+            const stateJson = parseJsonObject(String(row.state_json ?? "{}"), {});
+            if (row.next_run_at_ms != null) stateJson.nextRunAtMs = row.next_run_at_ms;
+            if (row.running_at_ms != null) stateJson.runningAtMs = row.running_at_ms;
+            if (row.last_run_at_ms != null) stateJson.lastRunAtMs = row.last_run_at_ms;
+            if (row.last_run_status != null) stateJson.lastRunStatus = row.last_run_status;
+            if (row.last_error != null) stateJson.lastError = row.last_error;
+            if (row.last_duration_ms != null) stateJson.lastDurationMs = row.last_duration_ms;
+            if (row.consecutive_errors != null) stateJson.consecutiveErrors = row.consecutive_errors;
+            if (row.consecutive_skipped != null) stateJson.consecutiveSkipped = row.consecutive_skipped;
+            if (row.schedule_error_count != null) stateJson.scheduleErrorCount = row.schedule_error_count;
+            if (row.last_delivery_status != null) stateJson.lastDeliveryStatus = row.last_delivery_status;
+            if (row.last_delivery_error != null) stateJson.lastDeliveryError = row.last_delivery_error;
+            if (row.last_delivered != null) stateJson.lastDelivered = row.last_delivered !== 0;
+            if (row.last_failure_alert_at_ms != null) stateJson.lastFailureAlertAtMs = row.last_failure_alert_at_ms;
+            row.state_json = JSON.stringify(stateJson);
+          }
+        }
         rowsToInsert.push(row);
         sortOrder += 1;
         continue;
