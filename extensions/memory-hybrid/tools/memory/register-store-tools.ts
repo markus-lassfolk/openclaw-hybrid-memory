@@ -504,7 +504,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     category: "technical",
                   });
                   await storeRegistryEmbeddings({
-                    storeFactsDb,
+                    factsDb: storeFactsDb,
                     embeddingRegistry,
                     embeddings,
                     factId: pointerEntry.id,
@@ -848,7 +848,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                         });
                       }
                       await storeRegistryEmbeddings({
-                        storeFactsDb,
+                        factsDb: storeFactsDb,
                         embeddingRegistry,
                         embeddings,
                         factId: newEntry.id,
@@ -1026,7 +1026,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 });
               }
               await storeRegistryEmbeddings({
-                storeFactsDb,
+                factsDb: storeFactsDb,
                 embeddingRegistry,
                 embeddings,
                 factId: entry.id,
