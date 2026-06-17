@@ -288,8 +288,18 @@ async function runWorkboardGatewayCliCall(
     return await new Promise((resolve) => {
       let stdout = "";
       let stderr = "";
+      let settled = false;
       const child = spawn("openclaw", args, { env });
-      const timer = setTimeout(() => child.kill("SIGTERM"), REQUEST_TIMEOUT_MS + 5000);
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          pluginLogger.warn(
+            `memory-hybrid: workboard gateway call ${method} timed out after ${REQUEST_TIMEOUT_MS + 5000}ms`,
+          );
+          child.kill("SIGTERM");
+          resolve(null);
+        }
+      }, REQUEST_TIMEOUT_MS + 5000);
       child.stdout?.on("data", (chunk) => {
         stdout += String(chunk);
       });
@@ -297,37 +307,43 @@ async function runWorkboardGatewayCliCall(
         stderr += String(chunk);
       });
       child.on("error", (err) => {
-        clearTimeout(timer);
-        pluginLogger.warn(`memory-hybrid: workboard gateway call ${method} failed: ${err.message}`);
-        resolve(null);
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          pluginLogger.warn(`memory-hybrid: workboard gateway call ${method} failed: ${err.message}`);
+          resolve(null);
+        }
       });
       child.on("close", (code) => {
-        clearTimeout(timer);
-        if (code !== 0) {
-          const detail = (stderr || stdout).trim();
-          pluginLogger.warn(
-            `memory-hybrid: workboard gateway call ${method} failed${detail ? `: ${detail.slice(0, 200)}` : ""}`,
-          );
-          resolve(null);
-          return;
-        }
-        const out = stdout.trim();
-        if (out.startsWith("{") || out.startsWith("[")) {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          if (code !== 0) {
+            const detail = (stderr || stdout).trim();
+            pluginLogger.warn(
+              `memory-hybrid: workboard gateway call ${method} failed${detail ? `: ${detail.slice(0, 200)}` : ""}`,
+            );
+            resolve(null);
+            return;
+          }
+          const out = stdout.trim();
+          if (out.startsWith("{") || out.startsWith("[")) {
+            try {
+              resolve(JSON.parse(out));
+              return;
+            } catch {
+              /* fall through */
+            }
+          }
+          if (!out) {
+            resolve(null);
+            return;
+          }
           try {
             resolve(JSON.parse(out));
-            return;
           } catch {
-            /* fall through */
+            resolve(null);
           }
-        }
-        if (!out) {
-          resolve(null);
-          return;
-        }
-        try {
-          resolve(JSON.parse(out));
-        } catch {
-          resolve(null);
         }
       });
     });
