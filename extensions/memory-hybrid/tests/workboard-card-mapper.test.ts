@@ -63,24 +63,24 @@ describe("workboard-card-mapper", () => {
       const card = taskToCard(makeTask(), DEFAULT_WORKBOARD_COLUMNS, TAG);
       expect(card).not.toBeNull();
       expect(card!.title).toBe("[Task] test-task");
-      expect(card!.column).toBe("In Progress");
+      expect(card!.column).toBe("running");
       expect(card!.externalId).toBe("hm-task:test-task");
       expect(card!.tags).toContain(TAG);
     });
 
     it("maps a done task", () => {
       const card = taskToCard(makeTask({ status: "Done" }), DEFAULT_WORKBOARD_COLUMNS, TAG);
-      expect(card!.column).toBe("Done");
+      expect(card!.column).toBe("done");
     });
 
     it("maps a failed task", () => {
       const card = taskToCard(makeTask({ status: "Failed" }), DEFAULT_WORKBOARD_COLUMNS, TAG);
-      expect(card!.column).toBe("Failed");
+      expect(card!.column).toBe("blocked");
     });
 
     it("maps a stale task to Backlog", () => {
       const card = taskToCard(makeTask({ stale: true }), DEFAULT_WORKBOARD_COLUMNS, TAG);
-      expect(card!.column).toBe("Backlog");
+      expect(card!.column).toBe("backlog");
     });
 
     it("includes branch and next in description", () => {
@@ -95,19 +95,19 @@ describe("workboard-card-mapper", () => {
       const card = goalToCard(makeGoal(), DEFAULT_WORKBOARD_COLUMNS, TAG);
       expect(card).not.toBeNull();
       expect(card!.title).toBe("[Goal] Ship feature X");
-      expect(card!.column).toBe("In Progress");
+      expect(card!.column).toBe("running");
       expect(card!.externalId).toBe("hm-goal:goal-1");
       expect(card!.tags).toContain("priority:high");
     });
 
     it("maps a blocked goal", () => {
       const card = goalToCard(makeGoal({ status: "blocked" }), DEFAULT_WORKBOARD_COLUMNS, TAG);
-      expect(card!.column).toBe("Blocked");
+      expect(card!.column).toBe("blocked");
     });
 
     it("maps a completed goal", () => {
       const card = goalToCard(makeGoal({ status: "completed" }), DEFAULT_WORKBOARD_COLUMNS, TAG);
-      expect(card!.column).toBe("Done");
+      expect(card!.column).toBe("done");
     });
 
     it("includes acceptance criteria and blockers in description", () => {
@@ -144,18 +144,19 @@ describe("workboard-card-mapper", () => {
 
   describe("column-to-status mapping", () => {
     it("maps columns back to task statuses", () => {
-      expect(columnToTaskStatus("In Progress", DEFAULT_WORKBOARD_COLUMNS)).toBe("In progress");
-      expect(columnToTaskStatus("Done", DEFAULT_WORKBOARD_COLUMNS)).toBe("Done");
-      expect(columnToTaskStatus("Failed", DEFAULT_WORKBOARD_COLUMNS)).toBe("Failed");
-      expect(columnToTaskStatus("Backlog", DEFAULT_WORKBOARD_COLUMNS)).toBe("Stalled");
+      expect(columnToTaskStatus("running", DEFAULT_WORKBOARD_COLUMNS)).toBe("In progress");
+      expect(columnToTaskStatus("scheduled", DEFAULT_WORKBOARD_COLUMNS)).toBe("Waiting");
+      expect(columnToTaskStatus("done", DEFAULT_WORKBOARD_COLUMNS)).toBe("Done");
+      expect(columnToTaskStatus("blocked", DEFAULT_WORKBOARD_COLUMNS)).toBe("Failed");
+      expect(columnToTaskStatus("backlog", DEFAULT_WORKBOARD_COLUMNS)).toBe("Stalled");
       expect(columnToTaskStatus("Unknown Column", DEFAULT_WORKBOARD_COLUMNS)).toBeNull();
     });
 
     it("maps columns back to goal statuses", () => {
-      expect(columnToGoalStatus("In Progress", DEFAULT_WORKBOARD_COLUMNS)).toBe("active");
-      expect(columnToGoalStatus("Done", DEFAULT_WORKBOARD_COLUMNS)).toBe("completed");
-      expect(columnToGoalStatus("Blocked", DEFAULT_WORKBOARD_COLUMNS)).toBe("blocked");
-      expect(columnToGoalStatus("Backlog", DEFAULT_WORKBOARD_COLUMNS)).toBe("stalled");
+      expect(columnToGoalStatus("running", DEFAULT_WORKBOARD_COLUMNS)).toBe("active");
+      expect(columnToGoalStatus("done", DEFAULT_WORKBOARD_COLUMNS)).toBe("completed");
+      expect(columnToGoalStatus("blocked", DEFAULT_WORKBOARD_COLUMNS)).toBe("blocked");
+      expect(columnToGoalStatus("backlog", DEFAULT_WORKBOARD_COLUMNS)).toBe("stalled");
       expect(columnToGoalStatus("Unknown Column", DEFAULT_WORKBOARD_COLUMNS)).toBeNull();
     });
   });

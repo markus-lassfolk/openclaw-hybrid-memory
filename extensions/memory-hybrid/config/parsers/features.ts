@@ -1277,6 +1277,7 @@ export function parseWorkboardConfig(cfg: Record<string, unknown>): WorkboardCon
   const columnsRaw = raw.columns as Record<string, unknown> | undefined;
   const columns: WorkboardColumnMapping = {
     taskInProgress: parseColumnName(columnsRaw?.taskInProgress, DEFAULT_WORKBOARD_COLUMNS.taskInProgress),
+    taskWaiting: parseColumnName(columnsRaw?.taskWaiting, DEFAULT_WORKBOARD_COLUMNS.taskWaiting),
     taskDone: parseColumnName(columnsRaw?.taskDone, DEFAULT_WORKBOARD_COLUMNS.taskDone),
     taskFailed: parseNullableColumnName(columnsRaw?.taskFailed, DEFAULT_WORKBOARD_COLUMNS.taskFailed),
     taskStale: parseNullableColumnName(columnsRaw?.taskStale, DEFAULT_WORKBOARD_COLUMNS.taskStale),

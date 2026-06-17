@@ -133,8 +133,9 @@ function taskStatusToColumn(
 
   switch (status) {
     case "In progress":
-    case "Waiting":
       return columns.taskInProgress;
+    case "Waiting":
+      return columns.taskWaiting;
     case "Stalled":
       return columns.taskStale;
     case "Done":
@@ -170,6 +171,7 @@ export function columnToTaskStatus(column: string, columns: WorkboardColumnMappi
   const match = (col: string | null) => col?.toLowerCase() === lower;
 
   if (match(columns.taskInProgress)) return "In progress";
+  if (match(columns.taskWaiting)) return "Waiting";
   if (match(columns.taskDone)) return "Done";
   if (match(columns.taskFailed)) return "Failed";
   if (match(columns.taskStale)) return "Stalled";

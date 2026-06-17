@@ -8,6 +8,7 @@
 
 import { spawn } from "../utils/process-runner.js";
 import { pluginLogger } from "../utils/logger.js";
+import { toWorkboardStatusSlug } from "./workboard-status-slugs.js";
 
 export type WorkboardRpcCard = {
   id: string;
@@ -138,7 +139,7 @@ function mapWorkboardCreateParams(card: {
 }): Record<string, unknown> {
   const params: Record<string, unknown> = {
     title: card.title,
-    status: card.column,
+    status: toWorkboardStatusSlug(card.column),
   };
   if (card.description) params.notes = card.description;
   if (card.tags?.length) params.labels = card.tags;
@@ -156,7 +157,7 @@ function mapWorkboardUpdatePatch(patch: {
 }): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (patch.title !== undefined) out.title = patch.title;
-  if (patch.column !== undefined) out.status = patch.column;
+  if (patch.column !== undefined) out.status = toWorkboardStatusSlug(patch.column);
   if (patch.description !== undefined) out.notes = patch.description;
   if (patch.tags !== undefined) out.labels = patch.tags;
   if (patch.metadata !== undefined) out.metadata = patch.metadata;
