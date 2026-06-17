@@ -300,6 +300,14 @@ async function runWorkboardGatewayCliCall(
       });
       child.on("close", (code) => {
         clearTimeout(timer);
+        if (code !== 0) {
+          const detail = (stderr || stdout).trim();
+          pluginLogger.warn(
+            `memory-hybrid: workboard gateway call ${method} failed${detail ? `: ${detail.slice(0, 200)}` : ""}`,
+          );
+          resolve(null);
+          return;
+        }
         const out = stdout.trim();
         if (out.startsWith("{") || out.startsWith("[")) {
           try {
@@ -308,14 +316,6 @@ async function runWorkboardGatewayCliCall(
           } catch {
             /* fall through */
           }
-        }
-        if (code !== 0) {
-          const detail = (stderr || stdout).trim();
-          pluginLogger.warn(
-            `memory-hybrid: workboard gateway call ${method} failed${detail ? `: ${detail.slice(0, 200)}` : ""}`,
-          );
-          resolve(null);
-          return;
         }
         if (!out) {
           resolve(null);
