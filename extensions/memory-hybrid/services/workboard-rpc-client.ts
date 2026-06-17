@@ -143,6 +143,7 @@ function mapWorkboardCreateParams(card: {
   if (card.description) params.notes = card.description;
   if (card.tags?.length) params.labels = card.tags;
   if (card.externalId) params.idempotencyKey = card.externalId;
+  if (card.metadata) params.metadata = card.metadata;
   return params;
 }
 
@@ -218,6 +219,7 @@ export function createWorkboardHttpRpcClient(gatewayUrl: string, token?: string)
     async listCards(opts) {
       const params: Record<string, unknown> = {};
       if (opts?.column) params.status = opts.column;
+      if (opts?.tag) params.labels = [opts.tag];
       const result = await rpc("workboard.cards.list", params);
       return filterCardsByTag(normalizeWorkboardCardsResult(result), opts?.tag);
     },
@@ -346,6 +348,7 @@ export function createWorkboardGatewayCliRpcClient(token?: string): WorkboardRpc
     async listCards(opts) {
       const params: Record<string, unknown> = {};
       if (opts?.column) params.status = opts.column;
+      if (opts?.tag) params.labels = [opts.tag];
       const result = await rpc("workboard.cards.list", params);
       return filterCardsByTag(normalizeWorkboardCardsResult(result), opts?.tag);
     },
