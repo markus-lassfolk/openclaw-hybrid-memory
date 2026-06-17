@@ -6,6 +6,7 @@
 import type { ActiveTaskEntry, ActiveTaskStatus } from "./active-task.js";
 import type { Goal, GoalStatus } from "./goal-stewardship-types.js";
 import type { WorkboardColumnMapping } from "../config/types/workboard.js";
+import { toWorkboardStatusSlug } from "./workboard-status-slugs.js";
 
 export type WorkboardCardPayload = {
   title: string;
@@ -80,7 +81,7 @@ export function taskToCard(
 
   return {
     title: `[Task] ${task.label}`,
-    column,
+    column: toWorkboardStatusSlug(column),
     description: descParts.join("\n") || undefined,
     tags: [cardTag],
     externalId: taskExternalId(task.label),
@@ -110,7 +111,7 @@ export function goalToCard(goal: Goal, columns: WorkboardColumnMapping, cardTag:
 
   return {
     title: `[Goal] ${goal.label}`,
-    column,
+    column: toWorkboardStatusSlug(column),
     description: descParts.join("\n") || undefined,
     tags: [cardTag, `priority:${goal.priority}`],
     externalId: goalExternalId(goal.id),
