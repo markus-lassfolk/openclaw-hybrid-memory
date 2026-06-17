@@ -39,8 +39,16 @@ export function goalExternalId(goalId: string): string {
   return `${GOAL_EXTERNAL_PREFIX}${goalId}`;
 }
 
+export function resolveWorkboardExternalId(card: WorkboardCardRecord): string | undefined {
+  const meta = card.metadata as { automation?: { idempotencyKey?: string } } | undefined;
+  const key = meta?.automation?.idempotencyKey;
+  if (typeof key === "string" && key.length > 0) return key;
+  return card.externalId;
+}
+
 export function isHybridMemoryCard(card: WorkboardCardRecord): boolean {
-  return !!card.externalId?.startsWith(TASK_EXTERNAL_PREFIX) || !!card.externalId?.startsWith(GOAL_EXTERNAL_PREFIX);
+  const extId = resolveWorkboardExternalId(card);
+  return !!extId?.startsWith(TASK_EXTERNAL_PREFIX) || !!extId?.startsWith(GOAL_EXTERNAL_PREFIX);
 }
 
 export function parseExternalId(

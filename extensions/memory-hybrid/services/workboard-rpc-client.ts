@@ -6,7 +6,7 @@
  * a direct plugin-to-plugin API if that becomes available.
  */
 
-import { spawnSync } from "../utils/process-runner.js";
+import { spawn } from "../utils/process-runner.js";
 import { pluginLogger } from "../utils/logger.js";
 
 export type WorkboardRpcCard = {
@@ -16,7 +16,7 @@ export type WorkboardRpcCard = {
   description?: string;
   tags?: string[];
   externalId?: string;
-  metadata?: Record<string, string>;
+  metadata?: Record<string, unknown>;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -46,24 +46,77 @@ export interface WorkboardRpcClient {
   isAvailable(): Promise<boolean>;
 }
 
-const REQUEST_TIMEOUT_MS = 10_000;
+const REQUEST_TIMEOUT_MS = 25_000;
+
+type WorkboardApiCard = {
+  id?: string;
+  title?: string;
+  status?: string;
+  column?: string;
+  notes?: string;
+  description?: string;
+  labels?: string[];
+  tags?: string[];
+  externalId?: string;
+  metadata?: { automation?: { idempotencyKey?: string } } & Record<string, unknown>;
+  createdAt?: number | string;
+  updatedAt?: number | string;
+};
+
+function workboardApiExternalId(card: WorkboardApiCard): string | undefined {
+  const key = card.metadata?.automation?.idempotencyKey;
+  if (typeof key === "string" && key.length > 0) return key;
+  if (typeof card.externalId === "string" && card.externalId.length > 0) return card.externalId;
+  return undefined;
+}
+
+/** Map OpenClaw Workboard card JSON (status/labels/notes) to hybrid-memory RPC shape. */
+export function normalizeWorkboardCardFromApi(raw: unknown): WorkboardRpcCard | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const api = raw as WorkboardApiCard;
+  if (typeof api.id !== "string" || typeof api.title !== "string") return null;
+  const column = typeof api.status === "string" ? api.status : typeof api.column === "string" ? api.column : "";
+  const tags = Array.isArray(api.labels) ? api.labels : Array.isArray(api.tags) ? api.tags : undefined;
+  const externalId = workboardApiExternalId(api);
+  return {
+    id: api.id,
+    title: api.title,
+    column,
+    description: typeof api.notes === "string" ? api.notes : api.description,
+    tags,
+    externalId,
+    metadata: api.metadata,
+    createdAt: typeof api.createdAt === "number" ? String(api.createdAt) : api.createdAt,
+    updatedAt: typeof api.updatedAt === "number" ? String(api.updatedAt) : api.updatedAt,
+  };
+}
 
 function normalizeWorkboardCardsResult(result: unknown): WorkboardRpcCard[] {
-  if (Array.isArray(result)) return result as WorkboardRpcCard[];
+  if (Array.isArray(result)) {
+    return result.map((card) => normalizeWorkboardCardFromApi(card)).filter((c): c is WorkboardRpcCard => c != null);
+  }
   if (typeof result === "object" && result !== null) {
-    const obj = result as { cards?: WorkboardRpcCard[]; result?: { cards?: WorkboardRpcCard[] } };
-    if (Array.isArray(obj.cards)) return obj.cards;
-    if (obj.result && Array.isArray(obj.result.cards)) return obj.result.cards;
+    const obj = result as { cards?: unknown[]; result?: { cards?: unknown[] } };
+    const rawCards = Array.isArray(obj.cards)
+      ? obj.cards
+      : obj.result && Array.isArray(obj.result.cards)
+        ? obj.result.cards
+        : [];
+    return rawCards.map((card) => normalizeWorkboardCardFromApi(card)).filter((c): c is WorkboardRpcCard => c != null);
   }
   return [];
 }
 
 function normalizeWorkboardCardResult(result: unknown): WorkboardRpcCard | null {
   if (typeof result !== "object" || result === null) return null;
-  const obj = result as WorkboardRpcCard & { result?: WorkboardRpcCard };
-  if (typeof obj.id === "string") return obj;
-  if (obj.result && typeof obj.result.id === "string") return obj.result;
-  return null;
+  const obj = result as { card?: unknown; result?: { card?: unknown; id?: string } };
+  if (obj.card) return normalizeWorkboardCardFromApi(obj.card);
+  if (obj.result && typeof obj.result === "object" && obj.result !== null) {
+    const nested = obj.result as { card?: unknown; id?: string };
+    if (nested.card) return normalizeWorkboardCardFromApi(nested.card);
+    if (typeof nested.id === "string") return normalizeWorkboardCardFromApi(nested);
+  }
+  return normalizeWorkboardCardFromApi(obj);
 }
 
 function normalizeWorkboardDeleteResult(result: unknown): boolean {
@@ -75,10 +128,49 @@ function normalizeWorkboardDeleteResult(result: unknown): boolean {
   return false;
 }
 
+function mapWorkboardCreateParams(card: {
+  title: string;
+  column: string;
+  description?: string;
+  tags?: string[];
+  externalId?: string;
+  metadata?: Record<string, string>;
+}): Record<string, unknown> {
+  const params: Record<string, unknown> = {
+    title: card.title,
+    status: card.column,
+  };
+  if (card.description) params.notes = card.description;
+  if (card.tags?.length) params.labels = card.tags;
+  if (card.externalId) params.idempotencyKey = card.externalId;
+  return params;
+}
+
+function mapWorkboardUpdatePatch(patch: {
+  title?: string;
+  column?: string;
+  description?: string;
+  tags?: string[];
+  metadata?: Record<string, string>;
+}): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (patch.title !== undefined) out.title = patch.title;
+  if (patch.column !== undefined) out.status = patch.column;
+  if (patch.description !== undefined) out.notes = patch.description;
+  if (patch.tags !== undefined) out.labels = patch.tags;
+  if (patch.metadata !== undefined) out.metadata = patch.metadata;
+  return out;
+}
+
+function filterCardsByTag(cards: WorkboardRpcCard[], tag?: string): WorkboardRpcCard[] {
+  if (!tag) return cards;
+  return cards.filter((c) => c.tags?.includes(tag));
+}
+
 export function createWorkboardHttpRpcClient(gatewayUrl: string, token?: string): WorkboardRpcClient {
   const baseUrl = gatewayUrl.replace(/\/+$/, "");
 
-  async function rpc<T>(method: string, params: Record<string, unknown> = {}): Promise<T | null> {
+  async function rpc(method: string, params: Record<string, unknown> = {}): Promise<unknown | null> {
     const url = `${baseUrl}/rpc/${method}`;
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (token) headers.Authorization = `Bearer ${token}`;
@@ -103,13 +195,13 @@ export function createWorkboardHttpRpcClient(gatewayUrl: string, token?: string)
         return null;
       }
 
-      const json = (await response.json()) as { result?: T; error?: string };
+      const json = (await response.json()) as { result?: unknown; error?: string };
       if (json.error) {
         pluginLogger.warn(`memory-hybrid: workboard RPC ${method} error: ${json.error}`);
         return null;
       }
 
-      return json.result ?? (json as unknown as T);
+      return json.result ?? json;
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
         pluginLogger.warn(`memory-hybrid: workboard RPC ${method} timed out after ${REQUEST_TIMEOUT_MS}ms`);
@@ -125,23 +217,24 @@ export function createWorkboardHttpRpcClient(gatewayUrl: string, token?: string)
   return {
     async listCards(opts) {
       const params: Record<string, unknown> = {};
-      if (opts?.tag) params.tag = opts.tag;
-      if (opts?.column) params.column = opts.column;
-      const result = await rpc<{ cards: WorkboardRpcCard[] }>("workboard.cards.list", params);
-      return result?.cards ?? [];
+      if (opts?.column) params.status = opts.column;
+      const result = await rpc("workboard.cards.list", params);
+      return filterCardsByTag(normalizeWorkboardCardsResult(result), opts?.tag);
     },
 
     async createCard(card) {
-      return rpc<WorkboardRpcCard>("workboard.cards.create", card);
+      const result = await rpc("workboard.cards.create", mapWorkboardCreateParams(card));
+      return normalizeWorkboardCardResult(result);
     },
 
     async updateCard(cardId, patch) {
-      return rpc<WorkboardRpcCard>("workboard.cards.update", { id: cardId, ...patch });
+      const result = await rpc("workboard.cards.update", { id: cardId, ...mapWorkboardUpdatePatch(patch) });
+      return normalizeWorkboardCardResult(result);
     },
 
     async deleteCard(cardId) {
-      const result = await rpc<{ deleted: boolean }>("workboard.cards.delete", { id: cardId });
-      return result?.deleted ?? false;
+      const result = await rpc("workboard.cards.delete", { id: cardId });
+      return normalizeWorkboardDeleteResult(result);
     },
 
     async findByExternalId(externalId) {
@@ -171,7 +264,11 @@ export function createWorkboardHttpRpcClient(gatewayUrl: string, token?: string)
   };
 }
 
-function runWorkboardGatewayCliCall(method: string, params: Record<string, unknown>, token?: string): unknown | null {
+async function runWorkboardGatewayCliCall(
+  method: string,
+  params: Record<string, unknown>,
+  token?: string,
+): Promise<unknown | null> {
   const args = [
     "gateway",
     "call",
@@ -182,24 +279,55 @@ function runWorkboardGatewayCliCall(method: string, params: Record<string, unkno
     "--timeout",
     String(REQUEST_TIMEOUT_MS),
   ];
+  const env = token ? { ...process.env, OPENCLAW_GATEWAY_TOKEN: token } : process.env;
 
   try {
-    const env = token ? { ...process.env, OPENCLAW_GATEWAY_TOKEN: token } : process.env;
-    const result = spawnSync("openclaw", args, {
-      encoding: "utf-8",
-      env,
-      timeout: REQUEST_TIMEOUT_MS + 2000,
+    return await new Promise((resolve) => {
+      let stdout = "";
+      let stderr = "";
+      const child = spawn("openclaw", args, { env });
+      const timer = setTimeout(() => child.kill("SIGTERM"), REQUEST_TIMEOUT_MS + 5000);
+      child.stdout?.on("data", (chunk) => {
+        stdout += String(chunk);
+      });
+      child.stderr?.on("data", (chunk) => {
+        stderr += String(chunk);
+      });
+      child.on("error", (err) => {
+        clearTimeout(timer);
+        pluginLogger.warn(`memory-hybrid: workboard gateway call ${method} failed: ${err.message}`);
+        resolve(null);
+      });
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        const out = stdout.trim();
+        if (out.startsWith("{") || out.startsWith("[")) {
+          try {
+            resolve(JSON.parse(out));
+            return;
+          } catch {
+            /* fall through */
+          }
+        }
+        if (code !== 0) {
+          const detail = (stderr || stdout).trim();
+          pluginLogger.warn(
+            `memory-hybrid: workboard gateway call ${method} failed${detail ? `: ${detail.slice(0, 200)}` : ""}`,
+          );
+          resolve(null);
+          return;
+        }
+        if (!out) {
+          resolve(null);
+          return;
+        }
+        try {
+          resolve(JSON.parse(out));
+        } catch {
+          resolve(null);
+        }
+      });
     });
-    if (result.error || result.status !== 0) {
-      const detail = (result.stderr || result.stdout || "").trim();
-      pluginLogger.warn(
-        `memory-hybrid: workboard gateway call ${method} failed${detail ? `: ${detail.slice(0, 200)}` : ""}`,
-      );
-      return null;
-    }
-    const stdout = result.stdout.trim();
-    if (!stdout) return null;
-    return JSON.parse(stdout) as unknown;
   } catch (err) {
     pluginLogger.warn(
       `memory-hybrid: workboard gateway call ${method} failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -217,19 +345,18 @@ export function createWorkboardGatewayCliRpcClient(token?: string): WorkboardRpc
   return {
     async listCards(opts) {
       const params: Record<string, unknown> = {};
-      if (opts?.tag) params.tag = opts.tag;
-      if (opts?.column) params.column = opts.column;
+      if (opts?.column) params.status = opts.column;
       const result = await rpc("workboard.cards.list", params);
-      return normalizeWorkboardCardsResult(result);
+      return filterCardsByTag(normalizeWorkboardCardsResult(result), opts?.tag);
     },
 
     async createCard(card) {
-      const result = await rpc("workboard.cards.create", card);
+      const result = await rpc("workboard.cards.create", mapWorkboardCreateParams(card));
       return normalizeWorkboardCardResult(result);
     },
 
     async updateCard(cardId, patch) {
-      const result = await rpc("workboard.cards.update", { id: cardId, ...patch });
+      const result = await rpc("workboard.cards.update", { id: cardId, ...mapWorkboardUpdatePatch(patch) });
       return normalizeWorkboardCardResult(result);
     },
 
@@ -244,8 +371,7 @@ export function createWorkboardGatewayCliRpcClient(token?: string): WorkboardRpc
     },
 
     async isAvailable() {
-      const result = runWorkboardGatewayCliCall("workboard.cards.list", {}, token);
-      return result != null;
+      return (await runWorkboardGatewayCliCall("workboard.cards.list", {}, token)) != null;
     },
   };
 }
