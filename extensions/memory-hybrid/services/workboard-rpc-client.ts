@@ -75,13 +75,13 @@ function workboardApiExternalId(card: WorkboardApiCard): string | undefined {
 export function normalizeWorkboardCardFromApi(raw: unknown): WorkboardRpcCard | null {
   if (typeof raw !== "object" || raw === null) return null;
   const api = raw as WorkboardApiCard;
-  if (typeof api.id !== "string" || typeof api.title !== "string") return null;
+  if (typeof api.id !== "string") return null;
   const column = typeof api.status === "string" ? api.status : typeof api.column === "string" ? api.column : "";
   const tags = Array.isArray(api.labels) ? api.labels : Array.isArray(api.tags) ? api.tags : undefined;
   const externalId = workboardApiExternalId(api);
   return {
     id: api.id,
-    title: api.title,
+    title: typeof api.title === "string" ? api.title : "",
     column,
     description: typeof api.notes === "string" ? api.notes : api.description,
     tags,
@@ -219,7 +219,7 @@ export function createWorkboardHttpRpcClient(gatewayUrl: string, token?: string)
   return {
     async listCards(opts) {
       const params: Record<string, unknown> = {};
-      if (opts?.column) params.status = opts.column;
+      if (opts?.column) params.status = toWorkboardStatusSlug(opts.column);
       if (opts?.tag) params.labels = [opts.tag];
       const result = await rpc("workboard.cards.list", params);
       return filterCardsByTag(normalizeWorkboardCardsResult(result), opts?.tag);
@@ -348,7 +348,7 @@ export function createWorkboardGatewayCliRpcClient(token?: string): WorkboardRpc
   return {
     async listCards(opts) {
       const params: Record<string, unknown> = {};
-      if (opts?.column) params.status = opts.column;
+      if (opts?.column) params.status = toWorkboardStatusSlug(opts.column);
       if (opts?.tag) params.labels = [opts.tag];
       const result = await rpc("workboard.cards.list", params);
       return filterCardsByTag(normalizeWorkboardCardsResult(result), opts?.tag);
