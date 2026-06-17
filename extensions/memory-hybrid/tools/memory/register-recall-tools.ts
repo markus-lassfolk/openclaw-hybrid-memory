@@ -517,16 +517,16 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       retrievalMode,
       includeSuperseded = false,
       asOf: asOfParam,
-        includeCold = false,
-        userId,
-        agentId,
-        sessionId,
-        confirmCrossTenantScope,
-        expandGraph: expandGraphParam,
-        expandDepth: expandDepthParam,
-        mode: recallModeParam,
-        vault: vaultParam,
-      } = params as {
+      includeCold = false,
+      userId,
+      agentId,
+      sessionId,
+      confirmCrossTenantScope,
+      expandGraph: expandGraphParam,
+      expandDepth: expandDepthParam,
+      mode: recallModeParam,
+      vault: vaultParam,
+    } = params as {
       query?: string;
       id?: string | number;
       limit?: number;
@@ -733,8 +733,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         scopeFilter,
       });
       if (!includeCold && results.length > 0) {
-        const coldFilterOpts =
-          asOfSec != null || scopeFilter ? { asOf: asOfSec, scopeFilter } : undefined;
+        const coldFilterOpts = asOfSec != null || scopeFilter ? { asOf: asOfSec, scopeFilter } : undefined;
         results = results.filter((r) => {
           const full = recallFactsDb.getById(r.entry.id, coldFilterOpts);
           return full && full.tier !== "cold";
@@ -843,11 +842,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
     let results: SearchResult[] = [];
     try {
       const useLegacyTagShortcut = Boolean(tag && !shouldUseConstrainedMode && recallMode !== "semantic");
-      const rrfStrategies = resolveRecallRrfStrategies(
-        recallMode,
-        cfg.retrieval.strategies,
-        useLegacyTagShortcut,
-      );
+      const rrfStrategies = resolveRecallRrfStrategies(recallMode, cfg.retrieval.strategies, useLegacyTagShortcut);
       const rrfConfig = { ...cfg.retrieval, strategies: rrfStrategies };
       // interactive-recall uses a different policy with its own vector prep; skip for other modes
       const effectivePolicy =
@@ -882,98 +877,105 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         }
       }
       if (!recallFallback) {
-      const queryExpander =
-        cfg.queryExpansion?.enabled && rrfStrategies.includes("semantic")
-          ? new QueryExpander(cfg.queryExpansion, openai)
-          : null;
-      const embedFn =
-        queryVector != null
-          ? (text: string) =>
-              embedCallWithTimeoutAndRetry(() => embeddings.embed(text), "memory-tools:rrf-deep-retrieval")
-          : null;
-      const rrfOutput =
-        vaultHandles.length > 1
-          ? await runMultiVaultExplicitDeepRetrieval(query, queryVector, vaultHandles, {
-              config: rrfConfig,
-              ...(effectiveMode !== "interactive-recall" && effectivePolicy
-                ? { policy: effectivePolicy }
-                : effectiveMode === "interactive-recall"
-                  ? { mode: effectiveMode as "interactive-recall" }
-                  : {}),
-              ...(useLegacyTagShortcut ? { tagFilter: tag ?? undefined } : {}),
-              ...(constrainedFilters ? { constrainedFilters } : {}),
-              includeSuperseded,
-              scopeFilter,
-              asOf: asOfSec ?? undefined,
-              graphHubDegreeCap: cfg.graph.hubDegreeCap,
-              graphHubScorePenalty: cfg.graph.hubScorePenalty,
-              aliasDb: cfg.aliases?.enabled ? aliasDb : null,
-              clustersConfig: cfg.clusters,
-              embeddingRegistry: embeddingRegistry ?? null,
-              factsDbForEmbeddings: recallFactsDb,
-              queryExpander: queryExpander ?? null,
-              embedFn,
-              rerankingConfig: cfg.reranking,
-              rerankingOpenai: openai,
-              adaptiveOpenai: cfg.documentGrading?.enabled ? openai : undefined,
-              documentGradingConfig: cfg.documentGrading,
-              issueStore: issueStore ?? null,
-              ...(entityLayerFactIds?.length ? { entityLayerCandidateIds: entityLayerFactIds } : {}),
-              warmTierOnly: !includeCold && cfg.memoryTiering.enabled,
-            })
-          : await runExplicitDeepRetrieval(query, queryVector, recallFactsDb.getRawDb(), recallVectorDb, recallFactsDb, {
-              config: rrfConfig,
-              ...(effectiveMode !== "interactive-recall" && effectivePolicy
-                ? { policy: effectivePolicy }
-                : effectiveMode === "interactive-recall"
-                  ? { mode: effectiveMode as "interactive-recall" }
-                  : {}),
-              ...(useLegacyTagShortcut ? { tagFilter: tag ?? undefined } : {}),
-              ...(constrainedFilters ? { constrainedFilters } : {}),
-              includeSuperseded,
-              scopeFilter,
-              asOf: asOfSec ?? undefined,
-              graphHubDegreeCap: cfg.graph.hubDegreeCap,
-              graphHubScorePenalty: cfg.graph.hubScorePenalty,
-              aliasDb: cfg.aliases?.enabled ? aliasDb : null,
-              clustersConfig: cfg.clusters,
-              embeddingRegistry: embeddingRegistry ?? null,
-              factsDbForEmbeddings: recallFactsDb,
-              queryExpander: queryExpander ?? null,
-              embedFn,
-              rerankingConfig: cfg.reranking,
-              rerankingOpenai: openai,
-              adaptiveOpenai: cfg.documentGrading?.enabled ? openai : undefined,
-              documentGradingConfig: cfg.documentGrading,
-              issueStore: issueStore ?? null,
-              ...(entityLayerFactIds?.length ? { entityLayerCandidateIds: entityLayerFactIds } : {}),
-              warmTierOnly: !includeCold && cfg.memoryTiering.enabled,
-            });
+        const queryExpander =
+          cfg.queryExpansion?.enabled && rrfStrategies.includes("semantic")
+            ? new QueryExpander(cfg.queryExpansion, openai)
+            : null;
+        const embedFn =
+          queryVector != null
+            ? (text: string) =>
+                embedCallWithTimeoutAndRetry(() => embeddings.embed(text), "memory-tools:rrf-deep-retrieval")
+            : null;
+        const rrfOutput =
+          vaultHandles.length > 1
+            ? await runMultiVaultExplicitDeepRetrieval(query, queryVector, vaultHandles, {
+                config: rrfConfig,
+                ...(effectiveMode !== "interactive-recall" && effectivePolicy
+                  ? { policy: effectivePolicy }
+                  : effectiveMode === "interactive-recall"
+                    ? { mode: effectiveMode as "interactive-recall" }
+                    : {}),
+                ...(useLegacyTagShortcut ? { tagFilter: tag ?? undefined } : {}),
+                ...(constrainedFilters ? { constrainedFilters } : {}),
+                includeSuperseded,
+                scopeFilter,
+                asOf: asOfSec ?? undefined,
+                graphHubDegreeCap: cfg.graph.hubDegreeCap,
+                graphHubScorePenalty: cfg.graph.hubScorePenalty,
+                aliasDb: cfg.aliases?.enabled ? aliasDb : null,
+                clustersConfig: cfg.clusters,
+                embeddingRegistry: embeddingRegistry ?? null,
+                factsDbForEmbeddings: recallFactsDb,
+                queryExpander: queryExpander ?? null,
+                embedFn,
+                rerankingConfig: cfg.reranking,
+                rerankingOpenai: openai,
+                adaptiveOpenai: cfg.documentGrading?.enabled ? openai : undefined,
+                documentGradingConfig: cfg.documentGrading,
+                issueStore: issueStore ?? null,
+                ...(entityLayerFactIds?.length ? { entityLayerCandidateIds: entityLayerFactIds } : {}),
+                warmTierOnly: !includeCold && cfg.memoryTiering.enabled,
+              })
+            : await runExplicitDeepRetrieval(
+                query,
+                queryVector,
+                recallFactsDb.getRawDb(),
+                recallVectorDb,
+                recallFactsDb,
+                {
+                  config: rrfConfig,
+                  ...(effectiveMode !== "interactive-recall" && effectivePolicy
+                    ? { policy: effectivePolicy }
+                    : effectiveMode === "interactive-recall"
+                      ? { mode: effectiveMode as "interactive-recall" }
+                      : {}),
+                  ...(useLegacyTagShortcut ? { tagFilter: tag ?? undefined } : {}),
+                  ...(constrainedFilters ? { constrainedFilters } : {}),
+                  includeSuperseded,
+                  scopeFilter,
+                  asOf: asOfSec ?? undefined,
+                  graphHubDegreeCap: cfg.graph.hubDegreeCap,
+                  graphHubScorePenalty: cfg.graph.hubScorePenalty,
+                  aliasDb: cfg.aliases?.enabled ? aliasDb : null,
+                  clustersConfig: cfg.clusters,
+                  embeddingRegistry: embeddingRegistry ?? null,
+                  factsDbForEmbeddings: recallFactsDb,
+                  queryExpander: queryExpander ?? null,
+                  embedFn,
+                  rerankingConfig: cfg.reranking,
+                  rerankingOpenai: openai,
+                  adaptiveOpenai: cfg.documentGrading?.enabled ? openai : undefined,
+                  documentGradingConfig: cfg.documentGrading,
+                  issueStore: issueStore ?? null,
+                  ...(entityLayerFactIds?.length ? { entityLayerCandidateIds: entityLayerFactIds } : {}),
+                  warmTierOnly: !includeCold && cfg.memoryTiering.enabled,
+                },
+              );
 
-      // Merge entity-lookup results first, then append RRF results (deduped).
-      // When packed is non-empty, only include fused results whose factId was packed
-      // (avoids including items beyond the token budget). Fall back to the full fused
-      // list when packed is empty (e.g. budget too small to pack any).
-      // Use a factId→entry Map so entry lookup never depends on loop index alignment.
-      const seenIds = new Set<string>(entityResults.map((r) => r.entry.id));
-      results = [...entityResults];
-      const entryByFactId = new Map<string, MemoryEntry>();
-      for (let i = 0; i < rrfOutput.fused.length; i++) {
-        const e = rrfOutput.entries[i];
-        if (e) entryByFactId.set(rrfOutput.fused[i].factId, e);
-      }
-      const packedFactIdSet = rrfOutput.packed.length > 0 ? new Set(rrfOutput.packedFactIds) : null;
-      for (const fusedResult of rrfOutput.fused) {
-        if (packedFactIdSet && !packedFactIdSet.has(fusedResult.factId)) continue;
-        if (seenIds.has(fusedResult.factId)) continue;
-        const entry = entryByFactId.get(fusedResult.factId);
-        if (entry) {
-          results.push({ entry, score: fusedResult.finalScore, backend: "sqlite" });
-          seenIds.add(fusedResult.factId);
+        // Merge entity-lookup results first, then append RRF results (deduped).
+        // When packed is non-empty, only include fused results whose factId was packed
+        // (avoids including items beyond the token budget). Fall back to the full fused
+        // list when packed is empty (e.g. budget too small to pack any).
+        // Use a factId→entry Map so entry lookup never depends on loop index alignment.
+        const seenIds = new Set<string>(entityResults.map((r) => r.entry.id));
+        results = [...entityResults];
+        const entryByFactId = new Map<string, MemoryEntry>();
+        for (let i = 0; i < rrfOutput.fused.length; i++) {
+          const e = rrfOutput.entries[i];
+          if (e) entryByFactId.set(rrfOutput.fused[i].factId, e);
         }
-      }
-      results.sort((a, b) => b.score - a.score);
-      results = results.slice(0, limit);
+        const packedFactIdSet = rrfOutput.packed.length > 0 ? new Set(rrfOutput.packedFactIds) : null;
+        for (const fusedResult of rrfOutput.fused) {
+          if (packedFactIdSet && !packedFactIdSet.has(fusedResult.factId)) continue;
+          if (seenIds.has(fusedResult.factId)) continue;
+          const entry = entryByFactId.get(fusedResult.factId);
+          if (entry) {
+            results.push({ entry, score: fusedResult.finalScore, backend: "sqlite" });
+            seenIds.add(fusedResult.factId);
+          }
+        }
+        results.sort((a, b) => b.score - a.score);
+        results = results.slice(0, limit);
       }
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -1252,9 +1254,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
           return { content: [{ type: "text", text: "Provide a query." }], details: { count: 0 } };
         }
         const limit =
-          typeof params.limit === "number" && params.limit > 0
-            ? Math.min(100, Math.floor(params.limit))
-            : 10;
+          typeof params.limit === "number" && params.limit > 0 ? Math.min(100, Math.floor(params.limit)) : 10;
         const entity = typeof params.entity === "string" ? params.entity.trim() : undefined;
         const tag = Array.isArray(params.tags) && params.tags.length > 0 ? String(params.tags[0]) : undefined;
         const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);

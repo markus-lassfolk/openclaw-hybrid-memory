@@ -326,7 +326,8 @@ function bindPayloadColumns(payload: Record<string, unknown>): {
 } {
   const kind = String(payload.kind ?? "agentTurn");
   if (kind === "systemEvent") {
-    const text = typeof payload.text === "string" ? payload.text : typeof payload.message === "string" ? payload.message : null;
+    const text =
+      typeof payload.text === "string" ? payload.text : typeof payload.message === "string" ? payload.message : null;
     return {
       payload_kind: "systemEvent",
       payload_message: text,
@@ -558,7 +559,9 @@ function cronJobRowId(rawJob: Record<string, unknown>): string {
 }
 
 function loadExistingSqliteCronRows(db: DatabaseSync, storeKey: string): Map<string, Record<string, unknown>> {
-  const rows = db.prepare(`SELECT * FROM cron_jobs WHERE store_key = ?`).all(storeKey) as Array<Record<string, unknown>>;
+  const rows = db.prepare(`SELECT * FROM cron_jobs WHERE store_key = ?`).all(storeKey) as Array<
+    Record<string, unknown>
+  >;
   const out = new Map<string, Record<string, unknown>>();
   for (const row of rows) {
     const jobId = String(row.job_id ?? "");
@@ -648,13 +651,17 @@ function writeCronStoreToSqlite(sqlitePath: string, storeKey: string, store: Ope
       }
     }
 
-    const tx = createTransaction(db, () => {
-      db.prepare(`DELETE FROM cron_jobs WHERE store_key = ?`).run(storeKey);
-      const insert = db.prepare(CRON_JOBS_INSERT_SQL);
-      for (const row of rowsToInsert) {
-        insert.run(row);
-      }
-    }, "IMMEDIATE");
+    const tx = createTransaction(
+      db,
+      () => {
+        db.prepare(`DELETE FROM cron_jobs WHERE store_key = ?`).run(storeKey);
+        const insert = db.prepare(CRON_JOBS_INSERT_SQL);
+        for (const row of rowsToInsert) {
+          insert.run(row);
+        }
+      },
+      "IMMEDIATE",
+    );
     tx();
   } finally {
     db.close();
@@ -692,7 +699,11 @@ export function writeOpenClawCronStore(
 /** Convenience: load store, mutate jobs array in place, then persist. */
 export function withOpenClawCronStore<T>(
   openclawDir: string,
-  mutate: (ctx: { store: OpenClawCronStoreFile; jobs: Array<Record<string, unknown>>; snapshot: OpenClawCronStoreSnapshot }) => T,
+  mutate: (ctx: {
+    store: OpenClawCronStoreFile;
+    jobs: Array<Record<string, unknown>>;
+    snapshot: OpenClawCronStoreSnapshot;
+  }) => T,
 ): T {
   const snapshot = readOpenClawCronStore(openclawDir);
   if (!Array.isArray(snapshot.store.jobs)) snapshot.store.jobs = [];

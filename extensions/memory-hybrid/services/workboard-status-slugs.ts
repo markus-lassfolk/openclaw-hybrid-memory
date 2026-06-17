@@ -50,3 +50,10 @@ export function toWorkboardStatusSlug(column: string): WorkboardStatusSlug {
   if (SLUG_SET.has(lower)) return lower as WorkboardStatusSlug;
   return LEGACY_COLUMN_TO_SLUG[lower] ?? "backlog";
 }
+
+/** Map column name (slug or legacy label) to slug, returning null if unrecognized. */
+export function tryToWorkboardStatusSlug(column: string): WorkboardStatusSlug | null {
+  const lower = column.trim().toLowerCase();
+  if (SLUG_SET.has(lower)) return lower as WorkboardStatusSlug;
+  return LEGACY_COLUMN_TO_SLUG[lower] ?? null;
+}

@@ -75,12 +75,7 @@ export function seedCorpusFacts(factsDb: FactsDB, rows: CorpusRow[]): Map<string
 }
 
 /** Compute average NDCG@k using FTS5 ranking against seeded corpus facts. */
-export function measureFtsNdcg(
-  factsDb: FactsDB,
-  rows: CorpusRow[],
-  idMap: Map<string, string>,
-  k = 5,
-): number {
+export function measureFtsNdcg(factsDb: FactsDB, rows: CorpusRow[], idMap: Map<string, string>, k = 5): number {
   const db = factsDb.getRawDb();
   let sum = 0;
   let counted = 0;

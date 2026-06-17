@@ -6,7 +6,7 @@
 import type { ActiveTaskEntry, ActiveTaskStatus } from "./active-task.js";
 import type { Goal, GoalStatus } from "./goal-stewardship-types.js";
 import type { WorkboardColumnMapping } from "../config/types/workboard.js";
-import { toWorkboardStatusSlug } from "./workboard-status-slugs.js";
+import { toWorkboardStatusSlug, tryToWorkboardStatusSlug } from "./workboard-status-slugs.js";
 
 export type WorkboardCardPayload = {
   title: string;
@@ -168,8 +168,10 @@ function goalStatusToColumn(status: GoalStatus, columns: WorkboardColumnMapping)
 }
 
 export function columnToTaskStatus(column: string, columns: WorkboardColumnMapping): ActiveTaskStatus | null {
-  const lower = column.toLowerCase();
-  const match = (col: string | null) => col?.toLowerCase() === lower;
+  const normalizedColumn = tryToWorkboardStatusSlug(column);
+  if (!normalizedColumn) return null;
+
+  const match = (col: string | null) => col && toWorkboardStatusSlug(col) === normalizedColumn;
 
   if (match(columns.taskInProgress)) return "In progress";
   if (match(columns.taskWaiting)) return "Waiting";
@@ -181,8 +183,10 @@ export function columnToTaskStatus(column: string, columns: WorkboardColumnMappi
 }
 
 export function columnToGoalStatus(column: string, columns: WorkboardColumnMapping): GoalStatus | null {
-  const lower = column.toLowerCase();
-  const match = (col: string | null) => col?.toLowerCase() === lower;
+  const normalizedColumn = tryToWorkboardStatusSlug(column);
+  if (!normalizedColumn) return null;
+
+  const match = (col: string | null) => col && toWorkboardStatusSlug(col) === normalizedColumn;
 
   if (match(columns.goalActive)) return "active";
   if (match(columns.goalCompleted)) return "completed";

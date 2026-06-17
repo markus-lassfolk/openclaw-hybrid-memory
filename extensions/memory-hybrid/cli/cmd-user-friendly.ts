@@ -30,7 +30,9 @@ export interface UserFriendlyContext {
     key: string,
     value: string,
   ) => { ok: boolean; error?: string } | Promise<{ ok: boolean; error?: string }>;
-  runConfigMode?: (mode: string) => { ok: boolean; error?: string; message?: string } | Promise<{ ok: boolean; error?: string; message?: string }>;
+  runConfigMode?: (
+    mode: string,
+  ) => { ok: boolean; error?: string; message?: string } | Promise<{ ok: boolean; error?: string; message?: string }>;
   runInstall?: (opts: { dryRun: boolean }) => Promise<{ ok: boolean }>;
   runMine?: (path: string) => Promise<void>;
 }
@@ -75,9 +77,11 @@ export function registerUserFriendlyCommands(mem: Chainable, ctx: UserFriendlyCo
   registerIfMissing(mem, "bootstrap", () =>
     registerBootstrapCommand(mem, ctx.cfg, ctx.factsDb, {
       runConfigMode: ctx.runConfigMode,
-      runInstall: ctx.runInstall ? async () => {
-        await ctx.runInstall!({ dryRun: false });
-      } : undefined,
+      runInstall: ctx.runInstall
+        ? async () => {
+            await ctx.runInstall!({ dryRun: false });
+          }
+        : undefined,
       runMine: ctx.runMine,
     }),
   );

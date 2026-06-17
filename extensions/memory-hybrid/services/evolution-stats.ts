@@ -46,9 +46,7 @@ export function collectEvolutionStats(db: DatabaseSync): EvolutionStats | null {
            ORDER BY started_at DESC
            LIMIT 1`,
         )
-        .get() as
-        | { started_at: number; items_processed: number; metadata_json: string | null }
-        | undefined;
+        .get() as { started_at: number; items_processed: number; metadata_json: string | null } | undefined;
       if (lastRun) {
         lastEvolutionPassAt = formatTimestampUtc(lastRun.started_at);
         qualityEvolvedLastPass = lastRun.items_processed ?? null;

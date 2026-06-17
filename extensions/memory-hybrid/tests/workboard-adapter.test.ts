@@ -31,9 +31,7 @@ describe("workboard adapter stale card removal", () => {
     };
     const client = mockClient([taskCard]);
 
-    vi.spyOn(await import("../services/workboard-rpc-client.js"), "createWorkboardRpcClient").mockReturnValue(
-      client,
-    );
+    vi.spyOn(await import("../services/workboard-rpc-client.js"), "createWorkboardRpcClient").mockReturnValue(client);
 
     const adapter = createWorkboardAdapter({
       cfg: {
@@ -64,9 +62,7 @@ describe("workboard adapter stale card removal", () => {
     };
     const client = mockClient([taskCard]);
 
-    vi.spyOn(await import("../services/workboard-rpc-client.js"), "createWorkboardRpcClient").mockReturnValue(
-      client,
-    );
+    vi.spyOn(await import("../services/workboard-rpc-client.js"), "createWorkboardRpcClient").mockReturnValue(client);
 
     const adapter = createWorkboardAdapter({
       cfg: {
@@ -97,9 +93,7 @@ describe("workboard adapter stale card removal", () => {
     };
     const client = mockClient([goalCard]);
 
-    vi.spyOn(await import("../services/workboard-rpc-client.js"), "createWorkboardRpcClient").mockReturnValue(
-      client,
-    );
+    vi.spyOn(await import("../services/workboard-rpc-client.js"), "createWorkboardRpcClient").mockReturnValue(client);
 
     const adapter = createWorkboardAdapter({
       cfg: {
@@ -154,9 +148,7 @@ describe("workboard adapter bidirectional sync", () => {
       isAvailable: vi.fn(async () => true),
     } as WorkboardRpcClient;
 
-    vi.spyOn(await import("../services/workboard-rpc-client.js"), "createWorkboardRpcClient").mockReturnValue(
-      client,
-    );
+    vi.spyOn(await import("../services/workboard-rpc-client.js"), "createWorkboardRpcClient").mockReturnValue(client);
 
     const adapter = createWorkboardAdapter({
       cfg: {

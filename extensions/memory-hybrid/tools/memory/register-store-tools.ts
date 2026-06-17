@@ -35,7 +35,11 @@ import { storeAliases } from "../../services/retrieval-aliases.js";
 import { validateScopedClassificationTarget } from "../../services/classification-scope.js";
 import { shouldAutoVerify } from "../../services/verification-store.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../../services/vector-maintenance.js";
-import { isWalWriteFailure, walRemove as walRemoveEntry, walWrite as walWriteEntry } from "../../services/wal-helpers.js";
+import {
+  isWalWriteFailure,
+  walRemove as walRemoveEntry,
+  walWrite as walWriteEntry,
+} from "../../services/wal-helpers.js";
 import type { MemoryEntry } from "../../types/memory.js";
 import { MEMORY_SCOPES } from "../../types/memory.js";
 import { detectFutureDate } from "../../utils/date-detector.js";
@@ -703,7 +707,8 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                   warnMessage: `memory-hybrid: blocked cross-scope or unknown memory_store UPDATE target ${classification.targetId}`,
                 });
                 if (oldFact) {
-                  const walEntryId = await walWriteEntry(storeWal,
+                  const walEntryId = await walWriteEntry(
+                    storeWal,
                     "update",
                     {
                       text: textToStore,
@@ -758,7 +763,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     updateStoreResult.newlyStored === false &&
                     !updateStoreResult.embeddingStale
                   ) {
-                    if (walEntryId) await walRemoveEntry(storeWal,walEntryId, api.logger);
+                    if (walEntryId) await walRemoveEntry(storeWal, walEntryId, api.logger);
                     return {
                       content: [
                         {
@@ -794,7 +799,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     } catch (err) {
                       api.logger.warn(`memory-hybrid: UPDATE merge vector refresh failed: ${err}`);
                     }
-                    if (walEntryId) await walRemoveEntry(storeWal,walEntryId, api.logger);
+                    if (walEntryId) await walRemoveEntry(storeWal, walEntryId, api.logger);
                     return {
                       content: [
                         {
@@ -872,7 +877,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     api.logger.info?.(
                       `memory-hybrid: UPDATE — superseded ${classification.targetId} with ${newEntry.id}: ${classification.reason}`,
                     );
-                    if (walEntryId) await walRemoveEntry(storeWal,walEntryId, api.logger);
+                    if (walEntryId) await walRemoveEntry(storeWal, walEntryId, api.logger);
                     return {
                       content: [
                         {
@@ -892,7 +897,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     };
                   }
                   // WAL cleanup for skipped update path
-                  if (walEntryId) await walRemoveEntry(storeWal,walEntryId, api.logger);
+                  if (walEntryId) await walRemoveEntry(storeWal, walEntryId, api.logger);
                   return {
                     content: [
                       {
@@ -919,7 +924,8 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
 
           // Scope was resolved above (before classify-before-write) for WAL and classification consistency.
 
-          const walEntryId = await walWriteEntry(storeWal,
+          const walEntryId = await walWriteEntry(
+            storeWal,
             "store",
             {
               text: textToStore,
@@ -973,7 +979,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
           });
           const entry = storeResult.entry;
           if (!storeResult.skipped && storeResult.newlyStored === false && !storeResult.embeddingStale) {
-            if (walEntryId) await walRemoveEntry(storeWal,walEntryId, api.logger);
+            if (walEntryId) await walRemoveEntry(storeWal, walEntryId, api.logger);
             return {
               content: [
                 {
@@ -1039,7 +1045,11 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
             }
 
-            if (storeResult.newlyStored && cfg.lifecycle.fragmentEmbedding.enabled && textToStore.length >= cfg.lifecycle.fragmentEmbedding.minChars) {
+            if (
+              storeResult.newlyStored &&
+              cfg.lifecycle.fragmentEmbedding.enabled &&
+              textToStore.length >= cfg.lifecycle.fragmentEmbedding.minChars
+            ) {
               setImmediate(() => {
                 void import("../../services/fragment-embedding.js")
                   .then(({ indexFactFragments }) =>
@@ -1271,7 +1281,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               context: { category },
             });
 
-            if (walEntryId) await walRemoveEntry(storeWal,walEntryId, api.logger);
+            if (walEntryId) await walRemoveEntry(storeWal, walEntryId, api.logger);
             return {
               content: [
                 {
@@ -1305,7 +1315,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             };
           }
           // WAL cleanup and return for skipped store path (Bug fix #1560, #1561)
-          if (walEntryId) await walRemoveEntry(storeWal,walEntryId, api.logger);
+          if (walEntryId) await walRemoveEntry(storeWal, walEntryId, api.logger);
           return {
             content: [
               {
@@ -1343,7 +1353,9 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
       description:
         "Returns facts flagged with contradictions — useful for reviewing uncertain or conflicting knowledge.",
       parameters: Type.Object({
-        since: Type.Optional(Type.String({ description: "ISO8601 timestamp cursor — only contradictions after this time." })),
+        since: Type.Optional(
+          Type.String({ description: "ISO8601 timestamp cursor — only contradictions after this time." }),
+        ),
         entity: Type.Optional(Type.String({ description: "Filter to contradictions involving this entity." })),
         limit: Type.Optional(Type.Number({ description: "Max results (default 50, max 200)." })),
         resolved: Type.Optional(
@@ -1355,8 +1367,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
         const rows = factsDb.queryContradictionSurface({
           since: typeof params.since === "string" ? params.since : undefined,
           entity: typeof params.entity === "string" ? params.entity : undefined,
-          limit:
-            typeof params.limit === "number" && params.limit > 0 ? Math.min(200, Math.floor(params.limit)) : 50,
+          limit: typeof params.limit === "number" && params.limit > 0 ? Math.min(200, Math.floor(params.limit)) : 50,
           resolved: typeof params.resolved === "boolean" ? params.resolved : undefined,
           scopeFilter,
         });
@@ -1369,8 +1380,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                   ? "No contradictions found."
                   : rows
                       .map(
-                        (r) =>
-                          `- [${r.score.toFixed(2)}] ${r.preview} (new=${r.factId}, old=${r.contradictingFactId})`,
+                        (r) => `- [${r.score.toFixed(2)}] ${r.preview} (new=${r.factId}, old=${r.contradictingFactId})`,
                       )
                       .join("\n"),
             },

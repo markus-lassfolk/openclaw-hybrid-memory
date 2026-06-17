@@ -23,11 +23,8 @@ import {
   taskExternalId,
   taskToCard,
 } from "./workboard-card-mapper.js";
-import {
-  type WorkboardRpcCard,
-  type WorkboardRpcClient,
-  createWorkboardRpcClient,
-} from "./workboard-rpc-client.js";
+import { type WorkboardRpcCard, type WorkboardRpcClient, createWorkboardRpcClient } from "./workboard-rpc-client.js";
+import { tryToWorkboardStatusSlug } from "./workboard-status-slugs.js";
 
 export type TaskLoader = () => { active: ActiveTaskEntry[]; completed: ActiveTaskEntry[] };
 export type GoalLoader = () => Goal[] | Promise<Goal[]>;
@@ -191,8 +188,10 @@ async function upsertCard(
   const existingCard = existing.get(payload.externalId);
 
   if (existingCard) {
+    const existingCardColumnSlug = tryToWorkboardStatusSlug(existingCard.column);
+    const payloadColumnSlug = tryToWorkboardStatusSlug(payload.column);
     const needsUpdate =
-      existingCard.column !== payload.column ||
+      existingCardColumnSlug !== payloadColumnSlug ||
       existingCard.title !== payload.title ||
       existingCard.description !== payload.description;
 
@@ -280,7 +279,9 @@ async function pullChanges(
         );
         continue;
       }
-      if (card.column === expectedColumn) {
+      const cardColumnSlug = tryToWorkboardStatusSlug(card.column);
+      const expectedColumnSlug = tryToWorkboardStatusSlug(expectedColumn);
+      if (cardColumnSlug === expectedColumnSlug) {
         traceIntegration(
           verbose,
           `workboard sync [${syncRunId}] pull noop task ${extId} — column "${card.column}" matches memory`,
@@ -333,7 +334,9 @@ async function pullChanges(
         );
         continue;
       }
-      if (card.column === expectedColumn) {
+      const cardColumnSlug = tryToWorkboardStatusSlug(card.column);
+      const expectedColumnSlug = tryToWorkboardStatusSlug(expectedColumn);
+      if (cardColumnSlug === expectedColumnSlug) {
         traceIntegration(
           verbose,
           `workboard sync [${syncRunId}] pull noop goal ${extId} — column "${card.column}" matches memory`,

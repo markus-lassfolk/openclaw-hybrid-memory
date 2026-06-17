@@ -83,9 +83,7 @@ export function computeCompositeScore(
 ): number {
   const weights = getIntentWeights(input.intent);
   const base =
-    input.searchScore * weights.search +
-    input.recencyScore * weights.recency +
-    input.confidence * weights.confidence;
+    input.searchScore * weights.search + input.recencyScore * weights.recency + input.confidence * weights.confidence;
 
   if (config.version === 1) {
     return base;

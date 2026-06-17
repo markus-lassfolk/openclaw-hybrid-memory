@@ -503,9 +503,7 @@ export class FactsDB extends FactsDBLayer2 {
     return recordEpisodeImpl(this.liveDb, input, false).episode;
   }
 
-  recordEpisodeWithCausalLinks(
-    input: Parameters<typeof recordEpisodeImpl>[1],
-  ): ReturnType<typeof recordEpisodeImpl> {
+  recordEpisodeWithCausalLinks(input: Parameters<typeof recordEpisodeImpl>[1]): ReturnType<typeof recordEpisodeImpl> {
     return recordEpisodeImpl(this.liveDb, input, true);
   }
 

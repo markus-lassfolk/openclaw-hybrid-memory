@@ -1697,15 +1697,9 @@ function migrateEpisodeCausalLinksTable(db: DatabaseSync): void {
       FOREIGN KEY (target_episode_id) REFERENCES episodes(id) ON DELETE CASCADE
     )
   `);
-  db.exec(
-    "CREATE INDEX IF NOT EXISTS idx_ecl_source ON episode_causal_links(source_episode_id)",
-  );
-  db.exec(
-    "CREATE INDEX IF NOT EXISTS idx_ecl_target ON episode_causal_links(target_episode_id, confidence DESC)",
-  );
-  db.exec(
-    "CREATE INDEX IF NOT EXISTS idx_ecl_reinforced ON episode_causal_links(last_reinforced_at)",
-  );
+  db.exec("CREATE INDEX IF NOT EXISTS idx_ecl_source ON episode_causal_links(source_episode_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_ecl_target ON episode_causal_links(target_episode_id, confidence DESC)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_ecl_reinforced ON episode_causal_links(last_reinforced_at)");
 }
 
 function migrateEpisodeCausalLinksLastDecayAt(db: DatabaseSync): void {

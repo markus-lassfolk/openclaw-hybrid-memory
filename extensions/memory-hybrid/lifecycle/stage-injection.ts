@@ -21,10 +21,7 @@ import {
 } from "../services/recalled-context-assembler.js";
 import { logRecallEvent } from "../services/recall-events.js";
 import { recordInjectionAttribution } from "../services/injection-attribution-store.js";
-import {
-  attributeInjectionToTurn,
-  segmentTranscriptIntoTurns,
-} from "../services/per-turn-attribution.js";
+import { attributeInjectionToTurn, segmentTranscriptIntoTurns } from "../services/per-turn-attribution.js";
 import { scanInjectionFilter, type InjectionFilterMode } from "../services/injection-filter.js";
 import { emitRecallVerboseLog } from "../services/recall-verbose-log.js";
 import { createRecallSpan, createRecallTimingLogger } from "../services/recall-timing.js";
@@ -204,8 +201,7 @@ async function runInjection(
   } = r;
   const recalledAmbient = issueBlock + narrativeBlock + hotBlock;
 
-  const injectionFilterMode: InjectionFilterMode =
-    ctx.cfg.retrieval?.contextBoundary?.injectionFilter ?? "audit";
+  const injectionFilterMode: InjectionFilterMode = ctx.cfg.retrieval?.contextBoundary?.injectionFilter ?? "audit";
   let injectionFilteredCount = 0;
 
   const vaultHandles =

@@ -1196,9 +1196,7 @@ export function parseLifecycleConfig(cfg: Record<string, unknown>): LifecycleAda
     fragmentEmbedding: {
       enabled: fragmentRaw?.enabled === true,
       minChars:
-        typeof fragmentRaw?.minChars === "number" && fragmentRaw.minChars > 0
-          ? Math.floor(fragmentRaw.minChars)
-          : 6000,
+        typeof fragmentRaw?.minChars === "number" && fragmentRaw.minChars > 0 ? Math.floor(fragmentRaw.minChars) : 6000,
     },
   };
 }

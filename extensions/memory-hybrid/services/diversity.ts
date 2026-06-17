@@ -59,9 +59,7 @@ export function applyDiversityDemotion<T extends { text: string }>(
   const demoted: T[] = [];
 
   for (const item of ranked) {
-    const tooSimilar = kept.some(
-      (k) => jaccardBigramSimilarity(k.text, item.text) > config.maxSimilarity,
-    );
+    const tooSimilar = kept.some((k) => jaccardBigramSimilarity(k.text, item.text) > config.maxSimilarity);
     if (tooSimilar && demoted.length < maxDemote) {
       demoted.push(item);
     } else {

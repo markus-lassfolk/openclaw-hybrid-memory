@@ -34,10 +34,7 @@ export function localMinutesInTimeZone(at: Date, timeZone: string): number {
 }
 
 /** Returns true when wall-clock time in `qw.tz` is inside [start, end). */
-export function isInQuietWindowAt(
-  qw: NonNullable<WorkerLeasesConfig["quietWindow"]>,
-  at: Date,
-): boolean {
+export function isInQuietWindowAt(qw: NonNullable<WorkerLeasesConfig["quietWindow"]>, at: Date): boolean {
   if (!qw.enabled) return false;
   const startMin = parseHmToMinutes(qw.start);
   const endMin = parseHmToMinutes(qw.end);
@@ -54,10 +51,7 @@ export function isInQuietWindowAt(
  * Epoch seconds when the quiet window ends after `at`.
  * Scans forward minute-by-minute using the same TZ logic as `isInQuietWindowAt`.
  */
-export function quietWindowEndEpochSecAt(
-  qw: NonNullable<WorkerLeasesConfig["quietWindow"]>,
-  at: Date,
-): number | null {
+export function quietWindowEndEpochSecAt(qw: NonNullable<WorkerLeasesConfig["quietWindow"]>, at: Date): number | null {
   if (!qw.enabled || !isInQuietWindowAt(qw, at)) return null;
 
   const startMs = at.getTime();
