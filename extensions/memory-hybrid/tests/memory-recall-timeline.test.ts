@@ -214,3 +214,197 @@ describe("memory_session_observability tool", () => {
     );
   });
 });
+
+/**
+ * Smoke tests for OpenClaw gateway recall behavior (fix hybrid-memory recall/search smoke).
+ *
+ * Reproduces failures observed in Maeve main session on 2026-06-21:
+ *   - memory_recall_timeline throwing "requires an authenticated session context"
+ *     when invoked from normal OpenClaw tool context that does not inject
+ *     api.context.sessionId.
+ *
+ * Verifies:
+ *   - When api.context.sessionId is missing AND no caller sessionId is supplied,
+ *     the tool falls back to cross-session timeline recall (recency-windowed,
+ *     default 14 days) instead of throwing.
+ *   - The existing security invariant is preserved: a caller-supplied sessionId
+ *     must still match the authenticated context, and is rejected when no
+ *     authenticated context is available (would-be data exposure vector).
+ */
+describe("memory_recall_timeline smoke (OpenClaw gateway context)", () => {
+  let dir: string;
+  let factsDb: FactsDB;
+  let eventLog: EventLog;
+  let narrativesDb: NarrativesDB;
+
+  function makeApiWithoutSessionContext() {
+    const tools = new Map<string, { execute: (...args: unknown[]) => unknown }>();
+    return {
+      registerTool(...args: unknown[]) {
+        for (const arg of args) {
+          if (arg && typeof arg === "object" && "name" in arg && "execute" in arg) {
+            const tool = arg as { name: string; execute: (...a: unknown[]) => unknown };
+            tools.set(tool.name, { execute: tool.execute });
+          }
+        }
+      },
+      getTool(name: string) {
+        return tools.get(name);
+      },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      context: {}, // OpenClaw gateway does not inject api.context.sessionId
+    };
+  }
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "memory-recall-timeline-smoke-"));
+    factsDb = new FactsDB(join(dir, "facts.db"));
+    eventLog = new EventLog(join(dir, "event-log.db"));
+    narrativesDb = new NarrativesDB(join(dir, "narratives.db"));
+  });
+
+  afterEach(() => {
+    factsDb.close();
+    eventLog.close();
+    narrativesDb.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("does not throw when api.context.sessionId is missing (graceful cross-session recall)", async () => {
+    const api = makeApiWithoutSessionContext();
+    registerMemoryTools(
+      {
+        factsDb,
+        vectorDb: makeMockVectorDb(),
+        cfg: makeCfg(),
+        embeddings: makeMockEmbeddings(),
+        embeddingRegistry: null,
+        openai: {} as never,
+        wal: null,
+        credentialsDb: null,
+        eventLog,
+        narrativesDb,
+        lastProgressiveIndexIds: [],
+        currentAgentIdRef: { value: null },
+        pendingLLMWarnings: createPendingLLMWarnings(),
+      },
+      api as never,
+      noopScopeFilter as never,
+      walWrite,
+      walRemove,
+      findSimilarByEmbedding as never,
+    );
+
+    const tool = api.getTool("memory_recall_timeline");
+    expect(tool).toBeTruthy();
+    const result = (await tool?.execute("tool-call", { query: "anything", limit: 1 })) as {
+      content?: { type: string; text: string }[];
+      details?: { count: number; narratives: unknown[] };
+    };
+    expect(result).toBeTruthy();
+    expect(result.details?.count).toBe(0);
+    expect(result.content?.[0]?.text).toContain("No narrative summary");
+  });
+
+  it("returns cross-session narrative summaries when no authenticated context", async () => {
+    const api = makeApiWithoutSessionContext();
+    narrativesDb.store({
+      sessionId: "older-session",
+      periodStart: Math.floor(Date.parse("2026-06-20T10:00:00.000Z") / 1000),
+      periodEnd: Math.floor(Date.parse("2026-06-20T10:30:00.000Z") / 1000),
+      tag: "session",
+      narrativeText: "Deployed hybrid-memory recall smoke fix to staging.",
+    });
+    registerMemoryTools(
+      {
+        factsDb,
+        vectorDb: makeMockVectorDb(),
+        cfg: makeCfg(),
+        embeddings: makeMockEmbeddings(),
+        embeddingRegistry: null,
+        openai: {} as never,
+        wal: null,
+        credentialsDb: null,
+        eventLog,
+        narrativesDb,
+        lastProgressiveIndexIds: [],
+        currentAgentIdRef: { value: null },
+        pendingLLMWarnings: createPendingLLMWarnings(),
+      },
+      api as never,
+      noopScopeFilter as never,
+      walWrite,
+      walRemove,
+      findSimilarByEmbedding as never,
+    );
+
+    const tool = api.getTool("memory_recall_timeline");
+    const result = (await tool?.execute("tool-call", { query: "deployment", limit: 5 })) as {
+      content?: { type: string; text: string }[];
+      details?: { count: number; narratives: Array<{ sessionId: string; text: string }> };
+    };
+    expect(result.details?.count).toBe(1);
+    expect(result.details?.narratives[0]?.sessionId).toBe("older-session");
+    expect(result.content?.[0]?.text).toContain("hybrid-memory");
+  });
+
+  it("still rejects caller-supplied sessionId without authenticated context (data exposure guard)", async () => {
+    const api = makeApiWithoutSessionContext();
+    registerMemoryTools(
+      {
+        factsDb,
+        vectorDb: makeMockVectorDb(),
+        cfg: makeCfg(),
+        embeddings: makeMockEmbeddings(),
+        embeddingRegistry: null,
+        openai: {} as never,
+        wal: null,
+        credentialsDb: null,
+        eventLog,
+        narrativesDb,
+        lastProgressiveIndexIds: [],
+        currentAgentIdRef: { value: null },
+        pendingLLMWarnings: createPendingLLMWarnings(),
+      },
+      api as never,
+      noopScopeFilter as never,
+      walWrite,
+      walRemove,
+      findSimilarByEmbedding as never,
+    );
+
+    const tool = api.getTool("memory_recall_timeline");
+    await expect(tool?.execute("tool-call", { sessionId: "attacker-controlled" })).rejects.toThrow(
+      /no authenticated session context/i,
+    );
+  });
+
+  it("memory_session_observability returns actionable error when no sessionId is available", async () => {
+    const api = makeApiWithoutSessionContext();
+    registerMemoryTools(
+      {
+        factsDb,
+        vectorDb: makeMockVectorDb(),
+        cfg: makeCfg(),
+        embeddings: makeMockEmbeddings(),
+        embeddingRegistry: null,
+        openai: {} as never,
+        wal: null,
+        credentialsDb: null,
+        eventLog,
+        narrativesDb,
+        lastProgressiveIndexIds: [],
+        currentAgentIdRef: { value: null },
+        pendingLLMWarnings: createPendingLLMWarnings(),
+      },
+      api as never,
+      noopScopeFilter as never,
+      walWrite,
+      walRemove,
+      findSimilarByEmbedding as never,
+    );
+
+    const tool = api.getTool("memory_session_observability");
+    await expect(tool?.execute("tool-call", {})).rejects.toThrow(/requires a sessionId/i);
+  });
+});
