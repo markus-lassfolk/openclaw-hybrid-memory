@@ -278,11 +278,23 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
           typeof api.context?.sessionId === "string" && api.context.sessionId.trim().length > 0
             ? api.context.sessionId.trim()
             : null;
-        if (!contextSessionId) {
-          throw new Error("memory_recall_timeline requires an authenticated session context");
-        }
-        if (requestedSessionId && requestedSessionId !== contextSessionId) {
-          throw new Error("memory_recall_timeline sessionId must match the authenticated session context");
+        // Security invariant: if the caller specifies a sessionId, it MUST match the
+        // authenticated context session. If the caller does NOT specify a sessionId,
+        // we fall back to cross-session timeline recall (recency-windowed, default
+        // 14 days) so the tool still works in OpenClaw gateway invocations that do
+        // not inject an authenticated sessionId. We only reject when a caller
+        // supplied sessionId cannot be verified against the authenticated context.
+        if (requestedSessionId) {
+          if (!contextSessionId) {
+            throw new Error(
+              "memory_recall_timeline: a sessionId parameter was supplied but no authenticated " +
+                "session context is available; pass the same sessionId the gateway exposed in " +
+                "api.context.sessionId, or omit sessionId to recall across recent sessions.",
+            );
+          }
+          if (requestedSessionId !== contextSessionId) {
+            throw new Error("memory_recall_timeline sessionId must match the authenticated session context");
+          }
         }
         const sessionId = contextSessionId;
 
@@ -300,11 +312,14 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         });
 
         if (summaries.length === 0) {
+          const scopeMsg = sessionId
+            ? `for session ${sessionId}`
+            : "across recent sessions (last ~14 days)";
           return {
             content: [
               {
                 type: "text" as const,
-                text: `No narrative summary found for session ${sessionId}.`,
+                text: `No narrative summary found ${scopeMsg}.`,
               },
             ],
             details: { count: 0, narratives: [] },
@@ -377,13 +392,17 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
           typeof api.context?.sessionId === "string" && api.context.sessionId.trim().length > 0
             ? api.context.sessionId.trim()
             : null;
+        // Session observability is per-session and requires authenticated context.
         if (!contextSessionId) {
-          throw new Error("memory_session_observability requires an authenticated session context");
+          throw new Error(
+            "memory_session_observability requires an authenticated session context " +
+              "(api.context.sessionId). Invoke the tool from an authenticated OpenClaw session.",
+          );
         }
         if (requestedSessionId && requestedSessionId !== contextSessionId) {
           throw new Error("memory_session_observability sessionId must match the authenticated session context");
         }
-        const sessionId = contextSessionId;
+        const sessionId = requestedSessionId ?? contextSessionId;
         const agentId =
           typeof params.agentId === "string" && params.agentId.trim().length > 0 ? params.agentId.trim() : null;
         const limit =
