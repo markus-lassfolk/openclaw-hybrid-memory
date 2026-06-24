@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 const execFileMock = vi.hoisted(() => vi.fn());
 vi.mock("../utils/process-runner.js", () => ({ execFile: execFileMock }));
 
+import type { StoreFactInput, StoreFactResult } from "../backends/facts-db/crud.js";
 import { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig } from "../config.js";
@@ -39,6 +40,7 @@ import {
   syncActiveTaskEntryToFacts,
   taskEntityKey,
   upsertProjectTaskKey,
+  type ActiveTaskHygienePlan,
 } from "../services/task-ledger-facts.js";
 import type { MemoryEntry } from "../types/memory.js";
 
@@ -54,6 +56,32 @@ function fact(partial: Partial<MemoryEntry> & { id: string; entity: string; key:
     confidence: 1,
     ...partial,
   } as MemoryEntry;
+}
+
+function skippedStoreResult(input: StoreFactInput, id: string): StoreFactResult {
+  return {
+    skipped: true,
+    rejected: true,
+    evictedFactId: null,
+    embeddingStale: false,
+    newlyStored: false,
+    preMergeText: null,
+    entry: {
+      id,
+      text: input.text ?? "",
+      category: input.category ?? "project",
+      importance: input.importance ?? 0.7,
+      entity: input.entity ?? null,
+      key: input.key ?? null,
+      value: input.value ?? null,
+      source: input.source,
+      createdAt: 1,
+      decayClass: input.decayClass ?? "permanent",
+      expiresAt: null,
+      lastConfirmedAt: 0,
+      confidence: 1,
+    },
+  };
 }
 
 function activeTaskStubs(): { vectorDb: VectorDB; embeddings: EmbeddingProvider } {
@@ -560,10 +588,10 @@ describe("task-ledger-facts", () => {
       const { active } = loadTaskLedgerFromFacts(db);
       const stored = active.find((t) => t.description.includes("#99"));
       expect(stored).toBeDefined();
-      const plan = {
+      const plan: ActiveTaskHygienePlan = {
         olderThanMinutes: 60,
-        duplicates: [] as const,
-        stale: [] as const,
+        duplicates: [],
+        stale: [],
         actions: [
           {
             label: stored!.label,
@@ -616,25 +644,9 @@ describe("task-ledger-facts", () => {
       storeTask("hygiene-ok", "Will apply", "failed", staleIso);
       storeTask("hygiene-fail", "Will fail persist", "failed", staleIso);
 
-      vi.spyOn(FactsDB.prototype, "storeWithResult").mockImplementation(function (this: FactsDB, input) {
+      vi.spyOn(FactsDB.prototype, "storeWithResult").mockImplementation(function (this: FactsDB, input): StoreFactResult {
         if (input.source === "active-task" && input.entity === "hygiene-fail" && input.key === "status") {
-          return {
-            skipped: true,
-            rejected: true,
-            evictedFactId: null,
-            embeddingStale: false,
-            newlyStored: false,
-            preMergeText: null,
-            entry: {
-              id: "blocked-hygiene-fail",
-              text: input.text ?? "",
-              category: "project",
-              importance: 0.7,
-              source: "active-task",
-              createdAt: 1,
-              decayClass: "permanent",
-            },
-          };
+          return skippedStoreResult(input, "blocked-hygiene-fail");
         }
         return originalStoreWithResult.call(this, input);
       });
@@ -1591,7 +1603,7 @@ it("syncActiveTaskEntryToFacts clears handoff when handoff is explicitly set und
   const handoff = {
     schema: "octave/task-handoff@v1",
     artifactId: "artifact-1",
-    signal: "update",
+    signal: "update" as const,
     agent: "worker",
     timestamp: now,
     checksum: "abc123",
@@ -1665,25 +1677,9 @@ it("syncActiveTaskEntryToFacts fails fast when a required key is blocked by pre-
   const originalStoreWithResult = FactsDB.prototype.storeWithResult;
 
   try {
-    vi.spyOn(FactsDB.prototype, "storeWithResult").mockImplementation(function (this: FactsDB, input) {
+    vi.spyOn(FactsDB.prototype, "storeWithResult").mockImplementation(function (this: FactsDB, input): StoreFactResult {
       if (input.source === "active-task" && input.key === "status") {
-        return {
-          skipped: true,
-          rejected: true,
-          evictedFactId: null,
-          embeddingStale: false,
-          newlyStored: false,
-          preMergeText: null,
-          entry: {
-            id: "blocked-status-id",
-            text: input.text ?? "",
-            category: "project",
-            importance: 0.7,
-            source: "active-task",
-            createdAt: 1,
-            decayClass: "permanent",
-          },
-        };
+        return skippedStoreResult(input, "blocked-status-id");
       }
       return originalStoreWithResult.call(this, input);
     });
@@ -1733,25 +1729,9 @@ it("syncActiveTaskEntryToFacts rolls back handoff retire when a later key fails"
       handoff,
     });
 
-    vi.spyOn(FactsDB.prototype, "storeWithResult").mockImplementation(function (this: FactsDB, input) {
+    vi.spyOn(FactsDB.prototype, "storeWithResult").mockImplementation(function (this: FactsDB, input): StoreFactResult {
       if (input.source === "active-task" && input.entity === "handoff-task" && input.key === "related_goal") {
-        return {
-          skipped: true,
-          rejected: true,
-          evictedFactId: null,
-          embeddingStale: false,
-          newlyStored: false,
-          preMergeText: null,
-          entry: {
-            id: "blocked-related-goal",
-            text: input.text ?? "",
-            category: "project",
-            importance: 0.7,
-            source: "active-task",
-            createdAt: 1,
-            decayClass: "permanent",
-          },
-        };
+        return skippedStoreResult(input, "blocked-related-goal");
       }
       return originalStoreWithResult.call(this, input);
     });
@@ -1827,25 +1807,9 @@ it("reconcileActiveTaskInProgressSessionsFacts skips audit fact id when reconcil
       text: "Task [agent:main:subagent:dead-audit] related_session: agent:main:subagent:dead-audit",
     });
 
-    vi.spyOn(FactsDB.prototype, "storeWithResult").mockImplementation(function (this: FactsDB, input) {
+    vi.spyOn(FactsDB.prototype, "storeWithResult").mockImplementation(function (this: FactsDB, input): StoreFactResult {
       if (input.source === "active-task-session-reconcile") {
-        return {
-          skipped: true,
-          rejected: true,
-          evictedFactId: null,
-          embeddingStale: false,
-          newlyStored: false,
-          preMergeText: null,
-          entry: {
-            id: "bogus-audit-id",
-            text: input.text ?? "",
-            category: "episode",
-            importance: 0.7,
-            source: "active-task-session-reconcile",
-            createdAt: 1,
-            decayClass: "permanent",
-          },
-        };
+        return skippedStoreResult(input, "bogus-audit-id");
       }
       return originalStoreWithResult.call(this, input);
     });
@@ -1912,25 +1876,9 @@ it("consumePendingTaskSignalsFacts deletes only signals whose facts persist succ
       memoryDir,
     );
 
-    vi.spyOn(FactsDB.prototype, "storeWithResult").mockImplementation(function (this: FactsDB, input) {
+    vi.spyOn(FactsDB.prototype, "storeWithResult").mockImplementation(function (this: FactsDB, input): StoreFactResult {
       if (input.source === "active-task" && input.entity === "fail-task" && input.key === "status") {
-        return {
-          skipped: true,
-          rejected: true,
-          evictedFactId: null,
-          embeddingStale: false,
-          newlyStored: false,
-          preMergeText: null,
-          entry: {
-            id: "blocked-fail-task-status",
-            text: input.text ?? "",
-            category: "project",
-            importance: 0.7,
-            source: "active-task",
-            createdAt: 1,
-            decayClass: "permanent",
-          },
-        };
+        return skippedStoreResult(input, "blocked-fail-task-status");
       }
       return originalStoreWithResult.call(this, input);
     });

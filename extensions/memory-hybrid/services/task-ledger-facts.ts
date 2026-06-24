@@ -424,9 +424,16 @@ export async function refreshActiveTaskProjectionBestEffort(opts: {
   logger?: { warn?: (m: string) => void };
 }): Promise<{ rendered: boolean; staleMarked: boolean; error?: string }> {
   try {
-    await renderActiveTaskMarkdownFile(opts.factsDb, opts.staleMinutes, opts.filePath, opts.projection, opts.logger, {
-      goalsDir: opts.goalsDir,
-    });
+    await renderActiveTaskMarkdownFile(
+      opts.factsDb,
+      opts.staleMinutes,
+      opts.filePath,
+      opts.projection,
+      opts.logger ? { debug: (message) => opts.logger?.warn?.(message) } : undefined,
+      {
+        goalsDir: opts.goalsDir,
+      },
+    );
     return { rendered: true, staleMarked: false };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -1116,7 +1123,7 @@ export async function upsertProjectTaskKey(
   return {
     entry,
     previous: previous && storeResult.newlyStored ? previous : undefined,
-    changed: storeResult.newlyStored,
+    changed: storeResult.newlyStored === true,
   };
 }
 

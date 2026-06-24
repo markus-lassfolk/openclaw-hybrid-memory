@@ -40,6 +40,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { checkCaptureDedupWindow, computeCaptureDedupHash } from "../services/capture-dedup.js";
 import { computeStatusHeadline } from "../cli/cmd-status.js";
+import type { SearchResult } from "../types/memory.js";
+import type { MemoryEntry } from "../types/memory.js";
 import { setFocusTopicInDir, getFocusTopicFromDir } from "../services/focus-topic.js";
 
 describe("intent classifier (#1910)", () => {
@@ -104,19 +106,39 @@ describe("diversity (#1910)", () => {
 });
 
 describe("BM25 bypass (#1910)", () => {
+  function makeSearchResult(id: string, text: string, score: number, extras?: Partial<MemoryEntry>): SearchResult {
+    return {
+      entry: {
+        id,
+        text,
+        category: "fact",
+        importance: 0.8,
+        entity: null,
+        key: null,
+        value: null,
+        source: "test",
+        createdAt: 1,
+        decayClass: "stable",
+        expiresAt: null,
+        lastConfirmedAt: 0,
+        confidence: 1,
+        ...extras,
+      },
+      score,
+      backend: "sqlite",
+    };
+  }
+
   it("bypasses when top score and gap are strong", () => {
-    const fts = [
-      { entry: { id: "a", text: "x" }, score: 0.9, backend: "sqlite" as const },
-      { entry: { id: "b", text: "y" }, score: 0.5, backend: "sqlite" as const },
-    ];
+    const fts = [makeSearchResult("a", "x", 0.9), makeSearchResult("b", "y", 0.5)];
     const d = evaluateBm25Bypass(fts, { enabled: true, bm25MinScore: 0.85, bm25MinGap: 0.15 }, false);
     expect(d.bypass).toBe(true);
   });
 
   it("still applies composite scoring when BM25 bypass is active", async () => {
     const fts = [
-      { entry: { id: "a", text: "alpha match", pinnedAt: 1 }, score: 0.95, backend: "sqlite" as const },
-      { entry: { id: "b", text: "beta", qualityScore: 0.2 }, score: 0.5, backend: "sqlite" as const },
+      makeSearchResult("a", "alpha match", 0.95, { pinnedAt: 1 }),
+      makeSearchResult("b", "beta", 0.5, { qualityScore: 0.2 }),
     ];
     const getEntry = (id: string) => fts.find((r) => r.entry.id === id)?.entry ?? null;
     const v2 = await applyRetrievalV2({
@@ -139,7 +161,7 @@ describe("BM25 bypass (#1910)", () => {
   it("applyRetrievalV2 can skip bypass telemetry when pipeline already recorded", async () => {
     resetRecallStats();
     recordBypassDecision(true);
-    const fts = [{ entry: { id: "a", text: "x" }, score: 0.9, backend: "sqlite" as const }];
+    const fts = [makeSearchResult("a", "x", 0.9)];
     await applyRetrievalV2({
       query: "test",
       results: fts,
@@ -397,23 +419,24 @@ describe("capture dedup window (#1913)", () => {
 
 describe("status headline (#1917)", () => {
   it("rolls up OK / DEGRADED / FAILING", () => {
+    type StatusInput = Parameters<typeof computeStatusHeadline>[0];
     const base = {
-      cronJobs: [{ enabled: true, consecutiveErrors: 0, lastRunAt: Date.now() }],
+      cronJobs: [{ enabled: true, consecutiveErrors: 0, lastRunAt: new Date().toISOString() }],
       audit: { recentFailures: [] },
       agentHealth: { alerts: [] },
-    } as never;
+    } as unknown as StatusInput;
     expect(computeStatusHeadline(base)).toBe("OK");
     expect(
       computeStatusHeadline({
         ...base,
-        cronJobs: [{ enabled: true, consecutiveErrors: 1, lastRunAt: Date.now() }],
-      } as never),
+        cronJobs: [{ enabled: true, consecutiveErrors: 1, lastRunAt: new Date().toISOString() }],
+      } as StatusInput),
     ).toBe("DEGRADED");
     expect(
       computeStatusHeadline({
         ...base,
-        cronJobs: [{ enabled: true, consecutiveErrors: 3, lastRunAt: Date.now() }],
-      } as never),
+        cronJobs: [{ enabled: true, consecutiveErrors: 3, lastRunAt: new Date().toISOString() }],
+      } as StatusInput),
     ).toBe("FAILING");
   });
 });

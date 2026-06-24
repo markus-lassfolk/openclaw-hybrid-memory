@@ -267,7 +267,7 @@ async function runInjection(
     }
     const messages = (event as { messages?: unknown[] })?.messages;
     if (messages && sideEffects?.accessedIds?.length) {
-      const turns = segmentTranscriptIntoTurns(messages);
+      const turns = segmentTranscriptIntoTurns(messages as Array<{ role?: string; content?: unknown }>);
       const attr = attributeInjectionToTurn(turns, sideEffects.accessedIds);
       const factIdToVaultDb = new Map<string, ReturnType<typeof ctx.factsDb.getRawDb>>();
       for (const id of sideEffects.accessedIds) {

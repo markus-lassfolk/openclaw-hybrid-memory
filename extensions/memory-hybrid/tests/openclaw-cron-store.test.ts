@@ -121,7 +121,7 @@ function seedSqliteCronJob(
         : "5 2 * * *",
       String(payload.kind ?? "agentTurn"),
       String(payload.message ?? payload.text ?? ""),
-      state.lastRunAtMs ?? null,
+      typeof state.lastRunAtMs === "number" ? state.lastRunAtMs : null,
       JSON.stringify(state),
       Date.now(),
       JSON.stringify({ ...job, state: {} }),

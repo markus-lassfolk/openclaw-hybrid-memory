@@ -733,7 +733,7 @@ export async function runDistillForCli(
               url: parsed.url,
               notes: parsed.notes,
             });
-            storedInVault = credStoreResult;
+            storedInVault = credStoreResult != null;
             const pointer = ensureCredentialVaultPointer(factsDb, parsed.service, parsed.type, "distillation", {
               importance: BATCH_STORE_IMPORTANCE,
               sourceDate: sourceDateSec(fact.source_date),

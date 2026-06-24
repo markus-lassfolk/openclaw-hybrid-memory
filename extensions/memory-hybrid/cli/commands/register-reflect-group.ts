@@ -2,7 +2,7 @@
  * Grouped `reflect` CLI commands.
  */
 
-import type { ManageBindings } from "../context.js";
+import type { ManageBindings } from "./manage/bindings.js";
 import type { Chainable } from "../shared.js";
 import {
   createCommandGroup,

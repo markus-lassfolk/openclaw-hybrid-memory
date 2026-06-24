@@ -14,7 +14,7 @@ let factsDb: FactsDB;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "hm-evolution-"));
-  factsDb = new FactsDB(join(tmpDir, "facts.db"), { fuzzyDedupe: false, storeConfig: {} });
+  factsDb = new FactsDB(join(tmpDir, "facts.db"), { fuzzyDedupe: false, storeConfig: { fuzzyDedupe: false } });
 });
 
 afterEach(() => {
@@ -28,6 +28,9 @@ describe("runEvolutionPass (#1914)", () => {
       text: "Frequently recalled deployment checklist",
       category: "pattern",
       importance: 0.6,
+      entity: null,
+      key: null,
+      value: null,
       source: "conversation",
     });
     const db = factsDb.getRawDb();
@@ -54,6 +57,9 @@ describe("runEvolutionPass (#1914)", () => {
       text: "Rarely used note",
       category: "fact",
       importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
       source: "conversation",
     });
     const result = await runEvolutionPass(factsDb.getRawDb(), 50);

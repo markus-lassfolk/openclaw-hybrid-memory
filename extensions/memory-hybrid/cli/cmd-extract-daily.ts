@@ -228,7 +228,7 @@ export async function runExtractDailyForCli(
                 value: parsed.secretValue,
                 url: parsed.url,
                 notes: parsed.notes,
-              });
+              }) != null;
               const sourceDateSec = Math.floor(new Date(dateStr).getTime() / 1000);
               const pointer = ensureCredentialVaultPointer(
                 factsDb,

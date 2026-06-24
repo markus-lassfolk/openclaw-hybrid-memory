@@ -8,7 +8,7 @@ import { join } from "node:path";
 import type { Chainable } from "./shared.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
-import type { ConfigCliResult } from "./cmd-config.js";
+import type { ConfigCliResult } from "./types.js";
 
 const VALID_PRESETS = new Set(["local", "minimal", "enhanced", "complete"]);
 

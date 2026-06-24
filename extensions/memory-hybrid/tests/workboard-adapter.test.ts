@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createWorkboardAdapter } from "../services/workboard-adapter.js";
+import type { TaskStatusUpdater } from "../services/workboard-adapter.js";
 import type { WorkboardRpcCard, WorkboardRpcClient } from "../services/workboard-rpc-client.js";
 import { goalExternalId, taskExternalId } from "../services/workboard-card-mapper.js";
 import { DEFAULT_WORKBOARD_COLUMNS } from "../config/types/workboard.js";
@@ -41,6 +42,7 @@ describe("workboard adapter stale card removal", () => {
         syncTasks: false,
         syncGoals: true,
         bidirectional: false,
+        syncIntervalMinutes: 5,
         columns: DEFAULT_WORKBOARD_COLUMNS,
       },
       loadTasks: () => ({ active: [], completed: [] }),
@@ -72,6 +74,7 @@ describe("workboard adapter stale card removal", () => {
         syncTasks: true,
         syncGoals: false,
         bidirectional: false,
+        syncIntervalMinutes: 5,
         columns: DEFAULT_WORKBOARD_COLUMNS,
       },
       loadTasks: () => ({ active: [], completed: [] }),
@@ -103,6 +106,7 @@ describe("workboard adapter stale card removal", () => {
         syncTasks: true,
         syncGoals: false,
         bidirectional: false,
+        syncIntervalMinutes: 5,
         columns: DEFAULT_WORKBOARD_COLUMNS,
       },
       loadTasks: () => ({ active: [], completed: [] }),
@@ -158,11 +162,12 @@ describe("workboard adapter bidirectional sync", () => {
         syncTasks: true,
         syncGoals: false,
         bidirectional: true,
+        syncIntervalMinutes: 5,
         columns: DEFAULT_WORKBOARD_COLUMNS,
       },
       loadTasks: () => ({ active: [task], completed: [] }),
       loadGoals: () => [],
-      updateTaskStatus,
+      updateTaskStatus: updateTaskStatus as TaskStatusUpdater,
     });
 
     const result = await adapter.sync();

@@ -6,6 +6,7 @@
  */
 
 import type { FactsDB } from "../backends/facts-db.js";
+import type { HybridMemoryConfig } from "../config.js";
 import type { CrystallizationQueueStatusFilter, CrystallizationStore } from "../backends/crystallization-store.js";
 import {
   assertCrystallizationQueueStatusFilter,

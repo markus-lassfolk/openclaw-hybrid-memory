@@ -28,7 +28,7 @@ describe("runMemoryEvolutionPass (#1914)", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "hm-mem-evo-"));
-    factsDb = new FactsDB(join(tmpDir, "facts.db"), { fuzzyDedupe: false, storeConfig: {} });
+    factsDb = new FactsDB(join(tmpDir, "facts.db"), { fuzzyDedupe: false, storeConfig: { fuzzyDedupe: false } });
   });
 
   afterEach(() => {
@@ -43,12 +43,18 @@ describe("runMemoryEvolutionPass (#1914)", () => {
       category: "fact",
       importance: 0.7,
       source: "conversation",
+      entity: null,
+      key: null,
+      value: null,
     });
     const b = factsDb.store({
       text: "Unrelated deployment checklist",
       category: "fact",
       importance: 0.5,
       source: "conversation",
+      entity: null,
+      key: null,
+      value: null,
       tags: ["ops"],
     });
     const now = Math.floor(Date.now() / 1000);
@@ -90,12 +96,18 @@ describe("runMemoryEvolutionPass (#1914)", () => {
       category: "fact",
       importance: 0.7,
       source: "conversation",
+      entity: null,
+      key: null,
+      value: null,
     });
     const b = factsDb.store({
       text: "Unrelated deployment checklist",
       category: "fact",
       importance: 0.5,
       source: "conversation",
+      entity: null,
+      key: null,
+      value: null,
       tags: ["ops"],
     });
     const now = Math.floor(Date.now() / 1000);
@@ -136,7 +148,7 @@ describe("indexFactFragments (#1914)", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "hm-frag-"));
-    factsDb = new FactsDB(join(tmpDir, "facts.db"), { fuzzyDedupe: false, storeConfig: {} });
+    factsDb = new FactsDB(join(tmpDir, "facts.db"), { fuzzyDedupe: false, storeConfig: { fuzzyDedupe: false } });
     vectorDb = new VectorDB(join(tmpDir, "facts.lance"), 4, false);
   });
 
@@ -153,12 +165,20 @@ describe("indexFactFragments (#1914)", () => {
       category: "fact",
       importance: 0.7,
       source: "conversation",
+      entity: null,
+      key: null,
+      value: null,
     });
 
     const result = await indexFactFragments({
       factsDb,
       vectorDb,
-      embeddings: { embed: async () => [0.1, 0.2, 0.3, 0.4], modelName: "test" },
+      embeddings: {
+        embed: async () => [0.1, 0.2, 0.3, 0.4],
+        embedBatch: async (texts: string[]) => texts.map(() => [0.1, 0.2, 0.3, 0.4]),
+        dimensions: 4,
+        modelName: "test",
+      },
       parentFact: parent,
       cfg: { enabled: true, minChars: 500 },
     });
@@ -182,12 +202,20 @@ describe("indexFactFragments (#1914)", () => {
       source: "conversation",
       scope: "session",
       scopeTarget: "sess-fragment-scope",
+      entity: null,
+      key: null,
+      value: null,
     });
 
     await indexFactFragments({
       factsDb,
       vectorDb,
-      embeddings: { embed: async () => [0.1, 0.2, 0.3, 0.4], modelName: "test" },
+      embeddings: {
+        embed: async () => [0.1, 0.2, 0.3, 0.4],
+        embedBatch: async (texts: string[]) => texts.map(() => [0.1, 0.2, 0.3, 0.4]),
+        dimensions: 4,
+        modelName: "test",
+      },
       parentFact: parent,
       cfg: { enabled: true, minChars: 500 },
     });

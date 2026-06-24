@@ -29,6 +29,7 @@ import type { WorkflowStore } from "../../backends/workflow-store.js";
 import type { EvolutionStats } from "../../services/evolution-stats.js";
 import { collectEvolutionStats } from "../../services/evolution-stats.js";
 import { readOpenClawCronStore } from "../../services/openclaw-cron-store.js";
+import type { ProvenanceService } from "../../services/provenance.js";
 import type { VerificationStore } from "../../services/verification-store.js";
 import { getDirSize, getFileSizeAsync, readJsonFile } from "../../utils/fs.js";
 import { formatTimestampUtc, nowIso } from "../../utils/dates.js";
@@ -1099,7 +1100,7 @@ export function collectMemoryViewerProvenance(ctx: DashboardContext, factId: str
       confidence: chain.fact.confidence,
       provenanceSession: chain.source.sessionId,
       sourceTurn: chain.source.turn,
-      edges: chain.edges.map((e) => ({
+      edges: chain.edges.map((e: (typeof chain.edges)[number]) => ({
         edgeType: e.edgeType,
         sourceType: e.sourceType,
         sourceId: e.sourceId,

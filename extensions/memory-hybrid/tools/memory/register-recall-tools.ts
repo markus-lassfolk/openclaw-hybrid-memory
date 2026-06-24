@@ -6,6 +6,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
+import type { RetrievalConfig } from "../../config.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { expandGraph, formatLinkPath } from "../../services/graph-retrieval.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
@@ -591,7 +592,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
     const source = normalizeOptionalString(sourceParam);
     const verificationTier = normalizeOptionalString(verificationTierParam);
     const sourceSession = normalizeOptionalString(sourceSessionParam);
-    const asOfSec = asOfParam != null && asOfParam !== "" ? parseSourceDate(asOfParam) : undefined;
+    const asOfSec = (asOfParam != null && asOfParam !== "" ? parseSourceDate(asOfParam) : undefined) ?? undefined;
 
     // Scope filtering with auto-detection
     // ⚠️ SECURITY WARNING: userId/agentId/sessionId are caller-controlled parameters.
@@ -862,7 +863,10 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
     try {
       const useLegacyTagShortcut = Boolean(tag && !shouldUseConstrainedMode && recallMode !== "semantic");
       const rrfStrategies = resolveRecallRrfStrategies(recallMode, cfg.retrieval.strategies, useLegacyTagShortcut);
-      const rrfConfig = { ...cfg.retrieval, strategies: rrfStrategies };
+      const rrfConfig: RetrievalConfig = {
+        ...cfg.retrieval,
+        strategies: rrfStrategies as RetrievalConfig["strategies"],
+      };
       // interactive-recall uses a different policy with its own vector prep; skip for other modes
       const effectivePolicy =
         effectiveMode !== "interactive-recall"
@@ -1014,8 +1018,8 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
           query,
           limit,
           queryVector,
-          recallFactsDb,
-          recallVectorDb,
+          factsDb: recallFactsDb,
+          vectorDb: recallVectorDb,
           recallOpts,
           scopeFilter,
           warmTierOnly: !includeCold && cfg.memoryTiering.enabled,
@@ -1214,7 +1218,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       agentId: agentIdForAudit(),
       action: "memory_recall",
       target: query ? `query="${query.slice(0, 160)}"` : undefined,
-      outcome: recallOutcome,
+      outcome: recallOutcome === "degraded_fallback" ? "partial" : recallOutcome,
       durationMs: Date.now() - recallStartedAt,
       sessionId: api.context?.sessionId ?? undefined,
       context: {

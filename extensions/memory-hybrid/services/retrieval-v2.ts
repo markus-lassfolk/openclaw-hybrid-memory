@@ -161,7 +161,7 @@ export async function applyRetrievalV2(opts: ApplyRetrievalV2Opts): Promise<Retr
   scored.sort((a, b) => b.score - a.score);
   const diversityStarted = Date.now();
   const { items: diverseItems, demotedCount: dmCount } = applyDiversityDemotion(
-    scored.map((s) => ({ text: s.text, ...s })),
+    scored.map((s) => ({ ...s, text: s.text })),
     opts.config.diversity,
   );
   recordRecallStageTiming("mmr", Date.now() - diversityStarted);

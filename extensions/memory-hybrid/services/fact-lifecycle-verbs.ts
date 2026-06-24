@@ -4,6 +4,7 @@
 
 import { appendFactProvenance } from "../backends/facts-db/provenance-json.js";
 import type { FactsDB } from "../backends/facts-db.js";
+import type { SQLInputValue } from "node:sqlite";
 import { GLOBAL_ONLY_SCOPE_SENTINEL } from "../utils/scope-filter.js";
 
 export const DEFAULT_PIN_QUOTA = 10;
@@ -63,7 +64,7 @@ export function countPinnedFacts(
       sql += " AND scope = 'global'";
     }
   }
-  const row = db.prepare(sql).get(...params) as { cnt: number } | undefined;
+  const row = db.prepare(sql).get(...(params as SQLInputValue[])) as { cnt: number } | undefined;
   return row?.cnt ?? 0;
 }
 

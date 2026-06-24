@@ -76,8 +76,8 @@ function isStandaloneCliProcess(argv = process.argv): boolean {
 
 /** Wrap async action to exit on completion (only for standalone CLI). */
 export const withExit =
-  <A extends unknown[], R>(fn: (...args: A) => Promise<R>) =>
-  (...args: A) => {
+  <A extends unknown[], R>(fn: (...args: A) => R | Promise<R>) =>
+  (...args: A): Promise<void> => {
     const isStandaloneCli = isStandaloneCliProcess();
     return Promise.resolve(fn(...args)).then(
       () => {

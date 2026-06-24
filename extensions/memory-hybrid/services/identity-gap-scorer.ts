@@ -53,7 +53,7 @@ export function scoreIdentityGaps(insights: MemoryEntry[], workspaceRoot: string
   let uncovered = 0;
   for (const insight of candidates) {
     const tokens = tokenSet(insight.text);
-    let bestFile = IDENTITY_GAP_FILES[0];
+    let bestFile: (typeof IDENTITY_GAP_FILES)[number] = IDENTITY_GAP_FILES[0];
     let bestOverlap = 0;
     for (const file of IDENTITY_GAP_FILES) {
       const ratio = overlapRatio(tokens, identityContents[file] ?? "");

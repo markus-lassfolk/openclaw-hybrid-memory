@@ -362,17 +362,19 @@ async function applySelfCorrectionRemediations(params: {
       }
       if (opts.dryRun) continue;
       try {
-        const storeResult = factsDb.storeWithResult({
-          text,
-          category: "technical",
-          importance: CLI_STORE_IMPORTANCE,
-          entity: obj.entity ?? null,
-          key: typeof obj.key === "string" ? obj.key : null,
-          value: text.slice(0, 200),
-          source: "self-correction",
-          tags: Array.isArray(obj.tags) ? obj.tags : [],
-          suppressVectorFallbackWarning: true,
-        });
+        const storeResult = factsDb.storeWithResult(
+          {
+            text,
+            category: "technical",
+            importance: CLI_STORE_IMPORTANCE,
+            entity: obj.entity ?? null,
+            key: typeof obj.key === "string" ? obj.key : null,
+            value: text.slice(0, 200),
+            source: "self-correction",
+            tags: Array.isArray(obj.tags) ? obj.tags : [],
+          },
+          { suppressVectorFallbackWarning: true },
+        );
         if (storeResult.skipped) continue;
         if (storeResult.newlyStored === false && !storeResult.embeddingStale) continue;
         const entry = storeResult.entry;

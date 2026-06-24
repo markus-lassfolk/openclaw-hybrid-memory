@@ -226,7 +226,7 @@ export async function runMemoryEvolutionPass(
       }
 
       if (!updated) {
-        updated = applyHeuristicUpdate(other, ctx, evolutionCfg, updateNeighbor);
+        updated = applyHeuristicUpdate(other, ctx, evolutionCfg, updateNeighbor as { run: (...args: unknown[]) => unknown });
       }
 
       if (updated) {

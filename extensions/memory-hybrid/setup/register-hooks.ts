@@ -535,8 +535,9 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
           );
           const blocks: string[] = [];
           let usedRecallSnippet = false;
+          const rApi = withHookResolutionApi(api, hookCtx);
           const compactionSessionKey =
-            resolveSessionKeyFromHookEvent(event, hookCtx) ?? lifecycleContext.currentAgentIdRef.value ?? "default";
+            resolveSessionKeyFromHookEvent(event, rApi) ?? lifecycleContext.currentAgentIdRef.value ?? "default";
           const lastPrompt =
             lifecycleContext.lastAutoRecallPromptBySession.get(compactionSessionKey)?.trim() ??
             (typeof lifecycleContext.lastAutoRecallPromptRef.value === "string"

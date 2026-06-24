@@ -224,7 +224,11 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           pluginLogger.error(
             `[dashboard-server] /api/viewer/stats: ${err instanceof Error ? err.message : String(err)}`,
           );
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), { route: pathname });
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "dashboard:viewer-stats",
+            subsystem: "dashboard",
+            route: pathname,
+          });
           res.writeHead(500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "InternalServerError" }));
         });
@@ -240,7 +244,11 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         pluginLogger.error(
           `[dashboard-server] /api/viewer/recall-stats: ${err instanceof Error ? err.message : String(err)}`,
         );
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), { route: pathname });
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "dashboard:viewer-recall-stats",
+          subsystem: "dashboard",
+          route: pathname,
+        });
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "InternalServerError" }));
       }
@@ -257,7 +265,11 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         pluginLogger.error(
           `[dashboard-server] /api/viewer/recall-signals: ${err instanceof Error ? err.message : String(err)}`,
         );
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), { route: pathname });
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "dashboard:viewer-recall-signals",
+          subsystem: "dashboard",
+          route: pathname,
+        });
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "InternalServerError" }));
       }

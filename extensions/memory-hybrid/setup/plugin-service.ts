@@ -117,6 +117,7 @@ export interface PluginServiceContext {
     watchdogTimer: { value: ReturnType<typeof setInterval> | null };
     maintenanceTick: { value: ReturnType<typeof setInterval> | null };
     maintenanceStartupTimeout: { value: ReturnType<typeof setTimeout> | null };
+    shuttingDownRef: { value: boolean };
   };
 }
 
@@ -161,8 +162,6 @@ export function createPluginService(ctx: PluginServiceContext) {
     eventBus,
   } = ctx;
 
-  let observerRunning = false;
-  let observerRunPromise: Promise<void> | null = null;
   let watchdogRunning = false;
   let watchdogRunPromise: Promise<void> | null = null;
   let shuttingDown = false;
@@ -751,7 +750,6 @@ export function createPluginService(ctx: PluginServiceContext) {
             auditStore,
             agentHealthStore,
             proposalsDb,
-            credentialsDb,
             openai,
             embeddings,
             eventBus: eventBus ?? null,
@@ -782,6 +780,7 @@ export function createPluginService(ctx: PluginServiceContext) {
           api.logger.warn(`memory-hybrid: maintenance tick failed: ${err}`);
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "maintenance-tick",
+            operation: "maintenance-tick",
           });
         } finally {
           maintenanceTickInFlight = false;
@@ -1038,16 +1037,6 @@ export function createPluginService(ctx: PluginServiceContext) {
         dashboardServer = null;
       }
       api.logger.info("memory-hybrid: stopping...");
-      if (observerRunPromise) {
-        const timeoutMs = 5000;
-        const completed = await Promise.race([
-          observerRunPromise.then(() => true).catch(() => true),
-          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
-        ]);
-        if (!completed) {
-          api.logger.warn("memory-hybrid: passive-observer shutdown timed out; closing databases anyway");
-        }
-      }
       if (watchdogRunPromise) {
         const timeoutMs = 5000;
         const completed = await Promise.race([

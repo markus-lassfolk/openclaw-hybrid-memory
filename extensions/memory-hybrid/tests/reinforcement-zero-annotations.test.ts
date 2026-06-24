@@ -404,7 +404,7 @@ describe("LLM failure → degraded_model_or_parser (#1639)", () => {
     vi.spyOn(adaptiveLlm, "chatCompleteWithAdaptiveMaintenanceRetry").mockResolvedValue({
       content: "",
       toolCalls: [{ name: "annotate", arguments: "not json" }],
-    } as Awaited<ReturnType<typeof adaptiveLlm.chatCompleteWithAdaptiveMaintenanceRetry>>);
+    } as unknown as Awaited<ReturnType<typeof adaptiveLlm.chatCompleteWithAdaptiveMaintenanceRetry>>);
     const sessionFile = join(tmpDir, "2026-01-01-session.jsonl");
     writeSessionWithoutMemoryRecall(sessionFile);
 

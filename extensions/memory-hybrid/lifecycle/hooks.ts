@@ -100,7 +100,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 },
               });
             }
-            return degraded.prependContext ? { prependContext: degraded.prependContext } : undefined;
+            return degraded.kind !== "full" && degraded.prependContext
+              ? { prependContext: degraded.prependContext }
+              : undefined;
           }
           if (recallStageResult.kind === "degraded") {
             if (capturedFirstRecallBegin) {

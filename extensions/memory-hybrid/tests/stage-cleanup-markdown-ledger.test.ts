@@ -64,7 +64,7 @@ describe("stage-cleanup markdown ledger signal consumption", () => {
       embeddings,
       currentAgentIdRef: { value: "test-agent" },
       auditStore: null,
-    } as LifecycleContext;
+    } as unknown as LifecycleContext;
     api = createMockPluginApi();
     const logger = { info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
     const apiWithLogger = {

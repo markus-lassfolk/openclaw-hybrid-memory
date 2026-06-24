@@ -682,17 +682,19 @@ export async function runExtractReinforcementForCli(
             const tags: string[] = Array.isArray(obj.tags) ? obj.tags : [];
             if (isPattern && !tags.includes("reinforcement")) tags.push("reinforcement");
             if (isPattern && !tags.includes("behavioral")) tags.push("behavioral");
-            const storeResult = factsDb.storeWithResult({
-              text,
-              category: isPattern ? "pattern" : "technical",
-              importance: CLI_STORE_IMPORTANCE,
-              entity: obj.entity ?? null,
-              key: typeof obj.key === "string" ? obj.key : null,
-              value: text.slice(0, 200),
-              source: "reinforcement-analysis",
-              tags,
-              suppressVectorFallbackWarning: true,
-            });
+            const storeResult = factsDb.storeWithResult(
+              {
+                text,
+                category: isPattern ? "pattern" : "technical",
+                importance: CLI_STORE_IMPORTANCE,
+                entity: obj.entity ?? null,
+                key: typeof obj.key === "string" ? obj.key : null,
+                value: text.slice(0, 200),
+                source: "reinforcement-analysis",
+                tags,
+              },
+              { suppressVectorFallbackWarning: true },
+            );
             if (storeResult.skipped) {
               continue;
             }
@@ -833,19 +835,21 @@ export async function runExtractReinforcementForCli(
                 `[Reinforcement praise] User: "${incident.userMessage.slice(0, 180)}" — praised behavior: ${incident.agentBehavior.slice(0, 180)}`,
               );
               if (!factsDb.hasDuplicate(praiseText, "reinforcement-praise")) {
-                const storeResult = factsDb.storeWithResult({
-                  text: praiseText,
-                  category: "preference",
-                  importance: Math.min(0.85, 0.5 + incident.confidence * 0.3),
-                  entity: null,
-                  key: "reinforcement_praise",
-                  value: praiseText.slice(0, 200),
-                  source: "reinforcement-praise",
-                  confidence: incident.confidence,
-                  tags: ["reinforcement", "praise", "no-recall-ids"],
-                  decayClass: "normal",
-                  suppressVectorFallbackWarning: true,
-                });
+                const storeResult = factsDb.storeWithResult(
+                  {
+                    text: praiseText,
+                    category: "preference",
+                    importance: Math.min(0.85, 0.5 + incident.confidence * 0.3),
+                    entity: null,
+                    key: "reinforcement_praise",
+                    value: praiseText.slice(0, 200),
+                    source: "reinforcement-praise",
+                    confidence: incident.confidence,
+                    tags: ["reinforcement", "praise", "no-recall-ids"],
+                    decayClass: "normal",
+                  },
+                  { suppressVectorFallbackWarning: true },
+                );
                 if (!storeResult.skipped && (storeResult.newlyStored || storeResult.embeddingStale)) {
                   praiseStored = true;
                   annotated++;

@@ -3,6 +3,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
+import type { SQLInputValue } from "node:sqlite";
 import type { HybridMemoryConfig } from "../../config.js";
 import {
   pinFact,
@@ -14,7 +15,10 @@ import {
 import { createRecallSpan } from "../../services/recall-timing.js";
 import { recordIntentDistribution } from "../../services/recall-timing-stats.js";
 import { runExplicitDeepRetrieval } from "../../services/retrieval-orchestrator.js";
-import { runMultiVaultExplicitDeepRetrieval } from "../../services/multi-vault-retrieval.js";
+import {
+  runMultiVaultExplicitDeepRetrieval,
+  type MultiVaultRetrievalResult,
+} from "../../services/multi-vault-retrieval.js";
 import { applyRetrievalV2, DEFAULT_RETRIEVAL_V2_CONFIG } from "../../services/retrieval-v2.js";
 import { applyFragmentRecallPostProcess, resolveRecallInjectionText } from "../../services/fragment-recall.js";
 import { buildToolScopeFilter, scopeFieldsFromFilter } from "../../utils/scope-filter.js";
@@ -76,7 +80,7 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
           Type.String({ description: "Named vault from plugin config vaults map, or 'all' to fan out" }),
         ),
       }),
-      async execute(_id, args: { query?: string; full?: boolean; limit?: number; vault?: string }) {
+      async execute(_toolCallId: string, args: { query?: string; full?: boolean; limit?: number; vault?: string }) {
         const query = String(args.query ?? "").trim();
         if (!query) return { content: [{ type: "text", text: "Query is required." }] };
         const limit = typeof args.limit === "number" ? Math.min(20, args.limit) : 5;
@@ -119,7 +123,10 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
           backend: "sqlite" as const,
         }));
 
-        const vaultByFactId = "vaultByFactId" in result ? result.vaultByFactId : new Map<string, string>();
+        const vaultByFactId: Map<string, string> =
+          "vaultByFactId" in result
+            ? (result as MultiVaultRetrievalResult).vaultByFactId
+            : new Map<string, string>();
         const vaultHandleByName = new Map(vaultHandles.map((h) => [h.name, h]));
         const getEntry = (id: string) => {
           const vaultName = vaultByFactId.get(id);
@@ -181,7 +188,7 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
           Type.String({ description: "Named vault from plugin config vaults map, or 'all' to fan out" }),
         ),
       }),
-      async execute(_id, args: { idOrQuery?: string; reason?: string; vault?: string }) {
+      async execute(_toolCallId: string, args: { idOrQuery?: string; reason?: string; vault?: string }) {
         const key = String(args.idOrQuery ?? "").trim();
         const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, {
           multiAgent: cfg.multiAgent,
@@ -224,7 +231,7 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
           Type.String({ description: "Named vault from plugin config vaults map, or 'all' to fan out" }),
         ),
       }),
-      async execute(_id, args: { idOrQuery?: string; until?: string; vault?: string }) {
+      async execute(_toolCallId: string, args: { idOrQuery?: string; until?: string; vault?: string }) {
         const key = String(args.idOrQuery ?? "").trim();
         const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, {
           multiAgent: cfg.multiAgent,
@@ -270,7 +277,7 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
         text: Type.String(),
         tags: Type.Optional(Type.Array(Type.String())),
       }),
-      async execute(_id, args: { text?: string; tags?: string[] }) {
+      async execute(_toolCallId: string, args: { text?: string; tags?: string[] }) {
         const text = String(args.text ?? "").trim();
         if (!text) return { content: [{ type: "text", text: "text is required." }] };
         const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, {
@@ -337,7 +344,7 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
       parameters: Type.Object({
         limit: Type.Optional(Type.Number()),
       }),
-      async execute(_id, args: { limit?: number }) {
+      async execute(_toolCallId: string, args: { limit?: number }) {
         const limit = typeof args.limit === "number" ? Math.min(50, Math.max(1, args.limit)) : 10;
         const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, {
           multiAgent: cfg.multiAgent,
@@ -348,7 +355,7 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
           : { scope: "global" as const, scopeTarget: undefined };
         const db = factsDb.getRawDb();
         let sql = `SELECT text FROM facts WHERE category = 'diary' AND superseded_at IS NULL`;
-        const params: unknown[] = [];
+        const params: SQLInputValue[] = [];
         if (scope === "global") {
           sql += ` AND scope = 'global'`;
         } else {

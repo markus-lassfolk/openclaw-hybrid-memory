@@ -26,11 +26,11 @@ function makeCandidate(id: string, text: string): SearchResult {
 }
 
 describe("filterCandidatesByInteractiveGrading", () => {
-  const cfg = { enabled: true, interactiveRecall: true, interactiveTopN: 2 };
+  const cfg = { enabled: true, interactiveRecall: true, interactiveTopN: 2, timeoutMs: undefined };
 
   it("returns all candidates when grading is disabled", async () => {
     const candidates = [makeCandidate("a", "alpha"), makeCandidate("b", "beta")];
-    const out = await filterCandidatesByInteractiveGrading("q", candidates, { enabled: false }, {} as never);
+    const out = await filterCandidatesByInteractiveGrading("q", candidates, { enabled: false, timeoutMs: undefined }, {} as never);
     expect(out).toEqual(candidates);
   });
 

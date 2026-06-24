@@ -16,8 +16,8 @@ describe("resolveVaultFactsTriplesMulti", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "hm-vault-spo-"));
-    defaultDb = new FactsDB(join(tmpDir, "default.db"), { fuzzyDedupe: false, storeConfig: {} });
-    secondaryDb = new FactsDB(join(tmpDir, "work.db"), { fuzzyDedupe: false, storeConfig: {} });
+    defaultDb = new FactsDB(join(tmpDir, "default.db"), { fuzzyDedupe: false, storeConfig: { fuzzyDedupe: false } });
+    secondaryDb = new FactsDB(join(tmpDir, "work.db"), { fuzzyDedupe: false, storeConfig: { fuzzyDedupe: false } });
   });
 
   afterEach(() => {

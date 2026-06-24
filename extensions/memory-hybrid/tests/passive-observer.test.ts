@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import * as chat from "../services/chat.js";
 import {
   type ExtractedFact,
@@ -27,8 +27,8 @@ import {
 
 /** Mock factsDb.storeWithResult wired to an optional store spy (passive-observer uses storeWithResult). */
 function mockFactsDbStore(overrides: Record<string, unknown> = {}) {
-  const store =
-    (overrides.store as ReturnType<typeof vi.fn> | undefined) ??
+  const store: Mock<(args: Record<string, unknown>) => { id: string }> =
+    (overrides.store as Mock<(args: Record<string, unknown>) => { id: string }> | undefined) ??
     vi.fn().mockReturnValue({ id: `fact-${randomUUID()}` });
   const storeWithResult =
     (overrides.storeWithResult as ReturnType<typeof vi.fn> | undefined) ??

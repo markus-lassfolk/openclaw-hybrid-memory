@@ -463,6 +463,8 @@ describe("provenance packing", () => {
       createdAt: 1_700_000_000,
       confidence: 0.9,
       decayClass: "normal" as const,
+      expiresAt: null,
+      lastConfirmedAt: 1_700_000_000,
     };
     const { packed } = packIntoBudget([{ factId: "consolidated-1", entry }], 5000, {
       provenanceByFactId: new Map([["consolidated-1", "2 src: Original A; Original B"]]),

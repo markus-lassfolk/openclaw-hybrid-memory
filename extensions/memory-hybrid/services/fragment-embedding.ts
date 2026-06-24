@@ -45,6 +45,9 @@ export async function indexFactFragments(opts: {
     const fragmentText = `[fragment of ${parentFact.id}] ${parentSummary}\n\n${chunk.text}`;
     const result = factsDb.storeWithResult({
       text: fragmentText,
+      entity: null,
+      key: null,
+      value: fragmentText.slice(0, 200),
       summary: chunk.sectionHeading ? `${chunk.sectionHeading}: ${chunk.text.slice(0, 160)}` : chunk.text.slice(0, 200),
       category: "fact",
       importance: Math.max(0.3, (parentFact.importance ?? 0.5) * 0.85),

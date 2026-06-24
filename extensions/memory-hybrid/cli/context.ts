@@ -88,12 +88,22 @@ export type ManageContext = {
     dryRun: boolean;
     limit: number;
     model: string;
-  }) => Promise<{ clustersFound: number; merged: number; deleted: number }>;
+  }) => Promise<{
+    clustersFound: number;
+    merged: number;
+    deleted: number;
+    clustersFailed?: number;
+    vectorFailures?: number;
+    semanticOutcome?: string;
+    skipped?: boolean;
+    skipReason?: string;
+  }>;
   runReflection: (opts: { window: number; dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
     factsAnalyzed: number;
     patternsExtracted: number;
     patternsStored: number;
     window: number;
+    semanticOutcome?: string;
   }>;
   runReflectionRules: (opts: {
     dryRun: boolean;
@@ -124,7 +134,7 @@ export type ManageContext = {
     model?: string;
     verbose?: boolean;
     window?: number;
-  }) => Promise<{ insightsExtracted: number; insightsStored: number; questionsAsked: number }>;
+  }) => Promise<{ insightsExtracted: number; insightsStored: number; questionsAsked: number; semanticOutcome?: string }>;
   reflectionConfig: { enabled: boolean; defaultWindow: number; minObservations: number; model: string };
   runClassify: (opts: { dryRun: boolean; limit: number; model?: string }) => Promise<{
     reclassified: number;
@@ -152,6 +162,9 @@ export type ManageContext = {
     sessionsScanned: number;
     dryRun?: boolean;
     skipped?: boolean;
+    partialFailure?: boolean;
+    jobRunId?: string;
+    semanticOutcome?: string;
   }>;
   runRecordDistill?: () => Promise<unknown>;
   runExtractProcedures?: (opts: {
@@ -292,12 +305,23 @@ export type ManageContext = {
     days?: number;
     verbose?: boolean;
     dryRun?: boolean;
-  }) => Promise<{ sessionsScanned: number }>;
+  }) => Promise<{
+    sessionsScanned: number;
+    stored?: number;
+    partial?: boolean;
+    dedupeDegraded?: boolean;
+    cursorBlockedReason?: string;
+  }>;
   runExtractReinforcement?: (opts: {
     days?: number;
     verbose?: boolean;
     dryRun?: boolean;
-  }) => Promise<{ sessionsScanned: number }>;
+  }) => Promise<{
+    sessionsScanned: number;
+    jobRunId?: string;
+    semanticOutcome?: string;
+    annotationStatus?: string;
+  }>;
   runExtractImplicitFeedback?: (opts: {
     days?: number;
     verbose?: boolean;
@@ -327,8 +351,18 @@ export type ManageContext = {
   runGenerateAutoSkills?: (opts: {
     dryRun: boolean;
     verbose?: boolean;
-  }) => Promise<{ generated: number; skipped?: number; paths?: string[] }>;
-  runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
+    apply?: boolean;
+  }) => Promise<{
+    generated: number;
+    skipped?: number;
+    paths?: string[];
+    summary?: { failedValidation?: number; failedEval?: number };
+  }>;
+  runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{
+    created: number;
+    jobRunId?: string;
+    semanticOutcome?: string;
+  }>;
   runDreamCycle?: (opts?: { verbose?: boolean }) => Promise<import("../services/dream-cycle.js").DreamCycleResult>;
   runContinuousVerification?: (opts?: {
     verbose?: boolean;

@@ -45,7 +45,16 @@ export function parseSessionMessagesFromLines(lines: string[], subsystem: string
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
-      const obj = JSON.parse(trimmed) as { type?: string; message?: { role?: string; content?: unknown } };
+      const obj = JSON.parse(trimmed) as {
+        type?: string;
+        message?: {
+          role?: string;
+          content?: unknown;
+          toolName?: string;
+          toolCallId?: string;
+          details?: unknown;
+        };
+      };
       if (obj.type !== "message" || !obj.message) continue;
       const msg = obj.message;
       const role = normalizeSessionRole(msg.role);

@@ -648,7 +648,7 @@ export class CrystallizationStore extends BaseSqliteStore {
              AND updated_at < ?`,
         )
         .run(reason, now, cutoff);
-      return result.changes;
+      return Number(result.changes);
     });
   }
 

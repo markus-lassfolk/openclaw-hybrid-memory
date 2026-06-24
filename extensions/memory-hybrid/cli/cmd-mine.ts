@@ -47,13 +47,12 @@ export async function executeMineCommand(
   if (opts.undo) {
     const db = factsDb.getRawDb();
     const now = Math.floor(Date.now() / 1000);
-    const factIds = db
+    const factIds = (db
       .prepare(
         `SELECT id FROM facts WHERE mine_batch_id = ? AND superseded_at IS NULL
          AND id NOT IN (SELECT fact_id FROM verified_facts)`,
       )
-      .all(opts.undo)
-      .map((r: { id: string }) => r.id);
+      .all(opts.undo) as Array<{ id: string }>).map((r) => r.id);
     const result = db
       .prepare(
         `UPDATE facts SET superseded_at = ?, superseded_by = 'mine-undo'

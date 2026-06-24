@@ -177,6 +177,7 @@ export interface HybridMemCliRegistrationContext {
   personaStateStore: HandlerContext["personaStateStore"];
   crystallizationStore?: HandlerContext["crystallizationStore"];
   toolProposalStore?: HandlerContext["toolProposalStore"];
+  workflowStore?: import("../../backends/workflow-store.js").WorkflowStore | null;
   verificationStore?: import("../../services/verification-store.js").VerificationStore | null;
   provenanceService?: import("../../services/provenance.js").ProvenanceService | null;
   resolvedSqlitePath: string;

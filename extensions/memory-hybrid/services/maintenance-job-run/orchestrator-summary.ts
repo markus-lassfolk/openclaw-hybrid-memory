@@ -1,4 +1,5 @@
 import type { StepResult } from "../maintenance-orchestrator.js";
+import { resolveSemanticGuardToken } from "./semantic-outcome.js";
 import { ORCHESTRATOR_RUN_SCHEMA_VERSION, type OrchestratorRunSummary } from "./types.js";
 import { resolveOrchestratorJobFromEnv, resolveOrchestratorRunIdFromEnv } from "./artifact-paths.js";
 import { nowIso } from "../../utils/dates.js";
@@ -50,7 +51,7 @@ export function toOrchestratorRunSummary(
       summary: s.summary,
       durationMs: s.durationMs,
       jobRunId: s.jobRunId,
-      semanticOutcome: s.semanticOutcome,
+      semanticOutcome: resolveSemanticGuardToken(s.semanticOutcome),
     })),
     counts,
     validation: meta.validation,

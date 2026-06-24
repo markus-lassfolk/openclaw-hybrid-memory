@@ -59,6 +59,9 @@ export function seedCorpusFacts(factsDb: FactsDB, rows: CorpusRow[]): Map<string
       text,
       category: "fact",
       importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
       source: "recall-benchmark",
     });
     const logicalId = row.expected_fact_ids?.[0];
@@ -68,6 +71,9 @@ export function seedCorpusFacts(factsDb: FactsDB, rows: CorpusRow[]): Map<string
       text: `Unrelated note about ${row.query.split(" ").slice(-2).join(" ")} and miscellaneous context`,
       category: "fact",
       importance: 0.3,
+      entity: null,
+      key: null,
+      value: null,
       source: "recall-benchmark-distractor",
     });
   }

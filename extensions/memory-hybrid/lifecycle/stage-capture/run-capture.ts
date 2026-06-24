@@ -1135,13 +1135,14 @@ export async function runCapture(
             if (ctx.credentialsDb) {
               let storedInVault = false;
               try {
-                storedInVault = ctx.credentialsDb.storeIfNew({
-                  service: cred.service,
-                  type: cred.type,
-                  value: cred.value,
-                  url: cred.url,
-                  notes: cred.notes,
-                });
+                storedInVault =
+                  ctx.credentialsDb.storeIfNew({
+                    service: cred.service,
+                    type: cred.type,
+                    value: cred.value,
+                    url: cred.url,
+                    notes: cred.notes,
+                  }) != null;
               } catch (err) {
                 if (!suppressCaptureStageError(ctx, api, err)) {
                   capturePluginError(err instanceof Error ? err : new Error(String(err)), {

@@ -27,6 +27,9 @@ describe("aggregateRecallStats referenceCount", () => {
       text: "Gateway timeout is 30s",
       category: "fact",
       importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
       source: "conversation",
     });
     const raw = db.getRawDb();
@@ -53,6 +56,9 @@ describe("aggregateRecallStats referenceCount", () => {
       text: "Unused surfaced fact",
       category: "fact",
       importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
       source: "conversation",
     });
     const raw = db.getRawDb();
@@ -78,6 +84,9 @@ describe("getSnoozeCandidates", () => {
       text: "Important fact the agent actually used",
       category: "fact",
       importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
       source: "conversation",
     });
     const raw = db.getRawDb();

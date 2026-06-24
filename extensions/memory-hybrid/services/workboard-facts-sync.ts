@@ -2,7 +2,7 @@
  * Apply Workboard pull (column → status) back into hybrid-memory facts / goals.
  */
 
-import type { EmbeddingProvider } from "../backends/embeddings.js";
+import type { EmbeddingProvider } from "./embeddings.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import { nowIso } from "../utils/dates.js";

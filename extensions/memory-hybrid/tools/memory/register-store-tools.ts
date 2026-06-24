@@ -396,13 +396,14 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             if (cfg.credentials.enabled && credentialsDb) {
               let storedInVault = false;
               try {
-                storedInVault = credentialsDb.storeIfNew({
-                  service: parsed.service,
-                  type: parsed.type,
-                  value: parsed.secretValue,
-                  url: parsed.url,
-                  notes: parsed.notes,
-                });
+                storedInVault =
+                  credentialsDb.storeIfNew({
+                    service: parsed.service,
+                    type: parsed.type,
+                    value: parsed.secretValue,
+                    url: parsed.url,
+                    notes: parsed.notes,
+                  }) != null;
               } catch (err) {
                 capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                   subsystem: "memory-tools",
@@ -479,7 +480,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 };
               }
               await cleanupEvictedVector({
-                storeVectorDb,
+                vectorDb: storeVectorDb,
                 evictedFactId: pointer.evictedFactId,
                 logger: api.logger,
                 context: "memory-store-credential-pointer",
@@ -639,13 +640,13 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               });
             }
             if (similarFacts.length === 0) {
-              similarFacts = storeFactsDb.findSimilarForClassification(textToStore, entity, key, 5, scope, scopeTarget);
+              similarFacts = storeFactsDb.findSimilarForClassification(textToStore, entity ?? null, key ?? null, 5, scope, scopeTarget);
             }
             if (similarFacts.length > 0) {
               const classification = await classifyMemoryOperation(
                 textToStore,
-                entity,
-                key,
+                entity ?? null,
+                key ?? null,
                 similarFacts,
                 openai,
                 cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "nano"),
@@ -673,7 +674,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                   storeFactsDb.supersede(classification.targetId, null);
                   aliasDb?.deleteByFactId(classification.targetId);
                   await deleteVectorForFactId({
-                    storeVectorDb,
+                    vectorDb: storeVectorDb,
                     factId: classification.targetId,
                     logger: api.logger,
                     context: "store-delete-action",
@@ -780,7 +781,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     updateStoreResult.embeddingStale
                   ) {
                     await cleanupEvictedVector({
-                      storeVectorDb,
+                      vectorDb: storeVectorDb,
                       evictedFactId: updateStoreResult.evictedFactId,
                       logger: api.logger,
                       context: "memory-store-update-merge",
@@ -812,7 +813,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                   }
                   if (!updateStoreResult.skipped && updateStoreResult.newlyStored) {
                     await cleanupEvictedVector({
-                      storeVectorDb,
+                      vectorDb: storeVectorDb,
                       evictedFactId: updateStoreResult.evictedFactId,
                       logger: api.logger,
                       context: "memory-store-update",
@@ -821,7 +822,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     storeFactsDb.supersede(classification.targetId, newEntry.id);
                     aliasDb?.deleteByFactId(classification.targetId);
                     await deleteVectorForFactId({
-                      storeVectorDb,
+                      vectorDb: storeVectorDb,
                       factId: classification.targetId,
                       logger: api.logger,
                       context: "store-update-delete-superseded",
@@ -961,9 +962,9 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             why: whyStored,
             category: category as MemoryCategory,
             importance,
-            entity,
-            key,
-            value,
+            entity: entity ?? null,
+            key: key ?? null,
+            value: value ?? null,
             source: "conversation",
             decayClass: paramDecayClass,
             summary,
@@ -993,7 +994,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
           // Guard: skip post-store ops when pre-store guard blocked the write (#1560, #1561)
           if (!storeResult.skipped) {
             await cleanupEvictedVector({
-              storeVectorDb,
+              vectorDb: storeVectorDb,
               evictedFactId: storeResult.evictedFactId,
               logger: api.logger,
               context: "memory-store",
@@ -1006,7 +1007,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               storeFactsDb.supersede(supersededId, entry.id);
               aliasDb?.deleteByFactId(supersededId);
               await deleteVectorForFactId({
-                storeVectorDb,
+                vectorDb: storeVectorDb,
                 factId: supersededId,
                 logger: api.logger,
                 context: "store-manual-supersede",

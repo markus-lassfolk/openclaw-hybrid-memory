@@ -45,9 +45,10 @@ describe("collectDreamCycleLog", () => {
 
     expect(runs).toHaveLength(1);
     expect(runs[0]?.runId).toBe("20260605T120000Z");
-    expect(runs[0]?.stages).toHaveLength(2);
-    expect(runs[0]?.stages?.[0]?.stageNumber).toBe(1);
-    expect(runs[0]?.stages?.[1]?.stageNumber).toBe(2);
+    const stages = runs[0]?.stages as Array<{ stageNumber: number }> | undefined;
+    expect(stages).toHaveLength(2);
+    expect(stages?.[0]?.stageNumber).toBe(1);
+    expect(stages?.[1]?.stageNumber).toBe(2);
   });
 });
 
@@ -163,6 +164,7 @@ describe("collectWorkshopChanges", () => {
       action: "detected",
       title: "Hidden chat change",
       detail: "Unrelated digest only",
+      proposalKey: null,
       rollbackAvailable: false,
       activation: "next-reload",
     });

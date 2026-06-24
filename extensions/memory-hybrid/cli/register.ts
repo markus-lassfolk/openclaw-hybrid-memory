@@ -221,6 +221,7 @@ export type HybridMemCliContext = {
     patternsExtracted: number;
     patternsStored: number;
     window: number;
+    semanticOutcome?: string;
   }>;
   runReflectionRules: (opts: {
     dryRun: boolean;
@@ -373,6 +374,10 @@ export type HybridMemCliContext = {
     }>;
     sessionsScanned: number;
     skipped?: boolean;
+    stored?: number;
+    partial?: boolean;
+    dedupeDegraded?: boolean;
+    cursorBlockedReason?: string;
   }>;
   runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean }) => Promise<{
     incidents: Array<{
@@ -386,6 +391,9 @@ export type HybridMemCliContext = {
     }>;
     sessionsScanned: number;
     skipped?: boolean;
+    jobRunId?: string;
+    semanticOutcome?: string;
+    annotationStatus?: string;
   }>;
   runExtractImplicitFeedback?: (opts: {
     days?: number;
@@ -413,7 +421,11 @@ export type HybridMemCliContext = {
     closedLoopReport?: string;
     skipped?: boolean;
   }>;
-  runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
+  runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{
+    created: number;
+    jobRunId?: string;
+    semanticOutcome?: string;
+  }>;
   runExport: (opts: {
     outputPath: string;
     excludeCredentials?: boolean;

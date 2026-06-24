@@ -31,7 +31,7 @@ import { expectStandaloneAndParentDecisionsEquivalent } from "./helpers/pending-
 
 let tmpDir: string;
 let proposalsDb: ProposalsDB;
-const cfg: Pick<HybridMemoryConfig, "personaProposals"> = {
+const cfg: Pick<HybridMemoryConfig, "personaProposals" | "liveChangeFeed"> = {
   personaProposals: {
     enabled: true,
     autoApply: false,
@@ -41,7 +41,9 @@ const cfg: Pick<HybridMemoryConfig, "personaProposals"> = {
     proposalTTLDays: 30,
     minSessionEvidence: 1,
     requireScopeFilter: false,
+    separateSelfCorrectionQuota: true,
   },
+  liveChangeFeed: { enabled: false } as HybridMemoryConfig["liveChangeFeed"],
 };
 
 beforeEach(() => {
@@ -253,6 +255,7 @@ describe("persona proposal triage", () => {
 
   it("apply-safe only auto-applies mechanically verified formatting on sensitive persona files", async () => {
     const allowedCfg = {
+      ...cfg,
       personaProposals: {
         ...cfg.personaProposals,
         allowedFiles: [...cfg.personaProposals.allowedFiles, "AGENTS.md" as never],
@@ -301,6 +304,7 @@ describe("persona proposal triage", () => {
   it("apply-safe defers disguised formatting semantic appends for every sensitive or critical file", async () => {
     writeFileSync(join(tmpDir, "TOOLS.md"), "# TOOLS\nUse available tools carefully.\n", "utf-8");
     const allowedCfg = {
+      ...cfg,
       personaProposals: {
         ...cfg.personaProposals,
         allowedFiles: [...cfg.personaProposals.allowedFiles, "AGENTS.md" as never, "TOOLS.md" as never],
@@ -338,6 +342,7 @@ describe("persona proposal triage", () => {
   it("apply-safe rejects append writes during critical target apply revalidation", async () => {
     writeFileSync(join(tmpDir, "TOOLS.md"), "# TOOLS\nUse available tools carefully.\n", "utf-8");
     const allowedCfg = {
+      ...cfg,
       personaProposals: {
         ...cfg.personaProposals,
         allowedFiles: [...cfg.personaProposals.allowedFiles, "TOOLS.md" as never],
@@ -371,6 +376,7 @@ describe("persona proposal triage", () => {
 
   it("apply-safe allows mechanically verified formatting-only replace for AGENTS.md", async () => {
     const allowedCfg = {
+      ...cfg,
       personaProposals: {
         ...cfg.personaProposals,
         allowedFiles: [...cfg.personaProposals.allowedFiles, "AGENTS.md" as never],
@@ -454,7 +460,7 @@ describe("persona proposal triage", () => {
 
     const result = await runPersonaProposalTriage({
       proposalsDb,
-      cfg: { personaProposals: { ...cfg.personaProposals, allowedFiles: ["../USER.md" as never, "IDENTITY.md"] } },
+      cfg: { ...cfg, personaProposals: { ...cfg.personaProposals, allowedFiles: ["../USER.md" as never, "IDENTITY.md"] } },
       workspace: tmpDir,
       mode: "dry-run",
       policy: "cautious",
@@ -648,6 +654,7 @@ describe("persona proposal triage", () => {
   it("defers once cumulative low-risk persona drift threshold is crossed", async () => {
     writeFileSync(join(tmpDir, "AGENTS.md"), "# AGENTS\nBe precise.\n", "utf-8");
     const allowedCfg = {
+      ...cfg,
       personaProposals: {
         ...cfg.personaProposals,
         allowedFiles: [...cfg.personaProposals.allowedFiles, "AGENTS.md" as never],
@@ -761,6 +768,7 @@ describe("persona proposal triage", () => {
       runPersonaProposalTriage({
         proposalsDb,
         cfg: {
+          ...cfg,
           personaProposals: {
             ...cfg.personaProposals,
             allowedFiles: [...cfg.personaProposals.allowedFiles, "AGENTS.md" as never],

@@ -171,11 +171,12 @@ describe("CLI grouped namespaces", () => {
   it("registers maintenance group with backfill --all parent action", async () => {
     const mem = new Command("hybrid-mem");
     mem.exitOverride();
+    const maintenanceCfg = {
+      embedding: { provider: "ollama" },
+      procedures: { allAgentSessions: false, sessionsDir: "/tmp/no-sessions" },
+    };
     const ctx = {
-      cfg: {
-        embedding: { provider: "ollama" },
-        procedures: { allAgentSessions: false, sessionsDir: "/tmp/no-sessions" },
-      },
+      cfg: maintenanceCfg,
       versionInfo: { pluginVersion: "test" },
       factsDb: {
         sqlitePath: "/tmp/facts.db",
@@ -188,7 +189,7 @@ describe("CLI grouped namespaces", () => {
       factsDb: {
         getRawDb: () => ({}),
       },
-      cfg: ctx.cfg,
+      cfg: maintenanceCfg,
     } as never;
 
     registerMaintenanceGroup(mem, b, ctx);
