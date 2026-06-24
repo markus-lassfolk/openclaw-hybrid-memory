@@ -6,12 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
-import {
-  acquireLease,
-  heartbeatLease,
-  releaseAllLeasesForSession,
-  releaseLease,
-} from "../services/worker-lease.js";
+import { acquireLease, heartbeatLease, releaseAllLeasesForSession, releaseLease } from "../services/worker-lease.js";
 import { searchFts } from "../services/fts-search.js";
 import { buildEpisodeCausalChain, decayEpisodeCausalLinks } from "../services/episode-causal-inference.js";
 import { scoreFactContradiction, repairUndetectedContradictions } from "../backends/facts-db/contradictions.js";
@@ -100,12 +95,7 @@ describe("recall mode config (#1901 risk 3)", () => {
 
 describe("contradiction surface (#1902)", () => {
   it("scores entity+key value mismatch with heuristic signals", () => {
-    const score = scoreFactContradiction(
-      "timeout is 30 seconds",
-      "30",
-      "timeout is 60 seconds",
-      "60",
-    );
+    const score = scoreFactContradiction("timeout is 30 seconds", "30", "timeout is 60 seconds", "60");
     expect(score.score).toBeGreaterThan(0);
     expect(score.heuristicSignals).toContain("numeric_conflict");
   });
@@ -159,11 +149,7 @@ describe("contradiction surface (#1902)", () => {
       source: "conversation",
     });
 
-    const repair = repairUndetectedContradictions(
-      db.getRawDb(),
-      (a, b, t, s) => db.createLink(a, b, t, s ?? 1.0),
-      50,
-    );
+    const repair = repairUndetectedContradictions(db.getRawDb(), (a, b, t, s) => db.createLink(a, b, t, s ?? 1.0), 50);
     expect(repair.pairsRepaired).toBeGreaterThan(0);
     expect(repair.pairsFailed).toBe(0);
     expect(repair.pairsFallback).toBe(0);
@@ -242,23 +228,25 @@ describe("episode causal chain (#1903)", () => {
       importance: 0.8,
     }).episode;
     raw.prepare("DELETE FROM episode_causal_links").run();
-    raw.prepare(
-      `INSERT INTO episode_causal_links (id, source_episode_id, target_episode_id, confidence, score_breakdown, last_reinforced_at, created_at)
+    raw
+      .prepare(
+        `INSERT INTO episode_causal_links (id, source_episode_id, target_episode_id, confidence, score_breakdown, last_reinforced_at, created_at)
        VALUES (?, ?, ?, ?, ?, NULL, ?)`,
-    ).run("link-1", source.id, target.id, 0.5, "{}", now - 86400);
+      )
+      .run("link-1", source.id, target.id, 0.5, "{}", now - 86400);
 
     const first = decayEpisodeCausalLinks(raw);
     expect(first.updated + first.deleted).toBeGreaterThan(0);
-    const afterFirst = raw
-      .prepare("SELECT confidence FROM episode_causal_links WHERE id = ?")
-      .get("link-1") as { confidence: number };
+    const afterFirst = raw.prepare("SELECT confidence FROM episode_causal_links WHERE id = ?").get("link-1") as {
+      confidence: number;
+    };
     const confAfterFirst = afterFirst.confidence;
 
     const second = decayEpisodeCausalLinks(raw);
     expect(second.updated).toBe(0);
-    const afterSecond = raw
-      .prepare("SELECT confidence FROM episode_causal_links WHERE id = ?")
-      .get("link-1") as { confidence: number };
+    const afterSecond = raw.prepare("SELECT confidence FROM episode_causal_links WHERE id = ?").get("link-1") as {
+      confidence: number;
+    };
     expect(afterSecond.confidence).toBeCloseTo(confAfterFirst, 5);
   });
 
@@ -273,13 +261,7 @@ describe("episode causal chain (#1903)", () => {
       importance: 0.8,
     }).episode;
 
-    const chain = buildEpisodeCausalChain(
-      db.getRawDb(),
-      scoped.id,
-      5,
-      false,
-      globalOnlyScopeFilter(),
-    );
+    const chain = buildEpisodeCausalChain(db.getRawDb(), scoped.id, 5, false, globalOnlyScopeFilter());
     expect(chain).toEqual([]);
     expect(scopedRowMatchesFilter("session", "secret-session", undefined)).toBe(false);
   });

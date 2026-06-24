@@ -781,10 +781,15 @@ export async function runReflection(
     }
 
     const sourceTexts = recentFacts.map((f) => f.text);
-    const guard = await runContaminationGuard(patternText, sourceTexts, existingPatternFacts.map((f) => f.text), {
-      openai,
-      skipLlm: true,
-    });
+    const guard = await runContaminationGuard(
+      patternText,
+      sourceTexts,
+      existingPatternFacts.map((f) => f.text),
+      {
+        openai,
+        skipLlm: true,
+      },
+    );
     if (!guard.allowed) {
       quarantineSynthesisDraft(factsDb.getRawDb(), patternText, guard, sourceTexts);
       duplicatesSkipped++;

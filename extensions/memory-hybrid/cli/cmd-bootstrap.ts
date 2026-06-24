@@ -40,9 +40,7 @@ export function registerBootstrapCommand(
           return;
         }
         if (!opts.force && existsSync(configPath)) {
-          console.error(
-            `Config already exists at ${configPath}. Re-run with --force to apply preset "${preset}".`,
-          );
+          console.error(`Config already exists at ${configPath}. Re-run with --force to apply preset "${preset}".`);
           process.exitCode = 1;
           return;
         }

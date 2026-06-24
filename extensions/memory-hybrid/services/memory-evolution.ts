@@ -151,8 +151,7 @@ function applyHeuristicUpdate(
   const merged = [...new Set([...existing, ...keywords])];
   if (merged.length === existing.length && neighbor.summary?.trim()) return false;
   const summary =
-    neighbor.summary?.trim() ||
-    (context.summary?.trim() ? context.summary.slice(0, 240) : context.text.slice(0, 240));
+    neighbor.summary?.trim() || (context.summary?.trim() ? context.summary.slice(0, 240) : context.text.slice(0, 240));
   const reason = `neighbor_evolution:${context.id}:${evolutionCfg.mode}`;
   updateNeighbor.run(JSON.stringify(merged), summary, reason, neighbor.id);
   return true;
@@ -167,10 +166,7 @@ export async function runMemoryEvolutionPass(
   const result: MemoryEvolutionResult = { linksScanned: 0, neighborsUpdated: 0, llmCalls: 0 };
   if (!evolutionCfg.enabled) return result;
 
-  const llmBudget = Math.min(
-    evolutionCfg.dailyLlmCallCap,
-    opts.llmCallsBudget ?? evolutionCfg.dailyLlmCallCap,
-  );
+  const llmBudget = Math.min(evolutionCfg.dailyLlmCallCap, opts.llmCallsBudget ?? evolutionCfg.dailyLlmCallCap);
   const useLlm = evolutionCfg.mode === "llm" && Boolean(opts.openai && opts.model);
 
   const sinceSec = Math.floor(Date.now() / 1000) - 7 * 86_400;

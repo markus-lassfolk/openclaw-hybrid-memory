@@ -37,7 +37,9 @@ describe("runEvolutionPass (#1914)", () => {
     expect(result.scanned).toBeGreaterThanOrEqual(1);
     expect(result.evolved).toBeGreaterThanOrEqual(1);
 
-    const row = db.prepare("SELECT quality_score, evolution_reason, revision_count FROM facts WHERE id = ?").get(fact.id) as {
+    const row = db
+      .prepare("SELECT quality_score, evolution_reason, revision_count FROM facts WHERE id = ?")
+      .get(fact.id) as {
       quality_score: number;
       evolution_reason: string;
       revision_count: number;

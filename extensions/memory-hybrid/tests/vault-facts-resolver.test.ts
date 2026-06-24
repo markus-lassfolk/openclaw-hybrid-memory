@@ -7,10 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
-import {
-  resolveVaultFactsTriples,
-  resolveVaultFactsTriplesMulti,
-} from "../services/vault-facts-resolver.js";
+import { resolveVaultFactsTriples, resolveVaultFactsTriplesMulti } from "../services/vault-facts-resolver.js";
 
 describe("resolveVaultFactsTriplesMulti", () => {
   let tmpDir: string;
@@ -61,10 +58,7 @@ describe("resolveVaultFactsTriplesMulti", () => {
     const defaultTriples = resolveVaultFactsTriples(defaultDb, "Tell me about Acme Corporation");
     expect(defaultTriples).toEqual([]);
 
-    const merged = resolveVaultFactsTriplesMulti(
-      [defaultDb, secondaryDb],
-      "Tell me about Acme Corporation",
-    );
+    const merged = resolveVaultFactsTriplesMulti([defaultDb, secondaryDb], "Tell me about Acme Corporation");
     expect(merged.some((t) => t.subject === "Acme Corporation" && t.predicate === "deadline")).toBe(true);
   });
 });

@@ -126,10 +126,7 @@ export function aggregateRecallStats(db: DatabaseSync, windowDays = 30): Map<str
 }
 
 /** Map confirmed access (full injection / explicit recall) onto recall-event surface stats. */
-export function enrichReferenceCountsFromFacts(
-  db: DatabaseSync,
-  stats: Map<string, FactRecallStats>,
-): void {
+export function enrichReferenceCountsFromFacts(db: DatabaseSync, stats: Map<string, FactRecallStats>): void {
   const factIds = [...stats.keys()];
   if (factIds.length === 0) return;
 

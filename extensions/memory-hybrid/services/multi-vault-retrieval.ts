@@ -6,10 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryEntry } from "../types/memory.js";
-import {
-  runExplicitDeepRetrieval,
-  type RetrievalPipelineOptions,
-} from "./retrieval-orchestrator.js";
+import { runExplicitDeepRetrieval, type RetrievalPipelineOptions } from "./retrieval-orchestrator.js";
 import type { FusedResult } from "./rrf-fusion.js";
 import type { VaultHandle } from "./vault-registry.js";
 
@@ -96,14 +93,7 @@ export async function runMultiVaultExplicitDeepRetrieval(
   const slices = await Promise.all(
     handles.map(async (h) => ({
       vaultName: h.name,
-      slice: await runExplicitDeepRetrieval(
-        query,
-        queryVector,
-        h.factsDb.getRawDb(),
-        h.vectorDb,
-        h.factsDb,
-        options,
-      ),
+      slice: await runExplicitDeepRetrieval(query, queryVector, h.factsDb.getRawDb(), h.vectorDb, h.factsDb, options),
     })),
   );
   return mergeOrchestratorSlices(slices);

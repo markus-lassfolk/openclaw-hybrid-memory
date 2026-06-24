@@ -25,9 +25,9 @@ describe("consolidated cron superseded job keys (#1925)", () => {
         "workshop-approval-reminder",
       ),
     ).toBe(false);
-    expect(
-      shouldDisableJobUnderConsolidatedOrchestrator("hybrid-mem:nightly-distill", "nightly-memory-sweep"),
-    ).toBe(true);
+    expect(shouldDisableJobUnderConsolidatedOrchestrator("hybrid-mem:nightly-distill", "nightly-memory-sweep")).toBe(
+      true,
+    );
     expect(shouldDisableJobUnderConsolidatedOrchestrator("hybrid-mem:maintenance-nightly")).toBe(false);
     expect(shouldDisableJobUnderConsolidatedOrchestrator("hybrid-mem:unknown-job")).toBe(false);
   });

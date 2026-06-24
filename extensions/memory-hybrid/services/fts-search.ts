@@ -231,7 +231,12 @@ export function searchFts(
         }
         if (tagFilter?.trim()) {
           filterSql += " AND (',' || COALESCE(tags,'') || ',') LIKE ? ESCAPE '\\'";
-          filterParams.push(`%,${tagFilter.toLowerCase().trim().replace(/[%_\\]/g, '\\$&')},%`);
+          filterParams.push(
+            `%,${tagFilter
+              .toLowerCase()
+              .trim()
+              .replace(/[%_\\]/g, "\\$&")},%`,
+          );
         }
         allFiltered.push(
           ...(db.prepare(filterSql).all(...filterParams) as Array<{

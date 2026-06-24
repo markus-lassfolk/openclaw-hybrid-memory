@@ -24,10 +24,7 @@ export function positionAwareAlpha(rankIndex: number): number {
 }
 
 /** Blend reranked order with pre-rerank scores using position-aware α. */
-export function blendRerankScores(
-  facts: ScoredFact[],
-  rerankScores: Map<string, number>,
-): ScoredFact[] {
+export function blendRerankScores(facts: ScoredFact[], rerankScores: Map<string, number>): ScoredFact[] {
   return facts
     .map((fact, index) => {
       const rerankScore = rerankScores.get(fact.factId) ?? fact.finalScore;
