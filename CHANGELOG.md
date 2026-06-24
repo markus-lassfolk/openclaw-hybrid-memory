@@ -27,7 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
-## [2026.6.172] - 2026-06-24
+## [2026.6.240] - 2026-06-24
 
 ### Fixed
 
@@ -35,11 +35,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- Version set to **2026.6.172**.
+- **Full-tree TypeScript check:** Cleared ~325 `tsc --noEmit` errors across CLI, services, tools, and tests so CI typecheck is enforceable again (stale typings, test mocks, and latent strictness mismatches).
+- Version set to **2026.6.240**.
 
 ### Upgrade note
 
-- After upgrading from **2026.6.170** / **2026.6.171**, **rerun maintenance once** (`openclaw hybrid-mem maintenance run --force --tiers nightly,cycle`) or wait for the next `maintenance-nightly` cron so vector/storage steps can complete and guard files are written. See [release-notes-2026.6.172.md](release-notes/release-notes-2026.6.172.md).
+- After upgrading from **2026.6.170** / **2026.6.171**, **rerun maintenance once** (`openclaw hybrid-mem maintenance run --force --tiers nightly,cycle`) or wait for the next `maintenance-nightly` cron so vector/storage steps can complete and guard files are written. See [release-notes-2026.6.240.md](release-notes/release-notes-2026.6.240.md).
 
 ---
 
