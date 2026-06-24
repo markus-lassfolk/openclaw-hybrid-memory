@@ -19,8 +19,20 @@ function mockRuntime(overrides: Partial<MemoryToolRuntime> = {}): MemoryToolRunt
       lancePath: "",
     }),
     resolveAllVaults: () => [
-      { name: "default", factsDb: {} as MemoryToolRuntime["factsDb"], vectorDb: {} as MemoryToolRuntime["vectorDb"], sqlitePath: "", lancePath: "" },
-      { name: "work", factsDb: {} as MemoryToolRuntime["factsDb"], vectorDb: {} as MemoryToolRuntime["vectorDb"], sqlitePath: "", lancePath: "" },
+      {
+        name: "default",
+        factsDb: {} as MemoryToolRuntime["factsDb"],
+        vectorDb: {} as MemoryToolRuntime["vectorDb"],
+        sqlitePath: "",
+        lancePath: "",
+      },
+      {
+        name: "work",
+        factsDb: {} as MemoryToolRuntime["factsDb"],
+        vectorDb: {} as MemoryToolRuntime["vectorDb"],
+        sqlitePath: "",
+        lancePath: "",
+      },
     ],
     ...overrides,
   } as MemoryToolRuntime;

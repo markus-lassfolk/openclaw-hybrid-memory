@@ -10,9 +10,7 @@ type ContactRow = { id: string; display_name: string; primary_org_id: string | n
 
 function loadOrgRows(db: ReturnType<FactsDB["getRawDb"]>): OrgRow[] {
   try {
-    return db
-      .prepare(`SELECT id, display_name FROM organizations ORDER BY display_name LIMIT 200`)
-      .all() as OrgRow[];
+    return db.prepare(`SELECT id, display_name FROM organizations ORDER BY display_name LIMIT 200`).all() as OrgRow[];
   } catch {
     return [];
   }
@@ -29,20 +27,13 @@ function loadContactRows(db: ReturnType<FactsDB["getRawDb"]>): ContactRow[] {
 }
 
 /** Build SPO triples for entities mentioned in the user prompt. */
-export function resolveVaultFactsTriples(
-  factsDb: FactsDB,
-  prompt: string,
-  maxTriples = 20,
-): SpoTriple[] {
+export function resolveVaultFactsTriples(factsDb: FactsDB, prompt: string, maxTriples = 20): SpoTriple[] {
   const db = factsDb.getRawDb();
   const orgRows = loadOrgRows(db);
   const contactRows = loadContactRows(db);
   if (orgRows.length === 0 && contactRows.length === 0) return [];
 
-  const knownEntities = [
-    ...orgRows.map((o) => o.display_name),
-    ...contactRows.map((c) => c.display_name),
-  ];
+  const knownEntities = [...orgRows.map((o) => o.display_name), ...contactRows.map((c) => c.display_name)];
   const matched = matchEntitiesInPrompt(prompt, knownEntities);
   if (matched.length === 0) return [];
 
@@ -79,11 +70,7 @@ export function resolveVaultFactsTriples(
 }
 
 /** Merge SPO triples from multiple vault facts DBs (multi-vault fan-out). */
-export function resolveVaultFactsTriplesMulti(
-  factsDbs: FactsDB[],
-  prompt: string,
-  maxTriples = 20,
-): SpoTriple[] {
+export function resolveVaultFactsTriplesMulti(factsDbs: FactsDB[], prompt: string, maxTriples = 20): SpoTriple[] {
   if (factsDbs.length === 0) return [];
   const seen = new Set<string>();
   const merged: SpoTriple[] = [];

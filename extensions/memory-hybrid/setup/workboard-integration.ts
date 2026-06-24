@@ -39,7 +39,7 @@ export async function armWorkboardIntegration(ctx: WorkboardIntegrationContext):
 
   if (!cfg.workboard?.enabled) return;
   if (shouldAbort?.()) return;
-  
+
   const checkSuperseded = () => shouldAbort?.() ?? false;
 
   const uiIntegrationVerbose = integrationVerbose(cfg.verbosity);
@@ -96,9 +96,7 @@ export async function armWorkboardIntegration(ctx: WorkboardIntegrationContext):
 
     const available = await adapter.isAvailable();
     if (!available) {
-      api.logger.info?.(
-        `memory-hybrid: Workboard plugin not reachable (${connectLabel}) — sync not armed`,
-      );
+      api.logger.info?.(`memory-hybrid: Workboard plugin not reachable (${connectLabel}) — sync not armed`);
       return;
     }
 
@@ -140,9 +138,7 @@ export async function armWorkboardIntegration(ctx: WorkboardIntegrationContext):
           });
       }, intervalMs),
     };
-    api.logger.info?.(
-      `memory-hybrid: Workboard sync loop started (every ${cfg.workboard.syncIntervalMinutes} min)`,
-    );
+    api.logger.info?.(`memory-hybrid: Workboard sync loop started (every ${cfg.workboard.syncIntervalMinutes} min)`);
   } catch (err) {
     api.logger.warn?.(
       `memory-hybrid: Workboard adapter startup failed (${connectLabel}, non-fatal): ${err instanceof Error ? err.message : String(err)}`,

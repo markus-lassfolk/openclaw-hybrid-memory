@@ -136,8 +136,7 @@ export function tryParseCredentialForVault(
   // If a match exists, it IS the credential — use its value.
   // Only fall back to the structured value param when no pattern matched.
   const secretFromMatch = match?.secretValue ?? null;
-  const secretFromParam =
-    value && value.length >= 8 && !value.startsWith(VAULT_POINTER_PREFIX) ? value : null;
+  const secretFromParam = value && value.length >= 8 && !value.startsWith(VAULT_POINTER_PREFIX) ? value : null;
   const secretValue = secretFromMatch ?? secretFromParam ?? null;
   if (!secretValue) return null;
   const typeFromPattern = (match?.type ?? "other") as "token" | "password" | "api_key" | "ssh" | "bearer" | "other";

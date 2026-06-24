@@ -75,11 +75,7 @@ export function detectRecommendedEmbeddingSetup(
     return {
       provider: "ollama",
       model: "nomic-embed-text",
-      source: ollamaHost
-        ? "OLLAMA_HOST"
-        : existsSync(join(homedir(), ".ollama"))
-          ? "~/.ollama"
-          : "ollama --version",
+      source: ollamaHost ? "OLLAMA_HOST" : existsSync(join(homedir(), ".ollama")) ? "~/.ollama" : "ollama --version",
       reason: "Detected a local Ollama installation or endpoint hint.",
     };
   }

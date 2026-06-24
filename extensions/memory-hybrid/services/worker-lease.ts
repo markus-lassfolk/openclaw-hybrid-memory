@@ -65,9 +65,7 @@ export function estimateContextUsage(db: DatabaseSync): number {
     const now = nowSec();
     const windowSec = 300;
     const row = db
-      .prepare(
-        `SELECT COUNT(*) AS cnt FROM facts WHERE created_at >= ? AND superseded_at IS NULL`,
-      )
+      .prepare(`SELECT COUNT(*) AS cnt FROM facts WHERE created_at >= ? AND superseded_at IS NULL`)
       .get(now - windowSec) as { cnt: number } | undefined;
     const recent = row?.cnt ?? 0;
     // Saturate at 20 writes/5min → usage 1.0
@@ -126,12 +124,8 @@ export function acquireLease(
   db.exec("BEGIN IMMEDIATE");
   try {
     const existing = db
-      .prepare(
-        "SELECT owner_session_id, expires_at, last_heartbeat_at FROM worker_leases WHERE worker_id = ?",
-      )
-      .get(workerId) as
-      | { owner_session_id: string; expires_at: number; last_heartbeat_at: number }
-      | undefined;
+      .prepare("SELECT owner_session_id, expires_at, last_heartbeat_at FROM worker_leases WHERE worker_id = ?")
+      .get(workerId) as { owner_session_id: string; expires_at: number; last_heartbeat_at: number } | undefined;
 
     if (existing) {
       const expired = existing.expires_at <= now;
@@ -142,16 +136,7 @@ export function acquireLease(
       db.prepare(
         `UPDATE worker_leases SET owner_session_id = ?, pid = ?, host = ?, acquired_at = ?, last_heartbeat_at = ?, expires_at = ?, state_json = ?
          WHERE worker_id = ?`,
-      ).run(
-        ownerSessionId,
-        pid,
-        host,
-        now,
-        now,
-        expiresAt,
-        opts.stateJson ?? null,
-        workerId,
-      );
+      ).run(ownerSessionId, pid, host, now, now, expiresAt, opts.stateJson ?? null, workerId);
     } else {
       db.prepare(
         `INSERT INTO worker_leases (worker_id, owner_session_id, pid, host, acquired_at, last_heartbeat_at, expires_at, state_json)
@@ -191,9 +176,9 @@ export function heartbeatLease(
   const now = nowSec();
   db.exec("BEGIN IMMEDIATE");
   try {
-    const row = db
-      .prepare("SELECT owner_session_id FROM worker_leases WHERE worker_id = ?")
-      .get(workerId) as { owner_session_id: string } | undefined;
+    const row = db.prepare("SELECT owner_session_id FROM worker_leases WHERE worker_id = ?").get(workerId) as
+      | { owner_session_id: string }
+      | undefined;
     if (!row || row.owner_session_id !== ownerSessionId) {
       db.exec("ROLLBACK");
       return false;
@@ -248,9 +233,7 @@ export function releaseAllLeasesForSession(db: DatabaseSync, ownerSessionId: str
 }
 
 export function listWorkerLeases(db: DatabaseSync): WorkerLeaseRow[] {
-  const rows = db.prepare("SELECT * FROM worker_leases ORDER BY worker_id").all() as Array<
-    Record<string, unknown>
-  >;
+  const rows = db.prepare("SELECT * FROM worker_leases ORDER BY worker_id").all() as Array<Record<string, unknown>>;
   return rows.map((r) => ({
     workerId: r.worker_id as string,
     ownerSessionId: r.owner_session_id as string,

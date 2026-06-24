@@ -98,8 +98,7 @@ export function finalizeInjectionMemoryContent(
   const vaultBudget = boundary?.vaultFactsMaxTokens?.balanced ?? 200;
   const vaultHandles =
     ctx.cfg.retrieval?.multiVaultFanOut === true && ctx.resolveAllVaults ? ctx.resolveAllVaults() : [];
-  const factsDbs =
-    vaultHandles.length > 0 ? vaultHandles.map((handle) => handle.factsDb) : [ctx.factsDb];
+  const factsDbs = vaultHandles.length > 0 ? vaultHandles.map((handle) => handle.factsDb) : [ctx.factsDb];
   let spoBlock = "";
   if (vaultBudget > 0 && prompt.trim()) {
     const triples = resolveVaultFactsTriplesMulti(factsDbs, prompt);

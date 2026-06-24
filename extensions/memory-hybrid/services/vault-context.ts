@@ -40,16 +40,8 @@ export function buildVaultContextBlock(options: VaultContextOptions): string {
     const suffix = meta.length > 0 ? ` [${meta.join(", ")}]` : "";
     return `  - ${f.text}${suffix}`;
   });
-  const relLines = (options.relationships ?? []).map(
-    (r) => `  - ${r.subjectId} ${r.edgeType} ${r.objectId}`,
-  );
-  const inner = [
-    "<vault-context>",
-    `<instruction>${instruction}</instruction>`,
-    "<facts>",
-    ...factLines,
-    "</facts>",
-  ];
+  const relLines = (options.relationships ?? []).map((r) => `  - ${r.subjectId} ${r.edgeType} ${r.objectId}`);
+  const inner = ["<vault-context>", `<instruction>${instruction}</instruction>`, "<facts>", ...factLines, "</facts>"];
   if (relLines.length > 0) {
     inner.push("<relationships>", ...relLines, "</relationships>");
   }
@@ -80,10 +72,7 @@ export function extractPromptNgrams(prompt: string, maxGram = 3): string[] {
 }
 
 /** Match known entity names against prompt (proper noun + ngram paths). */
-export function matchEntitiesInPrompt(
-  prompt: string,
-  knownEntities: string[],
-): string[] {
+export function matchEntitiesInPrompt(prompt: string, knownEntities: string[]): string[] {
   const lower = prompt.toLowerCase();
   const matched = new Set<string>();
   for (const entity of knownEntities) {

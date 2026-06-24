@@ -65,6 +65,10 @@ export async function storeRegistryEmbeddings({
   operation: string;
 }): Promise<void> {
   if (!embeddingRegistry) return;
+  if (!factsDb) {
+    logger.warn(`memory-hybrid: fact_embeddings store skipped (${operation}) — factsDb unavailable`);
+    return;
+  }
   const vectors = new Map<string, Float32Array>();
   if (vector && vector.length > 0) {
     vectors.set(embeddings.modelName, toFloat32Array(vector));

@@ -404,8 +404,7 @@ export function registerDoctorCommand(
 
       try {
         const signals = getRecallSignalsSnapshot(factsDb.getRawDb(), 7);
-        const status =
-          signals.autoSnoozeCandidates > 0 || signals.neverReferencedSurfaced > 0 ? "warn" : "pass";
+        const status = signals.autoSnoozeCandidates > 0 || signals.neverReferencedSurfaced > 0 ? "warn" : "pass";
         checks.push({
           name: "Recall feedback",
           status,

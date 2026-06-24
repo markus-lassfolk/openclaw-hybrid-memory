@@ -126,9 +126,7 @@ export async function applyRetrievalV2(opts: ApplyRetrievalV2Opts): Promise<Retr
   const v1Order = opts.results.map((r) => r.entry.id);
   const compositeCfg = opts.config.compositeScore;
   const recallStats =
-    opts.factsDb && compositeCfg.version === 2
-      ? aggregateRecallStats(opts.factsDb.getRawDb(), 30)
-      : null;
+    opts.factsDb && compositeCfg.version === 2 ? aggregateRecallStats(opts.factsDb.getRawDb(), 30) : null;
   let finalResults: SearchResult[];
   let demotedCount = 0;
 
@@ -147,9 +145,7 @@ export async function applyRetrievalV2(opts: ApplyRetrievalV2Opts): Promise<Retr
         (entry as MemoryEntry & { revisionCount?: number }).revisionCount ?? 0,
         (entry as MemoryEntry & { duplicateCount?: number }).duplicateCount ?? 0,
       ),
-      crossDomainBoost: recallStats
-        ? computeCrossDomainBoost(recallStats.get(r.entry.id)?.distinctQueries ?? 0, 3)
-        : 0,
+      crossDomainBoost: recallStats ? computeCrossDomainBoost(recallStats.get(r.entry.id)?.distinctQueries ?? 0, 3) : 0,
       intent: intent.intent,
       focusMultiplier: topicMatchMultiplier(entry.text, opts.focusTopic),
     };

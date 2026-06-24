@@ -190,29 +190,21 @@ function parseWorkerLeasesConfig(raw: unknown) {
       ? {
           enabled: quietRaw.enabled === true,
           start:
-            typeof quietRaw.start === "string" && quietRaw.start.trim().length > 0
-              ? quietRaw.start.trim()
-              : "01:00",
-          end:
-            typeof quietRaw.end === "string" && quietRaw.end.trim().length > 0 ? quietRaw.end.trim() : "06:00",
-          tz:
-            typeof quietRaw.tz === "string" && quietRaw.tz.trim().length > 0 ? quietRaw.tz.trim() : "UTC",
+            typeof quietRaw.start === "string" && quietRaw.start.trim().length > 0 ? quietRaw.start.trim() : "01:00",
+          end: typeof quietRaw.end === "string" && quietRaw.end.trim().length > 0 ? quietRaw.end.trim() : "06:00",
+          tz: typeof quietRaw.tz === "string" && quietRaw.tz.trim().length > 0 ? quietRaw.tz.trim() : "UTC",
         }
       : undefined;
   return {
     enabled: o.enabled === true,
     defaultTtlSeconds:
-      typeof o.defaultTtlSeconds === "number" && o.defaultTtlSeconds > 0
-        ? Math.floor(o.defaultTtlSeconds)
-        : 120,
+      typeof o.defaultTtlSeconds === "number" && o.defaultTtlSeconds > 0 ? Math.floor(o.defaultTtlSeconds) : 120,
     heartbeatIntervalSeconds:
       typeof o.heartbeatIntervalSeconds === "number" && o.heartbeatIntervalSeconds > 0
         ? Math.floor(o.heartbeatIntervalSeconds)
         : 30,
     ...(quietWindow ? { quietWindow } : {}),
-    ...(typeof o.contextUsageThreshold === "number" &&
-    o.contextUsageThreshold >= 0 &&
-    o.contextUsageThreshold <= 1
+    ...(typeof o.contextUsageThreshold === "number" && o.contextUsageThreshold >= 0 && o.contextUsageThreshold <= 1
       ? { contextUsageThreshold: o.contextUsageThreshold }
       : {}),
   };

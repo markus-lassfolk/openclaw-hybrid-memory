@@ -24,12 +24,7 @@ export type OrchestratorStepJournalInput = {
   semanticOutcome?: string;
 };
 
-export type MaintenanceRunStatus =
-  | "ran"
-  | "skipped:quiet"
-  | "skipped:rate"
-  | "skipped:lease"
-  | "failed";
+export type MaintenanceRunStatus = "ran" | "skipped:quiet" | "skipped:rate" | "skipped:lease" | "failed";
 
 export type MaintenanceRunInput = {
   job: string;
@@ -95,10 +90,7 @@ export function getLastRunForJob(db: DatabaseSync, job: string): MaintenanceRunR
 }
 
 /** Map orchestrator step outcome to journal status. */
-export function mapStepToMaintenanceRunStatus(
-  status: OrchestratorStepStatus,
-  summary: string,
-): MaintenanceRunStatus {
+export function mapStepToMaintenanceRunStatus(status: OrchestratorStepStatus, summary: string): MaintenanceRunStatus {
   if (status === "ok") {
     const lower = summary.toLowerCase();
     if (lower.includes("dry-run")) return "skipped:quiet";
