@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { describe, expect, it, vi } from "vitest";
 import { toolInstallers } from "../setup/tool-installers.js";
+import { hasBoundMemoryToolHelpers, resolveMemoryToolsContext } from "../tools/memory/helpers.js";
 import type { MemoryToolsContext } from "../tools/memory-tools.js";
 
 describe("tool installers", () => {
@@ -91,13 +92,19 @@ describe("tool installers", () => {
       "pendingLLMWarnings",
       "progressiveIndexBySession",
       "provenanceService",
+      "resolveAllVaults",
+      "resolveVault",
+      "resolveVaultWal",
       "variantQueue",
       "vectorDb",
       "verificationStore",
+      "wal",
       "walRemove",
       "walWrite",
     ]);
-    expect(selected).not.toHaveProperty("wal");
+    expect(selected.wal).toBe(wal);
+    expect(hasBoundMemoryToolHelpers(selected)).toBe(true);
+    expect(() => resolveMemoryToolsContext(selected)).not.toThrow();
     expect(selected.issueStore).toEqual({ kind: "issues" });
     expect(selected).not.toHaveProperty("workflowStore");
 

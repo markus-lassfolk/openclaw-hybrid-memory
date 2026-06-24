@@ -124,7 +124,7 @@ Hybrid Memory gives your OpenClaw agent **persistent memory** without turning me
 | [Credits & attribution](CREDITS-AND-ATTRIBUTION) | Sources, lineage, and what this repository adds |
 | [Contributor onboarding](CONTRIBUTOR-ONBOARDING) | First-contribution path, quality bar, and high-impact starter areas |
 | [Similar-sweep PR process](SIMILAR-SWEEP-PR) | Contributor merge order and module-split conventions during sweep batches |
-| [Release notes 2026.6.240](../release-notes/release-notes-2026.6.240.md) | Latest release highlights and upgrade notes |
+| [Release notes 2026.6.241](../release-notes/release-notes-2026.6.241.md) | Latest release highlights and upgrade notes |
 
 ---
 

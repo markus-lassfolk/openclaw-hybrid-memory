@@ -27,6 +27,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.6.241] - 2026-06-24
+
+### Fixed
+
+- **Gateway registration regression (#1938):** `hasBoundMemoryToolHelpers()` rejected pre-bound memory tool contexts when `wal` was present, causing `registerMemoryTools: Missing required legacy helper functions` on cold gateway start in **2026.6.240**. Bound helpers are now authoritative; legacy mode is detected only when those helpers are missing.
+- **Crystallization tool contract (#1939):** Added `memory_crystallize_restore` to `contracts.tools` / `AGENT_TOOL_CONTRACT_NAMES` so OpenClaw 6.x no longer warns about an undeclared runtime tool.
+- **Workboard cold-start probe (#1940):** Deferred the initial Workboard availability probe by 60s and retry up to 3 times with 15s backoff so sync arms after other gateway plugins finish loading, without requiring a manual re-register.
+
+### Changed
+
+- Version set to **2026.6.241**.
+
+---
+
 ## [2026.6.240] - 2026-06-24
 
 ### Fixed
