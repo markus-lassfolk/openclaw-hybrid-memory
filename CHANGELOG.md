@@ -27,6 +27,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.6.172] - 2026-06-24
+
+### Fixed
+
+- **Maintenance orchestrator guard writes (`writeFileSync is not defined`, #1934):** `extensions/memory-hybrid/services/cron-guard.ts` called `writeFileSync` in `writeStepGuardTimestampMs()` without importing it from `node:fs`. Successful maintenance steps then threw at the post-step guard write, causing nightly maintenance to report widespread failures (including `vectordb-optimize` and `repair-vectors`) even when the step runner succeeded. Restored the import and added unit/integration regression tests plus a CI Maintenance Gate (`tsc --noEmit` on scoped files + guard/orchestrator tests).
+
+### Changed
+
+- Version set to **2026.6.172**.
+
+### Upgrade note
+
+- After upgrading from **2026.6.170** / **2026.6.171**, **rerun maintenance once** (`openclaw hybrid-mem maintenance run --force --tiers nightly,cycle`) or wait for the next `maintenance-nightly` cron so vector/storage steps can complete and guard files are written. See [release-notes-2026.6.172.md](release-notes/release-notes-2026.6.172.md).
+
+---
+
 ## [2026.6.171] - 2026-06-21
 
 ### Fixed

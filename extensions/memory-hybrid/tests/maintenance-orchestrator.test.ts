@@ -4,8 +4,6 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   MAINTENANCE_STEPS,
-  getMaintenanceStep,
-  resolveStepGuardIntervalMs,
   runMaintenanceOrchestrator,
   toOrchestratorRunSummary,
 } from "../services/maintenance-orchestrator.js";
@@ -452,28 +450,5 @@ describe("maintenance-orchestrator", () => {
     );
     expect(pruneCalls).toBe(1);
     expect(result.steps[0]?.summary).toContain("pruned=3");
-  });
-});
-
-describe("cron-guard step helpers", () => {
-  let openclawDir: string;
-  afterEach(() => {
-    if (openclawDir) rmSync(openclawDir, { recursive: true, force: true });
-  });
-
-  it("read/write step guard roundtrip", () => {
-    openclawDir = mkdtempSync(join(tmpdir(), "hm-guard-"));
-    const ts = Date.now();
-    writeStepGuardTimestampMs("distill", ts, openclawDir);
-    expect(readStepGuardTimestampMs("distill", openclawDir)).toBe(ts);
-  });
-
-  it("uses passiveObserver.intervalMinutes for passive-observer guard", () => {
-    const step = getMaintenanceStep("passive-observer");
-    expect(step).toBeTruthy();
-    const cfg = {
-      passiveObserver: { enabled: true, intervalMinutes: 15 },
-    } as HybridMemoryConfig;
-    expect(resolveStepGuardIntervalMs(step!, cfg)).toBe(15 * 60 * 1000);
   });
 });
