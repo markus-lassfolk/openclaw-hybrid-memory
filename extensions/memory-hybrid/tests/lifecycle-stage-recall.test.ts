@@ -265,7 +265,7 @@ describe("runRecallStage", () => {
     );
 
     expect(recallPipeline.runRecallPipelineQuery).toHaveBeenCalled();
-    expect(recallPipeline.runRecallPipelineQuery.mock.calls[0]?.[4]).toMatchObject({
+    expect(vi.mocked(recallPipeline.runRecallPipelineQuery).mock.calls[0]?.[4]).toMatchObject({
       stageSignal: expect.any(AbortSignal),
     });
     expect(result?.kind).toBe("full");

@@ -102,6 +102,7 @@ describe("maintenance data gaps", { timeout: 60_000 }, () => {
           expiresAt: null,
           supersededAt: null,
           tags: [],
+          lastConfirmedAt: 1,
         },
       ],
       dir,

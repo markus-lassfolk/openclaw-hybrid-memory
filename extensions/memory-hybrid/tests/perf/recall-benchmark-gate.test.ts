@@ -38,7 +38,7 @@ describe("recall benchmark gate (#1910 / #1918)", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "hm-recall-bench-"));
-    factsDb = new FactsDB(join(tmpDir, "facts.db"), { fuzzyDedupe: false, storeConfig: {} });
+    factsDb = new FactsDB(join(tmpDir, "facts.db"), { fuzzyDedupe: false, storeConfig: { fuzzyDedupe: false } });
   });
 
   afterEach(() => {

@@ -444,7 +444,15 @@ export function registerManageReflectionPipeline(
             opts?.thinking === "adaptive" || opts?.thinking === "disabled" ? opts.thinking : undefined;
           let res;
           try {
-            res = await runReflectionRules({ dryRun, model: explicitModel, verbose, thinkingMode });
+            res = await runReflectionRules({
+              dryRun,
+              model:
+                explicitModel ??
+                reflectionConfig.model ??
+                getDefaultCronModel(getCronModelConfig(ctx.cfg), "maintenance"),
+              verbose,
+              thinkingMode,
+            });
           } catch (err) {
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {
               subsystem: "cli",

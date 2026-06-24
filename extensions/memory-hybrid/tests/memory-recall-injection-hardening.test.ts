@@ -253,7 +253,7 @@ describe("runInjectionStage — untrusted-data boundary in assembled prompt", ()
       const createMock = vi.fn(() => new Promise(() => undefined));
       ctx.openai = {
         chat: { completions: { create: createMock } },
-      } as typeof ctx.openai;
+      } as unknown as typeof ctx.openai;
       const candidates = Array.from({ length: 4 }, (_, i) => ({
         entry: {
           id: `fact-${i}`,

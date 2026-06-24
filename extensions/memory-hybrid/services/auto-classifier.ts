@@ -352,7 +352,7 @@ async function runClassifyForCli(
   discoveredPath: string,
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   progressReporter?: ClassifyProgressReporter,
-): Promise<{ reclassified: number; total: number; breakdown?: Record<string, number> }> {
+): Promise<{ reclassified: number; total: number; breakdown?: Record<string, number>; batchFailures?: number }> {
   // Callers (CLI, plugin-service) must pass opts.model or config.model so one is set
   const classifyModel = opts.model ?? config.model;
   if (!classifyModel) throw new Error("classify model required: set autoClassify.model or pass --model");

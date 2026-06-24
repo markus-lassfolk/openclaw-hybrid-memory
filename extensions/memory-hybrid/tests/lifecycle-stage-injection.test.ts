@@ -131,7 +131,7 @@ describe("runInjectionStage", () => {
     vi.useFakeTimers();
     try {
       const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
-      initPrependBudget(ctx.prependBudgetRef, 500, "test-session");
+      initPrependBudget(ctx.prependBudgetRef!, 500, "test-session");
       const api = makeMockStageApi();
       const base = makeMinimalRecallResult().candidates[0];
       const candidates = Array.from({ length: 5 }, (_, i) => ({
@@ -155,7 +155,7 @@ describe("runInjectionStage", () => {
       expect(api.logger.warn).toHaveBeenCalledWith(
         "memory-hybrid: injection stage timed out — returning unsummarized partial injection",
       );
-      const remaining = ctx.prependBudgetRef.value?.remainingTokens ?? 0;
+      const remaining = ctx.prependBudgetRef!.value?.remainingTokens ?? 0;
       expect(remaining).toBeGreaterThan(0);
       expect(remaining).toBeLessThan(500);
     } finally {

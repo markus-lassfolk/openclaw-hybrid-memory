@@ -150,6 +150,10 @@ export const DEFAULT_RETRIEVAL_CONFIG: RetrievalConfig = {
   graphWalkDepth: 2,
   semanticTopK: 20,
   fts5TopK: 20,
+  defaultRecallMode: "hybrid",
+  recallLatencyWarnMs: 150,
+  episodeCausalLatencyWarnMs: 30,
+  contradictionLatencyWarnMs: 20,
 };
 
 // ---------------------------------------------------------------------------
@@ -838,7 +842,7 @@ export async function runExplicitDeepRetrieval(
         queryText,
         scoredFacts,
         rerankingConfig,
-        rerankingOpenai,
+        rerankingOpenai!,
         config.crossEncoder,
       );
       const orderedEntriesReranked = reranked
@@ -941,7 +945,7 @@ export async function runExplicitDeepRetrieval(
       );
     }
 
-    if (issueStore && (policy as ExplicitDeepRetrievalPolicy).mode !== "interactive-recall") {
+    if (issueStore && policy.mode !== "interactive-recall") {
       strategyPromises.push(
         safeStrategy("issues", () => {
           const results = runIssueRetrievalStrategy(queryText, issueStore, semanticTopK, factsDb);
@@ -1208,7 +1212,7 @@ export async function runExplicitDeepRetrieval(
             queryText,
             scoredFacts,
             rerankingConfig,
-            rerankingOpenai,
+            rerankingOpenai!,
             config.crossEncoder,
           );
           const rerankedOrder = new Map(reranked.map((fact, index) => [fact.factId, index]));

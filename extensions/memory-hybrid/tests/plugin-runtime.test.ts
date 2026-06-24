@@ -35,9 +35,9 @@ describe("createTimers", () => {
     const t = createTimers();
     for (const key of Object.keys(t) as Array<keyof typeof t>) {
       if (key === "shuttingDownRef") {
-        expect(t[key].value).toBe(false);
-      } else {
-        expect(t[key].value).toBeNull();
+        expect(t[key]!.value).toBe(false);
+      } else if (t[key]) {
+        expect(t[key]!.value).toBeNull();
       }
     }
   });

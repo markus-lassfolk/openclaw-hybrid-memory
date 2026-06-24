@@ -81,7 +81,7 @@ describe("chatCompleteWithAdaptiveMaintenanceRetry thinking downgrade", () => {
 
     expect(detail.content).toContain("PATTERN:");
     expect(chat.chatCompleteWithRetryDetailed).toHaveBeenCalledTimes(2);
-    expect(chat.chatCompleteWithRetryDetailed.mock.calls[0][0].thinkingMode).toBe("adaptive");
-    expect(chat.chatCompleteWithRetryDetailed.mock.calls[1][0].thinkingMode).toBe("disabled");
+    expect(vi.mocked(chat.chatCompleteWithRetryDetailed).mock.calls[0][0].thinkingMode).toBe("adaptive");
+    expect(vi.mocked(chat.chatCompleteWithRetryDetailed).mock.calls[1][0].thinkingMode).toBe("disabled");
   });
 });

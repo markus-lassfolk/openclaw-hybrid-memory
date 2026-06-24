@@ -319,12 +319,14 @@ export async function replayWalEntries(
           continue;
         }
 
-        await cleanupEvictedVector({
-          vectorDb,
-          evictedFactId: storeResult.evictedFactId,
-          logger,
-          context: "wal-replay-store",
-        });
+        if (vectorDb) {
+          await cleanupEvictedVector({
+            vectorDb,
+            evictedFactId: storeResult.evictedFactId,
+            logger,
+            context: "wal-replay-store",
+          });
+        }
 
         const stored = storeResult.entry;
         await ensureVectorAndEmbeddingMeta({
@@ -475,12 +477,14 @@ export async function replayWalEntries(
           continue;
         }
 
-        await cleanupEvictedVector({
-          vectorDb,
-          evictedFactId: updateStoreResult.evictedFactId,
-          logger,
-          context: "wal-replay-update",
-        });
+        if (vectorDb) {
+          await cleanupEvictedVector({
+            vectorDb,
+            evictedFactId: updateStoreResult.evictedFactId,
+            logger,
+            context: "wal-replay-update",
+          });
+        }
 
         const stored = updateStoreResult.entry;
         factsDb.supersede(targetId, stored.id);

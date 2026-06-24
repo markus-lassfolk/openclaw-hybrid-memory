@@ -46,7 +46,7 @@ describe("fragment recall (#1914)", () => {
     });
     const results = preferFragmentsOverParents([
       { entry: parent, score: 0.95, backend: "sqlite" },
-      { entry: child, score: 0.8, backend: "vector" },
+      { entry: child, score: 0.8, backend: "lancedb" },
     ]);
     expect(results.map((r) => r.entry.id)).toEqual(["child"]);
   });
@@ -65,7 +65,7 @@ describe("fragment recall (#1914)", () => {
     const out = applyFragmentRecallPostProcess(
       [
         { entry: parent, score: 0.9, backend: "sqlite" },
-        { entry: child, score: 0.86, backend: "vector" },
+        { entry: child, score: 0.86, backend: "lancedb" },
       ],
       { fragmentScoreBoost: 1.1 },
     );

@@ -197,15 +197,15 @@ function registerManageStorageMaintenanceOnParent(
   wrapAction?: (
     oldPath: string,
     newPath: string,
-    fn: (...args: unknown[]) => void | Promise<void>,
-  ) => (...args: unknown[]) => void | Promise<void>,
+    fn: (...args: any[]) => void | Promise<void>,
+  ) => (...args: any[]) => void | Promise<void>,
 ): void {
   const groupedPath = (sub: string) => `storage ${sub}`;
   const maybeWrap = (
     flatPath: string,
     sub: string,
-    fn: (...args: unknown[]) => void | Promise<void>,
-  ): ((...args: unknown[]) => void | Promise<void>) => (wrapAction ? wrapAction(flatPath, groupedPath(sub), fn) : fn);
+    fn: (...args: any[]) => void | Promise<void>,
+  ): ((...args: any[]) => void | Promise<void>) => (wrapAction ? wrapAction(flatPath, groupedPath(sub), fn) : fn);
   const {
     factsDb,
     vectorDb,

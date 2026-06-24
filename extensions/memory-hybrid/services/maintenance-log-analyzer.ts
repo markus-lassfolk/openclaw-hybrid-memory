@@ -416,7 +416,7 @@ export function collectMaintenanceSteps(
         tierLabel?: string;
         finishedAt?: string;
         exitCode?: number;
-        steps?: Array<{ name: string; status: string; summary: string }>;
+        steps?: Array<{ name: string; status: string; summary: string; semanticOutcome?: string }>;
       };
       if (!Array.isArray(summary.steps)) continue;
       const summaryMtime = safeStatMtimeMs(summaryPath);

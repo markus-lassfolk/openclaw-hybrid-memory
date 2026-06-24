@@ -19,6 +19,7 @@ import { registerMineCommand } from "./cmd-mine.js";
 import { registerProvidersCommand } from "./cmd-providers.js";
 import { registerSetupCommand } from "./cmd-setup.js";
 import type { Chainable } from "./shared.js";
+import type { ConfigCliResult } from "./types.js";
 
 export interface UserFriendlyContext {
   cfg: HybridMemoryConfig;
@@ -30,9 +31,7 @@ export interface UserFriendlyContext {
     key: string,
     value: string,
   ) => { ok: boolean; error?: string } | Promise<{ ok: boolean; error?: string }>;
-  runConfigMode?: (
-    mode: string,
-  ) => { ok: boolean; error?: string; message?: string } | Promise<{ ok: boolean; error?: string; message?: string }>;
+  runConfigMode?: (mode: string) => ConfigCliResult | Promise<ConfigCliResult>;
   runInstall?: (opts: { dryRun: boolean }) => Promise<{ ok: boolean }>;
   runMine?: (path: string) => Promise<void>;
 }

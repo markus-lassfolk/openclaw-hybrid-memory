@@ -80,7 +80,7 @@ export async function runStoreForCli(
           value: parsed.secretValue,
           url: parsed.url,
           notes: parsed.notes,
-        });
+        }) != null;
       } catch (err) {
         capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:credential-vault-store" });
         return { outcome: "credential_vault_error" };

@@ -43,10 +43,9 @@ export function registerMaintenanceRunCommands(maintenance: Chainable): void {
       }),
     );
 
-  runCmd
-    .command("status")
-    .description("Show run status by id")
-    .argument("<id>", "Run id or unique prefix")
+  const statusCmd = runCmd.command("status").description("Show run status by id");
+  statusCmd.argument?.("<id>", "Run id or unique prefix");
+  statusCmd
     .option("--json", "Output JSON")
     .action(
       withExit(async (id: string, opts?: { json?: boolean }) => {
@@ -84,10 +83,9 @@ export function registerMaintenanceRunCommands(maintenance: Chainable): void {
       }),
     );
 
-  runCmd
-    .command("artifacts")
-    .description("List artifact paths for a run")
-    .argument("<id>", "Run id or unique prefix")
+  const artifactsCmd = runCmd.command("artifacts").description("List artifact paths for a run");
+  artifactsCmd.argument?.("<id>", "Run id or unique prefix");
+  artifactsCmd
     .option("--json", "Output JSON")
     .action(
       withExit(async (id: string, opts?: { json?: boolean }) => {
@@ -108,10 +106,9 @@ export function registerMaintenanceRunCommands(maintenance: Chainable): void {
       }),
     );
 
-  runCmd
-    .command("explain")
-    .description("Concise diagnosis for a run")
-    .argument("<id>", "Run id or unique prefix")
+  const explainCmd = runCmd.command("explain").description("Concise diagnosis for a run");
+  explainCmd.argument?.("<id>", "Run id or unique prefix");
+  explainCmd
     .option("--json", "Output JSON")
     .action(
       withExit(async (id: string, opts?: { json?: boolean }) => {
@@ -154,11 +151,9 @@ export function registerMaintenanceRunCommands(maintenance: Chainable): void {
       }),
     );
 
-  runCmd
-    .command("resume")
-    .description("Resume a partial JobRun")
-    .argument("<id>", "JobRun id or unique prefix")
-    .action(
+  const resumeCmd = runCmd.command("resume").description("Resume a partial JobRun");
+  resumeCmd.argument?.("<id>", "JobRun id or unique prefix");
+  resumeCmd.action(
       withExit(async (id: string) => {
         const listed = findMaintenanceRunById(id);
         if (!listed || listed.kind !== "job") {

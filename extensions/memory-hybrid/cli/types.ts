@@ -39,7 +39,7 @@ export type StoreCliResult =
   | { outcome: "credential_parse_error" }
   | { outcome: "credential_vault_error" }
   | { outcome: "credential_db_error" }
-  | { outcome: "noop"; reason: string }
+  | { outcome: "noop"; reason: string; id?: string }
   | { outcome: "retracted"; targetId: string; reason: string }
   | { outcome: "updated"; id: string; supersededId: string; reason: string }
   | {

@@ -201,7 +201,7 @@ export function collectDreamCycleLog(ctx: WorkshopDashboardContext, limit = 5): 
 
 export function collectSkillTelemetry(ctx: WorkshopDashboardContext) {
   try {
-    const report = ctx.factsDb.buildGeneratedSkillTelemetryReport?.({ limit: 50 });
+    const report = ctx.factsDb.buildGeneratedSkillTelemetryReport?.({ recentActivationLimit: 50 });
     return report?.rows ?? [];
   } catch {
     return [];

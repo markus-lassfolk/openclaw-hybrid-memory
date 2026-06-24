@@ -100,14 +100,14 @@ describe("registerLifecycleHooks capability hints cadence", () => {
     const pluginApi = buildPluginApiForRegisterHooks(tmpDir, factsDb, {
       autoRecall: { enabled: true, capabilityHints: "always" },
     });
-    initPrependBudget(pluginApi.prependBudgetRef, 500, "agent:main:main");
-    consumePrependBudget(pluginApi.prependBudgetRef, "x".repeat(1480));
+    initPrependBudget(pluginApi.prependBudgetRef!, 500, "agent:main:main");
+    consumePrependBudget(pluginApi.prependBudgetRef!, "x".repeat(1480));
     registerLifecycleHooks(pluginApi as never, api as never);
 
     const out = findCapabilityHints(invokeBeforePromptBuildHandlers(api, { session: { id: "sess-a" } }));
     expect(out).toBeDefined();
     expect(out).toContain("prepend budget cap");
-    expect(pluginApi.prependBudgetRef.value?.remainingTokens).toBe(0);
+    expect(pluginApi.prependBudgetRef!.value?.remainingTokens).toBe(0);
   });
 
   it("silent mode suppresses capability hints even with explicit capabilityHints setting", () => {

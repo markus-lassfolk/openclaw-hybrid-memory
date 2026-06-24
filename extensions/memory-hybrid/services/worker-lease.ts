@@ -221,7 +221,7 @@ export function releaseAllLeasesForSession(db: DatabaseSync, ownerSessionId: str
   try {
     const result = db.prepare("DELETE FROM worker_leases WHERE owner_session_id = ?").run(ownerSessionId);
     db.exec("COMMIT");
-    return result.changes;
+    return Number(result.changes);
   } catch {
     try {
       db.exec("ROLLBACK");

@@ -83,7 +83,7 @@ describe("heartbeat active-task + goal stewardship (facts ledger)", () => {
       embeddings,
       openai: null,
       currentAgentIdRef: { value: "test-agent" },
-    } as LifecycleContext;
+    } as unknown as LifecycleContext;
   });
 
   afterEach(async () => {

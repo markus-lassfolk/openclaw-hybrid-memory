@@ -352,7 +352,7 @@ export function buildLongRunningTaskRegistrationBlock(
 ): string {
   const label = sanitizePromptInjection(draft.label);
   const description = sanitizePromptInjection(draft.description);
-  const next = sanitizePromptInjection(draft.next);
+  const next = sanitizePromptInjection(draft.next ?? "");
   const repoContext = proposal.repoContext ? sanitizePromptInjection(proposal.repoContext) : undefined;
   const lines = [
     "<active-task-registration>",

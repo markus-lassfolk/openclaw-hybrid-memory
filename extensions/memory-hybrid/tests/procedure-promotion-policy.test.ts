@@ -389,7 +389,6 @@ Source procedure id: proc-weather
       policy,
       {
         skillsAutoPath: skillsDir,
-        requireApprovalForPromote: false,
         validationThreshold: 3,
       },
     );
@@ -398,7 +397,6 @@ Source procedure id: proc-weather
       policy,
       {
         skillsAutoPath: skillsDir,
-        requireApprovalForPromote: false,
         validationThreshold: 3,
       },
     );

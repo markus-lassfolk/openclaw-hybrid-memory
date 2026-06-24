@@ -41,7 +41,7 @@ export function buildCredentialPointerStoreInput(
 }
 
 export function isCredentialPointerRejected(result: StoreFactResult): boolean {
-  return result.skipped === true || result.rejected === true;
+  return result.skipped === true;
 }
 
 export function isCredentialPointerLinked(result: StoreFactResult): boolean {

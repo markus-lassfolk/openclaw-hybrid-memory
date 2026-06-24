@@ -21,7 +21,6 @@ import { type RecallPipelineDeps, runRecallPipelineQuery } from "../../services/
 import { mergeSearchResultsByBestScore } from "../../services/merge-results.js";
 import { createRecallSpan, createRecallTimingLogger } from "../../services/recall-timing.js";
 import { filterCandidatesByInteractiveGrading } from "../../services/interactive-recall-grader.js";
-import { trimBlockToBudget } from "../../services/context-block-trim.js";
 import { consumePrependBudget, getRemainingPrependTokens, initPrependBudget } from "../../services/prepend-budget.js";
 import {
   assembleRecallPrependContext,

@@ -19,7 +19,7 @@ describe("vault registry (#1917)", () => {
     try {
       const sqlitePath = join(dir, "facts.db");
       const lancePath = join(dir, "facts.lance");
-      const factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false, storeConfig: {} });
+      const factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false, storeConfig: { fuzzyDedupe: false } });
       const vectorDb = new VectorDB(lancePath, 8, false);
       const registry = createVaultRegistry({
         cfg: {
@@ -50,7 +50,7 @@ describe("vault registry (#1917)", () => {
     try {
       const sqlitePath = join(dir, "facts.db");
       const lancePath = join(dir, "facts.lance");
-      const factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false, storeConfig: {} });
+      const factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false, storeConfig: { fuzzyDedupe: false } });
       const vectorDb = new VectorDB(lancePath, 8, false);
       const registry = createVaultRegistry({
         cfg: {
@@ -79,7 +79,7 @@ describe("vault registry (#1917)", () => {
     try {
       const sqlitePath = join(dir, "facts.db");
       const lancePath = join(dir, "facts.lance");
-      const factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false, storeConfig: {} });
+      const factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false, storeConfig: { fuzzyDedupe: false } });
       const vectorDb = new VectorDB(lancePath, 8, false);
       const projectDbPath = join(dir, "project.db");
       const registry = createVaultRegistry({
@@ -111,7 +111,7 @@ describe("vault registry (#1917)", () => {
     try {
       const sqlitePath = join(dir, "facts.db");
       const lancePath = join(dir, "facts.lance");
-      const factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false, storeConfig: {} });
+      const factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false, storeConfig: { fuzzyDedupe: false } });
       const vectorDb = new VectorDB(lancePath, 8, false);
       const projectDbPath = join(dir, "project.db");
       const registry = createVaultRegistry({
@@ -142,7 +142,7 @@ describe("injection attribution store (#1916)", () => {
   it("persists attribution rows", () => {
     const dir = mkdtempSync(join(homedir(), "hm-attr-"));
     try {
-      const factsDb = new FactsDB(join(dir, "facts.db"), { fuzzyDedupe: false, storeConfig: {} });
+      const factsDb = new FactsDB(join(dir, "facts.db"), { fuzzyDedupe: false, storeConfig: { fuzzyDedupe: false } });
       const db = factsDb.getRawDb();
       recordInjectionAttribution(db, {
         sessionKey: "sess-1",

@@ -101,7 +101,10 @@ export type DistillContext = {
     full?: boolean;
     force?: boolean;
   }) => Promise<ReinforcementExtractResult>;
-  runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
+  runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{
+    created: number;
+    semanticOutcome?: string;
+  }>;
 };
 
 export type DistillRegistrationOptions = {
@@ -128,8 +131,8 @@ function registerDistillCommandsOnParent(
   wrapAction?: (
     oldPath: string,
     newPath: string,
-    fn: (...args: unknown[]) => void | Promise<void>,
-  ) => (...args: unknown[]) => void | Promise<void>,
+    fn: (...args: any[]) => void | Promise<void>,
+  ) => (...args: any[]) => void | Promise<void>,
   opts?: { skipDistillMain?: boolean },
 ): void {
   const {
@@ -149,13 +152,15 @@ function registerDistillCommandsOnParent(
   const maybeWrap = (
     flatPath: string,
     sub: string,
-    fn: (...args: unknown[]) => void | Promise<void>,
-  ): ((...args: unknown[]) => void | Promise<void>) => (wrapAction ? wrapAction(flatPath, groupedPath(sub), fn) : fn);
+    fn: (...args: any[]) => void | Promise<void>,
+  ): ((...args: any[]) => void | Promise<void>) => (wrapAction ? wrapAction(flatPath, groupedPath(sub), fn) : fn);
 
   if (!opts?.skipDistillMain) {
     registerScanMaintenanceOverrideOptions(
-      mem
-        .command(names.distill, isDefaultRun ? ({ isDefault: true } as never) : undefined)
+      (mem.command as (n: string, opts?: unknown) => Chainable)(
+        names.distill,
+        isDefaultRun ? ({ isDefault: true } as never) : undefined,
+      )
         .description(
           isDefaultRun
             ? "Extract facts from session JSONL via LLM (dedup, store). Use 'distill window' for date range info."

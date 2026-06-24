@@ -22,6 +22,7 @@ export interface DreamCycleFollowUpDeps {
     stale: number;
     uncertain: number;
     errors: number;
+    errorSummaries: string[];
   }>;
   runExtractImplicitFeedback?: (opts: {
     days?: number;

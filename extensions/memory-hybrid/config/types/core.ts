@@ -72,6 +72,8 @@ export type WALConfig = {
   walPath?: string;
   /** Maximum age of WAL entries before they're considered stale (ms, default: 5 minutes) */
   maxAge?: number;
+  /** Rewrite WAL when file size exceeds this limit (bytes, default: 16 MiB). */
+  maxSizeBytes?: number;
 };
 
 /** Event log archival configuration. */

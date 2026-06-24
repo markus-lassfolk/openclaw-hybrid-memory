@@ -315,9 +315,11 @@ export function buildCliMaintenanceRunners(
 
   set("build-languages", async () => {
     const r = await b.runBuildLanguageKeywords({ dryRun: false });
-    const summary = `languagesAdded=${r.languagesAdded ?? 0} semantic=${r.ok ? "success" : "partial"}`;
-    if (!r.ok) throw new Error(`build-languages failed (${r.error ?? "unknown"} ${summary})`);
-    return summary;
+    if (!r.ok) {
+      const summary = "languagesAdded=0 semantic=partial";
+      throw new Error(`build-languages failed (${r.error ?? "unknown"} ${summary})`);
+    }
+    return `languagesAdded=${r.languagesAdded} semantic=success`;
   });
 
   set("credentials-prune", async () => {
@@ -354,6 +356,7 @@ export function buildCliMaintenanceRunners(
   });
 
   set("per-folder-context", async () => {
+    if (!b.resolvedSqlitePath) throw new Error("per-folder-context unavailable (no sqlite path)");
     const { regeneratePerFolderContext } = await import("../../../services/per-folder-context.js");
     const memoryDir = dirname(b.resolvedSqlitePath);
     const r = regeneratePerFolderContext(b.factsDb, memoryDir, { days: 7 });
@@ -705,7 +708,10 @@ export function buildCliMaintenanceRunners(
 
   set("pending-digest", async () => {
     const report = buildPendingReviewDigestReport({ cfg: b.cfg, factsDb: b.factsDb, since: "7d" });
-    return `sections=${report.sections.length} totalPending=${report.totalPendingItems}`;
+    const pr = report.pendingReview;
+    const totalPending = pr.persona + pr.procedures + pr.tools + pr.crystallization + pr.verified;
+    const sections = [pr.persona, pr.procedures, pr.tools, pr.crystallization, pr.verified].filter((n) => n > 0).length;
+    return `sections=${sections} totalPending=${totalPending}`;
   });
 
   set("digest-autopilot", async () => {
@@ -798,7 +804,7 @@ export interface PluginCycleRunnerDeps {
   proposalsDb?: { pruneExpired: () => number } | null;
   credentialsDb?: { prune?: () => number } | null;
   openai: import("openai").default;
-  embeddings: import("../../services/embeddings.js").EmbeddingProvider;
+  embeddings: import("../../../services/embeddings.js").EmbeddingProvider;
   eventBus?: EventBus | null;
   resolvedSqlitePath: string;
   logger: { info: (s: string) => void; warn: (s: string) => void };
@@ -869,8 +875,9 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
   }
 
   if (deps.cfg.sensorSweep?.enabled && deps.eventBus) {
+    const eventBus = deps.eventBus;
     runners.set("sensor-sweep", async () => {
-      const r = await sweepAll(deps.eventBus, deps.cfg.sensorSweep, deps.factsDb, {
+      const r = await sweepAll(eventBus, deps.cfg.sensorSweep, deps.factsDb, {
         tier: "all",
         resolvedSqlitePath: deps.resolvedSqlitePath,
       });

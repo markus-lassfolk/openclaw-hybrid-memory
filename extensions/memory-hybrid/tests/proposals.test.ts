@@ -173,7 +173,7 @@ describe("applyApprovedProposal (non-git workspace — issue #90)", () => {
       },
       resolvedSqlitePath: join(tmpDir, "memory.db"),
       api: { logger: { warn: () => {} } },
-    };
+    } as unknown as Parameters<typeof applyApprovedProposal>[0];
 
     const result = await applyApprovedProposal(ctx, proposal.id);
 
@@ -213,7 +213,7 @@ describe("applyApprovedProposal (non-git workspace — issue #90)", () => {
       },
       resolvedSqlitePath: join(tmpDir, "memory.db"),
       api: { logger: { warn: () => {} } },
-    };
+    } as unknown as Parameters<typeof applyApprovedProposal>[0];
 
     const result = await applyApprovedProposal(ctx, replaceProposal.id);
     expect(result.ok).toBe(false);
@@ -535,7 +535,7 @@ describe("getProposalExpiryError and applyApprovedProposal expiry", () => {
         proposalsDb,
         cfg: { personaProposals: { allowedFiles: ["SOUL.md"] } },
         resolvedSqlitePath: join(tmpDir, "memory.db"),
-      },
+      } as unknown as Parameters<typeof applyApprovedProposal>[0],
       proposal.id,
     );
     return result.then((r) => {

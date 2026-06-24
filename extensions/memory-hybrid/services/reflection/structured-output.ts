@@ -241,7 +241,7 @@ export function parseRulesFromModelResponse(rawResponse: string): ReflectionRule
       parsedFromJson = true;
       parseableLines = structuredRules.length;
       for (const candidate of structuredRules) {
-        const normalized = normalizeRuleCandidate(candidate);
+        const normalized = normalizeRuleCandidate(String(candidate));
         if (normalized.rejectedLowConfidence) {
           rejectedLowConfidence++;
           continue;

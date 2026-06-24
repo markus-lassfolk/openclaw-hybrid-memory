@@ -172,7 +172,7 @@ export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
     tier: "nightly",
     guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20,
     llmTier: "default",
-    featureGate: (cfg) => cfg.distill?.enabled !== false,
+    featureGate: (cfg) => (cfg.distill as { enabled?: boolean } | undefined)?.enabled !== false,
   },
   {
     name: "resolve-contradictions",

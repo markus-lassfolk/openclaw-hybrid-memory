@@ -59,6 +59,9 @@ describe("keyword recall (#1901)", () => {
       text: "Policy FR-2024-LIC-027 requires quarterly audit",
       category: "fact",
       importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
       source: "conversation",
     });
     const hits = searchFts(db.getRawDb(), "FR-2024-LIC-027", { limit: 5 });

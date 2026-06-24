@@ -128,6 +128,7 @@ function selectMemoryCoreToolsContext(ctx: ToolsContext): MemoryToolsContext {
     currentAgentIdRef,
     pendingLLMWarnings,
     buildToolScopeFilter,
+    wal,
     walWrite: (operation, data, logger, supersedeTargetId) => walWrite(wal, operation, data, logger, supersedeTargetId),
     walRemove: (id, logger) => walRemove(wal, id, logger),
     findSimilarByEmbedding,
@@ -473,7 +474,7 @@ function selectProposalRoutesContext(ctx: ToolsContext, api: ClawdbotPluginApi):
 function installProposalRoutes(ctx: ProposalRoutesContext): void {
   if (!isWorkshopEnabled(ctx.cfgFull)) return;
   registerProposalHttpRoutes(ctx);
-  registerProposalGatewayMethods(ctx);
+  registerProposalGatewayMethods({ ...ctx, cfg: ctx.cfgFull });
 }
 
 function selectFactMutationGatewayContext(ctx: ToolsContext, api: ClawdbotPluginApi): FactMutationGatewayContext {

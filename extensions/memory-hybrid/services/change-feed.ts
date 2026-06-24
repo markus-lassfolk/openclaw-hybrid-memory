@@ -78,7 +78,7 @@ export class ChangeFeed {
   /** For tests: construct from a raw DatabaseSync handle. */
   static fromDb(db: DatabaseSync): ChangeFeed {
     const feed = Object.create(ChangeFeed.prototype) as ChangeFeed;
-    (feed as { getDb: () => DatabaseSync }).getDb = () => db;
+    (feed as unknown as { getDb: () => DatabaseSync }).getDb = () => db;
     feed.migrate();
     return feed;
   }

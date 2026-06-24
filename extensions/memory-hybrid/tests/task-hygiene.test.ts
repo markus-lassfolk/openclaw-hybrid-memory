@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ActiveTaskEntry } from "../services/active-task.js";
 import { readActiveTaskFile, writeActiveTaskFile } from "../services/active-task.js";
-import type { ActiveTaskContext } from "../cli/types.js";
+import type { ActiveTaskContext } from "../cli/active-tasks.js";
 import { runActiveTaskHygiene } from "../cli/active-tasks.js";
 import {
   buildLongRunningTaskDraft,
