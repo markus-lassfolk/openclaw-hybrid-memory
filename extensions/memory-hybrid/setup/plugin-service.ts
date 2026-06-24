@@ -571,10 +571,10 @@ export function createPluginService(ctx: PluginServiceContext) {
         }
       }
 
-      // Workboard integration: start adapter for bidirectional task/goal sync
+      // Workboard integration: defer probe on cold start (#1940), then retry before arming sync
       if (cfg.workboard?.enabled) {
-        const { armWorkboardIntegration } = await import("./workboard-integration.js");
-        await armWorkboardIntegration({
+        const { scheduleWorkboardStartupIntegration } = await import("./workboard-integration.js");
+        scheduleWorkboardStartupIntegration({
           factsDb,
           vectorDb,
           embeddings,

@@ -23,11 +23,60 @@ export type WorkboardIntegrationContext = {
   connectLabel?: string;
 };
 
+export const WORKBOARD_STARTUP_DEFER_MS = 60_000;
+export const WORKBOARD_STARTUP_PROBE_MAX_ATTEMPTS = 3;
+export const WORKBOARD_STARTUP_PROBE_BACKOFF_MS = 15_000;
+
 function clearWorkboardSyncTimer(timers: PluginRuntime["timers"]): void {
   if (timers.workboardSync?.value) {
     clearInterval(timers.workboardSync.value);
     timers.workboardSync.value = null;
   }
+}
+
+function clearWorkboardStartupTimer(timers: PluginRuntime["timers"]): void {
+  if (timers.workboardStartupTimeout?.value) {
+    clearTimeout(timers.workboardStartupTimeout.value);
+    timers.workboardStartupTimeout.value = null;
+  }
+}
+
+async function sleepMs(ms: number, shouldAbort?: () => boolean): Promise<void> {
+  if (ms <= 0) return;
+  await new Promise<void>((resolve) => {
+    setTimeout(() => resolve(), ms);
+  });
+  if (shouldAbort?.()) {
+    throw new Error("aborted");
+  }
+}
+
+async function probeWorkboardAdapterAvailable(
+  adapter: { isAvailable(): Promise<boolean> },
+  opts: {
+    maxAttempts: number;
+    backoffMs: number;
+    shouldAbort?: () => boolean;
+    logger: { debug?: (msg: string) => void };
+    connectLabel: string;
+  },
+): Promise<boolean> {
+  for (let attempt = 1; attempt <= opts.maxAttempts; attempt++) {
+    if (opts.shouldAbort?.()) return false;
+    const available = await adapter.isAvailable();
+    if (available) return true;
+    if (attempt < opts.maxAttempts) {
+      opts.logger.debug?.(
+        `memory-hybrid: Workboard probe attempt ${attempt}/${opts.maxAttempts} failed (${opts.connectLabel}) — retrying in ${opts.backoffMs}ms`,
+      );
+      try {
+        await sleepMs(opts.backoffMs, opts.shouldAbort);
+      } catch {
+        return false;
+      }
+    }
+  }
+  return false;
 }
 
 /**
@@ -94,7 +143,15 @@ export async function armWorkboardIntegration(ctx: WorkboardIntegrationContext):
       verbose: uiIntegrationVerbose,
     });
 
-    const available = await adapter.isAvailable();
+    const probeAttempts = connectLabel === "startup" ? WORKBOARD_STARTUP_PROBE_MAX_ATTEMPTS : 1;
+    const probeBackoff = connectLabel === "startup" ? WORKBOARD_STARTUP_PROBE_BACKOFF_MS : 0;
+    const available = await probeWorkboardAdapterAvailable(adapter, {
+      maxAttempts: probeAttempts,
+      backoffMs: probeBackoff,
+      shouldAbort: checkSuperseded,
+      logger: api.logger,
+      connectLabel,
+    });
     if (!available) {
       api.logger.info?.(`memory-hybrid: Workboard plugin not reachable (${connectLabel}) — sync not armed`);
       return;
@@ -148,6 +205,24 @@ export async function armWorkboardIntegration(ctx: WorkboardIntegrationContext):
       operation: "workboard-adapter-start",
     });
   }
+}
+
+/** Defer cold-start Workboard probe until other gateway plugins finish loading (#1940). */
+export function scheduleWorkboardStartupIntegration(ctx: WorkboardIntegrationContext): void {
+  const { cfg, api, timers, shouldAbort } = ctx;
+  if (!cfg.workboard?.enabled) return;
+  if (shouldAbort?.()) return;
+
+  clearWorkboardStartupTimer(timers);
+  api.logger.debug?.(
+    `memory-hybrid: Workboard startup probe deferred ${WORKBOARD_STARTUP_DEFER_MS}ms (cold gateway start)`,
+  );
+  timers.workboardStartupTimeout = {
+    value: setTimeout(() => {
+      timers.workboardStartupTimeout!.value = null;
+      void armWorkboardIntegration({ ...ctx, connectLabel: "startup" });
+    }, WORKBOARD_STARTUP_DEFER_MS),
+  };
 }
 
 /** Fire-and-forget re-arm after hot reload cleared timers without re-running plugin-service.start(). */

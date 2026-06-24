@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PluginRuntime } from "../api/plugin-runtime.js";
 import { createTimers } from "../api/plugin-runtime.js";
 import type { HybridMemoryConfig } from "../config.js";
-import { armWorkboardIntegration } from "../setup/workboard-integration.js";
+import {
+  WORKBOARD_STARTUP_DEFER_MS,
+  WORKBOARD_STARTUP_PROBE_BACKOFF_MS,
+  armWorkboardIntegration,
+  scheduleWorkboardStartupIntegration,
+} from "../setup/workboard-integration.js";
 
 function minimalWorkboardCfg(): HybridMemoryConfig {
   return {
@@ -117,5 +122,86 @@ describe("workboard-integration", () => {
     expect(logger.info).toHaveBeenCalledWith(
       "memory-hybrid: Workboard adapter connected (re-register) — starting sync",
     );
+  });
+
+  it("retries startup probe before giving up (#1940)", async () => {
+    const sync = vi.fn().mockResolvedValue({
+      cardsCreated: 0,
+      cardsUpdated: 0,
+      cardsRemoved: 0,
+      pullChanges: 0,
+      errors: [],
+    });
+    const isAvailable = vi
+      .fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+
+    vi.spyOn(await import("../services/workboard-adapter.js"), "createWorkboardAdapter").mockReturnValue({
+      isAvailable,
+      sync,
+    } as never);
+
+    const timers = createTimers() as PluginRuntime["timers"];
+    const logger = mockLogger();
+
+    const armPromise = armWorkboardIntegration({
+      factsDb: {} as never,
+      vectorDb: {} as never,
+      embeddings: {} as never,
+      cfg: minimalWorkboardCfg(),
+      api: { logger } as never,
+      timers,
+      connectLabel: "startup",
+    });
+
+    await vi.advanceTimersByTimeAsync(WORKBOARD_STARTUP_PROBE_BACKOFF_MS);
+    await vi.advanceTimersByTimeAsync(WORKBOARD_STARTUP_PROBE_BACKOFF_MS);
+    await armPromise;
+
+    expect(isAvailable).toHaveBeenCalledTimes(3);
+    expect(sync).toHaveBeenCalledTimes(1);
+    expect(timers.workboardSync?.value).not.toBeNull();
+  });
+
+  it("defers startup arm until cold-start delay elapses (#1940)", async () => {
+    const sync = vi.fn().mockResolvedValue({
+      cardsCreated: 0,
+      cardsUpdated: 0,
+      cardsRemoved: 0,
+      pullChanges: 0,
+      errors: [],
+    });
+    const isAvailable = vi.fn().mockResolvedValue(true);
+
+    vi.spyOn(await import("../services/workboard-adapter.js"), "createWorkboardAdapter").mockReturnValue({
+      isAvailable,
+      sync,
+    } as never);
+
+    const timers = createTimers() as PluginRuntime["timers"];
+    const logger = mockLogger();
+    const ctx = {
+      factsDb: {} as never,
+      vectorDb: {} as never,
+      embeddings: {} as never,
+      cfg: minimalWorkboardCfg(),
+      api: { logger } as never,
+      timers,
+      connectLabel: "startup",
+    };
+
+    scheduleWorkboardStartupIntegration(ctx);
+    expect(isAvailable).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(WORKBOARD_STARTUP_DEFER_MS - 1);
+    expect(isAvailable).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    await Promise.resolve();
+
+    expect(isAvailable).toHaveBeenCalled();
+    expect(sync).toHaveBeenCalledTimes(1);
   });
 });

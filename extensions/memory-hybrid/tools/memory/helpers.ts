@@ -31,13 +31,15 @@ export function hasBoundMemoryToolHelpers(
   ctx: MemoryToolsContext | LegacyMemoryToolsContext,
 ): ctx is MemoryToolsContext {
   const maybe = ctx as Partial<MemoryToolsContext> & { wal?: unknown };
-  const hasAllNewHelpers =
+  // Bound helpers on the context are authoritative; legacy mode passes them as separate
+  // registerMemoryTools args instead. MemoryToolsContext may include wal alongside bound
+  // walWrite/walRemove (e.g. selectMemoryCoreToolsContext for vault routing).
+  return (
     typeof maybe.buildToolScopeFilter === "function" &&
     typeof maybe.walWrite === "function" &&
     typeof maybe.walRemove === "function" &&
-    typeof maybe.findSimilarByEmbedding === "function";
-  const hasLegacyWal = typeof maybe.wal === "object" && maybe.wal !== null;
-  return hasAllNewHelpers && !hasLegacyWal;
+    typeof maybe.findSimilarByEmbedding === "function"
+  );
 }
 
 export function isEdictWriteToolEnabled(): boolean {
