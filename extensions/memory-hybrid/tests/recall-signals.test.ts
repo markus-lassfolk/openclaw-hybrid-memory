@@ -4,11 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
 import { insertRecallEvent } from "../services/recall-events.js";
-import {
-  aggregateRecallStats,
-  getSnoozeCandidates,
-  isNeverReferencedCandidate,
-} from "../services/recall-signals.js";
+import { aggregateRecallStats, getSnoozeCandidates, isNeverReferencedCandidate } from "../services/recall-signals.js";
 
 const { FactsDB } = _testing;
 

@@ -16,13 +16,7 @@ export type IntentClassification = {
   source: "heuristic" | "llm" | "explicit";
 };
 
-const WHY_PATTERNS = [
-  /\bwhy\b/i,
-  /\bbecause\b/i,
-  /\bcaused\b/i,
-  /\breason\b/i,
-  /\bhow come\b/i,
-];
+const WHY_PATTERNS = [/\bwhy\b/i, /\bbecause\b/i, /\bcaused\b/i, /\breason\b/i, /\bhow come\b/i];
 
 const WHEN_PATTERNS = [
   /\bwhen\b/i,
@@ -170,11 +164,7 @@ export async function classifyQueryIntent(
   const heuristic = classifyIntentHeuristic(query);
   let result = heuristic;
 
-  if (
-    config.llmRefinement &&
-    heuristic.confidence < config.heuristicThreshold &&
-    opts?.openai
-  ) {
+  if (config.llmRefinement && heuristic.confidence < config.heuristicThreshold && opts?.openai) {
     try {
       const response = await chatComplete({
         model: config.model ?? "openai/gpt-4.1-nano",

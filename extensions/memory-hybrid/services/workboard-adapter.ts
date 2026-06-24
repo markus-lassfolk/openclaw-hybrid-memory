@@ -19,15 +19,13 @@ import {
   goalExternalId,
   goalToCard,
   isHybridMemoryCard,
+  normalizeWorkboardNotes,
   parseExternalId,
   taskExternalId,
   taskToCard,
+  workboardColumnsEquivalent,
 } from "./workboard-card-mapper.js";
-import {
-  type WorkboardRpcCard,
-  type WorkboardRpcClient,
-  createWorkboardRpcClient,
-} from "./workboard-rpc-client.js";
+import { type WorkboardRpcCard, type WorkboardRpcClient, createWorkboardRpcClient } from "./workboard-rpc-client.js";
 
 export type TaskLoader = () => { active: ActiveTaskEntry[]; completed: ActiveTaskEntry[] };
 export type GoalLoader = () => Goal[] | Promise<Goal[]>;
@@ -192,9 +190,9 @@ async function upsertCard(
 
   if (existingCard) {
     const needsUpdate =
-      existingCard.column !== payload.column ||
+      !workboardColumnsEquivalent(existingCard.column, payload.column) ||
       existingCard.title !== payload.title ||
-      existingCard.description !== payload.description;
+      normalizeWorkboardNotes(existingCard.description) !== normalizeWorkboardNotes(payload.description);
 
     if (needsUpdate) {
       const updated = await client.updateCard(existingCard.id, {
@@ -280,7 +278,7 @@ async function pullChanges(
         );
         continue;
       }
-      if (card.column === expectedColumn) {
+      if (workboardColumnsEquivalent(card.column, expectedColumn)) {
         traceIntegration(
           verbose,
           `workboard sync [${syncRunId}] pull noop task ${extId} — column "${card.column}" matches memory`,
@@ -333,7 +331,7 @@ async function pullChanges(
         );
         continue;
       }
-      if (card.column === expectedColumn) {
+      if (workboardColumnsEquivalent(card.column, expectedColumn)) {
         traceIntegration(
           verbose,
           `workboard sync [${syncRunId}] pull noop goal ${extId} — column "${card.column}" matches memory`,

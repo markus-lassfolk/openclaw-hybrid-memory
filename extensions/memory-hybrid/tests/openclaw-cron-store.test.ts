@@ -183,7 +183,11 @@ describe("openclaw-cron-store (#1923)", () => {
       "maintenance-nightly",
       Date.now(),
       Date.now(),
-      JSON.stringify({ id: "hybrid-mem:maintenance-nightly", enabled: true, payload: { kind: "agentTurn", message: "msg" } }),
+      JSON.stringify({
+        id: "hybrid-mem:maintenance-nightly",
+        enabled: true,
+        payload: { kind: "agentTurn", message: "msg" },
+      }),
     );
     db.close();
 

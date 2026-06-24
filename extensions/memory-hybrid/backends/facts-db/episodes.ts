@@ -15,6 +15,7 @@ import {
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { parseTags, serializeTags } from "../../utils/tags.js";
 import { inferCausalLinks, type CausalLinkCandidate } from "../../services/episode-causal-inference.js";
+import { sanitizeFts5QueryForFacts } from "./fts-text.js";
 import { scopeFilterClausePositional } from "./scope-sql.js";
 
 export function rowToEpisode(row: Record<string, unknown>): Episode {

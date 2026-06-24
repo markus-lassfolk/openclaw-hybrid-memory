@@ -1,7 +1,7 @@
 {
   "id": "openclaw-hybrid-memory",
   "kind": "memory",
-  "version": "2026.6.170",
+  "version": "2026.6.171",
   "contracts": {
     "tools": [
       "active_task_checkpoint",
@@ -2614,31 +2614,44 @@
             "properties": {
               "taskInProgress": {
                 "type": "string",
-                "description": "Column for in-progress tasks. Default: In Progress."
+                "description": "Workboard status slug for in-progress tasks. Default: running."
               },
-              "taskDone": { "type": "string", "description": "Column for completed tasks. Default: Done." },
+              "taskWaiting": {
+                "type": "string",
+                "description": "Workboard status slug for waiting tasks. Default: scheduled."
+              },
+              "taskDone": {
+                "type": "string",
+                "description": "Workboard status slug for completed tasks. Default: done."
+              },
               "taskFailed": {
                 "type": ["string", "null"],
-                "description": "Column for failed tasks (null to skip). Default: Failed."
+                "description": "Workboard status slug for failed tasks (null to skip). Default: blocked."
               },
               "taskStale": {
                 "type": ["string", "null"],
-                "description": "Column for stale tasks (null to skip). Default: Backlog."
+                "description": "Workboard status slug for stale tasks (null to skip). Default: backlog."
               },
               "taskParked": {
                 "type": ["string", "null"],
-                "description": "Column for parked tasks (null to skip). Default: Backlog."
+                "description": "Workboard status slug for parked tasks (null to skip). Default: backlog."
               },
-              "goalActive": { "type": "string", "description": "Column for active goals. Default: In Progress." },
+              "goalActive": {
+                "type": "string",
+                "description": "Workboard status slug for active goals. Default: running."
+              },
               "goalBlocked": {
                 "type": ["string", "null"],
-                "description": "Column for blocked goals (null to skip). Default: Blocked."
+                "description": "Workboard status slug for blocked goals (null to skip). Default: blocked."
               },
               "goalStalled": {
                 "type": ["string", "null"],
-                "description": "Column for stalled goals (null to skip). Default: Backlog."
+                "description": "Workboard status slug for stalled goals (null to skip). Default: backlog."
               },
-              "goalCompleted": { "type": "string", "description": "Column for completed goals. Default: Done." }
+              "goalCompleted": {
+                "type": "string",
+                "description": "Workboard status slug for completed goals. Default: done."
+              }
             },
             "description": "Workboard column mapping for hybrid-memory statuses."
           }

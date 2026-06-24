@@ -23,10 +23,7 @@ function extractNamedEntities(text: string): string[] {
 }
 
 /** Layer 1: every named entity in draft must appear in ≥1 source fact. */
-export function checkEntityContamination(
-  draft: string,
-  sourceTexts: string[],
-): ContaminationCheckResult {
+export function checkEntityContamination(draft: string, sourceTexts: string[]): ContaminationCheckResult {
   const entities = extractNamedEntities(draft);
   if (entities.length === 0) return { allowed: true, layer: "deterministic" };
   const corpus = sourceTexts.join("\n").toLowerCase();

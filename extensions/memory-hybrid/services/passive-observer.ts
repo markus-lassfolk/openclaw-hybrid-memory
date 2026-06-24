@@ -731,7 +731,13 @@ export async function runPassiveObserver(
         }
 
         const dedupWindow = opts.dedupWindowMinutes ?? 30;
-        const dedupInput = { text: storedText, entity: null, key: null, scope: identity ? "global" : "session", scopeTarget: identity ? null : sessionId };
+        const dedupInput = {
+          text: storedText,
+          entity: null,
+          key: null,
+          scope: identity ? "global" : "session",
+          scopeTarget: identity ? null : sessionId,
+        };
 
         const storeWithDedupCheck = createTransaction(
           factsDb.getRawDb(),

@@ -27,6 +27,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.6.171] - 2026-06-21
+
+### Fixed
+
+- **memory_search_episodes throws `sanitizeFts5QueryForFacts is not defined`:** `backends/facts-db/episodes.ts` referenced the FTS5 query sanitizer from `backends/facts-db/fts-text.ts` without importing it, so episode search with a query exploded. Added the missing import alongside the existing sibling in `fact-queries.ts`. Smoke tests cover plain queries, special-character queries, null bytes, and FTS5 operators, plus unit coverage of `sanitizeFts5QueryForFacts`.
+
+- **memory_recall_timeline throws `requires an authenticated session context` from OpenClaw gateway invocations:** The OpenClaw gateway tool context does not inject `api.context.sessionId`. The tool previously hard-failed; it now falls back to cross-session timeline recall (recency-windowed, default 14 days — the path `recallNarrativeSummaries` already supports with `sessionId: null`). The existing security invariant is preserved: a caller-supplied `sessionId` is still rejected when no authenticated context is available, and must still match the authenticated context when one is present.
+
+- **memory_session_observability hard-fails with cryptic error:** Per-session observability has no cross-session equivalent, so it still requires a `sessionId`. The error message now explains how to recover (pass `sessionId` as a parameter or invoke from an authenticated session context).
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.6.171**.
+
+### Notes
+
+- Supports the OpenClaw gateway memory/RSS incident follow-up: hybrid-memory is the canonical memory layer, so recall / timeline / episode search smoke must be reliable.
+
+---
+
 ## [2026.6.170] - 2026-06-17
 
 ### Fixed

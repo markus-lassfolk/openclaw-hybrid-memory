@@ -106,9 +106,7 @@ export function registerGoalStewardshipInjection(
         triageHeavy,
       });
       if (!built) {
-        api.logger?.info?.(
-          "memory-hybrid: goal stewardship skipped — no candidate goals past cooldown/budget filters",
-        );
+        api.logger?.info?.("memory-hybrid: goal stewardship skipped — no candidate goals past cooldown/budget filters");
         return undefined;
       }
 

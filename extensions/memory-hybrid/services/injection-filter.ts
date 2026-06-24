@@ -37,13 +37,7 @@ const LAYER3 = [
 ];
 
 /** Layer 4 — delimiter injection. */
-const LAYER4 = [
-  /<\/context>/i,
-  /\n\nHuman\s*:/i,
-  /<\/recalled-context>/i,
-  /<\/vault-context>/i,
-  /<\/memory-context>/i,
-];
+const LAYER4 = [/<\/context>/i, /\n\nHuman\s*:/i, /<\/recalled-context>/i, /<\/vault-context>/i, /<\/memory-context>/i];
 
 /** Layer 5 — unicode obfuscation (zero-width, RTL, homoglyphs inside Latin words). */
 const ZERO_WIDTH = /[\u200B\u200C\u200D\uFEFF]/;

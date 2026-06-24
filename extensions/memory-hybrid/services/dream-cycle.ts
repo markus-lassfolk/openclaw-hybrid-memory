@@ -1053,20 +1053,17 @@ export async function runDreamCycle(
       logger.warn(
         `memory-hybrid: dream-cycle — ${repair.pairsFailed} contradiction pair(s) could not be repaired; will retry next dream cycle`,
       );
-      capturePluginError(
-        new Error(`contradiction repair partial failure: ${repair.pairsFailed} pair(s) unresolved`),
-        {
-          subsystem: "maintenance",
-          operation: "contradiction-repair-partial",
-          phase: "dream-cycle",
-          severity: "warning",
-          tags: {
-            pairs_failed: repair.pairsFailed,
-            pairs_fallback: repair.pairsFallback,
-            pairs_repaired: repair.pairsRepaired,
-          },
+      capturePluginError(new Error(`contradiction repair partial failure: ${repair.pairsFailed} pair(s) unresolved`), {
+        subsystem: "maintenance",
+        operation: "contradiction-repair-partial",
+        phase: "dream-cycle",
+        severity: "warning",
+        tags: {
+          pairs_failed: repair.pairsFailed,
+          pairs_fallback: repair.pairsFallback,
+          pairs_repaired: repair.pairsRepaired,
         },
-      );
+      });
     }
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {

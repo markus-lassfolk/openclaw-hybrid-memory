@@ -6,6 +6,7 @@
 import type { ActiveTaskEntry, ActiveTaskStatus } from "./active-task.js";
 import type { Goal, GoalStatus } from "./goal-stewardship-types.js";
 import type { WorkboardColumnMapping } from "../config/types/workboard.js";
+import { toWorkboardStatusSlug, tryToWorkboardStatusSlug } from "./workboard-status-slugs.js";
 
 export type WorkboardCardPayload = {
   title: string;
@@ -24,7 +25,7 @@ export type WorkboardCardRecord = {
   description?: string;
   tags?: string[];
   externalId?: string;
-  metadata?: Record<string, string>;
+  metadata?: Record<string, unknown>;
   updatedAt?: string;
 };
 
@@ -39,8 +40,30 @@ export function goalExternalId(goalId: string): string {
   return `${GOAL_EXTERNAL_PREFIX}${goalId}`;
 }
 
+export function resolveWorkboardExternalId(card: {
+  externalId?: string;
+  metadata?: Record<string, unknown>;
+}): string | undefined {
+  const meta = card.metadata as { automation?: { idempotencyKey?: string } } | undefined;
+  const key = meta?.automation?.idempotencyKey;
+  if (typeof key === "string" && key.length > 0) return key;
+  return card.externalId;
+}
+
+export function normalizeWorkboardNotes(notes?: string): string | undefined {
+  return notes ? notes : undefined;
+}
+
+export function workboardColumnsEquivalent(a: string, b: string): boolean {
+  const slugA = tryToWorkboardStatusSlug(a);
+  const slugB = tryToWorkboardStatusSlug(b);
+  if (slugA !== null && slugB !== null) return slugA === slugB;
+  return a === b;
+}
+
 export function isHybridMemoryCard(card: WorkboardCardRecord): boolean {
-  return !!card.externalId?.startsWith(TASK_EXTERNAL_PREFIX) || !!card.externalId?.startsWith(GOAL_EXTERNAL_PREFIX);
+  const extId = resolveWorkboardExternalId(card);
+  return !!extId?.startsWith(TASK_EXTERNAL_PREFIX) || !!extId?.startsWith(GOAL_EXTERNAL_PREFIX);
 }
 
 export function parseExternalId(
@@ -72,7 +95,7 @@ export function taskToCard(
 
   return {
     title: `[Task] ${task.label}`,
-    column,
+    column: toWorkboardStatusSlug(column),
     description: descParts.join("\n") || undefined,
     tags: [cardTag],
     externalId: taskExternalId(task.label),
@@ -102,7 +125,7 @@ export function goalToCard(goal: Goal, columns: WorkboardColumnMapping, cardTag:
 
   return {
     title: `[Goal] ${goal.label}`,
-    column,
+    column: toWorkboardStatusSlug(column),
     description: descParts.join("\n") || undefined,
     tags: [cardTag, `priority:${goal.priority}`],
     externalId: goalExternalId(goal.id),
@@ -125,8 +148,9 @@ function taskStatusToColumn(
 
   switch (status) {
     case "In progress":
-    case "Waiting":
       return columns.taskInProgress;
+    case "Waiting":
+      return columns.taskWaiting;
     case "Stalled":
       return columns.taskStale;
     case "Done":
@@ -158,10 +182,13 @@ function goalStatusToColumn(status: GoalStatus, columns: WorkboardColumnMapping)
 }
 
 export function columnToTaskStatus(column: string, columns: WorkboardColumnMapping): ActiveTaskStatus | null {
-  const lower = column.toLowerCase();
-  const match = (col: string | null) => col?.toLowerCase() === lower;
+  const normalizedColumn = tryToWorkboardStatusSlug(column);
+  if (!normalizedColumn) return null;
+
+  const match = (col: string | null) => col && toWorkboardStatusSlug(col) === normalizedColumn;
 
   if (match(columns.taskInProgress)) return "In progress";
+  if (match(columns.taskWaiting)) return "Waiting";
   if (match(columns.taskDone)) return "Done";
   if (match(columns.taskFailed)) return "Failed";
   if (match(columns.taskStale)) return "Stalled";
@@ -170,8 +197,10 @@ export function columnToTaskStatus(column: string, columns: WorkboardColumnMappi
 }
 
 export function columnToGoalStatus(column: string, columns: WorkboardColumnMapping): GoalStatus | null {
-  const lower = column.toLowerCase();
-  const match = (col: string | null) => col?.toLowerCase() === lower;
+  const normalizedColumn = tryToWorkboardStatusSlug(column);
+  if (!normalizedColumn) return null;
+
+  const match = (col: string | null) => col && toWorkboardStatusSlug(col) === normalizedColumn;
 
   if (match(columns.goalActive)) return "active";
   if (match(columns.goalCompleted)) return "completed";

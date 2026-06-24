@@ -43,10 +43,7 @@ export function getHmVerboseLevel(): typeof verboseLevel {
   return verboseLevel;
 }
 
-export function emitRecallVerboseLog(
-  event: RecallVerboseEvent,
-  logger?: { debug?: (msg: string) => void },
-): void {
+export function emitRecallVerboseLog(event: RecallVerboseEvent, logger?: { debug?: (msg: string) => void }): void {
   if (verboseLevel === "off") return;
   const payload = { ts: nowIso(), ...event };
   const line = JSON.stringify(payload);
