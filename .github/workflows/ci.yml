@@ -44,7 +44,7 @@ jobs:
       actionlint_required: ${{ steps.classify.outputs.actionlint_required }}
       security_required: ${{ steps.classify.outputs.security_required }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Classify changed paths (policy)
         id: classify
         run: node .github/scripts/classify-changes.mjs
@@ -64,7 +64,7 @@ jobs:
           - node-version: '24'
             job-name-suffix: '24'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
@@ -93,7 +93,7 @@ jobs:
           - node-version: '24'
             job-name-suffix: '24'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
@@ -123,7 +123,7 @@ jobs:
           - node-version: '24'
             job-name-suffix: '24'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
@@ -148,7 +148,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: '22.16'
@@ -181,7 +181,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: '22.16'
@@ -203,7 +203,7 @@ jobs:
     if: needs.changes.outputs.heavy_ci_required == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: actions/setup-node@v6
@@ -222,7 +222,7 @@ jobs:
     if: needs.changes.outputs.heavy_ci_required == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: '22.16'
@@ -245,7 +245,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: '22.16'
@@ -279,7 +279,7 @@ jobs:
           - node-version: '24'
             job-name-suffix: '24'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
@@ -354,7 +354,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Run architectural lint
         run: cd extensions/memory-hybrid && npm run lint:arch
 
