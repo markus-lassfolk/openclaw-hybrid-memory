@@ -405,6 +405,70 @@ describe("memory_recall_timeline smoke (OpenClaw gateway context)", () => {
     );
 
     const tool = api.getTool("memory_session_observability");
-    await expect(tool?.execute("tool-call", {})).rejects.toThrow(/requires a sessionId/i);
+    await expect(tool?.execute("tool-call", {})).rejects.toThrow(/requires an authenticated session context/i);
+  });
+
+  it("rejects caller-supplied sessionId without authenticated context", async () => {
+    const api = makeApiWithoutSessionContext();
+    registerMemoryTools(
+      {
+        factsDb,
+        vectorDb: makeMockVectorDb(),
+        cfg: makeCfg(),
+        embeddings: makeMockEmbeddings(),
+        embeddingRegistry: null,
+        openai: {} as never,
+        wal: null,
+        credentialsDb: null,
+        eventLog,
+        narrativesDb,
+        lastProgressiveIndexIds: [],
+        currentAgentIdRef: { value: null },
+        pendingLLMWarnings: createPendingLLMWarnings(),
+      },
+      api as never,
+      noopScopeFilter as never,
+      walWrite,
+      walRemove,
+      findSimilarByEmbedding as never,
+    );
+
+    const tool = api.getTool("memory_session_observability");
+    await expect(tool?.execute("tool-call", { sessionId: "attacker-controlled" })).rejects.toThrow(
+      /requires an authenticated session context/i,
+    );
+  });
+
+  it("uses cross-session wording when timeline recall returns no results", async () => {
+    const api = makeApiWithoutSessionContext();
+    registerMemoryTools(
+      {
+        factsDb,
+        vectorDb: makeMockVectorDb(),
+        cfg: makeCfg(),
+        embeddings: makeMockEmbeddings(),
+        embeddingRegistry: null,
+        openai: {} as never,
+        wal: null,
+        credentialsDb: null,
+        eventLog,
+        narrativesDb,
+        lastProgressiveIndexIds: [],
+        currentAgentIdRef: { value: null },
+        pendingLLMWarnings: createPendingLLMWarnings(),
+      },
+      api as never,
+      noopScopeFilter as never,
+      walWrite,
+      walRemove,
+      findSimilarByEmbedding as never,
+    );
+
+    const tool = api.getTool("memory_recall_timeline");
+    const result = (await tool?.execute("tool-call", {})) as {
+      content: Array<{ text: string }>;
+    };
+    expect(result.content[0]?.text).toMatch(/across recent sessions/i);
+    expect(result.content[0]?.text).not.toMatch(/session null/i);
   });
 });

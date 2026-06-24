@@ -312,11 +312,14 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         });
 
         if (summaries.length === 0) {
+          const scopeMsg = sessionId
+            ? `for session ${sessionId}`
+            : "across recent sessions (last ~14 days)";
           return {
             content: [
               {
                 type: "text" as const,
-                text: `No narrative summary found for session ${sessionId}.`,
+                text: `No narrative summary found ${scopeMsg}.`,
               },
             ],
             details: { count: 0, narratives: [] },
@@ -389,20 +392,17 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
           typeof api.context?.sessionId === "string" && api.context.sessionId.trim().length > 0
             ? api.context.sessionId.trim()
             : null;
-        // Session observability reports are inherently per-session, so a
-        // sessionId is required. Prefer the authenticated context sessionId and
-        // only allow a caller-supplied sessionId when it matches.
-        if (!contextSessionId && !requestedSessionId) {
+        // Session observability is per-session and requires authenticated context.
+        if (!contextSessionId) {
           throw new Error(
-            "memory_session_observability requires a sessionId (either pass it as a parameter " +
-              "or invoke the tool from an authenticated OpenClaw session context that exposes " +
-              "api.context.sessionId).",
+            "memory_session_observability requires an authenticated session context " +
+              "(api.context.sessionId). Invoke the tool from an authenticated OpenClaw session.",
           );
         }
-        const sessionId = contextSessionId ?? requestedSessionId;
-        if (requestedSessionId && contextSessionId && requestedSessionId !== contextSessionId) {
+        if (requestedSessionId && requestedSessionId !== contextSessionId) {
           throw new Error("memory_session_observability sessionId must match the authenticated session context");
         }
+        const sessionId = requestedSessionId ?? contextSessionId;
         const agentId =
           typeof params.agentId === "string" && params.agentId.trim().length > 0 ? params.agentId.trim() : null;
         const limit =
