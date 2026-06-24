@@ -230,13 +230,7 @@ export function registerEpisodeTools(runtime: MemoryToolRuntime): void {
         if (!episodeId) throw new Error("episodeId is required");
         const depth = typeof params.depth === "number" && params.depth > 0 ? Math.min(10, Math.floor(params.depth)) : 5;
         const includeExplicitOnly = params.includeExplicitOnly === true;
-        const chain = buildEpisodeCausalChain(
-          factsDb.getRawDb(),
-          episodeId,
-          depth,
-          includeExplicitOnly,
-          scopeFilter,
-        );
+        const chain = buildEpisodeCausalChain(factsDb.getRawDb(), episodeId, depth, includeExplicitOnly, scopeFilter);
         return {
           content: [
             {

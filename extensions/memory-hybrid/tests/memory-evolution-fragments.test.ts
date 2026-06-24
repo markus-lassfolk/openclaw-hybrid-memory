@@ -164,7 +164,10 @@ describe("indexFactFragments (#1914)", () => {
     });
 
     expect(result.fragmentsStored).toBeGreaterThan(1);
-    const childCount = factsDb.getRawDb().prepare("SELECT COUNT(*) AS c FROM facts WHERE parent_fact_id = ?").get(parent.id) as {
+    const childCount = factsDb
+      .getRawDb()
+      .prepare("SELECT COUNT(*) AS c FROM facts WHERE parent_fact_id = ?")
+      .get(parent.id) as {
       c: number;
     };
     expect(childCount.c).toBeGreaterThan(1);

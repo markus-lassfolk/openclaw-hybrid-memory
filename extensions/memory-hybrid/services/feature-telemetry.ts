@@ -25,10 +25,7 @@ function sanitize(value: string): string {
 }
 
 function formatEvent(event: FeatureTelemetryEvent): string {
-  const parts = [
-    `feature=${sanitize(event.feature)}`,
-    `op=${sanitize(event.operation)}`,
-  ];
+  const parts = [`feature=${sanitize(event.feature)}`, `op=${sanitize(event.operation)}`];
   if (event.outcome) parts.push(`outcome=${event.outcome}`);
   if (event.durationMs != null) parts.push(`duration_ms=${event.durationMs}`);
   if (event.warnBudgetMs != null) parts.push(`budget_ms=${event.warnBudgetMs}`);

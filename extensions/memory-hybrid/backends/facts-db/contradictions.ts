@@ -1334,19 +1334,12 @@ export function detectEpisodeFailureContradictions(
     params.push(...scope.params);
   }
   const rows = db
-    .prepare(
-      `SELECT id, text, value FROM facts WHERE ${conditions.join(" AND ")} ORDER BY created_at DESC LIMIT 20`,
-    )
+    .prepare(`SELECT id, text, value FROM facts WHERE ${conditions.join(" AND ")} ORDER BY created_at DESC LIMIT 20`)
     .all(...params) as Array<{ id: string; text: string; value: string | null }>;
 
   const out: Array<{ factId: string; score: number; heuristicSignals: string[]; preview: string }> = [];
   for (const row of rows) {
-    const { score, heuristicSignals } = scoreFactContradiction(
-      eventText,
-      eventText,
-      row.text ?? "",
-      row.value ?? "",
-    );
+    const { score, heuristicSignals } = scoreFactContradiction(eventText, eventText, row.text ?? "", row.value ?? "");
     if (score >= 0.3) {
       out.push({
         factId: row.id,

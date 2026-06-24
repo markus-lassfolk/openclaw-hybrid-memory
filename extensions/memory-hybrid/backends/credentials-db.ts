@@ -262,9 +262,9 @@ export class CredentialsDB extends BaseSqliteStore {
       this.liveDb,
       () => {
         for (const service of [...new Set(invalidRows.map((r) => r.service))]) {
-          const serviceRows = this.liveDb
-            .prepare("SELECT * FROM credentials WHERE service = ?")
-            .all(service) as Array<Record<string, unknown>>;
+          const serviceRows = this.liveDb.prepare("SELECT * FROM credentials WHERE service = ?").all(service) as Array<
+            Record<string, unknown>
+          >;
           const typesPresent = new Set(serviceRows.map((r) => String(r.type)));
 
           for (const row of serviceRows) {
@@ -300,9 +300,7 @@ export class CredentialsDB extends BaseSqliteStore {
                   .get(service, plan.siblingType) as { notes: string | null } | undefined;
                 const existingNotes = targetRow?.notes?.trim() || "";
                 const legacyEndpointNote = `[Legacy endpoint: ${plan.endpointUrl}]`;
-                const updatedNotes = existingNotes
-                  ? `${existingNotes} ${legacyEndpointNote}`
-                  : legacyEndpointNote;
+                const updatedNotes = existingNotes ? `${existingNotes} ${legacyEndpointNote}` : legacyEndpointNote;
                 this.liveDb
                   .prepare("UPDATE credentials SET notes = ?, updated = ? WHERE service = ? AND type = ?")
                   .run(updatedNotes, now, service, plan.siblingType);
@@ -324,9 +322,7 @@ export class CredentialsDB extends BaseSqliteStore {
                   .get(service) as { notes: string | null } | undefined;
                 const existingNotes = targetRow?.notes?.trim() || "";
                 const legacyEndpointNote = `[Legacy endpoint: ${plan.endpointUrl}]`;
-                const updatedNotes = existingNotes
-                  ? `${existingNotes} ${legacyEndpointNote}`
-                  : legacyEndpointNote;
+                const updatedNotes = existingNotes ? `${existingNotes} ${legacyEndpointNote}` : legacyEndpointNote;
                 this.liveDb
                   .prepare("UPDATE credentials SET notes = ?, updated = ? WHERE service = ? AND type = 'other'")
                   .run(updatedNotes, now, service);
@@ -363,9 +359,7 @@ export class CredentialsDB extends BaseSqliteStore {
 
         // Drop any remaining unsupported types that were not handled above.
         this.liveDb
-          .prepare(
-            `DELETE FROM credentials WHERE type NOT IN (${CREDENTIAL_TYPES.map(() => "?").join(", ")})`,
-          )
+          .prepare(`DELETE FROM credentials WHERE type NOT IN (${CREDENTIAL_TYPES.map(() => "?").join(", ")})`)
           .run(...CREDENTIAL_TYPES);
       },
       "IMMEDIATE",

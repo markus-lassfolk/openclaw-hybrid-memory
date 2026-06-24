@@ -58,16 +58,8 @@ export function createVaultRegistry(opts: {
   defaultWal: WriteAheadLog | null;
   vectorDim: number;
 }): VaultRegistry {
-  const {
-    cfg,
-    api,
-    defaultFactsDb,
-    defaultVectorDb,
-    defaultSqlitePath,
-    defaultLancePath,
-    defaultWal,
-    vectorDim,
-  } = opts;
+  const { cfg, api, defaultFactsDb, defaultVectorDb, defaultSqlitePath, defaultLancePath, defaultWal, vectorDim } =
+    opts;
   const cache = new Map<string, VaultHandle>();
   const walCache = new Map<string, WriteAheadLog>();
   const walEnabled = cfg.wal?.enabled === true;

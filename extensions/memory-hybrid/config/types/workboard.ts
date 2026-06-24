@@ -37,6 +37,8 @@ export type WorkboardConfig = {
 
 export type WorkboardColumnMapping = {
   taskInProgress: string;
+  /** Workboard column for Waiting tasks (OpenClaw slug, e.g. scheduled). */
+  taskWaiting: string;
   taskDone: string;
   taskFailed: string | null;
   taskStale: string | null;
@@ -47,16 +49,18 @@ export type WorkboardColumnMapping = {
   goalCompleted: string;
 };
 
+/** OpenClaw 6.8 Workboard status slugs — not legacy Kanban display labels. */
 export const DEFAULT_WORKBOARD_COLUMNS: WorkboardColumnMapping = {
-  taskInProgress: "In Progress",
-  taskDone: "Done",
-  taskFailed: "Failed",
-  taskStale: "Backlog",
-  taskParked: "Backlog",
-  goalActive: "In Progress",
-  goalBlocked: "Blocked",
-  goalStalled: "Backlog",
-  goalCompleted: "Done",
+  taskInProgress: "running",
+  taskWaiting: "scheduled",
+  taskDone: "done",
+  taskFailed: "blocked",
+  taskStale: "backlog",
+  taskParked: "backlog",
+  goalActive: "running",
+  goalBlocked: "blocked",
+  goalStalled: "backlog",
+  goalCompleted: "done",
 };
 
 export const DEFAULT_WORKBOARD_CONFIG: WorkboardConfig = {
