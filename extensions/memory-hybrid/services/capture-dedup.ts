@@ -49,8 +49,6 @@ export function checkCaptureDedupWindow(
     )
     .get(hash, cutoff, scope, scopeTarget, scopeTarget, scopeTarget) as { id: string } | undefined;
   if (!row) return { skip: false };
-  db.prepare(
-    `UPDATE facts SET duplicate_count = COALESCE(duplicate_count, 0) + 1 WHERE id = ?`,
-  ).run(row.id);
+  db.prepare(`UPDATE facts SET duplicate_count = COALESCE(duplicate_count, 0) + 1 WHERE id = ?`).run(row.id);
   return { skip: true, existingId: row.id };
 }

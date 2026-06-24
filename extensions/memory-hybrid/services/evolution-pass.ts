@@ -71,12 +71,7 @@ export async function runEvolutionPass(
       db.prepare(
         `INSERT INTO maintenance_runs (job, started_at, ended_at, status, items_processed, metadata_json)
          VALUES ('evolution-pass', ?, ?, 'ran', ?, ?)`,
-      ).run(
-        now,
-        now,
-        evolved,
-        JSON.stringify({ scanned: rows.length, neighborsUpdated, llmCalls }),
-      );
+      ).run(now, now, evolved, JSON.stringify({ scanned: rows.length, neighborsUpdated, llmCalls }));
     }
     return { scanned: rows.length, evolved, neighborsUpdated, llmCalls };
   }

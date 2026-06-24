@@ -15,9 +15,7 @@ export type TurnAttribution = {
 };
 
 /** Segment messages into turns for attribution. Falls back to single turn on uncertainty. */
-export function segmentTranscriptIntoTurns(
-  messages: Array<{ role?: string; content?: unknown }>,
-): ConversationTurn[] {
+export function segmentTranscriptIntoTurns(messages: Array<{ role?: string; content?: unknown }>): ConversationTurn[] {
   const turns: ConversationTurn[] = [];
   let idx = 0;
   for (const msg of messages) {
@@ -44,10 +42,7 @@ export function segmentTranscriptIntoTurns(
 }
 
 /** Attribute injected fact ids to the user turn that triggered injection (pre-response). */
-export function attributeInjectionToTurn(
-  turns: ConversationTurn[],
-  injectedFactIds: string[],
-): TurnAttribution {
+export function attributeInjectionToTurn(turns: ConversationTurn[], injectedFactIds: string[]): TurnAttribution {
   if (injectedFactIds.length === 0) {
     return { turnIndex: 0, injectedFactIds: [], referencedFactIds: [] };
   }
@@ -55,7 +50,7 @@ export function attributeInjectionToTurn(
   for (const t of turns) {
     if (t.role === "user") lastUser = t.index;
   }
-  const targetTurn = lastUser >= 0 ? lastUser : turns[turns.length - 1]?.index ?? 0;
+  const targetTurn = lastUser >= 0 ? lastUser : (turns[turns.length - 1]?.index ?? 0);
   return { turnIndex: targetTurn, injectedFactIds, referencedFactIds: [] };
 }
 

@@ -26,10 +26,10 @@ export function scopedRowMatchesFilter(
 }
 
 /** Scope SQL for episode causal candidate queries: global-only source → global candidates; scoped → global + compatible scope. */
-export function episodeCandidateScopeClause(episode: {
-  scope?: MemoryScope | null;
-  scopeTarget?: string | null;
-}): { clause: string; params: SQLInputValue[] } {
+export function episodeCandidateScopeClause(episode: { scope?: MemoryScope | null; scopeTarget?: string | null }): {
+  clause: string;
+  params: SQLInputValue[];
+} {
   const scope = episode.scope ?? "global";
   if (scope === "global") {
     return { clause: " AND scope = 'global'", params: [] };

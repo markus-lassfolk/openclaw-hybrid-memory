@@ -20,7 +20,9 @@ import type {
 export const MIN_QE_TIMEOUT_MS = 10_000;
 export const MIN_RERANK_TIMEOUT_MS = 5_000;
 
-function parseIntentRouterConfig(retrievalRaw: Record<string, unknown> | undefined): import("../types/retrieval.js").IntentRouterConfig {
+function parseIntentRouterConfig(
+  retrievalRaw: Record<string, unknown> | undefined,
+): import("../types/retrieval.js").IntentRouterConfig {
   const raw = retrievalRaw?.intentRouter as Record<string, unknown> | undefined;
   return {
     enabled: raw?.enabled !== false,
@@ -34,7 +36,9 @@ function parseIntentRouterConfig(retrievalRaw: Record<string, unknown> | undefin
   };
 }
 
-function parseCompositeScoreConfig(retrievalRaw: Record<string, unknown> | undefined): import("../types/retrieval.js").CompositeScoreConfig {
+function parseCompositeScoreConfig(
+  retrievalRaw: Record<string, unknown> | undefined,
+): import("../types/retrieval.js").CompositeScoreConfig {
   const raw = retrievalRaw?.compositeScore as Record<string, unknown> | undefined;
   const v = raw?.v === 2 ? 2 : 1;
   return {
@@ -44,7 +48,9 @@ function parseCompositeScoreConfig(retrievalRaw: Record<string, unknown> | undef
   };
 }
 
-function parseRetrievalDiversityConfig(retrievalRaw: Record<string, unknown> | undefined): import("../types/retrieval.js").RetrievalDiversityConfig {
+function parseRetrievalDiversityConfig(
+  retrievalRaw: Record<string, unknown> | undefined,
+): import("../types/retrieval.js").RetrievalDiversityConfig {
   const raw = retrievalRaw?.diversity as Record<string, unknown> | undefined;
   return {
     enabled: raw?.enabled === true,
@@ -52,7 +58,9 @@ function parseRetrievalDiversityConfig(retrievalRaw: Record<string, unknown> | u
   };
 }
 
-function parseRetrievalBypassConfig(retrievalRaw: Record<string, unknown> | undefined): import("../types/retrieval.js").RetrievalBypassConfig {
+function parseRetrievalBypassConfig(
+  retrievalRaw: Record<string, unknown> | undefined,
+): import("../types/retrieval.js").RetrievalBypassConfig {
   const raw = retrievalRaw?.bypass as Record<string, unknown> | undefined;
   return {
     enabled: raw?.enabled === true,
@@ -61,7 +69,9 @@ function parseRetrievalBypassConfig(retrievalRaw: Record<string, unknown> | unde
   };
 }
 
-function parseCrossEncoderConfig(retrievalRaw: Record<string, unknown> | undefined): import("../types/retrieval.js").CrossEncoderRerankConfig {
+function parseCrossEncoderConfig(
+  retrievalRaw: Record<string, unknown> | undefined,
+): import("../types/retrieval.js").CrossEncoderRerankConfig {
   const raw = retrievalRaw?.crossEncoder as Record<string, unknown> | undefined;
   return {
     endpoint: typeof raw?.endpoint === "string" ? raw.endpoint : undefined,
@@ -70,7 +80,9 @@ function parseCrossEncoderConfig(retrievalRaw: Record<string, unknown> | undefin
   };
 }
 
-function parseContextBoundaryConfig(retrievalRaw: Record<string, unknown> | undefined): import("../types/retrieval.js").ContextBoundaryConfig {
+function parseContextBoundaryConfig(
+  retrievalRaw: Record<string, unknown> | undefined,
+): import("../types/retrieval.js").ContextBoundaryConfig {
   const raw = retrievalRaw?.contextBoundary as Record<string, unknown> | undefined;
   const vf = raw?.vaultFactsMaxTokens as Record<string, unknown> | undefined;
   return {
@@ -87,7 +99,9 @@ function parseContextBoundaryConfig(retrievalRaw: Record<string, unknown> | unde
   };
 }
 
-function parseRecallFeedbackConfig(retrievalRaw: Record<string, unknown> | undefined): import("../types/retrieval.js").RecallFeedbackConfig {
+function parseRecallFeedbackConfig(
+  retrievalRaw: Record<string, unknown> | undefined,
+): import("../types/retrieval.js").RecallFeedbackConfig {
   const raw = retrievalRaw?.recallFeedback as Record<string, unknown> | undefined;
   const nudge = raw?.nudge as Record<string, unknown> | undefined;
   return {

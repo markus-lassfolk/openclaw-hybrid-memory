@@ -6,11 +6,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VaultHandle } from "./vault-registry.js";
 import type { MemoryEntry, SearchResult } from "../types/memory.js";
 
-export function resolveFactsDbForEntry(
-  entry: MemoryEntry,
-  defaultDb: FactsDB,
-  vaultHandles?: VaultHandle[],
-): FactsDB {
+export function resolveFactsDbForEntry(entry: MemoryEntry, defaultDb: FactsDB, vaultHandles?: VaultHandle[]): FactsDB {
   if (!vaultHandles || vaultHandles.length <= 1) return defaultDb;
   for (const handle of vaultHandles) {
     if (handle.factsDb.getById(entry.id)) return handle.factsDb;
@@ -41,27 +37,14 @@ export function preferFragmentsOverParents(candidates: SearchResult[]): SearchRe
 }
 
 /** Text shown in recall / injection when a fragment child is selected. */
-export function formatFragmentRecallText(
-  entry: MemoryEntry,
-  parent: MemoryEntry | null,
-  useSummary: boolean,
-): string {
+export function formatFragmentRecallText(entry: MemoryEntry, parent: MemoryEntry | null, useSummary: boolean): string {
   const body = useSummary && entry.summary?.trim() ? entry.summary : entry.text;
   if (!isFragmentEntry(entry) || !parent) return body;
-  const parentTitle =
-    parent.summary?.trim() ||
-    parent.text
-      .slice(0, 160)
-      .replace(/\s+/g, " ")
-      .trim();
+  const parentTitle = parent.summary?.trim() || parent.text.slice(0, 160).replace(/\s+/g, " ").trim();
   return `[§ ${parentTitle}]\n${body}`;
 }
 
-export function resolveRecallInjectionText(
-  entry: MemoryEntry,
-  factsDb: FactsDB,
-  useSummary: boolean,
-): string {
+export function resolveRecallInjectionText(entry: MemoryEntry, factsDb: FactsDB, useSummary: boolean): string {
   if (!isFragmentEntry(entry)) {
     return useSummary && entry.summary?.trim() ? entry.summary : entry.text;
   }
@@ -78,9 +61,7 @@ export function applyFragmentRecallPostProcess(
   let results = preferFragmentsOverParents(candidates);
   const boost = opts?.fragmentScoreBoost ?? 1.05;
   if (boost !== 1) {
-    results = results.map((r) =>
-      isFragmentEntry(r.entry) ? { ...r, score: r.score * boost } : r,
-    );
+    results = results.map((r) => (isFragmentEntry(r.entry) ? { ...r, score: r.score * boost } : r));
     results.sort((a, b) => b.score - a.score);
   }
   return results;

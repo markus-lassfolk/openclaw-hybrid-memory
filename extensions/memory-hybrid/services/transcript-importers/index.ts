@@ -91,7 +91,9 @@ export function parseChatGptExport(raw: string): ParsedConversation[] {
       if (!item || typeof item !== "object") continue;
       const conv = item as Record<string, unknown>;
       const title = String(conv.title ?? "ChatGPT conversation");
-      const mapping = conv.mapping as Record<string, { message?: { author?: { role?: string }; content?: { parts?: string[] } } }> | undefined;
+      const mapping = conv.mapping as
+        | Record<string, { message?: { author?: { role?: string }; content?: { parts?: string[] } } }>
+        | undefined;
       const messages: TranscriptMessage[] = [];
       if (mapping) {
         for (const node of Object.values(mapping)) {
@@ -163,7 +165,11 @@ const SECRET_PATTERNS: Array<{ name: string; regex: RegExp }> = [
 ];
 
 /** Redact common secret patterns before mine ingest. */
-export function redactSecretsInText(text: string): { text: string; redacted: number; categories: Record<string, number> } {
+export function redactSecretsInText(text: string): {
+  text: string;
+  redacted: number;
+  categories: Record<string, number>;
+} {
   let out = text;
   let redacted = 0;
   const categories: Record<string, number> = {};

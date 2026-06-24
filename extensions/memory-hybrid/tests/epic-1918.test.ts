@@ -29,7 +29,12 @@ import { computeCrossDomainBoost, isNeverReferencedCandidate } from "../services
 import { buildMemoryNudge, resetNudgeState } from "../services/memory-nudge.js";
 import { validateVaultPath } from "../config/vaults.js";
 import { positionAwareAlpha, blendRerankScores } from "../services/cross-encoder-reranker.js";
-import { resetRecallStats, recordRecallStageTiming, getRecallStatsSnapshot, recordBypassDecision } from "../services/recall-timing-stats.js";
+import {
+  resetRecallStats,
+  recordRecallStageTiming,
+  getRecallStatsSnapshot,
+  recordBypassDecision,
+} from "../services/recall-timing-stats.js";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -68,7 +73,10 @@ describe("composite score (#1910)", () => {
       intent: "GENERAL" as const,
     };
     const v2NoPin = computeCompositeScore(base, { version: 2, pinBoostDefault: 0.3, pinBoostCap: 1 });
-    const v2Pin = computeCompositeScore({ ...base, pinBoost: 0.3 }, { version: 2, pinBoostDefault: 0.3, pinBoostCap: 1 });
+    const v2Pin = computeCompositeScore(
+      { ...base, pinBoost: 0.3 },
+      { version: 2, pinBoostDefault: 0.3, pinBoostCap: 1 },
+    );
     expect(v2Pin).toBeGreaterThan(v2NoPin);
   });
 
@@ -97,7 +105,10 @@ describe("diversity (#1910)", () => {
 
 describe("BM25 bypass (#1910)", () => {
   it("bypasses when top score and gap are strong", () => {
-    const fts = [{ entry: { id: "a", text: "x" }, score: 0.9, backend: "sqlite" as const }, { entry: { id: "b", text: "y" }, score: 0.5, backend: "sqlite" as const }];
+    const fts = [
+      { entry: { id: "a", text: "x" }, score: 0.9, backend: "sqlite" as const },
+      { entry: { id: "b", text: "y" }, score: 0.5, backend: "sqlite" as const },
+    ];
     const d = evaluateBm25Bypass(fts, { enabled: true, bm25MinScore: 0.85, bm25MinGap: 0.15 }, false);
     expect(d.bypass).toBe(true);
   });
@@ -290,9 +301,9 @@ describe("transcript importers (#1915)", () => {
 describe("pin quota (#1911)", () => {
   it("exports default quota constant", () => {
     expect(DEFAULT_PIN_QUOTA).toBe(10);
-    expect(checkPinQuota({ getRawDb: () => ({ prepare: () => ({ get: () => ({ cnt: 10 }) }) }) } as never, 10).allowed).toBe(
-      false,
-    );
+    expect(
+      checkPinQuota({ getRawDb: () => ({ prepare: () => ({ get: () => ({ cnt: 10 }) }) }) } as never, 10).allowed,
+    ).toBe(false);
   });
 });
 

@@ -181,8 +181,8 @@ export function inferCausalLinks(db: DatabaseSync, newEpisode: Episode): InferCa
       `SELECT * FROM episodes WHERE created_at >= ? AND id != ? AND timestamp <= ?${scopeClause} ORDER BY timestamp DESC LIMIT ?`,
     )
     .all(sinceSec, newEpisode.id, newEpisode.timestamp, ...scopeParams, MAX_CANDIDATES * 2) as Array<
-      Record<string, unknown>
-    >;
+    Record<string, unknown>
+  >;
 
   const advisory: CausalLinkCandidate[] = [];
   const persisted: CausalLinkCandidate[] = [];
@@ -237,9 +237,7 @@ export function inferCausalLinks(db: DatabaseSync, newEpisode: Episode): InferCa
 export function decayEpisodeCausalLinks(db: DatabaseSync): { updated: number; deleted: number } {
   const nowSec = Math.floor(Date.now() / 1000);
   const rows = db
-    .prepare(
-      "SELECT id, confidence, last_reinforced_at, last_decay_at, created_at FROM episode_causal_links",
-    )
+    .prepare("SELECT id, confidence, last_reinforced_at, last_decay_at, created_at FROM episode_causal_links")
     .all() as Array<{
     id: string;
     confidence: number;
