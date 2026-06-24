@@ -573,7 +573,12 @@ export function createPluginService(ctx: PluginServiceContext) {
 
       // Workboard integration: defer probe on cold start (#1940), then retry before arming sync
       if (cfg.workboard?.enabled) {
-        const { scheduleWorkboardStartupIntegration } = await import("./workboard-integration.js");
+        const {
+          scheduleWorkboardStartupIntegration,
+          captureWorkboardBootRegistrationGeneration,
+          createWorkboardStartupShouldAbort,
+        } = await import("./workboard-integration.js");
+        const bootRegistrationGeneration = captureWorkboardBootRegistrationGeneration();
         scheduleWorkboardStartupIntegration({
           factsDb,
           vectorDb,
@@ -581,7 +586,7 @@ export function createPluginService(ctx: PluginServiceContext) {
           cfg,
           api,
           timers: timers as PluginRuntime["timers"],
-          shouldAbort: () => timers.shuttingDownRef.value,
+          shouldAbort: createWorkboardStartupShouldAbort(bootRegistrationGeneration, timers.shuttingDownRef),
           connectLabel: "startup",
         });
       }

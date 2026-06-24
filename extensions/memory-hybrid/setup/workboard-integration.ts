@@ -9,6 +9,8 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { resolveGoalsDir } from "../services/goal-stewardship.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import { integrationVerbose } from "../utils/integration-trace.js";
+import { isRegistrationSuperseded } from "../utils/registration-superseded.js";
+import { getHybridMemoryRegistrationState } from "./hybrid-memory-generation-state.js";
 
 export type WorkboardIntegrationContext = {
   factsDb: FactsDB;
@@ -26,6 +28,30 @@ export type WorkboardIntegrationContext = {
 export const WORKBOARD_STARTUP_DEFER_MS = 60_000;
 export const WORKBOARD_STARTUP_PROBE_MAX_ATTEMPTS = 3;
 export const WORKBOARD_STARTUP_PROBE_BACKOFF_MS = 15_000;
+
+/** First plugin-service cold start in this process — used to compute remaining defer on re-register. */
+let workboardGatewayColdStartAtMs: number | null = null;
+
+export function markWorkboardGatewayColdStart(): void {
+  if (workboardGatewayColdStartAtMs == null) {
+    workboardGatewayColdStartAtMs = Date.now();
+  }
+}
+
+/** @internal test helper */
+export function resetWorkboardGatewayColdStartForTests(): void {
+  workboardGatewayColdStartAtMs = null;
+}
+
+export function resolveWorkboardDeferMs(nowMs: number = Date.now()): number {
+  if (workboardGatewayColdStartAtMs == null) return 0;
+  const elapsed = nowMs - workboardGatewayColdStartAtMs;
+  return Math.max(0, WORKBOARD_STARTUP_DEFER_MS - elapsed);
+}
+
+function usesColdStartProbeStrategy(connectLabel: string): boolean {
+  return connectLabel === "startup" || connectLabel === "re-register";
+}
 
 function clearWorkboardSyncTimer(timers: PluginRuntime["timers"]): void {
   if (timers.workboardSync?.value) {
@@ -143,8 +169,10 @@ export async function armWorkboardIntegration(ctx: WorkboardIntegrationContext):
       verbose: uiIntegrationVerbose,
     });
 
-    const probeAttempts = connectLabel === "startup" ? WORKBOARD_STARTUP_PROBE_MAX_ATTEMPTS : 1;
-    const probeBackoff = connectLabel === "startup" ? WORKBOARD_STARTUP_PROBE_BACKOFF_MS : 0;
+    const probeAttempts = usesColdStartProbeStrategy(connectLabel)
+      ? WORKBOARD_STARTUP_PROBE_MAX_ATTEMPTS
+      : 1;
+    const probeBackoff = usesColdStartProbeStrategy(connectLabel) ? WORKBOARD_STARTUP_PROBE_BACKOFF_MS : 0;
     const available = await probeWorkboardAdapterAvailable(adapter, {
       maxAttempts: probeAttempts,
       backoffMs: probeBackoff,
@@ -207,26 +235,55 @@ export async function armWorkboardIntegration(ctx: WorkboardIntegrationContext):
   }
 }
 
-/** Defer cold-start Workboard probe until other gateway plugins finish loading (#1940). */
-export function scheduleWorkboardStartupIntegration(ctx: WorkboardIntegrationContext): void {
+/** Defer Workboard probe until other gateway plugins finish loading (#1940). */
+function scheduleWorkboardDeferredIntegration(ctx: WorkboardIntegrationContext, connectLabel: string): void {
   const { cfg, api, timers, shouldAbort } = ctx;
   if (!cfg.workboard?.enabled) return;
   if (shouldAbort?.()) return;
 
+  const deferMs = resolveWorkboardDeferMs();
   clearWorkboardStartupTimer(timers);
+
+  if (deferMs <= 0) {
+    void armWorkboardIntegration({ ...ctx, connectLabel });
+    return;
+  }
+
   api.logger.debug?.(
-    `memory-hybrid: Workboard startup probe deferred ${WORKBOARD_STARTUP_DEFER_MS}ms (cold gateway start)`,
+    `memory-hybrid: Workboard ${connectLabel} probe deferred ${deferMs}ms (cold gateway start)`,
   );
   timers.workboardStartupTimeout = {
     value: setTimeout(() => {
       timers.workboardStartupTimeout!.value = null;
-      void armWorkboardIntegration({ ...ctx, connectLabel: "startup" });
-    }, WORKBOARD_STARTUP_DEFER_MS),
+      if (shouldAbort?.()) return;
+      void armWorkboardIntegration({ ...ctx, connectLabel });
+    }, deferMs),
   };
+}
+
+/** Defer cold-start Workboard probe until other gateway plugins finish loading (#1940). */
+export function scheduleWorkboardStartupIntegration(ctx: WorkboardIntegrationContext): void {
+  markWorkboardGatewayColdStart();
+  scheduleWorkboardDeferredIntegration(ctx, "startup");
 }
 
 /** Fire-and-forget re-arm after hot reload cleared timers without re-running plugin-service.start(). */
 export function scheduleWorkboardIntegrationAfterReregister(ctx: WorkboardIntegrationContext): void {
   if (ctx.shouldAbort?.()) return;
-  void armWorkboardIntegration({ ...ctx, connectLabel: "re-register" });
+  scheduleWorkboardDeferredIntegration(ctx, "re-register");
+}
+
+/** Build shouldAbort for plugin-service cold start (shutdown + registration generation). */
+export function createWorkboardStartupShouldAbort(
+  bootRegistrationGeneration: number,
+  shuttingDownRef: { value: boolean },
+): () => boolean {
+  return () =>
+    shuttingDownRef.value ||
+    isRegistrationSuperseded(bootRegistrationGeneration);
+}
+
+/** Capture the registration generation when plugin-service.start() schedules Workboard. */
+export function captureWorkboardBootRegistrationGeneration(): number {
+  return getHybridMemoryRegistrationState().registrationGenerationRef.value;
 }
