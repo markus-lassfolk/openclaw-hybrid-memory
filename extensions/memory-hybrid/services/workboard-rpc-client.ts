@@ -6,7 +6,7 @@
  * a direct plugin-to-plugin API if that becomes available.
  */
 
-import { spawnSync } from "../utils/process-runner.js";
+import { spawn } from "../utils/process-runner.js";
 import { pluginLogger } from "../utils/logger.js";
 
 export type WorkboardRpcCard = {
@@ -48,21 +48,122 @@ export interface WorkboardRpcClient {
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
-function normalizeWorkboardCardsResult(result: unknown): WorkboardRpcCard[] {
-  if (Array.isArray(result)) return result as WorkboardRpcCard[];
-  if (typeof result === "object" && result !== null) {
-    const obj = result as { cards?: WorkboardRpcCard[]; result?: { cards?: WorkboardRpcCard[] } };
-    if (Array.isArray(obj.cards)) return obj.cards;
-    if (obj.result && Array.isArray(obj.result.cards)) return obj.result.cards;
+type WorkboardApiCardRaw = {
+  id: string;
+  title: string;
+  status?: string;
+  column?: string;
+  notes?: string;
+  description?: string;
+  labels?: string[];
+  tags?: string[];
+  externalId?: string;
+  idempotencyKey?: string;
+  metadata?: Record<string, unknown>;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+function extractWorkboardExternalId(raw: WorkboardApiCardRaw): string | undefined {
+  if (typeof raw.idempotencyKey === "string" && raw.idempotencyKey) return raw.idempotencyKey;
+  if (typeof raw.externalId === "string" && raw.externalId) return raw.externalId;
+  const automation = raw.metadata?.automation;
+  if (typeof automation === "object" && automation !== null) {
+    const key = (automation as { idempotencyKey?: unknown }).idempotencyKey;
+    if (typeof key === "string" && key) return key;
   }
-  return [];
+  return undefined;
+}
+
+/** Map OpenClaw 6.8 Workboard API cards to hybrid-memory's internal card shape (#1927). */
+export function normalizeWorkboardApiCard(raw: unknown): WorkboardRpcCard | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const card = raw as WorkboardApiCardRaw;
+  if (typeof card.id !== "string" || typeof card.title !== "string") return null;
+
+  const metadata: Record<string, string> | undefined =
+    card.metadata && typeof card.metadata === "object"
+      ? Object.fromEntries(
+          Object.entries(card.metadata).flatMap(([key, value]) =>
+            typeof value === "string" ? [[key, value]] : [],
+          ),
+        )
+      : undefined;
+
+  return {
+    id: card.id,
+    title: card.title,
+    column: card.status ?? card.column ?? "",
+    description: card.notes ?? card.description,
+    tags: card.labels ?? card.tags,
+    externalId: extractWorkboardExternalId(card),
+    metadata: metadata && Object.keys(metadata).length > 0 ? metadata : undefined,
+    createdAt: card.createdAt,
+    updatedAt: card.updatedAt,
+  };
+}
+
+function toWorkboardApiListParams(opts?: { tag?: string; column?: string }): Record<string, unknown> {
+  const params: Record<string, unknown> = {};
+  if (opts?.tag) params.label = opts.tag;
+  if (opts?.column) params.status = opts.column;
+  return params;
+}
+
+function toWorkboardApiCreateParams(card: {
+  title: string;
+  column: string;
+  description?: string;
+  tags?: string[];
+  externalId?: string;
+  metadata?: Record<string, string>;
+}): Record<string, unknown> {
+  const params: Record<string, unknown> = { title: card.title, status: card.column };
+  if (card.description) params.notes = card.description;
+  if (card.tags?.length) params.labels = card.tags;
+  if (card.externalId) params.idempotencyKey = card.externalId;
+  if (card.metadata) params.metadata = card.metadata;
+  return params;
+}
+
+function toWorkboardApiUpdateParams(patch: {
+  title?: string;
+  column?: string;
+  description?: string;
+  tags?: string[];
+  metadata?: Record<string, string>;
+}): Record<string, unknown> {
+  const params: Record<string, unknown> = {};
+  if (patch.title !== undefined) params.title = patch.title;
+  if (patch.column !== undefined) params.status = patch.column;
+  if (patch.description !== undefined) params.notes = patch.description;
+  if (patch.tags !== undefined) params.labels = patch.tags;
+  if (patch.metadata !== undefined) params.metadata = patch.metadata;
+  return params;
+}
+
+function normalizeWorkboardCardsResult(result: unknown): WorkboardRpcCard[] {
+  let cards: unknown[] = [];
+  if (Array.isArray(result)) {
+    cards = result;
+  } else if (typeof result === "object" && result !== null) {
+    const obj = result as { cards?: unknown[]; result?: { cards?: unknown[] } };
+    if (Array.isArray(obj.cards)) cards = obj.cards;
+    else if (obj.result && Array.isArray(obj.result.cards)) cards = obj.result.cards;
+  }
+  return cards.map(normalizeWorkboardApiCard).filter((card): card is WorkboardRpcCard => card !== null);
 }
 
 function normalizeWorkboardCardResult(result: unknown): WorkboardRpcCard | null {
   if (typeof result !== "object" || result === null) return null;
-  const obj = result as WorkboardRpcCard & { result?: WorkboardRpcCard };
-  if (typeof obj.id === "string") return obj;
-  if (obj.result && typeof obj.result.id === "string") return obj.result;
+  const obj = result as { card?: unknown; result?: unknown; id?: string };
+  if (obj.card) return normalizeWorkboardApiCard(obj.card);
+  if (typeof obj.id === "string") return normalizeWorkboardApiCard(obj);
+  if (obj.result && typeof obj.result === "object" && obj.result !== null) {
+    const inner = obj.result as { card?: unknown; id?: string };
+    if (inner.card) return normalizeWorkboardApiCard(inner.card);
+    if (typeof inner.id === "string") return normalizeWorkboardApiCard(inner);
+  }
   return null;
 }
 
@@ -124,19 +225,21 @@ export function createWorkboardHttpRpcClient(gatewayUrl: string, token?: string)
 
   return {
     async listCards(opts) {
-      const params: Record<string, unknown> = {};
-      if (opts?.tag) params.tag = opts.tag;
-      if (opts?.column) params.column = opts.column;
-      const result = await rpc<{ cards: WorkboardRpcCard[] }>("workboard.cards.list", params);
-      return result?.cards ?? [];
+      const result = await rpc<unknown>("workboard.cards.list", toWorkboardApiListParams(opts));
+      return normalizeWorkboardCardsResult(result);
     },
 
     async createCard(card) {
-      return rpc<WorkboardRpcCard>("workboard.cards.create", card);
+      const result = await rpc<unknown>("workboard.cards.create", toWorkboardApiCreateParams(card));
+      return normalizeWorkboardCardResult(result);
     },
 
     async updateCard(cardId, patch) {
-      return rpc<WorkboardRpcCard>("workboard.cards.update", { id: cardId, ...patch });
+      const result = await rpc<unknown>("workboard.cards.update", {
+        id: cardId,
+        ...toWorkboardApiUpdateParams(patch),
+      });
+      return normalizeWorkboardCardResult(result);
     },
 
     async deleteCard(cardId) {
@@ -171,7 +274,11 @@ export function createWorkboardHttpRpcClient(gatewayUrl: string, token?: string)
   };
 }
 
-function runWorkboardGatewayCliCall(method: string, params: Record<string, unknown>, token?: string): unknown | null {
+function runWorkboardGatewayCliCall(
+  method: string,
+  params: Record<string, unknown>,
+  token?: string,
+): Promise<unknown | null> {
   const args = [
     "gateway",
     "call",
@@ -183,29 +290,69 @@ function runWorkboardGatewayCliCall(method: string, params: Record<string, unkno
     String(REQUEST_TIMEOUT_MS),
   ];
 
-  try {
-    const env = token ? { ...process.env, OPENCLAW_GATEWAY_TOKEN: token } : process.env;
-    const result = spawnSync("openclaw", args, {
-      encoding: "utf-8",
-      env,
-      timeout: REQUEST_TIMEOUT_MS + 2000,
-    });
-    if (result.error || result.status !== 0) {
-      const detail = (result.stderr || result.stdout || "").trim();
+  return new Promise((resolve) => {
+    try {
+      const env = token ? { ...process.env, OPENCLAW_GATEWAY_TOKEN: token } : process.env;
+      const child = spawn("openclaw", args, { env });
+      let stdout = "";
+      let stderr = "";
+      let settled = false;
+
+      const finish = (value: unknown | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        resolve(value);
+      };
+
+      const timeout = setTimeout(() => {
+        child.kill();
+        pluginLogger.warn(`memory-hybrid: workboard gateway call ${method} timed out after ${REQUEST_TIMEOUT_MS}ms`);
+        finish(null);
+      }, REQUEST_TIMEOUT_MS + 2000);
+
+      child.stdout?.on("data", (chunk: string | Buffer) => {
+        stdout += chunk.toString();
+      });
+      child.stderr?.on("data", (chunk: string | Buffer) => {
+        stderr += chunk.toString();
+      });
+      child.on("error", (err) => {
+        pluginLogger.warn(
+          `memory-hybrid: workboard gateway call ${method} failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        finish(null);
+      });
+      child.on("close", (code) => {
+        if (code !== 0) {
+          const detail = (stderr || stdout).trim();
+          pluginLogger.warn(
+            `memory-hybrid: workboard gateway call ${method} failed${detail ? `: ${detail.slice(0, 200)}` : ""}`,
+          );
+          finish(null);
+          return;
+        }
+        const trimmed = stdout.trim();
+        if (!trimmed) {
+          finish(null);
+          return;
+        }
+        try {
+          finish(JSON.parse(trimmed) as unknown);
+        } catch (err) {
+          pluginLogger.warn(
+            `memory-hybrid: workboard gateway call ${method} failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          finish(null);
+        }
+      });
+    } catch (err) {
       pluginLogger.warn(
-        `memory-hybrid: workboard gateway call ${method} failed${detail ? `: ${detail.slice(0, 200)}` : ""}`,
+        `memory-hybrid: workboard gateway call ${method} failed: ${err instanceof Error ? err.message : String(err)}`,
       );
-      return null;
+      resolve(null);
     }
-    const stdout = result.stdout.trim();
-    if (!stdout) return null;
-    return JSON.parse(stdout) as unknown;
-  } catch (err) {
-    pluginLogger.warn(
-      `memory-hybrid: workboard gateway call ${method} failed: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    return null;
-  }
+  });
 }
 
 /** Gateway RPC via `openclaw gateway call` (OpenClaw 6.8+ when HTTP /rpc/* is unavailable). */
@@ -216,20 +363,20 @@ export function createWorkboardGatewayCliRpcClient(token?: string): WorkboardRpc
 
   return {
     async listCards(opts) {
-      const params: Record<string, unknown> = {};
-      if (opts?.tag) params.tag = opts.tag;
-      if (opts?.column) params.column = opts.column;
-      const result = await rpc("workboard.cards.list", params);
+      const result = await rpc("workboard.cards.list", toWorkboardApiListParams(opts));
       return normalizeWorkboardCardsResult(result);
     },
 
     async createCard(card) {
-      const result = await rpc("workboard.cards.create", card);
+      const result = await rpc("workboard.cards.create", toWorkboardApiCreateParams(card));
       return normalizeWorkboardCardResult(result);
     },
 
     async updateCard(cardId, patch) {
-      const result = await rpc("workboard.cards.update", { id: cardId, ...patch });
+      const result = await rpc("workboard.cards.update", {
+        id: cardId,
+        ...toWorkboardApiUpdateParams(patch),
+      });
       return normalizeWorkboardCardResult(result);
     },
 
@@ -244,7 +391,7 @@ export function createWorkboardGatewayCliRpcClient(token?: string): WorkboardRpc
     },
 
     async isAvailable() {
-      const result = runWorkboardGatewayCliCall("workboard.cards.list", {}, token);
+      const result = await runWorkboardGatewayCliCall("workboard.cards.list", {}, token);
       return result != null;
     },
   };
