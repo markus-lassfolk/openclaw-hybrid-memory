@@ -79,11 +79,13 @@ export function normalizeWorkboardCardFromApi(raw: unknown): WorkboardRpcCard | 
   const column = typeof api.status === "string" ? api.status : typeof api.column === "string" ? api.column : "";
   const tags = Array.isArray(api.labels) ? api.labels : Array.isArray(api.tags) ? api.tags : undefined;
   const externalId = workboardApiExternalId(api);
+  const rawNotes = typeof api.notes === "string" ? api.notes : api.description;
+  const description = rawNotes ? rawNotes : undefined;
   return {
     id: api.id,
     title: typeof api.title === "string" ? api.title : "",
     column,
-    description: typeof api.notes === "string" ? api.notes : api.description,
+    description,
     tags,
     externalId,
     metadata: api.metadata,

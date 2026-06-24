@@ -15,4 +15,8 @@ describe("workboard-status-slugs", () => {
     expect(toWorkboardStatusSlug("Failed")).toBe("blocked");
     expect(toWorkboardStatusSlug("Blocked")).toBe("blocked");
   });
+
+  it("passes through unrecognized custom column names", () => {
+    expect(toWorkboardStatusSlug("My Custom Lane")).toBe("My Custom Lane");
+  });
 });

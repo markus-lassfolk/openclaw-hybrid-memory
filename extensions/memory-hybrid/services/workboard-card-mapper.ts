@@ -25,7 +25,7 @@ export type WorkboardCardRecord = {
   description?: string;
   tags?: string[];
   externalId?: string;
-  metadata?: Record<string, string>;
+  metadata?: Record<string, unknown>;
   updatedAt?: string;
 };
 
@@ -40,11 +40,25 @@ export function goalExternalId(goalId: string): string {
   return `${GOAL_EXTERNAL_PREFIX}${goalId}`;
 }
 
-export function resolveWorkboardExternalId(card: WorkboardCardRecord): string | undefined {
+export function resolveWorkboardExternalId(card: {
+  externalId?: string;
+  metadata?: Record<string, unknown>;
+}): string | undefined {
   const meta = card.metadata as { automation?: { idempotencyKey?: string } } | undefined;
   const key = meta?.automation?.idempotencyKey;
   if (typeof key === "string" && key.length > 0) return key;
   return card.externalId;
+}
+
+export function normalizeWorkboardNotes(notes?: string): string | undefined {
+  return notes ? notes : undefined;
+}
+
+export function workboardColumnsEquivalent(a: string, b: string): boolean {
+  const slugA = tryToWorkboardStatusSlug(a);
+  const slugB = tryToWorkboardStatusSlug(b);
+  if (slugA !== null && slugB !== null) return slugA === slugB;
+  return a === b;
 }
 
 export function isHybridMemoryCard(card: WorkboardCardRecord): boolean {

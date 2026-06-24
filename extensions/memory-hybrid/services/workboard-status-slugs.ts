@@ -45,10 +45,13 @@ export function isValidWorkboardStatusSlug(value: string): value is WorkboardSta
 }
 
 /** Map configured column name (slug or legacy label) to a Workboard API status slug. */
-export function toWorkboardStatusSlug(column: string): WorkboardStatusSlug {
-  const lower = column.trim().toLowerCase();
-  if (SLUG_SET.has(lower)) return lower as WorkboardStatusSlug;
-  return LEGACY_COLUMN_TO_SLUG[lower] ?? "backlog";
+export function toWorkboardStatusSlug(column: string): string {
+  const trimmed = column.trim();
+  const lower = trimmed.toLowerCase();
+  if (SLUG_SET.has(lower)) return lower;
+  const mapped = LEGACY_COLUMN_TO_SLUG[lower];
+  if (mapped) return mapped;
+  return trimmed;
 }
 
 /** Map column name (slug or legacy label) to slug, returning null if unrecognized. */
