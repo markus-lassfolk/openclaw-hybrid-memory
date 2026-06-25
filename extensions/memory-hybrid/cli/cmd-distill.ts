@@ -71,6 +71,10 @@ import type { MaintenanceJobRun } from "../services/maintenance-job-run/job-run.
 import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 import type { DistillCliResult, DistillCliSink, DistillWindowResult, RecordDistillResult } from "./types.js";
+import {
+  classifyStoreDedupeMode,
+  resolveDistillVectorCandidates,
+} from "./vector-dedupe-helpers.js";
 
 // Constants used only by distill functions
 const FULL_DISTILL_MAX_DAYS = 90;
@@ -718,6 +722,11 @@ export async function runDistillForCli(
     };
     let stored = 0;
     let skipped = 0;
+    const fuzzyDedupeEnabled = cfg.store.fuzzyDedupe === true;
+    let vectorSearchDegraded = false;
+    let vectorDedupeStores = 0;
+    let lexicalOnlyDedupeStores = 0;
+    let usedHasDuplicateFallback = false;
     for (const fact of allFacts) {
       const parsed = tryParseCredentialForVault(fact.text, fact.entity ?? null, fact.key ?? null, fact.value, {
         requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
@@ -815,30 +824,83 @@ export async function runDistillForCli(
         continue;
       }
 
-      if (factsDb.hasDuplicate(fact.text, "distillation")) {
+      const category = (isValidCategory(fact.category) ? fact.category : "other") as MemoryCategory;
+      const entity = fact.entity ?? null;
+      const key = fact.key ?? null;
+      const redactedText = redactMaintenancePrivateText(fact.text);
+      const redactedValue = fact.value ? redactMaintenancePrivateText(fact.value) : redactedText.slice(0, 200);
+
+      if (
+        factsDb.hasDuplicate(redactedText, "distillation", {
+          category,
+          entity,
+          key,
+          value: redactedValue,
+        })
+      ) {
         skipped++;
         continue;
       }
       try {
-        const redactedText = redactMaintenancePrivateText(fact.text);
-        const redactedValue = fact.value ? redactMaintenancePrivateText(fact.value) : redactedText.slice(0, 200);
         const vector = await embeddings.embed(redactedText);
-        if (await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD)) {
+        const embeddingModelName =
+          typeof embeddings.modelName === "string" && embeddings.modelName.trim().length > 0
+            ? embeddings.modelName
+            : null;
+        const vectorResolve = await resolveDistillVectorCandidates({
+          fuzzyDedupe: fuzzyDedupeEnabled,
+          vector,
+          vectorDb,
+          factsDb,
+          embeddingModelName,
+        });
+        vectorSearchDegraded = vectorSearchDegraded || vectorResolve.vectorSearchDegraded;
+        if (vectorResolve.usedHasDuplicateFallback) {
+          usedHasDuplicateFallback = true;
+        }
+        if (vectorResolve.skipAsDuplicate) {
           skipped++;
           continue;
         }
-        const storeResult = factsDb.storeWithResult({
-          text: redactedText,
-          category: (isValidCategory(fact.category) ? fact.category : "other") as MemoryCategory,
-          importance: BATCH_STORE_IMPORTANCE,
-          entity: fact.entity ?? null,
-          key: fact.key ?? null,
-          value: redactedValue,
-          source: "distillation",
-          sourceDate: sourceDateSec(fact.source_date),
-          tags: fact.tags?.length ? fact.tags : extractTags(redactedText, fact.entity ?? undefined),
+        if (!fuzzyDedupeEnabled && (await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD))) {
+          skipped++;
+          continue;
+        }
+        const storeResult = factsDb.storeWithResult(
+          {
+            text: redactedText,
+            category,
+            importance: BATCH_STORE_IMPORTANCE,
+            entity,
+            key,
+            value: redactedValue,
+            source: "distillation",
+            sourceDate: sourceDateSec(fact.source_date),
+            tags: fact.tags?.length ? fact.tags : extractTags(redactedText, fact.entity ?? undefined),
+          },
+          {
+            vectorCandidates: vectorResolve.vectorCandidates,
+            warnContext: "distill",
+            suppressVectorFallbackWarning: true,
+          },
+        );
+        const factDedupeMode = classifyStoreDedupeMode({
+          fuzzyDedupe: fuzzyDedupeEnabled,
+          vectorSearchDegraded: vectorResolve.vectorSearchDegraded,
+          vectorCandidates: vectorResolve.vectorCandidates,
+          usedHasDuplicateFallback: vectorResolve.usedHasDuplicateFallback,
+          skipAsDuplicate: vectorResolve.skipAsDuplicate,
         });
+        if (factDedupeMode === "vector") {
+          vectorDedupeStores++;
+        } else if (factDedupeMode === "mixed") {
+          vectorDedupeStores++;
+          lexicalOnlyDedupeStores++;
+        } else {
+          lexicalOnlyDedupeStores++;
+        }
         if (storeResult.skipped) {
+          skipped++;
           continue;
         }
         if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
@@ -892,6 +954,18 @@ export async function runDistillForCli(
     } else if (batchFailures > 0) {
       sink.warn(`memory-hybrid: distill partial failure: ${batchFailures} batch(es) failed; scan cursor not advanced`);
     }
+    const dedupeDegraded = vectorSearchDegraded;
+    const distillDedupeMode =
+      vectorDedupeStores > 0 && lexicalOnlyDedupeStores > 0
+        ? "mixed"
+        : vectorDedupeStores > 0
+          ? "vector"
+          : "lexical-only";
+    if (dedupeDegraded && !opts.dryRun) {
+      sink.warn(
+        `memory-hybrid: distill DEGRADED — vector neighbour search unavailable${usedHasDuplicateFallback ? "; used hasDuplicate fallback where applicable" : ""}`,
+      );
+    }
     return withDistillJobRun({
       sessionsScanned: filesToProcess.length,
       factsExtracted: allFacts.length,
@@ -901,6 +975,8 @@ export async function runDistillForCli(
       semanticEmpty,
       partialFailure: batchFailures > 0,
       batchFailures,
+      dedupeDegraded,
+      distillDedupeMode,
     });
   } finally {
     if (shouldAcquireLock && !opts.dryRun) clearScanLock(SCAN_TYPE);

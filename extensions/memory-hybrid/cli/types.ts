@@ -235,6 +235,8 @@ export type DistillCliResult = {
   batchFailures?: number;
   jobRunId?: string;
   semanticOutcome?: string;
+  dedupeDegraded?: boolean;
+  distillDedupeMode?: "vector" | "lexical-only" | "mixed";
 };
 export type DistillCliSink = {
   log: (s: string) => void;

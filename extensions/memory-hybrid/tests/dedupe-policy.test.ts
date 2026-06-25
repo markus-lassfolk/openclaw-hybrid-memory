@@ -29,6 +29,18 @@ describe("dedupe policy", () => {
     expect(profile.vectorThreshold).toBe(0.95);
     expect(profile.lexicalJaccard).toBe(0.9);
   });
+
+  it("uses distill cosine threshold for distillation source (#1947)", () => {
+    const profile = resolveDedupeProfile("distillation", parseStoreConfig({ store: {} }));
+    expect(profile.vectorThreshold).toBe(0.85);
+  });
+
+  it("applies distill threshold to custom distillation profiles without vectorThreshold", () => {
+    const store = parseStoreConfig({
+      store: { sourceProfiles: { distillation: { onDuplicate: "skip" } } },
+    });
+    expect(resolveDedupeProfile("distillation", store).vectorThreshold).toBe(0.85);
+  });
 });
 
 import { mkdtempSync, rmSync } from "node:fs";
@@ -361,6 +373,80 @@ describe("FactsDB sourceProfiles write path", () => {
       );
       expect(stored.id).toBe(original.id);
       expect((stored.recallCount ?? 0) - initialRecall).toBeGreaterThanOrEqual(1);
+      expect(db.count()).toBe(1);
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("honours vectorCandidates for keyed project distillation facts (#1947)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dedupe-profile-distill-project-"));
+    const db = new FactsDB(join(dir, "facts.db"), {
+      fuzzyDedupe: true,
+      storeConfig: { fuzzyDedupe: true },
+    });
+    try {
+      const original = db.store({
+        text: "PR stewardship queue prioritizes merge-ready PRs before new feature work",
+        category: "project",
+        importance: 0.8,
+        entity: "hybrid-memory-pr-stewardship",
+        key: "next",
+        value: "merge PR #1600",
+        source: "distillation",
+      });
+      const stored = db.storeWithResult(
+        {
+          text: "PR stewardship queue should prioritize merge-ready pull requests before feature work",
+          category: "project",
+          importance: 0.8,
+          entity: "hybrid-memory-pr-stewardship",
+          key: "next",
+          value: "merge PR #1600 next",
+          source: "distillation",
+        },
+        { vectorCandidates: [{ id: original.id, score: 0.88 }] },
+      );
+      expect(stored.newlyStored).toBe(false);
+      expect(stored.entry.id).toBe(original.id);
+      expect(db.count()).toBe(1);
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("honours vectorCandidates for distillation project facts with entity slug drift (#1947)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dedupe-profile-distill-project-"));
+    const db = new FactsDB(join(dir, "facts.db"), {
+      fuzzyDedupe: true,
+      storeConfig: { fuzzyDedupe: true },
+    });
+    try {
+      const original = db.store({
+        text: "PR stewardship queue prioritizes merge-ready PRs before new feature work",
+        category: "project",
+        importance: 0.8,
+        entity: "hybrid-memory-pr-stewardship",
+        key: "next",
+        value: "merge PR #1600",
+        source: "distillation",
+      });
+      const stored = db.storeWithResult(
+        {
+          text: "PR stewardship queue should prioritize merge-ready pull requests before feature work",
+          category: "project",
+          importance: 0.8,
+          entity: "hybrid-memory-pr-stewardship-current-state",
+          key: "next",
+          value: "merge PR #1600 next",
+          source: "distillation",
+        },
+        { vectorCandidates: [{ id: original.id, score: 0.88 }] },
+      );
+      expect(stored.newlyStored).toBe(false);
+      expect(stored.entry.id).toBe(original.id);
       expect(db.count()).toBe(1);
     } finally {
       db.close();

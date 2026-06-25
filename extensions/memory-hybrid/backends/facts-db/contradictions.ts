@@ -700,11 +700,35 @@ function extractRefNumbers(text: string): Set<string> {
   return new Set(matches ?? []);
 }
 
-/** Heuristic: flag if multiple distinct PR/issue numbers appear across the two facts. */
+function countDistinctRefsInFact(fact: MemoryEntry): number {
+  const text = `${fact.value ?? ""} ${fact.text ?? ""}`;
+  return extractRefNumbers(text).size;
+}
+
+function countCombinedDistinctRefs(newFact: MemoryEntry, oldFact: MemoryEntry): number {
+  const text = `${newFact.value ?? ""} ${newFact.text ?? ""} ${oldFact.value ?? ""} ${oldFact.text ?? ""}`;
+  return extractRefNumbers(text).size;
+}
+
+/**
+ * Heuristic: flag entity reuse when refs exceed per-fact or asymmetric combined thresholds.
+ * Allows 2+2 disjoint queue drift for LWW (#1945) while still flagging 2+1 style overload.
+ */
 function isPossiblyOverloadedEntity(newFact: MemoryEntry, oldFact: MemoryEntry): boolean {
-  const combined = `${newFact.value ?? ""} ${newFact.text ?? ""} ${oldFact.value ?? ""} ${oldFact.text ?? ""}`;
-  const refs = extractRefNumbers(combined);
-  return refs.size > MAX_EXPECTED_REFS_PER_ENTITY;
+  const newCount = countDistinctRefsInFact(newFact);
+  const oldCount = countDistinctRefsInFact(oldFact);
+  if (newCount > MAX_EXPECTED_REFS_PER_ENTITY || oldCount > MAX_EXPECTED_REFS_PER_ENTITY) {
+    return true;
+  }
+  const combined = countCombinedDistinctRefs(newFact, oldFact);
+  if (combined <= MAX_EXPECTED_REFS_PER_ENTITY) {
+    return false;
+  }
+  // Both facts at capacity with disjoint refs (typical queue drift) — allow LWW (#1945).
+  if (newCount >= MAX_EXPECTED_REFS_PER_ENTITY && oldCount >= MAX_EXPECTED_REFS_PER_ENTITY) {
+    return false;
+  }
+  return true;
 }
 
 function truncateExcerpt(s: string, maxLen: number): string {

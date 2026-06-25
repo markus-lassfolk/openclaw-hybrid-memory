@@ -31,7 +31,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseDashboardConfig } from "../config/parsers/features.js";
 import { _testing } from "../index.js";
-import { collectStatus, createDashboardServer } from "../routes/dashboard-server.js";
+import { collectStatus, createDashboardServer, graphqlBodyIsMutation } from "../routes/dashboard-server.js";
 import * as fsUtils from "../utils/fs.js";
 
 const { FactsDB, VectorDB } = _testing;
@@ -164,6 +164,18 @@ describe("parseDashboardConfig", () => {
   it("enabled=false disables the server", () => {
     const cfg = parseDashboardConfig({ dashboard: { enabled: false } });
     expect(cfg.enabled).toBe(false);
+  });
+
+  it("parses optional dashboard token", () => {
+    const cfg = parseDashboardConfig({ dashboard: { token: "  secret-token  " } });
+    expect(cfg.token).toBe("secret-token");
+  });
+
+  it("graphqlBodyIsMutation detects named and anonymous mutations", () => {
+    expect(graphqlBodyIsMutation({ query: "{ __typename }" })).toBe(false);
+    expect(graphqlBodyIsMutation({ query: "mutation { deleteFact(id: \"x\") }" })).toBe(true);
+    expect(graphqlBodyIsMutation({ query: '{ deleteFact(id: "x") }' })).toBe(true);
+    expect(graphqlBodyIsMutation({ query: "query { facts { id } }" })).toBe(false);
   });
 });
 
@@ -526,10 +538,21 @@ describe("Memory Viewer API (Issue #1023)", () => {
     });
   }
 
-  async function apiPost(port: number, path: string, body: string) {
+  async function apiPost(
+    port: number,
+    path: string,
+    body: string,
+    extraHeaders: Record<string, string> = {},
+  ) {
     return new Promise<{ status: number; body: string }>((resolve) => {
       const req = request(
-        { hostname: "127.0.0.1", port, path, method: "POST", headers: { "Content-Type": "application/json" } },
+        {
+          hostname: "127.0.0.1",
+          port,
+          path,
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...extraHeaders },
+        },
         (res) => {
           let data = "";
           res.on("data", (c: Buffer) => {
@@ -802,6 +825,25 @@ describe("Memory Viewer API (Issue #1023)", () => {
     });
   });
 
+  it("POST /api/viewer/facts/:id/forget deletes the LanceDB vector", async () => {
+    await withServer(async (ctx, port) => {
+      const entry = ctx.factsDb.store({ text: "To forget vector", category: "fact", source: "test" });
+      const vector = new Array(VECTOR_DIM).fill(0.1);
+      await ctx.vectorDb.store({
+        text: entry.text,
+        vector,
+        importance: 0.5,
+        category: "fact",
+        id: entry.id,
+      });
+      const deleteSpy = vi.spyOn(ctx.vectorDb, "delete").mockResolvedValue(true);
+      const { status, body } = await apiPost(port, `/api/viewer/facts/${entry.id}/forget`, "{}");
+      expect(status).toBe(200);
+      expect(JSON.parse(body).ok).toBe(true);
+      expect(deleteSpy).toHaveBeenCalledWith(entry.id);
+    });
+  });
+
   it("POST /api/viewer/facts/:id/forget forgets a fact", async () => {
     await withServer(async (ctx, port) => {
       ctx.factsDb.store({ text: "To forget", category: "fact", source: "test" });
@@ -813,6 +855,73 @@ describe("Memory Viewer API (Issue #1023)", () => {
       expect(status).toBe(200);
       expect(JSON.parse(body).ok).toBe(true);
     });
+  });
+
+  it("POST forget returns 401 when dashboard.token is configured and missing", async () => {
+    const td = mkdtempSync(join(tmpdir(), "dashboard-auth-forget-"));
+    try {
+      const ctx = await makeContextWithStores(td);
+      ctx.hybridCfg = { dashboard: { enabled: true, port: 7700, token: "test-secret" } };
+      const srv = await createDashboardServer(ctx, 0);
+      try {
+        const entry = ctx.factsDb.store({ text: "Auth forget", category: "fact", source: "test" });
+        const unauthorized = await apiPost(srv.port, `/api/viewer/facts/${entry.id}/forget`, "{}");
+        expect(unauthorized.status).toBe(401);
+        const authorized = await apiPost(srv.port, `/api/viewer/facts/${entry.id}/forget`, "{}", {
+          Authorization: "Bearer test-secret",
+        });
+        expect(authorized.status).toBe(200);
+        expect(JSON.parse(authorized.body).ok).toBe(true);
+      } finally {
+        closeAll(ctx);
+        srv.close();
+      }
+    } finally {
+      rmSync(td, { recursive: true, force: true });
+    }
+  });
+
+  it("POST /graphql allows read-only queries without dashboard.token", async () => {
+    const td = mkdtempSync(join(tmpdir(), "dashboard-auth-gql-read-"));
+    try {
+      const ctx = await makeContextWithStores(td);
+      ctx.hybridCfg = { dashboard: { enabled: true, port: 7700, token: "test-secret" } };
+      const srv = await createDashboardServer(ctx, 0);
+      try {
+        const query = JSON.stringify({ query: "{ __typename }" });
+        const res = await apiPost(srv.port, "/graphql", query);
+        expect(res.status).not.toBe(401);
+      } finally {
+        closeAll(ctx);
+        srv.close();
+      }
+    } finally {
+      rmSync(td, { recursive: true, force: true });
+    }
+  });
+
+  it("POST /graphql anonymous deleteFact returns 401 when dashboard.token is set", async () => {
+    const td = mkdtempSync(join(tmpdir(), "dashboard-auth-gql-mut-"));
+    try {
+      const ctx = await makeContextWithStores(td);
+      ctx.hybridCfg = { dashboard: { enabled: true, port: 7700, token: "test-secret" } };
+      const srv = await createDashboardServer(ctx, 0);
+      try {
+        const entry = ctx.factsDb.store({ text: "GQL delete", category: "fact", source: "test" });
+        const query = JSON.stringify({ query: `{ deleteFact(id: "${entry.id}") }` });
+        const unauthorized = await apiPost(srv.port, "/graphql", query);
+        expect(unauthorized.status).toBe(401);
+        const authorized = await apiPost(srv.port, "/graphql", query, {
+          Authorization: "Bearer test-secret",
+        });
+        expect(authorized.status).not.toBe(401);
+      } finally {
+        closeAll(ctx);
+        srv.close();
+      }
+    } finally {
+      rmSync(td, { recursive: true, force: true });
+    }
   });
 
   it("POST /api/viewer/facts/:id/forget accepts malformed JSON bodies", async () => {

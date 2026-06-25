@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import type { StoreConfig, StoreDedupeAction, StoreOverflowAction } from "../config/types/core.js";
+import { DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
 import { normalizedHash } from "../utils/tags.js";
 
 export type ResolvedDedupeProfile = {
@@ -26,6 +27,15 @@ const DEFAULT_PROFILE: ResolvedDedupeProfile = {
 function globToRegExp(pattern: string): RegExp {
   const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
   return new RegExp(`^${escaped}$`);
+}
+
+/** Distillation re-extractions may drift entity slug within the same project namespace (#1947). */
+function entitiesCompatibleForDistillation(candidateEntity: string, matchedEntity: string | null): boolean {
+  if (!matchedEntity) return false;
+  const a = candidateEntity.trim();
+  const b = matchedEntity.trim();
+  if (a === b) return true;
+  return a.startsWith(`${b}-`) || b.startsWith(`${a}-`);
 }
 
 function normalizeProfile(sourcePattern: string, raw?: StoreConfig["defaultProfile"]): Partial<ResolvedDedupeProfile> {
@@ -59,6 +69,9 @@ export function resolveDedupeProfile(source: string | null | undefined, store: S
   if (profiles[sourceKey]) {
     const normalized = normalizeProfile(sourceKey, profiles[sourceKey]);
     const merged = { ...base, ...normalized };
+    if (sourceKey === "distillation" && normalized.vectorThreshold === undefined) {
+      merged.vectorThreshold = DISTILL_DEDUP_THRESHOLD;
+    }
     // If user configured a source-specific profile without explicit onDuplicate, default to "store"
     if (normalized.onDuplicate === undefined) {
       merged.onDuplicate = "store";
@@ -71,12 +84,15 @@ export function resolveDedupeProfile(source: string | null | undefined, store: S
     if (globToRegExp(pattern).test(sourceKey)) {
       const normalized = normalizeProfile(pattern, profile);
       const merged = { ...base, ...normalized };
-      // If user configured a glob profile without explicit onDuplicate, default to "store"
       if (normalized.onDuplicate === undefined) {
         merged.onDuplicate = "store";
       }
       return merged;
     }
+  }
+
+  if (sourceKey === "distillation") {
+    return { ...base, vectorThreshold: DISTILL_DEDUP_THRESHOLD };
   }
 
   return base;
@@ -176,6 +192,74 @@ function tokenJaccard(a: Set<string>, b: Set<string>): number {
 const JACCARD_LOOKBACK_SEC = 120 * 24 * 60 * 60;
 const JACCARD_ROW_LIMIT = 200;
 
+function resolveVectorDuplicateCandidate(
+  profile: ResolvedDedupeProfile,
+  ctx: ApplyDedupeContext,
+): { id: string; score: number } | null {
+  if (
+    profile.vectorThreshold == null ||
+    profile.vectorThreshold <= 0 ||
+    profile.vectorThreshold > 1 ||
+    !ctx.vectorCandidates ||
+    ctx.vectorCandidates.length === 0
+  ) {
+    return null;
+  }
+  let bestVec: { id: string; score: number } | null = null;
+  for (const cand of ctx.vectorCandidates) {
+    if (
+      typeof cand.score === "number" &&
+      cand.score >= profile.vectorThreshold &&
+      (bestVec === null || cand.score > bestVec.score)
+    ) {
+      bestVec = { id: cand.id, score: cand.score };
+    }
+  }
+  return bestVec;
+}
+
+function resolveProjectVectorDuplicateCandidate(
+  profile: ResolvedDedupeProfile,
+  ctx: ApplyDedupeContext,
+  entity: string,
+  key: string,
+  candidateSource: string,
+): { id: string; score: number } | null {
+  if (
+    profile.vectorThreshold == null ||
+    profile.vectorThreshold <= 0 ||
+    profile.vectorThreshold > 1 ||
+    !ctx.vectorCandidates ||
+    ctx.vectorCandidates.length === 0
+  ) {
+    return null;
+  }
+  const ranked = [...ctx.vectorCandidates]
+    .filter((cand) => typeof cand.score === "number" && cand.score >= profile.vectorThreshold!)
+    .sort((a, b) => b.score - a.score);
+  for (const vectorDup of ranked) {
+    const matched = ctx.db
+      .prepare("SELECT entity, key, category FROM facts WHERE id = ? AND superseded_at IS NULL LIMIT 1")
+      .get(vectorDup.id) as { entity: string | null; key: string | null; category: string | null } | undefined;
+    if (!matched || matched.category?.trim().toLowerCase() !== "project") {
+      continue;
+    }
+    const matchedEntity = matched.entity?.trim() ?? null;
+    const matchedKey = matched.key?.trim() ?? null;
+    const sameKey = matchedKey === key;
+    const sameEntityAndKey = matchedEntity === entity && sameKey;
+    if (
+      sameEntityAndKey ||
+      (candidateSource === "distillation" &&
+        sameKey &&
+        entitiesCompatibleForDistillation(entity, matchedEntity))
+    ) {
+      return vectorDup;
+    }
+  }
+  return null;
+}
+
 /**
  * Decide how a candidate fact should be handled before insert.
  * Side-effect free (no SQL writes).
@@ -238,6 +322,10 @@ export function applyDedupe(
     if (existing) {
       return mapOnDuplicate(profile, existing.id, "exact");
     }
+    const vectorDup = resolveProjectVectorDuplicateCandidate(profile, ctx, entity, key, candidate.source);
+    if (vectorDup) {
+      return mapOnDuplicate(profile, vectorDup.id, "vector");
+    }
     return { action: "store" };
   }
 
@@ -299,16 +387,7 @@ export function applyDedupe(
     ctx.vectorCandidates &&
     ctx.vectorCandidates.length > 0
   ) {
-    let bestVec: { id: string; score: number } | null = null;
-    for (const cand of ctx.vectorCandidates) {
-      if (
-        typeof cand.score === "number" &&
-        cand.score >= profile.vectorThreshold &&
-        (bestVec === null || cand.score > bestVec.score)
-      ) {
-        bestVec = { id: cand.id, score: cand.score };
-      }
-    }
+    const bestVec = resolveVectorDuplicateCandidate(profile, ctx);
     if (bestVec) {
       return mapOnDuplicate(profile, bestVec.id, "vector");
     }

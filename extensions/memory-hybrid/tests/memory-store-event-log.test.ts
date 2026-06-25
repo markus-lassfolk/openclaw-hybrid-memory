@@ -252,7 +252,7 @@ describe("memory_store event_log integration", () => {
     factsDb.storeWithResult = vi.fn().mockReturnValue({
       entry: { id: "", text: "", createdAt: 0 },
       evictedFactId: null,
-      rejected: true,
+      skipped: true,
     });
 
     registerMemoryTools(

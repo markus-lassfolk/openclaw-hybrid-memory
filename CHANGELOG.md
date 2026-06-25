@@ -27,6 +27,81 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.6.256] - 2026-06-25
+
+### Fixed
+
+- **GraphQL auth:** Anonymous mutations (`{ deleteFact(...) }`) now require `dashboard.token`.
+- **GraphQL pruneFacts:** Requires valid `olderThan`; no longer deletes all facts when omitted or unparsed.
+- **GraphQL mutations:** Index LanceDB on create/import/update; delete vectors on supersede/delete; publish subscription events.
+- **GraphQL queries:** `search`/`semanticSearch` scope filter; `entityFacts`/`relatedFacts` active-only; `graph` includes `memory_links`.
+- **Crystallization tool:** `getRawDb()` required only when worker leases are enabled.
+
+---
+
+## [2026.6.255] - 2026-06-25
+
+### Fixed
+
+- **Mission Control write auth:** Optional `dashboard.token` requires Bearer/`X-Dashboard-Token` on verify/forget/workshop/GraphQL POST routes.
+- **Distill vector dedupe (degraded):** Scoped neighbour filtering before unscoped `hasDuplicate`; unscoped hits no longer skip writes.
+- **GraphQL updateFact:** Artifact/reasoning-trace text always rejected; legacy source bypass no longer skips text guard.
+- **Auto-capture WAL:** Dedup-window peek before WAL write avoids orphan WAL entries on skip.
+- **Dashboard forget/GraphQL delete:** LanceDB vectors removed when facts are forgotten or deleted.
+- **Passive observer:** Session-scoped vector dedupe validates live facts before treating matches as duplicates.
+- **GraphQL expiry filters:** `facts`/`search` compare `expiresAt` in unix seconds (not milliseconds).
+- **GraphQL updateFact:** Removes LanceDB vector for superseded fact id after in-place edit.
+
+### Changed
+
+- **Pre-store guard:** Artifact/reasoning-trace text blocked even when `allowPreStoreGuardBypass` is set (category/source bypass unchanged).
+- **GraphQL auth:** `dashboard.token` required only for mutations; read-only queries work without a token.
+
+---
+
+## [2026.6.254] - 2026-06-25
+
+### Fixed
+
+- **memory_store WAL routing:** Use bound `walWrite`/`walRemove` helpers when the default WAL handle is null (fixes test regressions and legacy tool registration paths).
+- **Capture dedup window:** Gracefully skip SQLite transaction wrapper when `factsDb.getRawDb()` is unavailable (passive-observer, stage-capture, maintenance CLI mocks).
+- **Config guards:** Optional-chain `lifecycle.fragmentEmbedding`, `provenance`, and `verification` in memory_store.
+- **Live MiniMax tests:** Opt-in via `RUN_LIVE_MINIMAX_TESTS=1`; update ceiling probes and fetch timeouts.
+
+### Changed
+
+- Version set to **2026.6.254**.
+
+---
+
+## [2026.6.253] - 2026-06-25
+
+### Fixed
+
+- **Distill dedupe QA (#1945, #1947):** Restore `vectorDb.hasDuplicate` when `fuzzyDedupe` is disabled; redact maintenance-private text before the lexical pre-check; increment `skipped` when `storeWithResult` returns `skipped`.
+- **Distill vector fallback:** Skip useless `hasDuplicate` when LanceDB schema is invalid (it always returns false); only use the fallback when schema is valid.
+- **Distillation entity drift:** Require compatible entity slugs (prefix relationship) for vector dedupe — same key alone is no longer enough across unrelated projects.
+- **Project-state LWW overload heuristic:** Flag asymmetric ref splits (e.g. 2+1) while still allowing symmetric 2+2 queue drift (#1945).
+
+### Changed
+
+- Version set to **2026.6.253**.
+
+---
+
+## [2026.6.252] - 2026-06-25
+
+### Fixed
+
+- **Project-state LWW entity-reuse heuristic (#1945):** Count distinct PR/issue refs per fact instead of across both facts in a pair, so legitimate project-state transitions no longer false-positive as `possible-entity-reuse`.
+- **Distill vector dedupe (#1947):** Wire LanceDB neighbour candidates into `storeWithResult`, restore `hasDuplicate` fallback when vector search degrades, pass structured fields into the lexical pre-check, and allow distillation project facts to vector-dedupe across entity slug drift while preserving the #1276 guard for other sources.
+
+### Changed
+
+- Version set to **2026.6.252**.
+
+---
+
 ## [2026.6.250] - 2026-06-25
 
 ### Fixed

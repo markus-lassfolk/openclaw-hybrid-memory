@@ -941,9 +941,11 @@ export function parseCostTrackingConfig(cfg: Record<string, unknown>): CostTrack
 
 export function parseDashboardConfig(cfg: Record<string, unknown>): DashboardConfig {
   const raw = cfg.dashboard as Record<string, unknown> | undefined;
+  const token = typeof raw?.token === "string" && raw.token.trim().length > 0 ? raw.token.trim() : undefined;
   return {
     enabled: raw?.enabled !== false,
     port: typeof raw?.port === "number" && raw.port >= 1024 && raw.port <= 65535 ? Math.floor(raw.port) : 7700,
+    token,
     gitRepo: typeof raw?.gitRepo === "string" ? raw.gitRepo : undefined,
   };
 }

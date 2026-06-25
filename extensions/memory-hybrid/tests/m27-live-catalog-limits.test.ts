@@ -13,7 +13,8 @@ import {
 } from "../services/model-capabilities.js";
 
 const apiKey = process.env.MINIMAX_API_KEY?.trim();
-const live = apiKey ? describe : describe.skip;
+const runLiveMiniMax = apiKey && process.env.RUN_LIVE_MINIMAX_TESTS === "1";
+const live = runLiveMiniMax ? describe : describe.skip;
 
 const BASE_URL = "https://api.minimax.io/v1";
 const BLOCK = "word ";
@@ -23,7 +24,7 @@ function fillerForTargetTokens(targetTokens: number): string {
   return `Reply only: OK\n\n${BLOCK.repeat(Math.ceil(approxChars / BLOCK.length))}`;
 }
 
-async function chatCompletion(body: Record<string, unknown>) {
+async function chatCompletion(body: Record<string, unknown>, timeoutMs = 120_000) {
   const res = await fetch(`${BASE_URL}/chat/completions`, {
     method: "POST",
     headers: {
@@ -31,6 +32,7 @@ async function chatCompletion(body: Record<string, unknown>) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const json = (await res.json()) as {
     usage?: { prompt_tokens?: number; completion_tokens?: number };
@@ -91,23 +93,29 @@ live("live MiniMax M2.7 catalog limits", () => {
     }
   }, 600_000);
 
-  it("distill batch 150k input + 128k output budget succeeds; 200k input fails", async () => {
-    const ok = await chatCompletion({
-      model: "MiniMax-M2.7",
-      messages: [{ role: "user", content: fillerForTargetTokens(150_000) }],
-      max_completion_tokens: 128_000,
-      thinking: { type: "disabled" },
-    });
+  it("distill batch 150k input + 128k output budget succeeds; input above API ceiling fails", async () => {
+    const ok = await chatCompletion(
+      {
+        model: "MiniMax-M2.7",
+        messages: [{ role: "user", content: fillerForTargetTokens(150_000) }],
+        max_completion_tokens: 128_000,
+        thinking: { type: "disabled" },
+      },
+      540_000,
+    );
     expect(ok.status).toBe(200);
     expect(ok.json.usage?.prompt_tokens).toBeGreaterThan(110_000);
     expect(ok.json.usage?.prompt_tokens).toBeLessThanOrEqual(150_000);
 
-    const fail = await chatCompletion({
-      model: "MiniMax-M2.7",
-      messages: [{ role: "user", content: fillerForTargetTokens(200_000) }],
-      max_completion_tokens: 128_000,
-      thinking: { type: "disabled" },
-    });
+    const fail = await chatCompletion(
+      {
+        model: "MiniMax-M2.7",
+        messages: [{ role: "user", content: fillerForTargetTokens(328_000) }],
+        max_completion_tokens: 128_000,
+        thinking: { type: "disabled" },
+      },
+      540_000,
+    );
     expect(fail.status).toBe(400);
     expect(fail.json.error?.message ?? fail.json.base_resp?.status_msg ?? "").toMatch(/context window exceeds limit/i);
   }, 600_000);

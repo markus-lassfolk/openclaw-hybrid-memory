@@ -100,7 +100,7 @@ export function registerFrustrationHandlers(
       }
 
       const implicitSignals = exportAsImplicitSignals(frustrationResult);
-      if (implicitSignals.length > 0) {
+      if (implicitSignals.length > 0 && typeof ctx.factsDb.getRawDb === "function") {
         try {
           const rawDb = ctx.factsDb.getRawDb();
           const insert = rawDb.prepare(`

@@ -45,7 +45,7 @@ export function registerRunAllCommand(mem: Chainable, b: ManageBindings, command
             openclawDir,
             logger: { info: (m) => console.log(m), warn: (m) => console.warn(m) },
             oneTimeMarkerExists: (path) => existsSync(join(memoryDir, path)),
-            journalDb: b.factsDb.getRawDb(),
+            journalDb: typeof b.factsDb.getRawDb === "function" ? b.factsDb.getRawDb() : undefined,
           },
           {
             tiers: ["cycle", "nightly"],

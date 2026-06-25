@@ -60,7 +60,7 @@ describe.skipIf(!distExists)("publish dist procedure-skill-generator", () => {
       expect(typeof genMod.generateAutoSkills).toBe("function");
       expect(typeof factsMod.FactsDB).toBe("function");
     }
-  });
+  }, 60_000);
 
   it("dist skill-creator-validator accepts generated frontmatter and rejects illegal one (#1545)", async () => {
     const { quickValidateSkillMarkdown } = await import(

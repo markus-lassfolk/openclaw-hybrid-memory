@@ -34,6 +34,7 @@ import type { VerificationStore } from "../../services/verification-store.js";
 import { getDirSize, getFileSizeAsync, readJsonFile } from "../../utils/fs.js";
 import { formatTimestampUtc, nowIso } from "../../utils/dates.js";
 import { pluginLogger } from "../../utils/logger.js";
+import { deleteVectorForFactId } from "../../services/vector-maintenance.js";
 import { isValidGhRepoArg } from "../../utils/gh-repo-arg.js";
 import { execFile as execFileCb } from "../../utils/process-runner.js";
 
@@ -1225,12 +1226,12 @@ export function collectMemoryViewerLinks(ctx: DashboardContext, limit = 5000): M
 }
 
 /** Perform a fact action (verify / forget) and return result. */
-export function performFactAction(
+export async function performFactAction(
   ctx: DashboardContext,
   action: "verify" | "forget",
   factId: string,
   body: Record<string, unknown>,
-): { ok: boolean; message: string } {
+): Promise<{ ok: boolean; message: string }> {
   try {
     const factsDb = ctx.factsDb;
     const fact = factsDb.getById(factId);
@@ -1248,6 +1249,14 @@ export function performFactAction(
     try {
       const ok = factsDb.supersede(factId, null);
       if (!ok) return { ok: false, message: `Could not supersede fact ${factId}` };
+      if (ctx.vectorDb) {
+        await deleteVectorForFactId({
+          vectorDb: ctx.vectorDb,
+          factId,
+          logger: ctx.logger ?? pluginLogger,
+          context: "dashboard-forget",
+        });
+      }
     } catch {
       return { ok: false, message: `Could not forget fact ${factId}` };
     }

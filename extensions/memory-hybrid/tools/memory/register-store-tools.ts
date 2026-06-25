@@ -84,7 +84,34 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
     storeRegistryEmbeddings,
     isEdictWriteToolEnabled,
     sanitizeScopeParam,
+    wal,
+    walWrite,
+    walRemove,
   } = runtime;
+
+  const writeStoreWal = (
+    storeWal: ReturnType<typeof resolveToolVaultWal>,
+    operation: "store" | "update",
+    data: Record<string, unknown>,
+    supersedeTargetId?: string,
+  ) => {
+    if (storeWal != null && storeWal !== wal) {
+      return walWriteEntry(storeWal, operation, data, api.logger, supersedeTargetId);
+    }
+    return walWrite(operation, data, api.logger, supersedeTargetId);
+  };
+
+  const removeStoreWal = (storeWal: ReturnType<typeof resolveToolVaultWal>, id: string) => {
+    if (storeWal != null && storeWal !== wal) {
+      return walRemoveEntry(storeWal, id, api.logger);
+    }
+    return walRemove(id, api.logger);
+  };
+
+  const storeWalWriteFailed = (storeWal: ReturnType<typeof resolveToolVaultWal>, walEntryId: string | null) => {
+    const walRef = storeWal != null && storeWal !== wal ? storeWal : wal;
+    return isWalWriteFailure(walRef, walEntryId);
+  };
 
   const walWriteFailedResponse = () => ({
     content: [
@@ -262,7 +289,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
 
           const provenanceSessionId = api.context?.sessionId ?? null;
           const recordActiveStoreProvenance = (factId: string, sourceText?: string) => {
-            if (!provenanceService || !cfg.provenance.enabled) return;
+            if (!provenanceService || cfg.provenance?.enabled !== true) return;
             try {
               provenanceService.addEdge(factId, {
                 edgeType: "DERIVED_FROM",
@@ -366,7 +393,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             autoKey?: string | null,
             autoValue?: string | null,
           ) => {
-            if (!cfg.verification.enabled || !verificationStore) return;
+            if (!cfg.verification?.enabled || !verificationStore) return;
             const shouldEnroll =
               explicitVerificationTier === "critical" ||
               (cfg.verification.autoClassify &&
@@ -708,7 +735,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                   warnMessage: `memory-hybrid: blocked cross-scope or unknown memory_store UPDATE target ${classification.targetId}`,
                 });
                 if (oldFact) {
-                  const walEntryId = await walWriteEntry(
+                  const walEntryId = await writeStoreWal(
                     storeWal,
                     "update",
                     {
@@ -728,10 +755,9 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                       scope,
                       scopeTarget,
                     },
-                    api.logger,
                     classification.targetId,
                   );
-                  if (isWalWriteFailure(storeWal, walEntryId)) {
+                  if (storeWalWriteFailed(storeWal, walEntryId)) {
                     return walWriteFailedResponse();
                   }
 
@@ -764,7 +790,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     updateStoreResult.newlyStored === false &&
                     !updateStoreResult.embeddingStale
                   ) {
-                    if (walEntryId) await walRemoveEntry(storeWal, walEntryId, api.logger);
+                    if (walEntryId) await removeStoreWal(storeWal, walEntryId);
                     return {
                       content: [
                         {
@@ -800,7 +826,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     } catch (err) {
                       api.logger.warn(`memory-hybrid: UPDATE merge vector refresh failed: ${err}`);
                     }
-                    if (walEntryId) await walRemoveEntry(storeWal, walEntryId, api.logger);
+                    if (walEntryId) await removeStoreWal(storeWal, walEntryId);
                     return {
                       content: [
                         {
@@ -878,7 +904,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     api.logger.info?.(
                       `memory-hybrid: UPDATE — superseded ${classification.targetId} with ${newEntry.id}: ${classification.reason}`,
                     );
-                    if (walEntryId) await walRemoveEntry(storeWal, walEntryId, api.logger);
+                    if (walEntryId) await removeStoreWal(storeWal, walEntryId);
                     return {
                       content: [
                         {
@@ -898,7 +924,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     };
                   }
                   // WAL cleanup for skipped update path
-                  if (walEntryId) await walRemoveEntry(storeWal, walEntryId, api.logger);
+                  if (walEntryId) await removeStoreWal(storeWal, walEntryId);
                   return {
                     content: [
                       {
@@ -925,7 +951,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
 
           // Scope was resolved above (before classify-before-write) for WAL and classification consistency.
 
-          const walEntryId = await walWriteEntry(
+          const walEntryId = await writeStoreWal(
             storeWal,
             "store",
             {
@@ -945,9 +971,8 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               scope,
               scopeTarget,
             },
-            api.logger,
           );
-          if (isWalWriteFailure(storeWal, walEntryId)) {
+          if (storeWalWriteFailed(storeWal, walEntryId)) {
             return walWriteFailedResponse();
           }
           const decayFreezeUntil =
@@ -980,7 +1005,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
           });
           const entry = storeResult.entry;
           if (!storeResult.skipped && storeResult.newlyStored === false && !storeResult.embeddingStale) {
-            if (walEntryId) await walRemoveEntry(storeWal, walEntryId, api.logger);
+            if (walEntryId) await removeStoreWal(storeWal, walEntryId);
             return {
               content: [
                 {
@@ -1048,8 +1073,8 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
 
             if (
               storeResult.newlyStored &&
-              cfg.lifecycle.fragmentEmbedding.enabled &&
-              textToStore.length >= cfg.lifecycle.fragmentEmbedding.minChars
+              cfg.lifecycle?.fragmentEmbedding?.enabled === true &&
+              textToStore.length >= (cfg.lifecycle?.fragmentEmbedding?.minChars ?? 6000)
             ) {
               setImmediate(() => {
                 void import("../../services/fragment-embedding.js")
@@ -1059,7 +1084,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                       vectorDb: storeVectorDb,
                       embeddings,
                       parentFact: entry,
-                      cfg: cfg.lifecycle.fragmentEmbedding,
+                      cfg: cfg.lifecycle!.fragmentEmbedding!,
                       logger: api.logger,
                     }),
                   )
@@ -1282,7 +1307,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               context: { category },
             });
 
-            if (walEntryId) await walRemoveEntry(storeWal, walEntryId, api.logger);
+            if (walEntryId) await removeStoreWal(storeWal, walEntryId);
             return {
               content: [
                 {
@@ -1316,7 +1341,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             };
           }
           // WAL cleanup and return for skipped store path (Bug fix #1560, #1561)
-          if (walEntryId) await walRemoveEntry(storeWal, walEntryId, api.logger);
+          if (walEntryId) await removeStoreWal(storeWal, walEntryId);
           return {
             content: [
               {
