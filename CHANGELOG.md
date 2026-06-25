@@ -36,6 +36,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Auto-classify:** Nightly path uses `chatCompleteWithRetry` with maintenance timeouts; preserves `"[]"` fallback when the assistant message is stripped as an empty placeholder.
 - **Incident batch analysis:** Retries and batch splits stop when the orchestrator deadline is reached.
 
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.6.259**.
+
 ---
 
 ## [2026.6.258] - 2026-06-25
