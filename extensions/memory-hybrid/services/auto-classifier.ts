@@ -11,11 +11,21 @@ import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
 import { getMemoryCategories, isValidCategory } from "../config.js";
 import { tryParseFirstJsonArray } from "../utils/llm-json-array.js";
-import { extractAssistantMessageText } from "../utils/llm-message.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
-import { is404Like, is500Like, isConnectionErrorLike, isOllamaOOM } from "./chat.js";
+import { capTimeoutByMaintenanceRunDeadline, maintenanceRunDeadlineReached } from "../utils/maintenance-run-deadline.js";
+import {
+  chatCompleteWithRetry,
+  is404Like,
+  is500Like,
+  isConnectionErrorLike,
+  isOllamaOOM,
+  resolveMaintenanceChatTimeoutMs,
+} from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
-import { chatCompletionTokenParams } from "./model-capabilities.js";
+
+function resolveAutoClassifyLlmTimeoutMs(model: string): number {
+  return capTimeoutByMaintenanceRunDeadline(resolveMaintenanceChatTimeoutMs(model));
+}
 
 /** Minimum "other" facts before category discovery kicks in. */
 const MIN_OTHER_FOR_DISCOVERY = 15;
@@ -126,23 +136,33 @@ async function discoverCategoriesFromOther(
   let anyBatchSucceeded = false;
 
   for (let i = 0; i < others.length; i += DISCOVERY_BATCH_SIZE) {
+    if (maintenanceRunDeadlineReached()) {
+      logger.info("memory-hybrid: category discovery stopped — maintenance run deadline reached");
+      break;
+    }
     const batch = others.slice(i, i + DISCOVERY_BATCH_SIZE);
     const factLines = batch.map((f, idx) => `${idx + 1}. ${f.text.slice(0, 280)}`).join("\n");
     const prompt = fillPrompt(loadPrompt("category-discovery"), { facts: factLines });
 
+    const timeoutMs = resolveAutoClassifyLlmTimeoutMs(config.model);
+    if (timeoutMs <= 0) {
+      logger.info("memory-hybrid: category discovery stopped — no remaining LLM budget");
+      break;
+    }
+
     try {
-      const { withLLMRetry } = await import("./chat.js");
-      const resp = await withLLMRetry(
-        () =>
-          openai.chat.completions.create({
-            model: config.model,
-            messages: [{ role: "user", content: prompt }],
-            temperature: 0,
-            ...chatCompletionTokenParams(config.model, batch.length * 24),
-          }),
-        { maxRetries: 2 },
-      );
-      const content = extractAssistantMessageText(resp.choices?.[0]?.message).text || "[]";
+      const raw = await chatCompleteWithRetry({
+        model: config.model,
+        content: prompt,
+        temperature: 0,
+        maxTokens: batch.length * 24,
+        openai,
+        label: "memory-hybrid: category-discovery",
+        feature: "auto-classify",
+        timeoutMs,
+      });
+      // chatComplete strips literal "[]" as a placeholder; empty array is valid discovery output.
+      const content = raw.trim().length > 0 ? raw : "[]";
       const labels = tryParseFirstJsonArray(content);
       if (!labels) continue;
       anyBatchSucceeded = true;
@@ -242,20 +262,24 @@ ${factLines}
 
 Respond with ONLY a JSON array of category strings, one per fact, in order. Example: ["fact","entity","preference"]`;
 
-  try {
-    const { withLLMRetry } = await import("./chat.js");
-    const resp = await withLLMRetry(
-      () =>
-        openai.chat.completions.create({
-          model,
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0,
-          ...chatCompletionTokenParams(model, facts.length * 20),
-        }),
-      { maxRetries: 2 },
-    );
+  const timeoutMs = resolveAutoClassifyLlmTimeoutMs(model);
+  if (timeoutMs <= 0) {
+    return { results: new Map(), suggestions: new Map(), success: false };
+  }
 
-    const content = extractAssistantMessageText(resp.choices?.[0]?.message).text || "[]";
+  try {
+    const raw = await chatCompleteWithRetry({
+      model,
+      content: prompt,
+      temperature: 0,
+      maxTokens: facts.length * 20,
+      openai,
+      label: "memory-hybrid: classify-batch",
+      feature: "auto-classify",
+      timeoutMs,
+    });
+    // chatComplete strips literal "[]" as a placeholder; empty array is valid classify output.
+    const content = raw.trim().length > 0 ? raw : "[]";
     const parsed = tryParseFirstJsonArray(content);
     if (!parsed) return { results: new Map(), suggestions: new Map(), success: false };
 
@@ -377,6 +401,10 @@ async function runClassifyForCli(
   let batchFailures = 0;
   let batchIndex = 0;
   for (let i = 0; i < others.length; i += config.batchSize) {
+    if (maintenanceRunDeadlineReached()) {
+      logger.info("memory-hybrid: classify stopped — maintenance run deadline reached");
+      break;
+    }
     reporter?.update(batchIndex + 1);
     const batch = others.slice(i, i + config.batchSize).map((e) => ({ id: e.id, text: e.text }));
     const { results, suggestions, success } = await classifyBatch(openai, classifyModel, batch, categories);
@@ -461,6 +489,10 @@ async function runAutoClassify(
   let batchFailures = 0;
 
   for (let i = 0; i < others.length; i += config.batchSize) {
+    if (maintenanceRunDeadlineReached()) {
+      logger.info("memory-hybrid: auto-classify stopped — maintenance run deadline reached");
+      break;
+    }
     const batch = others.slice(i, i + config.batchSize).map((e) => ({
       id: e.id,
       text: e.text,
