@@ -251,8 +251,15 @@ function detectDegradedContinuousVerificationStatus(logContent: string): Degrade
     if (!marker) continue;
     const machineLine = marker[1].trim();
     const reasonMatch = machineLine.match(/\breason=([a-z_]+)/i);
+    const reason = reasonMatch?.[1]?.toLowerCase();
+    if (reason === "all_uncertain") continue;
+    if (reason === "errors_present") {
+      const errorsMatch = machineLine.match(/\berrors=(\d+)/i);
+      const errors = errorsMatch ? Number.parseInt(errorsMatch[1], 10) : 0;
+      if (!Number.isFinite(errors) || errors <= 0) continue;
+    }
     return {
-      reason: reasonMatch?.[1]?.toLowerCase(),
+      reason,
       machineLine,
     };
   }

@@ -27,6 +27,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.6.257] - 2026-06-25
+
+### Fixed
+
+- **Maintenance nightly exit codes (#1949):** Treat `extract-implicit` budget-cap partial runs (`maxWallClock`, session/signal/trajectory caps) as successful monitoring steps instead of failures; stop counting continuous-verification LLM downgrades to `UNCERTAIN` as errors and do not fail nightly when all facts receive uncertain verdicts; run orchestrator `audit-health` non-strict (warnings only) while still failing on report errors. Cron exit validator ignores legacy `all_uncertain` degraded machine-status lines.
+
+---
+
 ## [2026.6.256] - 2026-06-25
 
 ### Fixed

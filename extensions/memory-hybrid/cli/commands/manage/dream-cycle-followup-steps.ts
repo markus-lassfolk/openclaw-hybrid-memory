@@ -9,7 +9,9 @@ import { runCrystallizationProposalCycle } from "../../../services/crystallizati
 import { getEffectivenessReport, runClosedLoopAnalysis } from "../../../services/feedback-effectiveness.js";
 import {
   assessContinuousVerificationResult,
+  extractImplicitSemanticOutcome,
   formatContinuousVerificationAssessmentLine,
+  isGracefulExtractImplicitPartial,
 } from "./dream-cycle-followup.js";
 
 export interface DreamCycleFollowUpDeps {
@@ -66,8 +68,8 @@ export async function runExtractImplicitStep(deps: DreamCycleFollowUpDeps, verbo
     includeClosedLoop: false,
     verbose,
   });
-  const summary = `${res.signalsExtracted} signals (${res.positiveCount}+/${res.negativeCount}-) from ${res.sessionsProcessed}/${res.sessionsScanned} sessions semantic=${res.partial ? "partial" : "success"}`;
-  if (res.partial) {
+  const summary = `${res.signalsExtracted} signals (${res.positiveCount}+/${res.negativeCount}-) from ${res.sessionsProcessed}/${res.sessionsScanned} sessions semantic=${extractImplicitSemanticOutcome(res)}`;
+  if (res.partial && !isGracefulExtractImplicitPartial(res.partialReason)) {
     throw new Error(`extract-implicit partial failure (${res.partialReason ?? "capped"}): ${summary}`);
   }
   return summary;

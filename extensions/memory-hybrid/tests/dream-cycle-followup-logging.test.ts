@@ -4,8 +4,10 @@ import {
   assessContinuousVerificationResult,
   applyDreamCyclePipelineExitCode,
   dreamCycleFollowUpSkipReason,
+  extractImplicitSemanticOutcome,
   formatContinuousVerificationAssessmentLine,
   formatExtractImplicitFeedbackProgress,
+  isGracefulExtractImplicitPartial,
   recordDreamCycleFollowUpFailure,
   shouldSkipDreamCycleFollowUps,
   runVerboseFollowUp,
@@ -99,7 +101,13 @@ describe("dream-cycle follow-up heartbeat logging", () => {
     );
   });
 
-  it("treats all-uncertain verification results as degraded", () => {
+  it("maps graceful extract-implicit budget caps to monitoring semantics", () => {
+    expect(isGracefulExtractImplicitPartial("maxWallClock")).toBe(true);
+    expect(extractImplicitSemanticOutcome({ partial: true, partialReason: "maxWallClock" })).toBe("monitoring");
+    expect(extractImplicitSemanticOutcome({ partial: true, partialReason: "reinforcementError" })).toBe("partial");
+  });
+
+  it("treats all-uncertain verification results as healthy when the cycle completed", () => {
     const assessment = assessContinuousVerificationResult({
       checked: 12,
       confirmed: 0,
@@ -109,46 +117,73 @@ describe("dream-cycle follow-up heartbeat logging", () => {
       errorSummaries: [],
     });
 
-    expect(assessment.status).toBe("degraded");
-    expect(assessment.reason).toBe("all_uncertain");
-    expect(assessment.shouldFailPipeline).toBe(true);
-    expect(assessment.summary).toContain("all 12 verification check(s) were uncertain");
+    expect(assessment.status).toBe("healthy");
+    expect(assessment.reason).toBe("healthy");
+    expect(assessment.shouldFailPipeline).toBe(false);
   });
 
-  it("treats verification errors as degraded even when outcomes are uncertain", () => {
+  it("treats LLM-downgraded uncertain outcomes as healthy when every fact got a verdict", () => {
     const assessment = assessContinuousVerificationResult({
       checked: 5,
       confirmed: 0,
       stale: 0,
       uncertain: 5,
-      errors: 5,
+      errors: 0,
       errorSummaries: [
         "fact=abc12345…: provider timeout",
         "fact=def67890…: provider timeout",
-        "fact=ghi54321…: provider timeout",
-        "fact=jkl98765…: provider timeout",
-        "fact=mno24680…: provider timeout",
       ],
+    });
+
+    expect(assessment.status).toBe("healthy");
+    expect(assessment.reason).toBe("healthy");
+    expect(assessment.shouldFailPipeline).toBe(false);
+  });
+
+  it("treats infrastructure verification errors as degraded pipeline failures", () => {
+    const assessment = assessContinuousVerificationResult({
+      checked: 0,
+      confirmed: 0,
+      stale: 0,
+      uncertain: 0,
+      errors: 1,
+      errorSummaries: ["listDueForReverification: db locked"],
     });
 
     expect(assessment.status).toBe("degraded");
     expect(assessment.reason).toBe("errors_present");
     expect(assessment.shouldFailPipeline).toBe(true);
-    expect(assessment.summary).toContain("5/5 verification check(s) errored");
+    expect(assessment.summary).toContain("infrastructure error prevented verification");
   });
 
-  it("emits machine-readable degraded verification status details", () => {
-    const result = {
+  it("treats per-fact failures without verdicts as degraded pipeline failures", () => {
+    const assessment = assessContinuousVerificationResult({
       checked: 5,
+      confirmed: 1,
+      stale: 0,
+      uncertain: 3,
+      errors: 1,
+      errorSummaries: ["fact=abc12345…: unexpected store failure"],
+    });
+
+    expect(assessment.status).toBe("degraded");
+    expect(assessment.reason).toBe("errors_present");
+    expect(assessment.shouldFailPipeline).toBe(true);
+    expect(assessment.summary).toContain("failed without a verdict");
+  });
+
+  it("emits machine-readable verification status details for infrastructure failures", () => {
+    const result = {
+      checked: 0,
       confirmed: 0,
       stale: 0,
-      uncertain: 5,
-      errors: 5,
-      errorSummaries: ["fact=abc12345…: provider timeout"],
+      uncertain: 0,
+      errors: 1,
+      errorSummaries: ["listDueForReverification: db locked"],
     };
     const assessment = assessContinuousVerificationResult(result);
     expect(formatContinuousVerificationAssessmentLine(result, assessment)).toBe(
-      "status=degraded reason=errors_present checked=5 confirmed=0 stale=0 uncertain=5 errors=5",
+      "status=degraded reason=errors_present checked=0 confirmed=0 stale=0 uncertain=0 errors=1",
     );
   });
 
