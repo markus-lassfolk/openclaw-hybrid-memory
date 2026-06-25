@@ -15,8 +15,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   implicitFeedbackCollapseStatus,
   isSemanticNoOpImplicitFeedbackCollapseStatus,
+  propagateAbortSignal,
+  remainingDeadlineMs,
   resolveTrajectoryLlmBudgetMs,
   runWithConcurrencyLimit,
+  trajectoryCallTimeoutMs,
   TRAJECTORY_LLM_MIN_BUDGET_MS,
   TRAJECTORY_PER_CALL_BUDGET_MS,
 } from "../cli/cmd-feedback.js";
@@ -1725,6 +1728,38 @@ describe("trajectory LLM budget (#1953)", () => {
     });
     expect(maxInFlight).toBeLessThanOrEqual(4);
     expect(maxInFlight).toBeGreaterThan(1);
+  });
+
+  it("runWithConcurrencyLimit honors shouldStop before claiming new work", async () => {
+    const processed: number[] = [];
+    let stopAfter = 2;
+    await runWithConcurrencyLimit(
+      [0, 1, 2, 3, 4],
+      2,
+      async (item) => {
+        processed.push(item);
+        if (processed.length >= stopAfter) stopAfter = 0;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      },
+      { shouldStop: () => stopAfter === 0 },
+    );
+    expect(processed.length).toBeLessThanOrEqual(3);
+    expect(processed.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("trajectoryCallTimeoutMs shrinks as deadline approaches", () => {
+    const deadline = 10_000;
+    expect(trajectoryCallTimeoutMs(deadline, 9_000)).toBe(1_000);
+    expect(trajectoryCallTimeoutMs(deadline, 10_000)).toBe(0);
+    expect(remainingDeadlineMs(deadline, 9_500)).toBe(500);
+  });
+
+  it("propagateAbortSignal aborts target when source aborts", () => {
+    const source = new AbortController();
+    const target = new AbortController();
+    propagateAbortSignal(source.signal, target);
+    source.abort(new Error("wall clock"));
+    expect(target.signal.aborted).toBe(true);
   });
 });
 

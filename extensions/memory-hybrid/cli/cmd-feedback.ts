@@ -19,7 +19,7 @@ import {
   isCompactVerbosity,
   resolveReflectionModelAndFallbacks,
 } from "../config.js";
-import { chatCompleteWithRetry } from "../services/chat.js";
+import { chatCompleteWithRetryDetailed } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { runCrossAgentLearning } from "../services/cross-agent-learning.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -433,11 +433,42 @@ export function resolveTrajectoryLlmBudgetMs(remainingWallClockMs: number): numb
   return Math.min(TRAJECTORY_PER_CALL_BUDGET_MS, Math.max(1, Math.floor(remainingWallClockMs)));
 }
 
+/** Remaining milliseconds until an absolute deadline (0 when expired). */
+export function remainingDeadlineMs(deadlineMs: number, nowMs: number = Date.now()): number {
+  return Math.max(0, deadlineMs - nowMs);
+}
+
+/** Timeout for the next LLM attempt within a per-trajectory deadline (0 when expired). */
+export function trajectoryCallTimeoutMs(deadlineMs: number, nowMs: number = Date.now()): number {
+  const remaining = remainingDeadlineMs(deadlineMs, nowMs);
+  return remaining > 0 ? Math.max(1, remaining) : 0;
+}
+
+/** Propagate a source abort signal into a target controller (first abort wins). */
+export function propagateAbortSignal(source: AbortSignal, target: AbortController): void {
+  if (source.aborted) {
+    if (!target.signal.aborted) {
+      target.abort(source.reason ?? new Error("aborted"));
+    }
+    return;
+  }
+  source.addEventListener(
+    "abort",
+    () => {
+      if (!target.signal.aborted) {
+        target.abort(source.reason ?? new Error("aborted"));
+      }
+    },
+    { once: true },
+  );
+}
+
 /** Run async work over items with a bounded worker pool. */
 export async function runWithConcurrencyLimit<TItem, TResult>(
   items: readonly TItem[],
   concurrency: number,
   worker: (item: TItem, index: number) => Promise<TResult>,
+  opts?: { shouldStop?: () => boolean },
 ): Promise<TResult[]> {
   if (items.length === 0) return [];
   const results: TResult[] = new Array(items.length);
@@ -446,6 +477,7 @@ export async function runWithConcurrencyLimit<TItem, TResult>(
   await Promise.all(
     Array.from({ length: workerCount }, async () => {
       while (true) {
+        if (opts?.shouldStop?.()) return;
         const index = nextIndex++;
         if (index >= items.length) return;
         results[index] = await worker(items[index]!, index);
@@ -1106,67 +1138,95 @@ export async function runExtractImplicitFeedbackForCli(
           const nanoPref = getLLMModelPreference(getCronModelConfig(cfg), "nano");
           const model = nanoPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
           const fallbackModels = nanoPref.length > 1 ? nanoPref.slice(1) : (cfg.distill?.fallbackModels ?? []);
+          const runWallClockAbort = new AbortController();
           let stopTrajectoryLlm = false;
-          await runWithConcurrencyLimit(trajectories, TRAJECTORY_LLM_CONCURRENCY, async (traj) => {
-            if (stopTrajectoryLlm) return;
+          const shouldStopTrajectoryLlm = (): boolean => stopTrajectoryLlm || runWallClockAbort.signal.aborted;
+          const wallClockWatchdog = setInterval(() => {
             if (wallClockLimitReached()) {
               stopTrajectoryLlm = true;
-              return;
+              runWallClockAbort.abort(new Error("implicit-feedback wall-clock budget exceeded"));
             }
-            const llmBudgetMs = resolveTrajectoryLlmBudgetMs(remainingWallClockMs());
-            if (llmBudgetMs === 0) {
-              stopTrajectoryLlm = true;
-              return;
-            }
-            const llmAbort = new AbortController();
-            const llmTimeout = setTimeout(
-              () => llmAbort.abort(new Error("implicit-feedback trajectory LLM budget exceeded")),
-              llmBudgetMs,
+          }, 250);
+          try {
+            await runWithConcurrencyLimit(
+              trajectories,
+              TRAJECTORY_LLM_CONCURRENCY,
+              async (traj) => {
+                if (shouldStopTrajectoryLlm()) return;
+                if (wallClockLimitReached()) {
+                  stopTrajectoryLlm = true;
+                  runWallClockAbort.abort(new Error("implicit-feedback wall-clock budget exceeded"));
+                  return;
+                }
+                const llmBudgetMs = resolveTrajectoryLlmBudgetMs(remainingWallClockMs());
+                if (llmBudgetMs === 0) {
+                  stopTrajectoryLlm = true;
+                  runWallClockAbort.abort(new Error("implicit-feedback wall-clock budget exceeded"));
+                  return;
+                }
+                const deadlineMs = Date.now() + llmBudgetMs;
+                const perCallAbort = new AbortController();
+                const perCallTimeout = setTimeout(
+                  () => perCallAbort.abort(new Error("implicit-feedback trajectory LLM budget exceeded")),
+                  llmBudgetMs,
+                );
+                propagateAbortSignal(runWallClockAbort.signal, perCallAbort);
+                const chatFn = async (opts: { model?: string; messages: Array<{ role: string; content: string }> }) => {
+                  const userMessage = opts.messages.find((m) => m.role === "user");
+                  if (!userMessage) throw new Error("No user message found");
+                  const timeoutMs = trajectoryCallTimeoutMs(deadlineMs);
+                  if (timeoutMs === 0 || perCallAbort.signal.aborted || runWallClockAbort.signal.aborted) {
+                    throw new Error("implicit-feedback trajectory LLM budget exceeded");
+                  }
+                  const detail = await chatCompleteWithRetryDetailed({
+                    model: opts.model ?? model,
+                    content: userMessage.content,
+                    temperature: 0.2,
+                    maxTokens: 4000,
+                    openai,
+                    fallbackModels,
+                    label: "memory-hybrid: trajectory-analyze",
+                    feature: CostFeature.trajectoryAnalyze,
+                    timeoutMs,
+                    timeoutMsPerModel: () => trajectoryCallTimeoutMs(deadlineMs),
+                    signal: perCallAbort.signal,
+                  });
+                  return detail.content;
+                };
+                try {
+                  const llmAnalysis = await analyzeTrajectoriesWithLLM(traj, prompt, chatFn);
+                  if (llmAnalysis) {
+                    traj.lessonsExtracted = [llmAnalysis.keyLesson, ...llmAnalysis.patterns];
+                    if (llmAnalysis.pivotTurn !== null) {
+                      traj.keyPivot = llmAnalysis.pivotTurn;
+                    }
+                    if (llmAnalysis.outcome) {
+                      traj.outcome = llmAnalysis.outcome;
+                    }
+                  }
+                } catch (err) {
+                  if (wallClockLimitReached() || runWallClockAbort.signal.aborted) {
+                    stopTrajectoryLlm = true;
+                    return;
+                  }
+                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                    operation: "runExtractImplicitFeedbackForCli:llm-trajectory-analysis",
+                    severity: "info",
+                    subsystem: "implicit-feedback",
+                  });
+                } finally {
+                  clearTimeout(perCallTimeout);
+                }
+                if (wallClockLimitReached()) {
+                  stopTrajectoryLlm = true;
+                  runWallClockAbort.abort(new Error("implicit-feedback wall-clock budget exceeded"));
+                }
+              },
+              { shouldStop: shouldStopTrajectoryLlm },
             );
-            const chatFn = async (opts: { model?: string; messages: Array<{ role: string; content: string }> }) => {
-              const userMessage = opts.messages.find((m) => m.role === "user");
-              if (!userMessage) throw new Error("No user message found");
-              return await chatCompleteWithRetry({
-                model: opts.model ?? model,
-                content: userMessage.content,
-                temperature: 0.2,
-                maxTokens: 4000,
-                openai,
-                fallbackModels,
-                label: "memory-hybrid: trajectory-analyze",
-                feature: CostFeature.trajectoryAnalyze,
-                timeoutMs: llmBudgetMs,
-                signal: llmAbort.signal,
-              });
-            };
-            try {
-              const llmAnalysis = await analyzeTrajectoriesWithLLM(traj, prompt, chatFn);
-              if (llmAnalysis) {
-                traj.lessonsExtracted = [llmAnalysis.keyLesson, ...llmAnalysis.patterns];
-                if (llmAnalysis.pivotTurn !== null) {
-                  traj.keyPivot = llmAnalysis.pivotTurn;
-                }
-                if (llmAnalysis.outcome) {
-                  traj.outcome = llmAnalysis.outcome;
-                }
-              }
-            } catch (err) {
-              if (wallClockLimitReached()) {
-                stopTrajectoryLlm = true;
-                return;
-              }
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                operation: "runExtractImplicitFeedbackForCli:llm-trajectory-analysis",
-                severity: "info",
-                subsystem: "implicit-feedback",
-              });
-            } finally {
-              clearTimeout(llmTimeout);
-            }
-            if (wallClockLimitReached()) {
-              stopTrajectoryLlm = true;
-            }
-          });
+          } finally {
+            clearInterval(wallClockWatchdog);
+          }
         }
 
         for (const traj of trajectories) {
