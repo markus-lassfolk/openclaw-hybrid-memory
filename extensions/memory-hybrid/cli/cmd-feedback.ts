@@ -19,7 +19,7 @@ import {
   isCompactVerbosity,
   resolveReflectionModelAndFallbacks,
 } from "../config.js";
-import { chatCompleteWithRetry } from "../services/chat.js";
+import { chatCompleteWithRetryDetailed } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { runCrossAgentLearning } from "../services/cross-agent-learning.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -33,7 +33,11 @@ import {
   generateMonthlyReport,
   ToolEffectivenessStore,
 } from "../services/tool-effectiveness.js";
-import { analyzeTrajectoriesWithLLM, buildTrajectories, serializeTrajectory } from "../services/trajectory-tracker.js";
+import {
+  analyzeTrajectoriesWithLLM,
+  buildTrajectories,
+  serializeTrajectory,
+} from "../services/trajectory-tracker.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { loadPrompt } from "../utils/prompt-loader.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
@@ -44,6 +48,7 @@ import { runSelfCorrectionRunForCli } from "./cmd-selfcorrection.js";
 import { resolveExtractSessionFilePaths } from "../services/extract-session-paths.js";
 import type { HandlerContext } from "./handlers.js";
 import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
+import { getMaintenanceRunAbortSignal, maintenanceRunDeadlineReached } from "../utils/maintenance-run-deadline.js";
 
 const IMPLICIT_FEEDBACK_LESSON_TAGS = ["implicit-feedback", "trajectory", "feedback"];
 
@@ -414,6 +419,71 @@ export function cleanupImplicitFeedbackDuplicates(
 // extract-implicit-feedback
 // ---------------------------------------------------------------------------
 
+/** Minimum wall-clock remaining before scheduling another trajectory LLM call. */
+export const TRAJECTORY_LLM_MIN_BUDGET_MS = 1000;
+
+/** Per-trajectory LLM call wall-clock cap (Issue #1953). */
+export const TRAJECTORY_PER_CALL_BUDGET_MS = 30_000;
+
+/** Max concurrent trajectory LLM analyses per session (Issue #1953). */
+export const TRAJECTORY_LLM_CONCURRENCY = 4;
+
+/** Resolve per-trajectory LLM budget from remaining run wall-clock (Issue #1953). */
+export function resolveTrajectoryLlmBudgetMs(remainingWallClockMs: number): number {
+  if (remainingWallClockMs < TRAJECTORY_LLM_MIN_BUDGET_MS) return 0;
+  return Math.min(TRAJECTORY_PER_CALL_BUDGET_MS, Math.max(1, Math.floor(remainingWallClockMs)));
+}
+
+/** Remaining milliseconds until an absolute deadline (0 when expired). */
+export function remainingDeadlineMs(deadlineMs: number, nowMs: number = Date.now()): number {
+  return Math.max(0, deadlineMs - nowMs);
+}
+
+/** Timeout for the next LLM attempt within a per-trajectory deadline (0 when expired). */
+export function trajectoryCallTimeoutMs(deadlineMs: number, nowMs: number = Date.now()): number {
+  const remaining = remainingDeadlineMs(deadlineMs, nowMs);
+  return remaining > 0 ? Math.max(1, remaining) : 0;
+}
+
+/** Propagate a source abort signal into a target controller (first abort wins). Returns a disposer. */
+export function propagateAbortSignal(source: AbortSignal, target: AbortController): () => void {
+  const onAbort = () => {
+    if (!target.signal.aborted) {
+      target.abort(source.reason ?? new Error("aborted"));
+    }
+  };
+  if (source.aborted) {
+    onAbort();
+    return () => {};
+  }
+  source.addEventListener("abort", onAbort, { once: true });
+  return () => source.removeEventListener("abort", onAbort);
+}
+
+/** Run async work over items with a bounded worker pool. */
+export async function runWithConcurrencyLimit<TItem, TResult>(
+  items: readonly TItem[],
+  concurrency: number,
+  worker: (item: TItem, index: number) => Promise<TResult>,
+  opts?: { shouldStop?: () => boolean },
+): Promise<TResult[]> {
+  if (items.length === 0) return [];
+  const results: TResult[] = new Array(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, concurrency), items.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (true) {
+        if (opts?.shouldStop?.()) return;
+        const index = nextIndex++;
+        if (index >= items.length) return;
+        results[index] = await worker(items[index]!, index);
+      }
+    }),
+  );
+  return results;
+}
+
 export type ExtractImplicitFeedbackStopReason =
   | "maxWallClock"
   | "maxSessions"
@@ -763,6 +833,10 @@ export async function runExtractImplicitFeedbackForCli(
       markPartialProgress("maxWallClock");
       break;
     }
+    if (maintenanceRunDeadlineReached()) {
+      markPartialProgress("maxWallClock");
+      break;
+    }
     // BUG FIX #2: Check against sessionsVisited to ensure session cap includes skipped sessions
     if (maxSessionsPerRun > 0 && progress.sessionsVisited >= maxSessionsPerRun) {
       markPartialProgress("maxSessions");
@@ -792,7 +866,6 @@ export async function runExtractImplicitFeedbackForCli(
         subsystem: "implicit-feedback",
       });
       emitProgress();
-      lastProcessedFilePath = filePath;
       continue;
     }
 
@@ -1060,37 +1133,57 @@ export async function runExtractImplicitFeedbackForCli(
            WHERE session_file = ? AND turns_json = ?
            LIMIT 1`,
         );
-        const TRAJECTORY_LLM_MIN_BUDGET_MS = 1000;
-        for (const traj of trajectories) {
-          try {
-            // Check wall clock limit before processing each trajectory (especially before LLM analysis)
+        if (implicitCfg.trajectoryLLMAnalysis && trajectories.length > 0) {
+          const prompt = loadPrompt("trajectory-analyze");
+          const nanoPref = getLLMModelPreference(getCronModelConfig(cfg), "nano");
+          const model = nanoPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
+          const fallbackModels = nanoPref.length > 1 ? nanoPref.slice(1) : (cfg.distill?.fallbackModels ?? []);
+          const runWallClockAbort = new AbortController();
+          let stopTrajectoryLlm = false;
+          const shouldStopTrajectoryLlm = (): boolean => stopTrajectoryLlm || runWallClockAbort.signal.aborted;
+          const wallClockWatchdog = setInterval(() => {
             if (wallClockLimitReached()) {
-              markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
-              break;
+              stopTrajectoryLlm = true;
+              runWallClockAbort.abort(new Error("implicit-feedback wall-clock budget exceeded"));
             }
-
-            // If LLM analysis is enabled, use it to enhance lessons
-            if (implicitCfg.trajectoryLLMAnalysis) {
-              try {
-                const prompt = loadPrompt("trajectory-analyze");
-                const nanoPref = getLLMModelPreference(getCronModelConfig(cfg), "nano");
-                const model = nanoPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
-                const fallbackModels = nanoPref.length > 1 ? nanoPref.slice(1) : (cfg.distill?.fallbackModels ?? []);
-                const remainingMs = remainingWallClockMs();
-                if (remainingMs < TRAJECTORY_LLM_MIN_BUDGET_MS) {
-                  markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
-                  break;
+          }, 250);
+          try {
+            await runWithConcurrencyLimit(
+              trajectories,
+              TRAJECTORY_LLM_CONCURRENCY,
+              async (traj) => {
+                if (shouldStopTrajectoryLlm()) return;
+                if (wallClockLimitReached()) {
+                  stopTrajectoryLlm = true;
+                  runWallClockAbort.abort(new Error("implicit-feedback wall-clock budget exceeded"));
+                  return;
                 }
-                const llmBudgetMs = Math.max(1, Math.floor(remainingMs));
-                const llmAbort = new AbortController();
-                const llmTimeout = setTimeout(
-                  () => llmAbort.abort(new Error("implicit-feedback trajectory LLM budget exceeded")),
+                const llmBudgetMs = resolveTrajectoryLlmBudgetMs(remainingWallClockMs());
+                if (llmBudgetMs === 0) {
+                  // Stop scheduling new calls, but do not abort in-flight workers that already
+                  // claimed budget — remaining wall-clock may be <1s while calls finish.
+                  stopTrajectoryLlm = true;
+                  return;
+                }
+                const deadlineMs = Date.now() + llmBudgetMs;
+                const perCallAbort = new AbortController();
+                const perCallTimeout = setTimeout(
+                  () => perCallAbort.abort(new Error("implicit-feedback trajectory LLM budget exceeded")),
                   llmBudgetMs,
                 );
+                const disposeRunAbortLink = propagateAbortSignal(runWallClockAbort.signal, perCallAbort);
+                const maintenanceAbort = getMaintenanceRunAbortSignal();
+                const disposeMaintenanceAbortLink = maintenanceAbort
+                  ? propagateAbortSignal(maintenanceAbort, perCallAbort)
+                  : () => {};
                 const chatFn = async (opts: { model?: string; messages: Array<{ role: string; content: string }> }) => {
                   const userMessage = opts.messages.find((m) => m.role === "user");
                   if (!userMessage) throw new Error("No user message found");
-                  return await chatCompleteWithRetry({
+                  const timeoutMs = trajectoryCallTimeoutMs(deadlineMs);
+                  if (timeoutMs === 0 || perCallAbort.signal.aborted || runWallClockAbort.signal.aborted) {
+                    throw new Error("implicit-feedback trajectory LLM budget exceeded");
+                  }
+                  const detail = await chatCompleteWithRetryDetailed({
                     model: opts.model ?? model,
                     content: userMessage.content,
                     temperature: 0.2,
@@ -1099,41 +1192,56 @@ export async function runExtractImplicitFeedbackForCli(
                     fallbackModels,
                     label: "memory-hybrid: trajectory-analyze",
                     feature: CostFeature.trajectoryAnalyze,
-                    timeoutMs: llmBudgetMs,
-                    signal: llmAbort.signal,
+                    timeoutMs,
+                    timeoutMsPerModel: () => trajectoryCallTimeoutMs(deadlineMs),
+                    signal: perCallAbort.signal,
                   });
+                  return detail.content;
                 };
-                let llmAnalysis: Awaited<ReturnType<typeof analyzeTrajectoriesWithLLM>> | null = null;
                 try {
-                  llmAnalysis = await analyzeTrajectoriesWithLLM(traj, prompt, chatFn);
+                  const llmAnalysis = await analyzeTrajectoriesWithLLM(traj, prompt, chatFn);
+                  if (llmAnalysis) {
+                    traj.lessonsExtracted = [llmAnalysis.keyLesson, ...llmAnalysis.patterns];
+                    if (llmAnalysis.pivotTurn !== null) {
+                      traj.keyPivot = llmAnalysis.pivotTurn;
+                    }
+                    if (llmAnalysis.outcome) {
+                      traj.outcome = llmAnalysis.outcome;
+                    }
+                  }
+                } catch (err) {
+                  if (wallClockLimitReached() || runWallClockAbort.signal.aborted) {
+                    stopTrajectoryLlm = true;
+                    return;
+                  }
+                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                    operation: "runExtractImplicitFeedbackForCli:llm-trajectory-analysis",
+                    severity: "info",
+                    subsystem: "implicit-feedback",
+                  });
                 } finally {
-                  clearTimeout(llmTimeout);
+                  clearTimeout(perCallTimeout);
+                  disposeRunAbortLink();
+                  disposeMaintenanceAbortLink();
                 }
-                if (llmAbort.signal.aborted || wallClockLimitReached()) {
-                  markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
-                  break;
-                }
-                if (llmAnalysis) {
-                  // Replace heuristic lessons with LLM-produced lesson and patterns
-                  traj.lessonsExtracted = [llmAnalysis.keyLesson, ...llmAnalysis.patterns];
-                  if (llmAnalysis.pivotTurn !== null) {
-                    traj.keyPivot = llmAnalysis.pivotTurn;
-                  }
-                  if (llmAnalysis.outcome) {
-                    traj.outcome = llmAnalysis.outcome;
-                  }
-                }
-              } catch (err) {
                 if (wallClockLimitReached()) {
-                  markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
-                  break;
+                  stopTrajectoryLlm = true;
+                  runWallClockAbort.abort(new Error("implicit-feedback wall-clock budget exceeded"));
                 }
-                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                  operation: "runExtractImplicitFeedbackForCli:llm-trajectory-analysis",
-                  severity: "info",
-                  subsystem: "implicit-feedback",
-                });
-              }
+              },
+              { shouldStop: shouldStopTrajectoryLlm },
+            );
+          } finally {
+            clearInterval(wallClockWatchdog);
+          }
+        }
+
+        for (const traj of trajectories) {
+          try {
+            // Check wall clock limit before persisting each trajectory
+            if (wallClockLimitReached()) {
+              markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
+              break;
             }
 
             const row = serializeTrajectory(traj);
@@ -1442,7 +1550,12 @@ export async function runExtractImplicitFeedbackForCli(
   progress.stage = "done";
   emitProgress();
 
-  if (!opts.dryRun && implicitCfg.triggerSelfCorrectionRun && bridgeIncidents.length > 0) {
+  if (
+    !opts.dryRun &&
+    implicitCfg.triggerSelfCorrectionRun &&
+    bridgeIncidents.length > 0 &&
+    !wallClockLimitReached()
+  ) {
     if (implicitCfg.llmSignalAnalysis !== false) {
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
       try {
@@ -1470,7 +1583,12 @@ export async function runExtractImplicitFeedbackForCli(
     }
   }
 
-  if (!opts.dryRun && implicitCfg.triggerSelfCorrectionRun && bridgeIncidents.length > 0) {
+  if (
+    !opts.dryRun &&
+    implicitCfg.triggerSelfCorrectionRun &&
+    bridgeIncidents.length > 0 &&
+    !wallClockLimitReached()
+  ) {
     const cap = implicitCfg.selfCorrectionBridgeMaxIncidents ?? 5;
     const incidents = bridgeIncidents.slice(0, cap);
     const workspace = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
@@ -1489,7 +1607,7 @@ export async function runExtractImplicitFeedbackForCli(
   }
 
   // Update scan cursor with the last fully processed session
-  if (!opts.dryRun && lastProcessedFilePath && progress.sessionsProcessed > 0) {
+  if (!opts.dryRun && lastProcessedFilePath && progress.sessionsProcessed > 0 && progress.sessionsReadErrors === 0) {
     const shouldAdvanceCursor =
       !partial ||
       partialReason === "maxSessions" ||
@@ -1501,7 +1619,7 @@ export async function runExtractImplicitFeedbackForCli(
       const stat = statSync(lastProcessedFilePath);
       const lastSessionTs = stat.mtimeMs;
       const lastSessionFile = basename(lastProcessedFilePath);
-      factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs, progress.sessionsVisited, lastSessionFile);
+      factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs, progress.sessionsProcessed, lastSessionFile);
     }
   }
 

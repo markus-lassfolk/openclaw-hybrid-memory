@@ -6,7 +6,11 @@ import type OpenAI from "openai";
 import type { HybridMemoryConfig } from "../config.js";
 import { getCronModelConfig, getLLMModelPreference } from "../config.js";
 import { tryParseFirstJsonObject } from "../utils/llm-json-array.js";
-import { extractAssistantMessageText } from "../utils/llm-message.js";
+import {
+  capTimeoutByMaintenanceRunDeadline,
+  getMaintenanceRunAbortSignal,
+} from "../utils/maintenance-run-deadline.js";
+import { chatCompleteWithRetry, resolveMaintenanceChatTimeoutMs } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 
 export async function llmTriageNeedsHeavy(
@@ -19,21 +23,20 @@ export async function llmTriageNeedsHeavy(
     const models = getLLMModelPreference(getCronModelConfig(cfg), "nano");
     const model = models[0];
     if (!model) return null;
-    const res = await openai.chat.completions.create({
+    const raw = await chatCompleteWithRetry({
       model,
-      messages: [
-        {
-          role: "user",
-          content: `Reply with ONLY valid JSON: {"needsHeavy":true or false}. needsHeavy means substantive reasoning or multi-step dispatch is likely needed (not a trivial heartbeat).
+      content: `Reply with ONLY valid JSON: {"needsHeavy":true or false}. needsHeavy means substantive reasoning or multi-step dispatch is likely needed (not a trivial heartbeat).
 Goals summary (truncated):
 ${goalSummaries.slice(0, 6000)}`,
-        },
-      ],
-      max_tokens: 60,
+      maxTokens: 60,
       temperature: 0,
+      openai,
+      label: "goal-stewardship: llm-triage",
+      feature: "goal-stewardship",
+      timeoutMs: capTimeoutByMaintenanceRunDeadline(resolveMaintenanceChatTimeoutMs(model)),
+      signal: getMaintenanceRunAbortSignal(),
     });
-    const text = extractAssistantMessageText(res.choices[0]?.message).text;
-    const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
+    const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
     const j = tryParseFirstJsonObject(cleaned) as { needsHeavy?: boolean } | null;
     if (!j) return null;
     return j.needsHeavy === true;

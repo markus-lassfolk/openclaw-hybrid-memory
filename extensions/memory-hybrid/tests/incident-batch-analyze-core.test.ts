@@ -5,6 +5,10 @@ import {
   inferFinishReasonFromLlmContent,
 } from "../services/incident-batch-analyze-core.js";
 import { maintenanceMaxOutputTokens } from "../services/chat.js";
+import {
+  clearMaintenanceRunDeadline,
+  setMaintenanceRunDeadlineMs,
+} from "../utils/maintenance-run-deadline.js";
 
 const SAMPLE_ITEM = { remediationType: "TOOLS_RULE", category: "X", severity: "LOW" };
 
@@ -30,7 +34,53 @@ const baseDeps = {
 
 describe("analyzeIncidentBatchWithSplit", () => {
   afterEach(() => {
+    clearMaintenanceRunDeadline();
     vi.restoreAllMocks();
+  });
+
+  it("returns null items when maintenance run deadline is already reached", async () => {
+    setMaintenanceRunDeadlineMs(Date.now() - 1);
+    const llmCall = vi.fn(async () => ({
+      content: JSON.stringify([SAMPLE_ITEM]),
+      fallbacks: 0,
+      finishReason: "stop" as const,
+    }));
+    const result = await analyzeIncidentBatchWithSplit(
+      {
+        ...baseDeps,
+        maxTokens: 8000,
+        llmCall,
+      },
+      [{ id: 1 }],
+    );
+    expect(result.items).toBeNull();
+    expect(llmCall).not.toHaveBeenCalled();
+  });
+
+  it("does not retry transient LLM errors after maintenance run deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      setMaintenanceRunDeadlineMs(Date.now() + 100);
+      let calls = 0;
+      const resultPromise = analyzeIncidentBatchWithSplit(
+        {
+          ...baseDeps,
+          maxTokens: 8000,
+          llmCall: async () => {
+            calls++;
+            throw new Error("LLM request timeout after 120s");
+          },
+        },
+        [{ id: 1 }],
+      );
+      const rejection = expect(resultPromise).rejects.toThrow(/timeout|deadline/i);
+      await vi.advanceTimersByTimeAsync(6000);
+      await rejection;
+      expect(calls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+      clearMaintenanceRunDeadline();
+    }
   });
 
   it("retries transient LLM errors and records diagnostics.retries", async () => {

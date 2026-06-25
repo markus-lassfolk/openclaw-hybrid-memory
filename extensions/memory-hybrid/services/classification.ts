@@ -7,33 +7,10 @@
 import type OpenAI from "openai";
 import type { MemoryEntry } from "../types/memory.js";
 import { extractBalancedArraySlice, stripThinkingWrapperBlocks } from "../utils/llm-json-array.js";
-import { extractAssistantMessageText } from "../utils/llm-message.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { capturePluginError } from "./error-reporter.js";
-import { isMiniMaxModel, requiresMaxCompletionTokens, shouldOmitSamplingParams } from "./model-capabilities.js";
-
-/** Chat body for classify completions — mirrors `chatComplete` in `chat.ts` (#1008). */
-function buildClassifyChatBody(
-  model: string,
-  userContent: string,
-  maxOutputTokens: number,
-): OpenAI.ChatCompletionCreateParamsNonStreaming {
-  const useMaxCompletionTokens = requiresMaxCompletionTokens(model);
-  const body: OpenAI.ChatCompletionCreateParamsNonStreaming & {
-    thinking?: { type: "disabled" | "adaptive" };
-  } = {
-    model,
-    messages: [{ role: "user", content: userContent }],
-    ...(useMaxCompletionTokens ? { max_completion_tokens: maxOutputTokens } : { max_tokens: maxOutputTokens }),
-  };
-  if (!shouldOmitSamplingParams(model)) {
-    body.temperature = 0;
-  }
-  if (isMiniMaxModel(model)) {
-    body.thinking = { type: "disabled" };
-  }
-  return body;
-}
+import { isMiniMaxModel } from "./model-capabilities.js";
+import { capTimeoutByMaintenanceRunDeadline, getMaintenanceRunAbortSignal, maintenanceRunDeadlineReached } from "../utils/maintenance-run-deadline.js";
 
 export type MemoryClassification = {
   action: "ADD" | "UPDATE" | "DELETE" | "NOOP";
@@ -143,17 +120,19 @@ export async function classifyMemoryOperation(
   const { prompt } = buildClassifyPromptParts(candidateText, candidateEntity, candidateKey, existingFacts);
 
   try {
-    const { withLLMRetry } = await import("./chat.js");
-    const resp = (await withLLMRetry(
-      () =>
-        openai.chat.completions.create(
-          buildClassifyChatBody(model, prompt, 100) as unknown as Parameters<
-            OpenAI["chat"]["completions"]["create"]
-          >[0],
-        ),
-      { maxRetries: 2 },
-    )) as OpenAI.Chat.ChatCompletion;
-    const content = extractAssistantMessageText(resp.choices?.[0]?.message).text;
+    const { chatCompleteWithRetry, resolveMaintenanceChatTimeoutMs } = await import("./chat.js");
+    const content = await chatCompleteWithRetry({
+      model,
+      content: prompt,
+      temperature: 0,
+      maxTokens: 100,
+      openai,
+      label: "memory-hybrid: classify-memory-operation",
+      feature: "auto-classify",
+      timeoutMs: capTimeoutByMaintenanceRunDeadline(resolveMaintenanceChatTimeoutMs(model)),
+      signal: getMaintenanceRunAbortSignal(),
+      ...(isMiniMaxModel(model) ? { thinkingMode: "disabled" as const } : {}),
+    });
     return parseClassificationResponse(content, existingFacts);
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -377,6 +356,13 @@ For UPDATE or DELETE, targetId must be one of the existing fact ids listed under
   const runSequential = async (): Promise<MemoryClassification[]> => {
     const out: MemoryClassification[] = [];
     for (const it of items) {
+      if (maintenanceRunDeadlineReached()) {
+        logger.warn(
+          "memory-hybrid: batch classify sequential fallback stopped — maintenance run deadline reached",
+        );
+        out.push({ action: "ADD", reason: "maintenance run deadline reached; defaulting to ADD" });
+        continue;
+      }
       out.push(
         await classifyMemoryOperation(
           it.candidateText,
@@ -393,18 +379,20 @@ For UPDATE or DELETE, targetId must be one of the existing fact ids listed under
   };
 
   try {
-    const { withLLMRetry } = await import("./chat.js");
+    const { chatCompleteWithRetry, resolveMaintenanceChatTimeoutMs } = await import("./chat.js");
     const batchMaxOut = Math.min(800, 80 * items.length);
-    const resp = (await withLLMRetry(
-      () =>
-        openai.chat.completions.create(
-          buildClassifyChatBody(model, fullPrompt, batchMaxOut) as unknown as Parameters<
-            OpenAI["chat"]["completions"]["create"]
-          >[0],
-        ),
-      { maxRetries: 2 },
-    )) as OpenAI.Chat.ChatCompletion;
-    const raw = extractAssistantMessageText(resp.choices?.[0]?.message).text;
+    const raw = await chatCompleteWithRetry({
+      model,
+      content: fullPrompt,
+      temperature: 0,
+      maxTokens: batchMaxOut,
+      openai,
+      label: "memory-hybrid: classify-memory-operations-batch",
+      feature: "auto-classify",
+      timeoutMs: capTimeoutByMaintenanceRunDeadline(resolveMaintenanceChatTimeoutMs(model)),
+      signal: getMaintenanceRunAbortSignal(),
+      ...(isMiniMaxModel(model) ? { thinkingMode: "disabled" as const } : {}),
+    });
     const parsed = parseBatchClassifyResponseContent(raw);
     if (!Array.isArray(parsed) || parsed.length !== items.length) {
       logger.warn(

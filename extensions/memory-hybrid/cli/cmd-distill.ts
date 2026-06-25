@@ -53,6 +53,11 @@ import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
 import { formatDateUtc, formatTimestampUtcFromMs, nowIso } from "../utils/dates.js";
 import { getEnv } from "../utils/env-manager.js";
+import {
+  capTimeoutByMaintenanceRunDeadline,
+  getMaintenanceRunAbortSignal,
+  maintenanceRunDeadlineReached,
+} from "../utils/maintenance-run-deadline.js";
 import { redactMaintenancePrivateText } from "../utils/maintenance-privacy.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { loadPrompt } from "../utils/prompt-loader.js";
@@ -516,6 +521,11 @@ export async function runDistillForCli(
     let batchFailures = 0;
 
     while (cursorBlock < blocks.length) {
+      if (maintenanceRunDeadlineReached()) {
+        sink.warn("memory-hybrid: distill: maintenance run deadline reached; stopping batch loop");
+        batchFailures++;
+        break;
+      }
       batchNum++;
       const limits = effectiveLimitsForModel(model);
       const batch = buildBatch(cursorBlock, limits.batchTokenLimit);
@@ -572,7 +582,11 @@ export async function runDistillForCli(
           label: `memory-hybrid: distill batch ${batchNum}`,
           feature: CostFeature.distillCli,
           thinkingMode: resolveDistillThinkingMode(cfg),
-          timeoutMsPerModel: (m) => resolveMaintenanceChatTimeoutMs(m, resolveDistillThinkingMode(cfg)),
+          timeoutMsPerModel: (m) =>
+            capTimeoutByMaintenanceRunDeadline(
+              resolveMaintenanceChatTimeoutMs(m, resolveDistillThinkingMode(cfg)),
+            ),
+          signal: getMaintenanceRunAbortSignal(),
         });
         if (detail.finishReason?.toLowerCase() === "length") {
           logger.warn?.(

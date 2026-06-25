@@ -4,6 +4,10 @@ import { chatCompleteWithAdaptiveMaintenanceRetry } from "./adaptive-maintenance
 import { maintenanceMaxOutputTokens, type MiniMaxThinkingMode } from "./chat.js";
 import { checkBatchRemediationCoverage, mergeSplitBatchItemsWithOffset } from "./batch-incident-analysis.js";
 import type { CostFeature } from "./cost-feature-labels.js";
+import {
+  getMaintenanceRunAbortSignal,
+  maintenanceRunDeadlineReached,
+} from "../utils/maintenance-run-deadline.js";
 import { estimateTokens } from "../utils/text.js";
 
 export type IncidentBatchAnalyzeDiagnostics = {
@@ -61,6 +65,10 @@ async function sleepMs(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function maintenanceDeadlineBlocked(): boolean {
+  return maintenanceRunDeadlineReached() || getMaintenanceRunAbortSignal()?.aborted === true;
+}
+
 async function callBatchAnalyzeLlm<TIncident>(
   deps: IncidentBatchAnalyzeDeps<unknown, TIncident>,
   batch: TIncident[],
@@ -70,6 +78,11 @@ async function callBatchAnalyzeLlm<TIncident>(
 ): Promise<IncidentBatchLlmResult> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= 4; attempt++) {
+    if (maintenanceDeadlineBlocked()) {
+      const blockedError =
+        lastError instanceof Error ? lastError : new Error("maintenance run deadline reached");
+      throw blockedError;
+    }
     try {
       if (deps.llmCall) {
         return await deps.llmCall(batch, batchLabel, maxTokensOverride);
@@ -110,6 +123,9 @@ async function callBatchAnalyzeLlm<TIncident>(
     } catch (err) {
       lastError = err;
       if (!isTransientBatchLlmError(err) || attempt >= 4) throw err;
+      if (maintenanceDeadlineBlocked()) {
+        throw err instanceof Error ? err : new Error(String(err));
+      }
       const delay = 5000 * 2 ** (attempt - 1);
       diagnostics.retries++;
       deps.onTransientRetry?.({
@@ -203,6 +219,18 @@ export async function analyzeIncidentBatchWithSplit<TItem, TIncident>(
   },
   batch: TIncident[],
 ): Promise<IncidentBatchAnalyzeResult<TItem>> {
+  if (maintenanceRunDeadlineReached()) {
+    return {
+      items: null,
+      diagnostics: {
+        fallbacks: 0,
+        parseFailures: 0,
+        batchSplits: 0,
+        truncations: 0,
+        retries: 0,
+      },
+    };
+  }
   const diagnostics: IncidentBatchAnalyzeDiagnostics = {
     fallbacks: 0,
     parseFailures: 0,
@@ -234,6 +262,7 @@ export async function analyzeIncidentBatchWithSplit<TItem, TIncident>(
 
   if (
     allowBudgetBump &&
+    !maintenanceRunDeadlineReached() &&
     isTruncated &&
     batch.length > 0 &&
     items !== null &&
@@ -270,6 +299,9 @@ export async function analyzeIncidentBatchWithSplit<TItem, TIncident>(
       (effectiveParsedCount > 0 && effectiveParsedCount < batch.length));
 
   if (needsSplit) {
+    if (maintenanceRunDeadlineReached()) {
+      return { items: null, finishReason, rawContent: content, diagnostics };
+    }
     diagnostics.batchSplits++;
     deps.logger.warn?.(
       `memory-hybrid: incident-batch ${batchLabel}: auto-split expected=${batch.length} parsed=${effectiveParsedCount} finish=${finishReason ?? "stop"}`,

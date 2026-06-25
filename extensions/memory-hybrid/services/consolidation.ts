@@ -19,9 +19,12 @@ import { withCostFeature } from "./cost-context.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
-import { chatCompletionTokenParams } from "./model-capabilities.js";
 import { isMiniMaxModel } from "./chat.js";
-import { extractAssistantMessageText } from "../utils/llm-message.js";
+import {
+  capTimeoutByMaintenanceRunDeadline,
+  getMaintenanceRunAbortSignal,
+  maintenanceRunDeadlineReached,
+} from "../utils/maintenance-run-deadline.js";
 import type { ProvenanceService } from "./provenance.js";
 import { dotProductSimilarity, loadReflectionDedupeCorpusVectors } from "./reflection.js";
 import { deleteVectorsForFactIds, cleanupEvictedVector } from "./vector-maintenance.js";
@@ -199,28 +202,30 @@ export async function runConsolidate(
   let storeDedupeVectorFallbackSuppressed = 0;
   const consolidationRunId = provenanceService ? randomUUID() : null;
   for (const clusterIds of clusters) {
+    if (maintenanceRunDeadlineReached()) {
+      logger.warn("memory-hybrid: consolidate stopped — maintenance run deadline reached");
+      break;
+    }
     const texts = clusterIds.map((id) => idToFact.get(id)?.text);
     const factsList = texts.map((t, i) => `${i + 1}. ${t}`).join("\n");
     const prompt = fillPrompt(loadPrompt("consolidate"), { facts_list: factsList });
     let mergedText: string;
     try {
-      const { withLLMRetry } = await import("./chat.js");
-      // Uses withCostFeature context-wrapper (rather than a feature: param) because
-      // openai.chat.completions.create is called directly here, not via chatCompleteWithRetry.
-      const resp = await withCostFeature("consolidation", () =>
-        withLLMRetry(
-          () =>
-            openai.chat.completions.create({
-              model: opts.model,
-              messages: [{ role: "user", content: prompt }],
-              temperature: 0,
-              ...chatCompletionTokenParams(opts.model, 300),
-              ...(opts.thinkingMode && isMiniMaxModel(opts.model) ? { thinking: { type: opts.thinkingMode } } : {}),
-            }),
-          { maxRetries: 2 },
-        ),
+      const { chatCompleteWithRetryDetailed, resolveMaintenanceChatTimeoutMs } = await import("./chat.js");
+      const detail = await withCostFeature("consolidation", () =>
+        chatCompleteWithRetryDetailed({
+          model: opts.model,
+          content: prompt,
+          temperature: 0,
+          maxTokens: 300,
+          openai: opts.openai,
+          label: "memory-hybrid: consolidate",
+          timeoutMs: capTimeoutByMaintenanceRunDeadline(resolveMaintenanceChatTimeoutMs(opts.model, opts.thinkingMode)),
+          signal: getMaintenanceRunAbortSignal(),
+          ...(opts.thinkingMode && isMiniMaxModel(opts.model) ? { thinkingMode: opts.thinkingMode } : {}),
+        }),
       );
-      mergedText = extractAssistantMessageText(resp.choices[0]?.message).text.slice(0, CONSOLIDATION_MERGE_MAX_CHARS);
+      mergedText = detail.content.slice(0, CONSOLIDATION_MERGE_MAX_CHARS);
     } catch (err) {
       logger.warn(`memory-hybrid: consolidate LLM failed for cluster: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {

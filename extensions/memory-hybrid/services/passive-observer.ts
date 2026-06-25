@@ -24,11 +24,16 @@ import type { MemoryCategory, ReinforcementConfig } from "../config.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { chunkTextByChars } from "../utils/text.js";
 import { nowIso } from "../utils/dates.js";
-import { LLMRetryError, chatCompleteWithRetry } from "./chat.js";
+import { LLMRetryError, chatCompleteWithRetry, resolveMaintenanceChatTimeoutMs } from "./chat.js";
 import { CostFeature } from "./cost-feature-labels.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
+import {
+  capTimeoutByMaintenanceRunDeadline,
+  getMaintenanceRunAbortSignal,
+  maintenanceRunDeadlineReached,
+} from "../utils/maintenance-run-deadline.js";
 import {
   isSubstantiveMemoryText,
   prepareMemoryMetadataForStorage,
@@ -487,6 +492,10 @@ export async function runPassiveObserver(
   // Phase 3: process each session that has new content.
   // ---------------------------------------------------------------------------
   for (const { filePath, sessionId, fileBytelen, cursor } of sessions) {
+    if (maintenanceRunDeadlineReached()) {
+      logger.warn("memory-hybrid: passive-observer — maintenance run deadline reached; stopping session scan");
+      break;
+    }
     if (cursor >= fileBytelen) continue; // Nothing new
 
     let rawBuf: Buffer;
@@ -557,7 +566,17 @@ export async function runPassiveObserver(
     let chunksAttempted = 0;
     let chunksSucceeded = 0;
 
+    let deadlineStopped = false;
+
     for (const chunk of chunks) {
+      if (maintenanceRunDeadlineReached()) {
+        logger.warn(
+          `memory-hybrid: passive-observer — maintenance run deadline reached; deferring session ${sessionId}`,
+        );
+        deadlineStopped = true;
+        result.errors++;
+        break;
+      }
       if (!chunk.trim()) continue;
       chunksAttempted++;
       result.chunksProcessed++;
@@ -578,6 +597,8 @@ export async function runPassiveObserver(
           fallbackModels: opts.fallbackModels ?? [],
           label: "memory-hybrid: passive-observer",
           feature: CostFeature.passiveObserver,
+          timeoutMs: capTimeoutByMaintenanceRunDeadline(resolveMaintenanceChatTimeoutMs(opts.model)),
+          signal: getMaintenanceRunAbortSignal(),
         });
       } catch (err) {
         logger.warn(`memory-hybrid: passive-observer — LLM failed for session ${sessionId}: ${err}`);
@@ -843,6 +864,10 @@ export async function runPassiveObserver(
           result.factsStored++;
         }
       }
+    }
+
+    if (deadlineStopped) {
+      break;
     }
 
     // Advance cursor only when every attempted chunk in this segment succeeded (or there were none).

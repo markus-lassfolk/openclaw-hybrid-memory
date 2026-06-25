@@ -19,6 +19,8 @@ import {
   sanitizeProviderPressureBudget,
   sanitizeTimeBudgetSec,
 } from "./entity-enrichment-adaptive.js";
+import { capturePluginError } from "./error-reporter.js";
+import { resolveMaintenanceStepDeadlineMs } from "../utils/maintenance-run-deadline.js";
 
 function sanitizeEnrichmentLimit(n: number): number {
   const x = Math.floor(Number(n));
@@ -298,7 +300,7 @@ export async function runEntityEnrichmentForCli(
   const timeBudgetSec = sanitizeTimeBudgetSec(opts.timeBudgetSec ?? opts.targetDurationSec);
   const providerPressureBudget = sanitizeProviderPressureBudget(opts.providerPressureBudget);
   const startedAtMs = Date.now();
-  const deadlineMs = timeBudgetSec != null ? startedAtMs + timeBudgetSec * 1000 : undefined;
+  const deadlineMs = resolveMaintenanceStepDeadlineMs(startedAtMs, timeBudgetSec ?? undefined);
   const isPastDeadline = (): boolean => deadlineMs != null && Date.now() >= deadlineMs;
 
   let effectiveBatchSize = sanitizeBatchSize(opts.batchSize ?? 20);
@@ -442,7 +444,17 @@ export async function runEntityEnrichmentForCli(
           if (extraction.pressureSignals.timeoutFailure) factTimeout = 1;
           stats.llmFailuresDelta++;
         } else {
-          factsDb.applyEntityEnrichment(id, extraction.mentions, extraction.detectedLang);
+          try {
+            factsDb.applyEntityEnrichment(id, extraction.mentions, extraction.detectedLang);
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              operation: "entity-enrichment:apply",
+              severity: "info",
+              subsystem: "entity-enrichment",
+            });
+            stats.batchFailures++;
+            stats.llmFailuresDelta++;
+          }
         }
 
         stats.mentionsDelta = extraction.quality.mentions;
@@ -450,7 +462,7 @@ export async function runEntityEnrichmentForCli(
         stats.rejectedDelta = extraction.quality.rejected;
         stats.duplicatesDelta = extraction.quality.duplicates;
         stats.rejectReasonsDelta = { ...extraction.quality.rejectReasons };
-        if (extraction.mentions.length > 0) {
+        if (extraction.mentions.length > 0 && stats.batchFailures === 0) {
           stats.factsEnrichedDelta = 1;
         }
         if (verbose && (extraction.mentions.length > 0 || extraction.rejectedMentions.length > 0)) {
@@ -471,6 +483,19 @@ export async function runEntityEnrichmentForCli(
           rateLimitCount: factRateLimit,
           transientFailureCount: factTransient,
           timeoutFailureCount: factTimeout,
+        };
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "entity-enrichment:process-fact",
+          severity: "info",
+          subsystem: "entity-enrichment",
+        });
+        return {
+          processed: 1,
+          stats: { ...emptyBatchStats(), batchFailures: 1, llmFailuresDelta: 1 },
+          rateLimitCount: 0,
+          transientFailureCount: 0,
+          timeoutFailureCount: 0,
         };
       } finally {
         mergeCounters.pendingLlmCalls.value--;

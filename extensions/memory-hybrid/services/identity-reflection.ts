@@ -4,7 +4,12 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { IdentityReflectionStore } from "../backends/identity-reflection-store.js";
 import type { ScopeFilter } from "../types/memory.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
-import { LLMRetryError, chatCompleteWithRetry } from "./chat.js";
+import {
+  capTimeoutByMaintenanceRunDeadline,
+  getMaintenanceRunAbortSignal,
+  maintenanceRunDeadlineReached,
+} from "../utils/maintenance-run-deadline.js";
+import { LLMRetryError, chatCompleteWithRetry, resolveMaintenanceChatTimeoutMs } from "./chat.js";
 import { CostFeature } from "./cost-feature-labels.js";
 import { capturePluginError } from "./error-reporter.js";
 
@@ -111,6 +116,15 @@ export async function runIdentityReflection(
   if (!config.enabled) {
     return { insightsExtracted: 0, insightsStored: 0, questionsAsked: 0 };
   }
+  if (maintenanceRunDeadlineReached()) {
+    logger.info("memory-hybrid: reflect-identity — maintenance run deadline reached; skipping");
+    return {
+      insightsExtracted: 0,
+      insightsStored: 0,
+      questionsAsked: config.questions.length,
+      semanticOutcome: "deferred",
+    };
+  }
 
   const windowDays = Math.min(90, Math.max(1, Math.floor(opts.window ?? config.defaultWindow)));
   const nowSec = Math.floor(Date.now() / 1000);
@@ -167,6 +181,8 @@ export async function runIdentityReflection(
       fallbackModels: opts.fallbackModels ?? [],
       label: "memory-hybrid: reflect-identity",
       feature: CostFeature.identityReflection,
+      timeoutMs: capTimeoutByMaintenanceRunDeadline(resolveMaintenanceChatTimeoutMs(opts.model)),
+      signal: getMaintenanceRunAbortSignal(),
     });
   } catch (err) {
     logger.warn(`memory-hybrid: reflect-identity LLM failed: ${err}`);

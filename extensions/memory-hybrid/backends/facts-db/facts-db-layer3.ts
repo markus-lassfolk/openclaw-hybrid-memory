@@ -3,6 +3,7 @@
  */
 
 import type { ExtractedMention } from "../../services/entity-enrichment.js";
+import { runWithSqliteBusyRetry } from "./crud.js";
 import type { Episode, EpisodeOutcome, MemoryEntry, ScopeFilter } from "../../types/memory.js";
 import {
   getAllEdges as getAllEdgesImpl,
@@ -537,19 +538,21 @@ export class FactsDB extends FactsDBLayer2 {
 
   /** Replace stored NER rows for a fact (typically after LLM extraction). */
   applyEntityEnrichment(factId: string, mentions: ExtractedMention[], detectedLang: string): void {
-    replaceFactEntityMentions(
-      this.liveDb,
-      factId,
-      mentions.map((m) => ({
-        label: m.label,
-        surfaceText: m.surfaceText,
-        normalizedSurface: m.normalizedSurface,
-        startOffset: m.startOffset,
-        endOffset: m.endOffset,
-        confidence: m.confidence,
-        detectedLang,
-        source: "llm",
-      })),
+    runWithSqliteBusyRetry(this.liveDb, () =>
+      replaceFactEntityMentions(
+        this.liveDb,
+        factId,
+        mentions.map((m) => ({
+          label: m.label,
+          surfaceText: m.surfaceText,
+          normalizedSurface: m.normalizedSurface,
+          startOffset: m.startOffset,
+          endOffset: m.endOffset,
+          confidence: m.confidence,
+          detectedLang,
+          source: "llm",
+        })),
+      ),
     );
   }
 

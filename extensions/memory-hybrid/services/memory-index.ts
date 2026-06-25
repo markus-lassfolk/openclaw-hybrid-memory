@@ -8,12 +8,18 @@ import { resolveOpenClawWorkspaceRoot } from "../utils/openclaw-workspace.js";
 import { formatDateUtc, nowIso } from "../utils/dates.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import {
+  capTimeoutByMaintenanceRunDeadline,
+  getMaintenanceRunAbortSignal,
+  maintenanceRunDeadlineReached,
+} from "../utils/maintenance-run-deadline.js";
+import {
   LLMRetryError,
   chatCompleteWithRetry,
   is404Like,
   is500Like,
   isConnectionErrorLike,
   isOllamaOOM,
+  resolveMaintenanceChatTimeoutMs,
 } from "./chat.js";
 import { CostFeature } from "./cost-feature-labels.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -272,6 +278,8 @@ async function synthesizeMemoryIndex(
       fallbackModels: options.fallbackModels ?? [],
       label: "memory-hybrid: memory-index",
       feature: CostFeature.memoryIndex,
+      timeoutMs: capTimeoutByMaintenanceRunDeadline(resolveMaintenanceChatTimeoutMs(options.model)),
+      signal: getMaintenanceRunAbortSignal(),
     });
     return sanitizeIndexMarkdown(response);
   } catch (err) {
@@ -353,6 +361,14 @@ export async function writeMemoryIndex(
     if (existingContent) {
       return { path: outputPath, content: existingContent, usedFallback: false };
     }
+  }
+
+  if (maintenanceRunDeadlineReached()) {
+    logger.warn("memory-hybrid: memory-index — maintenance run deadline reached; using deterministic fallback");
+    const content = renderMemoryIndexMarkdown(snapshot);
+    await mkdir(dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, content, "utf-8");
+    return { path: outputPath, content, usedFallback: true };
   }
 
   const llmMarkdown = await synthesizeMemoryIndex(snapshot, openai, options, logger);

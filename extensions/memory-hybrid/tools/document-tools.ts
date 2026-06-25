@@ -25,6 +25,7 @@ import {
 import { chunkMarkdown } from "../services/document-chunker.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { resolveMaintenanceChatTimeoutMs } from "../services/chat.js";
 import { chatCompletionTokenParams } from "../services/model-capabilities.js";
 import type { ProvenanceService } from "../services/provenance.js";
 import type { PythonBridge } from "../services/python-bridge.js";
@@ -227,23 +228,32 @@ async function describeImageWithVision(opts: {
     "Describe this image for memory storage. Focus on concrete, factual details: " +
     "objects, people, text, labels, charts, and context. Keep it concise but complete.";
 
+  const visionTimeoutMs = Math.min(120_000, resolveMaintenanceChatTimeoutMs(primaryModel) * 2);
+
   let lastError: Error | undefined;
   for (const model of modelsToTry) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      controller.abort(new Error(`Vision LLM request timeout after ${visionTimeoutMs}ms (model: ${model})`));
+    }, visionTimeoutMs);
     try {
-      const resp = await openai.chat.completions.create({
-        model,
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: prompt },
-              { type: "image_url", image_url: { url: imageUrl } },
-            ],
-          },
-        ],
-        temperature: 0.2,
-        ...chatCompletionTokenParams(model, 800),
-      });
+      const resp = await openai.chat.completions.create(
+        {
+          model,
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: prompt },
+                { type: "image_url", image_url: { url: imageUrl } },
+              ],
+            },
+          ],
+          temperature: 0.2,
+          ...chatCompletionTokenParams(model, 800),
+        },
+        { signal: controller.signal },
+      );
       const text = extractAssistantMessageText(resp.choices[0]?.message).text;
       if (!text) {
         throw new Error(`Vision model ${model} returned empty response.`);
@@ -251,6 +261,8 @@ async function describeImageWithVision(opts: {
       return { text, model };
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 

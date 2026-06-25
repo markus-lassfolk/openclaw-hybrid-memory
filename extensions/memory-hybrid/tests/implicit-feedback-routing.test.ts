@@ -8,11 +8,21 @@
  *   - CLI command 'extract-implicit' is registered in ManageContext
  */
 
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { implicitFeedbackCollapseStatus, isSemanticNoOpImplicitFeedbackCollapseStatus } from "../cli/cmd-feedback.js";
+import {
+  implicitFeedbackCollapseStatus,
+  isSemanticNoOpImplicitFeedbackCollapseStatus,
+  propagateAbortSignal,
+  remainingDeadlineMs,
+  resolveTrajectoryLlmBudgetMs,
+  runWithConcurrencyLimit,
+  trajectoryCallTimeoutMs,
+  TRAJECTORY_LLM_MIN_BUDGET_MS,
+  TRAJECTORY_PER_CALL_BUDGET_MS,
+} from "../cli/cmd-feedback.js";
 import {
   cleanupImplicitFeedbackDuplicates,
   type HandlerContext,
@@ -1106,6 +1116,33 @@ describe("implicit feedback routing — cleanup progress reporting", () => {
       }
     });
 
+    it("does not advance scan cursor when a session read fails but a later session succeeds", async () => {
+      const db = makeDb(capsTmpDir);
+      writePositiveSession(capsSessionsDir, "2026-01-01-a.jsonl");
+      writePositiveSession(capsSessionsDir, "2026-01-01-b.jsonl");
+      const olderMtime = new Date("2026-01-01T00:00:00.000Z");
+      const newerMtime = new Date("2026-01-02T00:00:00.000Z");
+      const unreadablePath = join(capsSessionsDir, "2026-01-01-a.jsonl");
+      utimesSync(unreadablePath, olderMtime, olderMtime);
+      utimesSync(join(capsSessionsDir, "2026-01-01-b.jsonl"), newerMtime, newerMtime);
+      chmodSync(unreadablePath, 0o000);
+
+      try {
+        const ctx = makeCtx(db, capsSessionsDir, { feedToSelfCorrection: false });
+        const result = await runExtractImplicitFeedbackForCli(ctx, {
+          days: 365,
+          dryRun: false,
+          includeTrajectories: false,
+          includeClosedLoop: false,
+        });
+        expect(result.sessionsSkipped).toBe(1);
+        expect(result.sessionsProcessed).toBe(1);
+        expect(db.getScanCursor("extract-implicit-feedback")).toBeNull();
+      } finally {
+        chmodSync(unreadablePath, 0o644);
+      }
+    });
+
     it("resumes capped incremental backlog outside the moving day window", async () => {
       vi.useFakeTimers();
       try {
@@ -1195,6 +1232,7 @@ describe("implicit feedback routing — cleanup progress reporting", () => {
       expect(result.sessionsDeferred).toBe(1);
       expect(result.backlogSessionsEstimate).toBe(1);
       expect(db.getScanCursor("extract-implicit-feedback")?.lastSessionFile).toBe("2026-01-01-a.jsonl");
+      expect(db.getScanCursor("extract-implicit-feedback")?.sessionsProcessed).toBe(1);
     });
 
     it("processes one oversized session instead of stalling on per-run caps", async () => {
@@ -1691,6 +1729,75 @@ describe("implicit feedback routing — self-correction bridge", () => {
     });
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
+  });
+});
+
+describe("trajectory LLM budget (#1953)", () => {
+  it("resolveTrajectoryLlmBudgetMs returns 0 when remaining wall-clock is below minimum", () => {
+    expect(resolveTrajectoryLlmBudgetMs(TRAJECTORY_LLM_MIN_BUDGET_MS - 1)).toBe(0);
+    expect(resolveTrajectoryLlmBudgetMs(0)).toBe(0);
+  });
+
+  it("resolveTrajectoryLlmBudgetMs caps per-trajectory budget at TRAJECTORY_PER_CALL_BUDGET_MS", () => {
+    expect(resolveTrajectoryLlmBudgetMs(120_000)).toBe(TRAJECTORY_PER_CALL_BUDGET_MS);
+    expect(resolveTrajectoryLlmBudgetMs(TRAJECTORY_PER_CALL_BUDGET_MS)).toBe(TRAJECTORY_PER_CALL_BUDGET_MS);
+    expect(resolveTrajectoryLlmBudgetMs(5_000)).toBe(5_000);
+  });
+
+  it("runWithConcurrencyLimit bounds in-flight workers", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const items = Array.from({ length: 12 }, (_, i) => i);
+    await runWithConcurrencyLimit(items, 4, async () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight--;
+    });
+    expect(maxInFlight).toBeLessThanOrEqual(4);
+    expect(maxInFlight).toBeGreaterThan(1);
+  });
+
+  it("runWithConcurrencyLimit honors shouldStop before claiming new work", async () => {
+    const processed: number[] = [];
+    let stopAfter = 2;
+    await runWithConcurrencyLimit(
+      [0, 1, 2, 3, 4],
+      2,
+      async (item) => {
+        processed.push(item);
+        if (processed.length >= stopAfter) stopAfter = 0;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      },
+      { shouldStop: () => stopAfter === 0 },
+    );
+    expect(processed.length).toBeLessThanOrEqual(3);
+    expect(processed.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("trajectoryCallTimeoutMs shrinks as deadline approaches", () => {
+    const deadline = 10_000;
+    expect(trajectoryCallTimeoutMs(deadline, 9_000)).toBe(1_000);
+    expect(trajectoryCallTimeoutMs(deadline, 10_000)).toBe(0);
+    expect(remainingDeadlineMs(deadline, 9_500)).toBe(500);
+  });
+
+  it("propagateAbortSignal aborts target when source aborts", () => {
+    const source = new AbortController();
+    const target = new AbortController();
+    const dispose = propagateAbortSignal(source.signal, target);
+    source.abort(new Error("wall clock"));
+    expect(target.signal.aborted).toBe(true);
+    dispose();
+  });
+
+  it("propagateAbortSignal disposer removes listener before source aborts", () => {
+    const source = new AbortController();
+    const target = new AbortController();
+    const dispose = propagateAbortSignal(source.signal, target);
+    dispose();
+    source.abort(new Error("wall clock"));
+    expect(target.signal.aborted).toBe(false);
   });
 });
 

@@ -6,6 +6,12 @@
 import type { HybridMemoryConfig } from "../config.js";
 import type { DatabaseSync } from "node:sqlite";
 import { nowIso } from "../utils/dates.js";
+import {
+  clearMaintenanceRunDeadline,
+  maintenanceRunDeadlineReached,
+  remainingMaintenanceRunMs,
+  setMaintenanceRunDeadlineMs,
+} from "../utils/maintenance-run-deadline.js";
 import { is429OrWrapped } from "./chat.js";
 import { generateOrchestratorRunId } from "./maintenance-job-run/orchestrator-summary.js";
 import { recordMaintenanceStepRun } from "./maintenance-audit-journal.js";
@@ -466,6 +472,7 @@ export async function runMaintenanceOrchestrator(
   const maxRuntimeMs =
     options.maxRuntimeMs ??
     (orchestratorCfg?.maxRuntimeMinutes ? orchestratorCfg.maxRuntimeMinutes * 60_000 : undefined);
+  const runDeadlineMs = maxRuntimeMs != null ? startedAtMs + maxRuntimeMs : undefined;
 
   let steps = MAINTENANCE_STEPS.filter((s) => options.tiers.includes(s.tier));
   if (options.include?.length) {
@@ -497,6 +504,8 @@ export async function runMaintenanceOrchestrator(
     }
   };
 
+  setMaintenanceRunDeadlineMs(runDeadlineMs);
+  try {
   for (const step of steps) {
     if (maxRuntimeMs !== undefined && Date.now() - startedAtMs >= maxRuntimeMs) {
       pushStepResult({
@@ -585,8 +594,14 @@ export async function runMaintenanceOrchestrator(
       continue;
     }
 
-    if (lastWasLlmStep && isLlmProviderStep(step.llmTier) && llmCooldownMs > 0) {
-      await sleep(llmCooldownMs);
+    if (lastWasLlmStep && isLlmProviderStep(step.llmTier) && llmCooldownMs > 0 && !maintenanceRunDeadlineReached()) {
+      const remaining = remainingMaintenanceRunMs();
+      const cooldownMs = Number.isFinite(remaining)
+        ? Math.min(llmCooldownMs, Math.max(0, Math.floor(remaining)))
+        : llmCooldownMs;
+      if (cooldownMs > 0) {
+        await sleep(cooldownMs);
+      }
     }
 
     const stepStarted = Date.now();
@@ -677,6 +692,9 @@ export async function runMaintenanceOrchestrator(
     finishedAt,
     durationMs: Date.now() - startedAtMs,
   };
+  } finally {
+    clearMaintenanceRunDeadline();
+  }
 }
 
 export { toOrchestratorRunSummary, generateOrchestratorRunId } from "./maintenance-job-run/orchestrator-summary.js";
