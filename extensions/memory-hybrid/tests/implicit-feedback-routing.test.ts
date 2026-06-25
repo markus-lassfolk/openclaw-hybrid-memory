@@ -12,7 +12,14 @@ import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { implicitFeedbackCollapseStatus, isSemanticNoOpImplicitFeedbackCollapseStatus } from "../cli/cmd-feedback.js";
+import {
+  implicitFeedbackCollapseStatus,
+  isSemanticNoOpImplicitFeedbackCollapseStatus,
+  resolveTrajectoryLlmBudgetMs,
+  runWithConcurrencyLimit,
+  TRAJECTORY_LLM_MIN_BUDGET_MS,
+  TRAJECTORY_PER_CALL_BUDGET_MS,
+} from "../cli/cmd-feedback.js";
 import {
   cleanupImplicitFeedbackDuplicates,
   type HandlerContext,
@@ -1691,6 +1698,33 @@ describe("implicit feedback routing — self-correction bridge", () => {
     });
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
+  });
+});
+
+describe("trajectory LLM budget (#1953)", () => {
+  it("resolveTrajectoryLlmBudgetMs returns 0 when remaining wall-clock is below minimum", () => {
+    expect(resolveTrajectoryLlmBudgetMs(TRAJECTORY_LLM_MIN_BUDGET_MS - 1)).toBe(0);
+    expect(resolveTrajectoryLlmBudgetMs(0)).toBe(0);
+  });
+
+  it("resolveTrajectoryLlmBudgetMs caps per-trajectory budget at TRAJECTORY_PER_CALL_BUDGET_MS", () => {
+    expect(resolveTrajectoryLlmBudgetMs(120_000)).toBe(TRAJECTORY_PER_CALL_BUDGET_MS);
+    expect(resolveTrajectoryLlmBudgetMs(TRAJECTORY_PER_CALL_BUDGET_MS)).toBe(TRAJECTORY_PER_CALL_BUDGET_MS);
+    expect(resolveTrajectoryLlmBudgetMs(5_000)).toBe(5_000);
+  });
+
+  it("runWithConcurrencyLimit bounds in-flight workers", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const items = Array.from({ length: 12 }, (_, i) => i);
+    await runWithConcurrencyLimit(items, 4, async () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight--;
+    });
+    expect(maxInFlight).toBeLessThanOrEqual(4);
+    expect(maxInFlight).toBeGreaterThan(1);
   });
 });
 

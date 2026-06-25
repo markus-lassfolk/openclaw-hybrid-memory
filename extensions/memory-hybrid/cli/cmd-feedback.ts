@@ -33,7 +33,11 @@ import {
   generateMonthlyReport,
   ToolEffectivenessStore,
 } from "../services/tool-effectiveness.js";
-import { analyzeTrajectoriesWithLLM, buildTrajectories, serializeTrajectory } from "../services/trajectory-tracker.js";
+import {
+  analyzeTrajectoriesWithLLM,
+  buildTrajectories,
+  serializeTrajectory,
+} from "../services/trajectory-tracker.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { loadPrompt } from "../utils/prompt-loader.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
@@ -413,6 +417,43 @@ export function cleanupImplicitFeedbackDuplicates(
 // ---------------------------------------------------------------------------
 // extract-implicit-feedback
 // ---------------------------------------------------------------------------
+
+/** Minimum wall-clock remaining before scheduling another trajectory LLM call. */
+export const TRAJECTORY_LLM_MIN_BUDGET_MS = 1000;
+
+/** Per-trajectory LLM call wall-clock cap (Issue #1953). */
+export const TRAJECTORY_PER_CALL_BUDGET_MS = 30_000;
+
+/** Max concurrent trajectory LLM analyses per session (Issue #1953). */
+export const TRAJECTORY_LLM_CONCURRENCY = 4;
+
+/** Resolve per-trajectory LLM budget from remaining run wall-clock (Issue #1953). */
+export function resolveTrajectoryLlmBudgetMs(remainingWallClockMs: number): number {
+  if (remainingWallClockMs < TRAJECTORY_LLM_MIN_BUDGET_MS) return 0;
+  return Math.min(TRAJECTORY_PER_CALL_BUDGET_MS, Math.max(1, Math.floor(remainingWallClockMs)));
+}
+
+/** Run async work over items with a bounded worker pool. */
+export async function runWithConcurrencyLimit<TItem, TResult>(
+  items: readonly TItem[],
+  concurrency: number,
+  worker: (item: TItem, index: number) => Promise<TResult>,
+): Promise<TResult[]> {
+  if (items.length === 0) return [];
+  const results: TResult[] = new Array(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, concurrency), items.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (true) {
+        const index = nextIndex++;
+        if (index >= items.length) return;
+        results[index] = await worker(items[index]!, index);
+      }
+    }),
+  );
+  return results;
+}
 
 export type ExtractImplicitFeedbackStopReason =
   | "maxWallClock"
@@ -1060,80 +1101,80 @@ export async function runExtractImplicitFeedbackForCli(
            WHERE session_file = ? AND turns_json = ?
            LIMIT 1`,
         );
-        const TRAJECTORY_LLM_MIN_BUDGET_MS = 1000;
+        if (implicitCfg.trajectoryLLMAnalysis && trajectories.length > 0) {
+          const prompt = loadPrompt("trajectory-analyze");
+          const nanoPref = getLLMModelPreference(getCronModelConfig(cfg), "nano");
+          const model = nanoPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
+          const fallbackModels = nanoPref.length > 1 ? nanoPref.slice(1) : (cfg.distill?.fallbackModels ?? []);
+          let stopTrajectoryLlm = false;
+          await runWithConcurrencyLimit(trajectories, TRAJECTORY_LLM_CONCURRENCY, async (traj) => {
+            if (stopTrajectoryLlm) return;
+            if (wallClockLimitReached()) {
+              stopTrajectoryLlm = true;
+              return;
+            }
+            const llmBudgetMs = resolveTrajectoryLlmBudgetMs(remainingWallClockMs());
+            if (llmBudgetMs === 0) {
+              stopTrajectoryLlm = true;
+              return;
+            }
+            const llmAbort = new AbortController();
+            const llmTimeout = setTimeout(
+              () => llmAbort.abort(new Error("implicit-feedback trajectory LLM budget exceeded")),
+              llmBudgetMs,
+            );
+            const chatFn = async (opts: { model?: string; messages: Array<{ role: string; content: string }> }) => {
+              const userMessage = opts.messages.find((m) => m.role === "user");
+              if (!userMessage) throw new Error("No user message found");
+              return await chatCompleteWithRetry({
+                model: opts.model ?? model,
+                content: userMessage.content,
+                temperature: 0.2,
+                maxTokens: 4000,
+                openai,
+                fallbackModels,
+                label: "memory-hybrid: trajectory-analyze",
+                feature: CostFeature.trajectoryAnalyze,
+                timeoutMs: llmBudgetMs,
+                signal: llmAbort.signal,
+              });
+            };
+            try {
+              const llmAnalysis = await analyzeTrajectoriesWithLLM(traj, prompt, chatFn);
+              if (llmAnalysis) {
+                traj.lessonsExtracted = [llmAnalysis.keyLesson, ...llmAnalysis.patterns];
+                if (llmAnalysis.pivotTurn !== null) {
+                  traj.keyPivot = llmAnalysis.pivotTurn;
+                }
+                if (llmAnalysis.outcome) {
+                  traj.outcome = llmAnalysis.outcome;
+                }
+              }
+            } catch (err) {
+              if (wallClockLimitReached()) {
+                stopTrajectoryLlm = true;
+                return;
+              }
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                operation: "runExtractImplicitFeedbackForCli:llm-trajectory-analysis",
+                severity: "info",
+                subsystem: "implicit-feedback",
+              });
+            } finally {
+              clearTimeout(llmTimeout);
+            }
+            if (wallClockLimitReached()) {
+              stopTrajectoryLlm = true;
+            }
+          });
+        }
+
         for (const traj of trajectories) {
           try {
-            // Check wall clock limit before processing each trajectory (especially before LLM analysis)
+            // Check wall clock limit before persisting each trajectory
             if (wallClockLimitReached()) {
               markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
               break;
-            }
-
-            // If LLM analysis is enabled, use it to enhance lessons
-            if (implicitCfg.trajectoryLLMAnalysis) {
-              try {
-                const prompt = loadPrompt("trajectory-analyze");
-                const nanoPref = getLLMModelPreference(getCronModelConfig(cfg), "nano");
-                const model = nanoPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
-                const fallbackModels = nanoPref.length > 1 ? nanoPref.slice(1) : (cfg.distill?.fallbackModels ?? []);
-                const remainingMs = remainingWallClockMs();
-                if (remainingMs < TRAJECTORY_LLM_MIN_BUDGET_MS) {
-                  markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
-                  break;
-                }
-                const llmBudgetMs = Math.max(1, Math.floor(remainingMs));
-                const llmAbort = new AbortController();
-                const llmTimeout = setTimeout(
-                  () => llmAbort.abort(new Error("implicit-feedback trajectory LLM budget exceeded")),
-                  llmBudgetMs,
-                );
-                const chatFn = async (opts: { model?: string; messages: Array<{ role: string; content: string }> }) => {
-                  const userMessage = opts.messages.find((m) => m.role === "user");
-                  if (!userMessage) throw new Error("No user message found");
-                  return await chatCompleteWithRetry({
-                    model: opts.model ?? model,
-                    content: userMessage.content,
-                    temperature: 0.2,
-                    maxTokens: 4000,
-                    openai,
-                    fallbackModels,
-                    label: "memory-hybrid: trajectory-analyze",
-                    feature: CostFeature.trajectoryAnalyze,
-                    timeoutMs: llmBudgetMs,
-                    signal: llmAbort.signal,
-                  });
-                };
-                let llmAnalysis: Awaited<ReturnType<typeof analyzeTrajectoriesWithLLM>> | null = null;
-                try {
-                  llmAnalysis = await analyzeTrajectoriesWithLLM(traj, prompt, chatFn);
-                } finally {
-                  clearTimeout(llmTimeout);
-                }
-                if (llmAbort.signal.aborted || wallClockLimitReached()) {
-                  markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
-                  break;
-                }
-                if (llmAnalysis) {
-                  // Replace heuristic lessons with LLM-produced lesson and patterns
-                  traj.lessonsExtracted = [llmAnalysis.keyLesson, ...llmAnalysis.patterns];
-                  if (llmAnalysis.pivotTurn !== null) {
-                    traj.keyPivot = llmAnalysis.pivotTurn;
-                  }
-                  if (llmAnalysis.outcome) {
-                    traj.outcome = llmAnalysis.outcome;
-                  }
-                }
-              } catch (err) {
-                if (wallClockLimitReached()) {
-                  markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
-                  break;
-                }
-                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                  operation: "runExtractImplicitFeedbackForCli:llm-trajectory-analysis",
-                  severity: "info",
-                  subsystem: "implicit-feedback",
-                });
-              }
             }
 
             const row = serializeTrajectory(traj);
