@@ -58,6 +58,7 @@ export function jobRunOutcomeToValidatorSemantic(outcome: JobRunSemanticOutcome)
       return "ok";
     case "success_with_review":
     case "partial":
+    case "monitoring":
       return "degraded";
     case "failed":
     case "failed_semantic_empty":
@@ -70,10 +71,16 @@ export function jobRunOutcomeFailsOrchestratorStep(outcome: JobRunSemanticOutcom
   return outcome === "failed" || outcome === "failed_semantic_empty";
 }
 
+/** Operational monitoring signals that should surface in telemetry but not abort nightly maintenance. */
+export function semanticOutcomeIsMonitoringSignal(semantic: string | undefined): boolean {
+  return resolveSemanticGuardToken(semantic) === "monitoring";
+}
+
 /** Whether a semantic token (unified outcome or legacy CLI status) blocks guard advancement. */
 export function semanticOutcomeBlocksOrchestratorGuard(semantic: string | undefined): boolean {
   const resolved = resolveSemanticGuardToken(semantic);
   if (!resolved) return false;
+  if (semanticOutcomeIsMonitoringSignal(semantic)) return false;
   if (resolved === "partial") return true;
   return jobRunOutcomeFailsOrchestratorStep(resolved);
 }

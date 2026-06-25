@@ -210,25 +210,9 @@ function assertLifecycleSyncSummaryDoesNotBlock(summary: string): string {
   return summary;
 }
 
-function assertRecordStorageSampleSummaryDoesNotBlock(summary: string): string {
-  if (/\breason=storage_unavailable\b/i.test(summary)) {
-    const semanticSummary = summary.includes("semantic=") ? summary : `${summary} semantic=partial`;
-    throw new Error(`record-storage-sample storage unavailable (${semanticSummary})`);
-  }
-  return summary;
-}
-
 function resolveOpenclawHomeFromSqlitePath(resolvedSqlitePath: string | null | undefined): string {
   if (resolvedSqlitePath) return join(dirname(resolvedSqlitePath), "..");
   return join(homedir(), ".openclaw");
-}
-
-function assertContradictionMaintenanceSummaryDoesNotBlock(summary: string, evaluation: { degraded: boolean }): string {
-  const semantic = parseSemanticTokenFromSummary(summary);
-  if (evaluation.degraded || semanticOutcomeBlocksOrchestratorGuard(semantic)) {
-    throw new Error(`resolve-contradictions degraded backlog (${summary})`);
-  }
-  return summary;
 }
 
 export function buildCliMaintenanceRunners(
@@ -280,8 +264,7 @@ export function buildCliMaintenanceRunners(
       /* non-fatal */
     }
     const r = recordStorageGrowthSample(b.factsDb, lanceBytes, {});
-    const summary = `status=${r.status} reason=${r.reason ?? "none"} semantic=${r.reason === "storage_unavailable" ? "partial" : "success"}`;
-    return assertRecordStorageSampleSummaryDoesNotBlock(summary);
+    return `status=${r.status} reason=${r.reason ?? "none"} semantic=${r.reason === "storage_unavailable" ? "monitoring" : "success"}`;
   });
 
   set("analyze-maintenance-logs", async () => {
@@ -390,7 +373,7 @@ export function buildCliMaintenanceRunners(
 
   set("resolve-contradictions", async () => {
     const openclawHome = resolveOpenclawHomeFromSqlitePath(b.resolvedSqlitePath);
-    const { summary, evaluation } = await runContradictionMaintenanceAutoStep({
+    const { summary } = await runContradictionMaintenanceAutoStep({
       openclawHome,
       degradedAmbiguousThreshold: DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD,
       degradedConsecutiveThreshold: ORCHESTRATOR_CONTRADICTION_DEGRADED_CONSECUTIVE_THRESHOLD,
@@ -400,7 +383,7 @@ export function buildCliMaintenanceRunners(
           targetRate: 0.8,
         }),
     });
-    return assertContradictionMaintenanceSummaryDoesNotBlock(summary, evaluation);
+    return summary;
   });
 
   set("enrich-entities", async () => {
@@ -890,8 +873,7 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
 
   runners.set("record-storage-sample", async () => {
     const r = recordStorageGrowthSample(deps.factsDb, null, {});
-    const summary = `status=${r.status} reason=${r.reason ?? "none"} semantic=${r.reason === "storage_unavailable" ? "partial" : "success"}`;
-    return assertRecordStorageSampleSummaryDoesNotBlock(summary);
+    return `status=${r.status} reason=${r.reason ?? "none"} semantic=${r.reason === "storage_unavailable" ? "monitoring" : "success"}`;
   });
 
   if (deps.runAnalyzeLogs) {

@@ -1776,12 +1776,28 @@ export const GUARD_BLOCKING_SEMANTIC_STEP_NAMES = [
 
 export const CROSS_CUTTING_GUARD_FAILURE_CLASSES = ["hidden_llm_failure", "cursor_not_advanced"] as const;
 
+/** Telemetry issues that surface operator signals without blocking cron guard advancement. */
+export const MONITORING_ONLY_FAILURE_CLASSES = [
+  "resolve_contradictions_degraded_backlog",
+  "record_storage_unavailable",
+] as const;
+
 export function isGuardBlockingSemanticIssue(issue: MaintenanceTelemetryIssue): boolean {
   if (issue.failureCategory !== "semantic_failure") return false;
+  if ((MONITORING_ONLY_FAILURE_CLASSES as readonly string[]).includes(issue.failureClass)) {
+    return false;
+  }
   if (issue.failureClass === "hidden_llm_failure" || issue.failureClass === "cursor_not_advanced") {
     return true;
   }
   return (GUARD_BLOCKING_SEMANTIC_STEP_NAMES as readonly string[]).includes(issue.stepName);
+}
+
+export function shouldUpdateMaintenanceGuard(
+  maintenanceStatus: ExitValidationResult["maintenanceStatus"],
+  reportableIssues: MaintenanceTelemetryIssue[],
+): boolean {
+  return maintenanceStatus === "success" && !reportableIssues.some(isGuardBlockingSemanticIssue);
 }
 
 /**
@@ -2007,8 +2023,8 @@ export function validateMaintenanceExecution(
     });
   }
 
-  // Guard should only be updated on full success (not feature-gated skips).
-  const guardUpdated = maintenanceStatus === "success";
+  // Guard should only be updated on full success (not feature-gated skips or guard-blocking semantic failures).
+  const guardUpdated = shouldUpdateMaintenanceGuard(maintenanceStatus, reportableIssues);
 
   // Build error message
   let error: string | undefined;
@@ -2246,7 +2262,7 @@ function mergeSummaryWithLedgerChecks(
   }
 
   semanticStatus = combineSemanticStatus(semanticStatus, maintenanceStatus, reportableIssues);
-  guardUpdated = maintenanceStatus === "success" && semanticStatus === "ok";
+  guardUpdated = shouldUpdateMaintenanceGuard(maintenanceStatus, reportableIssues);
 
   return {
     maintenanceStatus,
@@ -2418,7 +2434,7 @@ export function validateFromSummaryJson(
         steps,
         missingSteps,
         failedSteps,
-        guardUpdated: maintenanceStatus === "success" && semanticStatus === "ok",
+        guardUpdated: shouldUpdateMaintenanceGuard(maintenanceStatus, []),
         exitPath,
         logPath,
         reportableIssues: failedSteps.map((s) =>

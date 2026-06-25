@@ -910,20 +910,21 @@ error: unknown command 'bar'
       );
     });
 
-    it("detects resolve-contradictions degraded backlog on exit=0 and blocks guard", () => {
+    it("detects resolve-contradictions degraded backlog on exit=0 without blocking guard", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "resolve-contradictions.exit.txt");
       const logPath = join(tmpDir, "resolve-contradictions.log");
       writeFileSync(exitPath, "2026-05-08T02:15:30Z resolve-contradictions exit=0\n");
       writeFileSync(
         logPath,
-        "resolve-contradictions summary mode=default auto_resolved=0 ambiguous=250 no_progress=1 degraded=1 threshold_enabled=1 threshold=200 consecutive=1 consecutive_threshold=1\n",
+        "resolve-contradictions summary mode=default auto_resolved=0 ambiguous=250 no_progress=1 degraded=1 threshold_enabled=1 threshold=200 consecutive=1 consecutive_threshold=1 semantic=monitoring\n",
       );
 
       const result = validateMaintenanceExecution(exitPath, logPath, ["resolve-contradictions"]);
 
-      expect(result.maintenanceStatus).toBe("failed");
-      expect(result.guardUpdated).toBe(false);
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.guardUpdated).toBe(true);
+      expect(result.semanticStatus).toBe("degraded");
       expect(result.reportableIssues).toContainEqual(
         expect.objectContaining({
           stepName: "resolve-contradictions",
@@ -1163,20 +1164,21 @@ error: unknown command 'bar'
       );
     });
 
-    it("detects record-storage-sample storage_unavailable as semantic failure", () => {
+    it("detects record-storage-sample storage_unavailable as monitoring without blocking guard", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "record-storage-sample.exit.txt");
       const logPath = join(tmpDir, "record-storage-sample.log");
       writeFileSync(exitPath, "2026-05-08T02:15:30Z record-storage-sample exit=0\n");
       writeFileSync(
         logPath,
-        "record-storage-sample: skipped (storage database unavailable) status=skipped_storage_unavailable reason=storage_unavailable semantic=partial",
+        "record-storage-sample: skipped (storage database unavailable) status=skipped_storage_unavailable reason=storage_unavailable semantic=monitoring",
       );
 
       const result = validateMaintenanceExecution(exitPath, logPath, ["record-storage-sample"]);
 
-      expect(result.maintenanceStatus).toBe("failed");
-      expect(result.guardUpdated).toBe(false);
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.guardUpdated).toBe(true);
+      expect(result.semanticStatus).toBe("degraded");
       expect(result.reportableIssues).toContainEqual(
         expect.objectContaining({
           stepName: "record-storage-sample",

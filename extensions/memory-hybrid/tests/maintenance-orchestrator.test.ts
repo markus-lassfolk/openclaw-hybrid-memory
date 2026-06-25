@@ -342,25 +342,28 @@ describe("maintenance-orchestrator", () => {
     expect(result.exitCode).toBe(1);
   });
 
-  it("parses semantic token from resolve-contradictions degraded backlog", async () => {
+  it("resolve-contradictions degraded backlog is a monitoring signal and does not abort nightly", async () => {
     openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const degradedSummary =
+      "resolve-contradictions summary mode=auto auto_resolved=0 ambiguous=250 no_progress=1 degraded=1 consecutive=3 consecutive_threshold=3 semantic=monitoring";
     const runners = new Map<string, () => Promise<string>>([
-      [
-        "resolve-contradictions",
-        async () => {
-          throw new Error(
-            "resolve-contradictions degraded backlog (resolve-contradictions summary mode=auto auto_resolved=0 ambiguous=250 no_progress=1 degraded=1 semantic=partial)",
-          );
-        },
-      ],
+      ["resolve-contradictions", async () => degradedSummary],
+      ["entity-mentions-cleanup", async () => "changedFacts=0 rowsScanned=0 removedRows=0 semantic=success"],
     ]);
     const result = await runMaintenanceOrchestrator(
       { cfg: minimalCfg(), runners, openclawDir },
-      { tiers: ["nightly"], force: true, verbose: false, include: ["resolve-contradictions"] },
+      {
+        tiers: ["nightly"],
+        force: true,
+        verbose: false,
+        include: ["resolve-contradictions", "entity-mentions-cleanup"],
+      },
     );
-    expect(result.steps[0]?.status).toBe("failed");
-    expect(result.steps[0]?.semanticOutcome).toBe("partial");
-    expect(result.exitCode).toBe(1);
+    expect(result.steps).toHaveLength(2);
+    expect(result.steps[0]?.status).toBe("ok");
+    expect(result.steps[0]?.semanticOutcome).toBe("monitoring");
+    expect(result.steps[1]?.status).toBe("ok");
+    expect(result.exitCode).toBe(0);
   });
 
   it("parses semantic token from scope-promote partial failure", async () => {
