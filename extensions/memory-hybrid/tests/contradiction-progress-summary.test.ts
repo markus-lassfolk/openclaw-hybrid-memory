@@ -131,7 +131,7 @@ describe("contradiction-progress-summary", () => {
       }),
     });
     expect(summary).toContain("mode=auto");
-    expect(summary).toContain("semantic=monitoring");
+    expect(summary).toContain("semantic=success");
     expect(evaluation.degraded).toBe(false);
     expect(evaluation.exitReason).toBe("ambiguous_backlog_monitoring");
     expect(readConsecutiveNoProgressRuns(home)).toBe(1);
@@ -155,7 +155,7 @@ describe("contradiction-progress-summary", () => {
       }),
     });
     expect(degraded.evaluation.degraded).toBe(false);
-    expect(degraded.summary).toContain("semantic=monitoring");
+    expect(degraded.summary).toContain("semantic=success");
 
     const third = await runContradictionMaintenanceAutoStep({
       openclawHome: home,
