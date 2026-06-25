@@ -683,6 +683,7 @@ export async function runSelfCorrectionRunForCli(
     const today = formatDateUtc(Math.floor(Date.now() / 1000));
     const reportPath = join(reportDir, `self-correction-${today}.md`);
     let incidents: CorrectionIncident[];
+    let extractSessionsScanned = 0;
     if (opts.incidents !== undefined) {
       incidents = opts.incidents;
     } else if (opts.extractPath) {
@@ -719,6 +720,7 @@ export async function runSelfCorrectionRunForCli(
         filePaths: scFilePaths,
         verbose: opts.verbose,
       });
+      extractSessionsScanned = extractResult.sessionsScanned;
       incidents = extractResult.incidents;
       const scCfgExtract = cfg.selfCorrection ?? DEFAULT_SELF_CORRECTION;
       if (scCfgExtract.llmExtract !== false && incidents.length >= 0) {
@@ -1301,7 +1303,13 @@ export async function runSelfCorrectionRunForCli(
     if (!opts.dryRun && !opts.incidents && !opts.extractPath && allBatchesCompleted) {
       const sessionPaths = [...new Set(incidents.map((i) => i.sessionFile).filter(Boolean))];
       const lastSessionTs = sessionPaths.length > 0 ? (getMaxMtime(sessionPaths) ?? Date.now()) : Date.now();
-      factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs, incidents.length);
+      const sessionsProcessedThisRun =
+        extractSessionsScanned > 0
+          ? extractSessionsScanned
+          : sessionPaths.length > 0
+            ? sessionPaths.length
+            : 1;
+      factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs, sessionsProcessedThisRun);
     }
 
     if (jobRun) {

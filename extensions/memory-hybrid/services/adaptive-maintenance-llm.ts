@@ -25,6 +25,10 @@ import {
 } from "./chat.js";
 import type { CostFeatureId } from "./cost-feature-labels.js";
 import { capturePluginError } from "./error-reporter.js";
+import {
+  capTimeoutByMaintenanceRunDeadline,
+  getMaintenanceRunAbortSignal,
+} from "../utils/maintenance-run-deadline.js";
 
 export type MaintenanceLlmLogger = {
   info?: (msg: string) => void;
@@ -141,7 +145,9 @@ async function callMaintenanceDetailed(
     feature: opts.feature,
     responseFormat: opts.responseFormat,
     onRetry: opts.onRetry,
-    timeoutMsPerModel: (m) => resolveMaintenanceChatTimeoutMs(m, thinkingMode),
+    timeoutMsPerModel: (m) =>
+      capTimeoutByMaintenanceRunDeadline(resolveMaintenanceChatTimeoutMs(m, thinkingMode)),
+    signal: getMaintenanceRunAbortSignal(),
     ...(thinkingMode != null ? { thinkingMode } : {}),
   });
 }

@@ -20,6 +20,11 @@ import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { isMiniMaxModel } from "./chat.js";
+import {
+  capTimeoutByMaintenanceRunDeadline,
+  getMaintenanceRunAbortSignal,
+  maintenanceRunDeadlineReached,
+} from "../utils/maintenance-run-deadline.js";
 import type { ProvenanceService } from "./provenance.js";
 import { dotProductSimilarity, loadReflectionDedupeCorpusVectors } from "./reflection.js";
 import { deleteVectorsForFactIds, cleanupEvictedVector } from "./vector-maintenance.js";
@@ -197,6 +202,10 @@ export async function runConsolidate(
   let storeDedupeVectorFallbackSuppressed = 0;
   const consolidationRunId = provenanceService ? randomUUID() : null;
   for (const clusterIds of clusters) {
+    if (maintenanceRunDeadlineReached()) {
+      logger.warn("memory-hybrid: consolidate stopped — maintenance run deadline reached");
+      break;
+    }
     const texts = clusterIds.map((id) => idToFact.get(id)?.text);
     const factsList = texts.map((t, i) => `${i + 1}. ${t}`).join("\n");
     const prompt = fillPrompt(loadPrompt("consolidate"), { facts_list: factsList });
@@ -211,7 +220,8 @@ export async function runConsolidate(
           maxTokens: 300,
           openai: opts.openai,
           label: "memory-hybrid: consolidate",
-          timeoutMs: resolveMaintenanceChatTimeoutMs(opts.model, opts.thinkingMode),
+          timeoutMs: capTimeoutByMaintenanceRunDeadline(resolveMaintenanceChatTimeoutMs(opts.model, opts.thinkingMode)),
+          signal: getMaintenanceRunAbortSignal(),
           ...(opts.thinkingMode && isMiniMaxModel(opts.model) ? { thinkingMode: opts.thinkingMode } : {}),
         }),
       );

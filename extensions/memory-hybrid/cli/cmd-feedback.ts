@@ -48,6 +48,7 @@ import { runSelfCorrectionRunForCli } from "./cmd-selfcorrection.js";
 import { resolveExtractSessionFilePaths } from "../services/extract-session-paths.js";
 import type { HandlerContext } from "./handlers.js";
 import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
+import { getMaintenanceRunAbortSignal, maintenanceRunDeadlineReached } from "../utils/maintenance-run-deadline.js";
 
 const IMPLICIT_FEEDBACK_LESSON_TAGS = ["implicit-feedback", "trajectory", "feedback"];
 
@@ -832,6 +833,10 @@ export async function runExtractImplicitFeedbackForCli(
       markPartialProgress("maxWallClock");
       break;
     }
+    if (maintenanceRunDeadlineReached()) {
+      markPartialProgress("maxWallClock");
+      break;
+    }
     // BUG FIX #2: Check against sessionsVisited to ensure session cap includes skipped sessions
     if (maxSessionsPerRun > 0 && progress.sessionsVisited >= maxSessionsPerRun) {
       markPartialProgress("maxSessions");
@@ -1167,6 +1172,10 @@ export async function runExtractImplicitFeedbackForCli(
                   llmBudgetMs,
                 );
                 const disposeRunAbortLink = propagateAbortSignal(runWallClockAbort.signal, perCallAbort);
+                const maintenanceAbort = getMaintenanceRunAbortSignal();
+                const disposeMaintenanceAbortLink = maintenanceAbort
+                  ? propagateAbortSignal(maintenanceAbort, perCallAbort)
+                  : () => {};
                 const chatFn = async (opts: { model?: string; messages: Array<{ role: string; content: string }> }) => {
                   const userMessage = opts.messages.find((m) => m.role === "user");
                   if (!userMessage) throw new Error("No user message found");
@@ -1213,6 +1222,7 @@ export async function runExtractImplicitFeedbackForCli(
                 } finally {
                   clearTimeout(perCallTimeout);
                   disposeRunAbortLink();
+                  disposeMaintenanceAbortLink();
                 }
                 if (wallClockLimitReached()) {
                   stopTrajectoryLlm = true;

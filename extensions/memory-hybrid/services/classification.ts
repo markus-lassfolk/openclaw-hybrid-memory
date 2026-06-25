@@ -10,7 +10,7 @@ import { extractBalancedArraySlice, stripThinkingWrapperBlocks } from "../utils/
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { capturePluginError } from "./error-reporter.js";
 import { isMiniMaxModel } from "./model-capabilities.js";
-import { capTimeoutByMaintenanceRunDeadline } from "../utils/maintenance-run-deadline.js";
+import { capTimeoutByMaintenanceRunDeadline, getMaintenanceRunAbortSignal } from "../utils/maintenance-run-deadline.js";
 
 export type MemoryClassification = {
   action: "ADD" | "UPDATE" | "DELETE" | "NOOP";
@@ -130,6 +130,7 @@ export async function classifyMemoryOperation(
       label: "memory-hybrid: classify-memory-operation",
       feature: "auto-classify",
       timeoutMs: capTimeoutByMaintenanceRunDeadline(resolveMaintenanceChatTimeoutMs(model)),
+      signal: getMaintenanceRunAbortSignal(),
       ...(isMiniMaxModel(model) ? { thinkingMode: "disabled" as const } : {}),
     });
     return parseClassificationResponse(content, existingFacts);
@@ -382,6 +383,7 @@ For UPDATE or DELETE, targetId must be one of the existing fact ids listed under
       label: "memory-hybrid: classify-memory-operations-batch",
       feature: "auto-classify",
       timeoutMs: capTimeoutByMaintenanceRunDeadline(resolveMaintenanceChatTimeoutMs(model)),
+      signal: getMaintenanceRunAbortSignal(),
       ...(isMiniMaxModel(model) ? { thinkingMode: "disabled" as const } : {}),
     });
     const parsed = parseBatchClassifyResponseContent(raw);

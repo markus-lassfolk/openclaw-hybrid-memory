@@ -31,6 +31,7 @@ import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import {
   capTimeoutByMaintenanceRunDeadline,
+  getMaintenanceRunAbortSignal,
   maintenanceRunDeadlineReached,
 } from "../utils/maintenance-run-deadline.js";
 import {
@@ -597,6 +598,7 @@ export async function runPassiveObserver(
           label: "memory-hybrid: passive-observer",
           feature: CostFeature.passiveObserver,
           timeoutMs: capTimeoutByMaintenanceRunDeadline(resolveMaintenanceChatTimeoutMs(opts.model)),
+          signal: getMaintenanceRunAbortSignal(),
         });
       } catch (err) {
         logger.warn(`memory-hybrid: passive-observer — LLM failed for session ${sessionId}: ${err}`);

@@ -17,6 +17,10 @@ import {
 import { isEntityStopWord as isConfiguredEntityStopWord } from "../utils/entity-stopwords.js";
 import { stripThinkingWrapperBlocks, parseFirstJsonObjectValue } from "../utils/llm-json-array.js";
 import {
+  capTimeoutByMaintenanceRunDeadline,
+  getMaintenanceRunAbortSignal,
+} from "../utils/maintenance-run-deadline.js";
+import {
   chatCompleteWithRetry,
   is403QuotaOrRateLimitLike,
   is429OrWrapped,
@@ -164,7 +168,8 @@ ${body}`;
       openai,
       label: "memory-hybrid: entity-enrichment",
       feature: "entity-enrichment",
-      timeoutMs: resolveMaintenanceChatTimeoutMs(model),
+      timeoutMs: capTimeoutByMaintenanceRunDeadline(resolveMaintenanceChatTimeoutMs(model)),
+      signal: getMaintenanceRunAbortSignal(),
     });
     const raw = parseMentionJson(content);
     const mentions: ExtractedMention[] = [];

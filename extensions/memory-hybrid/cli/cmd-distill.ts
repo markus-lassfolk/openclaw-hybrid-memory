@@ -55,6 +55,7 @@ import { formatDateUtc, formatTimestampUtcFromMs, nowIso } from "../utils/dates.
 import { getEnv } from "../utils/env-manager.js";
 import {
   capTimeoutByMaintenanceRunDeadline,
+  getMaintenanceRunAbortSignal,
   maintenanceRunDeadlineReached,
 } from "../utils/maintenance-run-deadline.js";
 import { redactMaintenancePrivateText } from "../utils/maintenance-privacy.js";
@@ -585,6 +586,7 @@ export async function runDistillForCli(
             capTimeoutByMaintenanceRunDeadline(
               resolveMaintenanceChatTimeoutMs(m, resolveDistillThinkingMode(cfg)),
             ),
+          signal: getMaintenanceRunAbortSignal(),
         });
         if (detail.finishReason?.toLowerCase() === "length") {
           logger.warn?.(

@@ -9,7 +9,6 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { getCronModelConfig, getDefaultCronModel } from "../config/index.js";
 import "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { chatCompletionTokenParams } from "../services/model-capabilities.js";
 import { trimBlockToBudget } from "../services/context-block-trim.js";
 import { consumePrependBudget } from "../services/prepend-budget.js";
 import { shouldPinFactForInjection } from "../services/pinned-recall-policy.js";
@@ -28,7 +27,6 @@ import { createRecallSpan, createRecallTimingLogger } from "../services/recall-t
 import { resolveRecallInjectionText, resolveFactsDbForEntry } from "../services/fragment-recall.js";
 import { sanitizePromptInjection } from "../services/skill-prompt-injection.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
-import { extractAssistantMessageText } from "../utils/llm-message.js";
 import {
   estimateTokens,
   estimateTokensForDisplay,
@@ -579,29 +577,20 @@ async function runInjection(
       })
       .join("\n");
     try {
-      const { withLLMRetry } = await import("../services/chat.js");
+      const { chatCompleteWithRetry } = await import("../services/chat.js");
       const injectionSummarizeModel = summarizeModel ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "nano");
-      const resp = await withLLMRetry(
-        () => {
-          if (options.abortSignal?.aborted) {
-            throw Object.assign(new Error("injection stage aborted"), { name: "AbortError" });
-          }
-          return ctx.openai.chat.completions.create({
-            model: injectionSummarizeModel,
-            messages: [
-              {
-                role: "user",
-                content: `Summarize these memories into 2-3 short sentences. Preserve key facts.\n\n${fullBullets.slice(0, 4000)}`,
-              },
-            ],
-            temperature: 0,
-            ...chatCompletionTokenParams(injectionSummarizeModel, 200),
-          });
-        },
-        { maxRetries: 2 },
-      );
-      const summary = extractAssistantMessageText(resp.choices[0]?.message).text;
-      if (summary) {
+      const summary = await chatCompleteWithRetry({
+        model: injectionSummarizeModel,
+        content: `Summarize these memories into 2-3 short sentences. Preserve key facts.\n\n${fullBullets.slice(0, 4000)}`,
+        temperature: 0,
+        maxTokens: 200,
+        openai: ctx.openai,
+        label: "memory-hybrid: injection-summarize",
+        feature: "auto-recall",
+        timeoutMs: INJECTION_STAGE_TIMEOUT_MS,
+        signal: options.abortSignal,
+      });
+      if (summary.trim()) {
         let sanitizedSummary = sanitizePromptInjection(summary);
         let summaryTokens = estimateTokens(header + sanitizedSummary + footer);
         if (summaryTokens > memoryTokenBudget) {
