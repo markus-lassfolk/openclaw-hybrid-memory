@@ -27,6 +27,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.6.250] - 2026-06-25
+
+### Fixed
+
+- **Maintenance nightly abort on degraded contradiction backlog (#1942):** `resolve-contradictions` no longer throws when the ambiguous backlog crosses the degraded threshold, so `maintenance-nightly` continues through downstream steps and cron guard files advance while operators still receive degraded telemetry.
+- **Monitoring-only maintenance signals:** Introduced non-blocking `semantic=monitoring` for operational signals (degraded contradiction backlog, transient `record-storage-sample` unavailability) that surface in validation without aborting the orchestrator or blocking guard advancement.
+- **`reflect-rules` tolerated flake:** Orchestrator runner no longer treats tolerated `invalid_response_format` flakes (non-empty model response) as fatal semantic failures.
+- **Legacy cron `resolve-contradictions` exit code:** Standalone CLI preserves shell exit `2` on degraded backlog; cron wrappers (`HM_JOB` set) keep shell exit `0` so `nightly-memory-sweep` does not abort under `set -e`.
+
+### Changed
+
+- Version set to **2026.6.250** (replaces invalid npm version `2026.250`).
+
+---
+
 ## [2026.6.241] - 2026-06-24
 
 ### Fixed
