@@ -700,11 +700,17 @@ function extractRefNumbers(text: string): Set<string> {
   return new Set(matches ?? []);
 }
 
-/** Heuristic: flag if multiple distinct PR/issue numbers appear across the two facts. */
+function countDistinctRefsInFact(fact: MemoryEntry): number {
+  const text = `${fact.value ?? ""} ${fact.text ?? ""}`;
+  return extractRefNumbers(text).size;
+}
+
+/** Heuristic: flag if either fact alone references too many distinct PR/issue numbers. */
 function isPossiblyOverloadedEntity(newFact: MemoryEntry, oldFact: MemoryEntry): boolean {
-  const combined = `${newFact.value ?? ""} ${newFact.text ?? ""} ${oldFact.value ?? ""} ${oldFact.text ?? ""}`;
-  const refs = extractRefNumbers(combined);
-  return refs.size > MAX_EXPECTED_REFS_PER_ENTITY;
+  return (
+    countDistinctRefsInFact(newFact) > MAX_EXPECTED_REFS_PER_ENTITY ||
+    countDistinctRefsInFact(oldFact) > MAX_EXPECTED_REFS_PER_ENTITY
+  );
 }
 
 function truncateExcerpt(s: string, maxLen: number): string {
