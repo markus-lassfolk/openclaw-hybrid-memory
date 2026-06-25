@@ -27,6 +27,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.6.259] - 2026-06-25
+
+### Fixed
+
+- **Extract-implicit trajectory LLM (#1953):** Bounded concurrency (4 workers), per-trajectory timeout (~30s), and wall-clock watchdog so one hung call cannot block the nightly run for hours; scan cursor advances on sessions processed, not visited.
+- **Maintenance run deadline (#1953 follow-up):** Orchestrator-wide deadline with cooperative abort signal; per-step timeouts capped by remaining run time across auto-classify, distill, passive-observer, entity-enrichment, consolidation, incident batch analysis, reinforcement/self-correction batch loops, and inter-step LLM cooldown.
+- **Auto-classify:** Nightly path uses `chatCompleteWithRetry` with maintenance timeouts; preserves `"[]"` fallback when the assistant message is stripped as an empty placeholder.
+- **Incident batch analysis:** Retries and batch splits stop when the orchestrator deadline is reached.
+
+---
+
 ## [2026.6.258] - 2026-06-25
 
 ### Fixed
