@@ -133,6 +133,7 @@ describe("contradiction-progress-summary", () => {
     expect(summary).toContain("mode=auto");
     expect(summary).toContain("semantic=success");
     expect(evaluation.degraded).toBe(false);
+    expect(evaluation.exitReason).toBe("ambiguous_backlog_monitoring");
     expect(readConsecutiveNoProgressRuns(home)).toBe(1);
 
     const degraded = await runContradictionMaintenanceAutoStep({
@@ -175,6 +176,6 @@ describe("contradiction-progress-summary", () => {
       }),
     });
     expect(third.evaluation.degraded).toBe(true);
-    expect(third.summary).toContain("semantic=partial");
+    expect(third.summary).toContain("semantic=monitoring");
   });
 });

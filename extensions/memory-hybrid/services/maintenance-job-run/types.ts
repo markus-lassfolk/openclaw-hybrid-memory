@@ -9,6 +9,7 @@ export type JobRunSemanticOutcome =
   | "success"
   | "success_with_review"
   | "partial"
+  | "monitoring"
   | "failed"
   | "skipped"
   | "empty"

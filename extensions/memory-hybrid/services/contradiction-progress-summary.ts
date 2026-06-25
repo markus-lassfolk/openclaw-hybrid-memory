@@ -180,7 +180,7 @@ export async function runContradictionMaintenanceAutoStep(params: {
     previousConsecutiveNoProgressRuns: previousConsecutive,
   });
   persistConsecutiveNoProgressState(metrics, evaluation, params.openclawHome);
-  const semantic = evaluation.degraded ? "partial" : "success";
+  const semantic = evaluation.degraded ? "monitoring" : "success";
   const summary = `${formatContradictionProgressSummaryLine("auto", metrics, evaluation)} semantic=${semantic}`;
   return { summary, evaluation, metrics };
 }

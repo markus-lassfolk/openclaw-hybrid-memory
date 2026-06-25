@@ -14,6 +14,7 @@ import {
   jobRunOutcomeFailsOrchestratorStep,
   semanticOutcomeBlocksOrchestratorGuard,
   semanticOutcomeIsPartialFailure,
+  semanticOutcomeIsMonitoringSignal,
   resolveSemanticGuardToken,
   parseSemanticTokenFromSummary,
   reflectRulesStepSummaryIndicatesFailure,
@@ -95,6 +96,8 @@ describe("maintenance-job-run", () => {
     expect(jobRunOutcomeFailsOrchestratorStep("failed_semantic_empty")).toBe(true);
     expect(jobRunOutcomeFailsOrchestratorStep("success")).toBe(false);
     expect(semanticOutcomeBlocksOrchestratorGuard("partial")).toBe(true);
+    expect(semanticOutcomeBlocksOrchestratorGuard("monitoring")).toBe(false);
+    expect(semanticOutcomeIsMonitoringSignal("monitoring")).toBe(true);
     expect(semanticOutcomeBlocksOrchestratorGuard("failed_partial")).toBe(true);
     expect(semanticOutcomeBlocksOrchestratorGuard("failed_suspect_zero_parsed")).toBe(true);
     expect(semanticOutcomeBlocksOrchestratorGuard("failed_parse")).toBe(true);

@@ -8,7 +8,9 @@ import {
   CROSS_CUTTING_GUARD_FAILURE_CLASSES,
   GUARD_BLOCKING_SEMANTIC_STEP_NAMES,
   isGuardBlockingSemanticIssue,
+  MONITORING_ONLY_FAILURE_CLASSES,
   resolveValidateCronExitCode,
+  shouldUpdateMaintenanceGuard,
   type ExitValidationResult,
   type MaintenanceTelemetryIssue,
 } from "../services/cron-exit-validator.js";
@@ -110,6 +112,43 @@ describe("maintenance validator coverage registry", () => {
         ...semanticIssue("distill"),
         failureCategory: "mechanical_failure",
       }),
+    ).toBe(false);
+  });
+
+  it("does not block guard for monitoring-only failure classes", () => {
+    for (const failureClass of MONITORING_ONLY_FAILURE_CLASSES) {
+      expect(
+        isGuardBlockingSemanticIssue({
+          ...semanticIssue("resolve-contradictions"),
+          failureClass,
+        }),
+      ).toBe(false);
+    }
+  });
+
+  it("shouldUpdateMaintenanceGuard allows guard update when only monitoring issues remain", () => {
+    expect(
+      shouldUpdateMaintenanceGuard(
+        "success",
+        [
+          {
+            ...semanticIssue("resolve-contradictions"),
+            failureClass: "resolve_contradictions_degraded_backlog",
+          },
+        ],
+        "degraded",
+      ),
+    ).toBe(true);
+  });
+
+  it("shouldUpdateMaintenanceGuard blocks guard for degraded semantic status without monitoring issues", () => {
+    expect(shouldUpdateMaintenanceGuard("success", [], "degraded")).toBe(false);
+    expect(
+      shouldUpdateMaintenanceGuard(
+        "success",
+        [{ ...semanticIssue("extract-reinforcement"), failureClass: "extract_reinforcement_semantic_empty" }],
+        "degraded",
+      ),
     ).toBe(false);
   });
 

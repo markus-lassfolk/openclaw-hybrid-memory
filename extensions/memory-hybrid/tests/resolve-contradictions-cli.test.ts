@@ -732,6 +732,35 @@ describe("resolve-contradictions CLI contract mode", () => {
     }
   });
 
+  it("keeps shell exit 0 for degraded backlog when invoked from hybrid-mem cron wrapper", async () => {
+    const tmpHome = mkdtempSync(join(tmpdir(), "openclaw-test-"));
+    const originalHome = process.env.OPENCLAW_HOME;
+    const originalHmJob = process.env.HM_JOB;
+    try {
+      process.env.OPENCLAW_HOME = tmpHome;
+      process.env.HM_JOB = "nightly-memory-sweep";
+      const runResolveContradictions = vi.fn().mockResolvedValue({
+        autoResolved: [],
+        ambiguous: [
+          { contradictionId: "c-1", factIdNew: "new-1", factIdOld: "old-1" },
+          { contradictionId: "c-2", factIdNew: "new-2", factIdOld: "old-2" },
+        ],
+      });
+      const mem = makeProgram(makeBindings({ runResolveContradictions }));
+      vi.spyOn(console, "log").mockImplementation(() => {});
+
+      await mem.parseAsync(["resolve-contradictions", "--degraded-ambiguous-threshold", "1"], { from: "user" });
+
+      expect(process.exitCode ?? 0).toBe(0);
+    } finally {
+      if (originalHome !== undefined) process.env.OPENCLAW_HOME = originalHome;
+      else Reflect.deleteProperty(process.env, "OPENCLAW_HOME");
+      if (originalHmJob !== undefined) process.env.HM_JOB = originalHmJob;
+      else Reflect.deleteProperty(process.env, "HM_JOB");
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
   it("emits resolve-contradictions JSON summary for cron validation", async () => {
     const tmpHome = mkdtempSync(join(tmpdir(), "openclaw-test-"));
     const originalHome = process.env.OPENCLAW_HOME;

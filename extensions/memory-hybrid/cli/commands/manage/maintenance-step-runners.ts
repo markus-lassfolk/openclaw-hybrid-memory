@@ -72,6 +72,33 @@ function reflectRulesDiagnosticsIndicateFailure(
   return !d.parseSuccess || rulesStored === 0;
 }
 
+function formatReflectRulesMaintenanceSummary(r: {
+  rulesStored: number;
+  rulesExtracted: number;
+  diagnostics?:
+    | {
+        parseSuccess: boolean;
+        status: "ok" | "partial" | "degraded";
+        zeroRulesReason?: string;
+        modelResponseChars?: number;
+      }
+    | undefined;
+}): string {
+  const d = r.diagnostics;
+  const failed = reflectRulesDiagnosticsIndicateFailure(d, r.rulesStored);
+  return [
+    `rulesStored=${r.rulesStored}`,
+    `rulesExtracted=${r.rulesExtracted}`,
+    d ? `parse_success=${d.parseSuccess}` : null,
+    d?.zeroRulesReason ? `zero_rules_reason=${d.zeroRulesReason}` : null,
+    d ? `status=${d.status}` : null,
+    typeof d?.modelResponseChars === "number" ? `model_response_chars=${d.modelResponseChars}` : null,
+    failed ? "semantic=failed" : "semantic=success",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 export interface BuildCliRunnersOptions {
   verbose?: boolean;
   backfillDecayMarker?: string;
@@ -210,25 +237,9 @@ function assertLifecycleSyncSummaryDoesNotBlock(summary: string): string {
   return summary;
 }
 
-function assertRecordStorageSampleSummaryDoesNotBlock(summary: string): string {
-  if (/\breason=storage_unavailable\b/i.test(summary)) {
-    const semanticSummary = summary.includes("semantic=") ? summary : `${summary} semantic=partial`;
-    throw new Error(`record-storage-sample storage unavailable (${semanticSummary})`);
-  }
-  return summary;
-}
-
 function resolveOpenclawHomeFromSqlitePath(resolvedSqlitePath: string | null | undefined): string {
   if (resolvedSqlitePath) return join(dirname(resolvedSqlitePath), "..");
   return join(homedir(), ".openclaw");
-}
-
-function assertContradictionMaintenanceSummaryDoesNotBlock(summary: string, evaluation: { degraded: boolean }): string {
-  const semantic = parseSemanticTokenFromSummary(summary);
-  if (evaluation.degraded || semanticOutcomeBlocksOrchestratorGuard(semantic)) {
-    throw new Error(`resolve-contradictions degraded backlog (${summary})`);
-  }
-  return summary;
 }
 
 export function buildCliMaintenanceRunners(
@@ -280,8 +291,7 @@ export function buildCliMaintenanceRunners(
       /* non-fatal */
     }
     const r = recordStorageGrowthSample(b.factsDb, lanceBytes, {});
-    const summary = `status=${r.status} reason=${r.reason ?? "none"} semantic=${r.reason === "storage_unavailable" ? "partial" : "success"}`;
-    return assertRecordStorageSampleSummaryDoesNotBlock(summary);
+    return `status=${r.status} reason=${r.reason ?? "none"} semantic=${r.reason === "storage_unavailable" ? "monitoring" : "success"}`;
   });
 
   set("analyze-maintenance-logs", async () => {
@@ -390,7 +400,7 @@ export function buildCliMaintenanceRunners(
 
   set("resolve-contradictions", async () => {
     const openclawHome = resolveOpenclawHomeFromSqlitePath(b.resolvedSqlitePath);
-    const { summary, evaluation } = await runContradictionMaintenanceAutoStep({
+    const { summary } = await runContradictionMaintenanceAutoStep({
       openclawHome,
       degradedAmbiguousThreshold: DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD,
       degradedConsecutiveThreshold: ORCHESTRATOR_CONTRADICTION_DEGRADED_CONSECUTIVE_THRESHOLD,
@@ -400,7 +410,7 @@ export function buildCliMaintenanceRunners(
           targetRate: 0.8,
         }),
     });
-    return assertContradictionMaintenanceSummaryDoesNotBlock(summary, evaluation);
+    return summary;
   });
 
   set("enrich-entities", async () => {
@@ -474,19 +484,11 @@ export function buildCliMaintenanceRunners(
 
   set("reflect-rules", async () => {
     const r = await b.runReflectionRules({ dryRun: false, model: b.reflectionConfig.model, verbose });
-    const d = r.diagnostics;
-    const summary = [
-      `rulesStored=${r.rulesStored}`,
-      `rulesExtracted=${r.rulesExtracted}`,
-      d ? `parse_success=${d.parseSuccess}` : null,
-      d?.zeroRulesReason ? `zero_rules_reason=${d.zeroRulesReason}` : null,
-      d ? `status=${d.status}` : null,
-      d?.status === "degraded" || reflectRulesDiagnosticsIndicateFailure(d, r.rulesStored) ? "semantic=failed" : null,
-    ]
-      .filter(Boolean)
-      .join(" ");
-    if (d?.status === "degraded" || reflectRulesDiagnosticsIndicateFailure(d, r.rulesStored)) {
-      throw new Error(`reflect-rules semantic failure (${d?.zeroRulesReason ?? "degraded"}): ${summary}`);
+    const summary = formatReflectRulesMaintenanceSummary(r);
+    if (reflectRulesDiagnosticsIndicateFailure(r.diagnostics, r.rulesStored)) {
+      throw new Error(
+        `reflect-rules semantic failure (${r.diagnostics?.zeroRulesReason ?? r.diagnostics?.status ?? "failed"}): ${summary}`,
+      );
     }
     return summary;
   });
@@ -890,8 +892,7 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
 
   runners.set("record-storage-sample", async () => {
     const r = recordStorageGrowthSample(deps.factsDb, null, {});
-    const summary = `status=${r.status} reason=${r.reason ?? "none"} semantic=${r.reason === "storage_unavailable" ? "partial" : "success"}`;
-    return assertRecordStorageSampleSummaryDoesNotBlock(summary);
+    return `status=${r.status} reason=${r.reason ?? "none"} semantic=${r.reason === "storage_unavailable" ? "monitoring" : "success"}`;
   });
 
   if (deps.runAnalyzeLogs) {
