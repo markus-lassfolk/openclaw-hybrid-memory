@@ -43,6 +43,7 @@ import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getEnv } from "../utils/env-manager.js";
 import { getReinforcementSignalRegex } from "../utils/language-keywords.js";
 import { redactMaintenancePrivateText } from "../utils/maintenance-privacy.js";
+import { maintenanceRunDeadlineReached } from "../utils/maintenance-run-deadline.js";
 import { parseStructuredItemsAcceptingEmpty } from "../utils/llm-json-array.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { resolveExtractSessionFilePaths } from "../services/extract-session-paths.js";
@@ -462,6 +463,12 @@ export async function runExtractReinforcementForCli(
         };
 
         for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+          if (maintenanceRunDeadlineReached()) {
+            logger.warn?.(
+              "memory-hybrid: extract-reinforcement stopped — maintenance run deadline reached",
+            );
+            break;
+          }
           if (completedBatchIndexes.has(batchIndex)) continue;
           const batch = batches[batchIndex];
           const globalIncidentOffset = globalIncidentOffsetForBatch(batches, batchIndex);
@@ -485,7 +492,7 @@ export async function runExtractReinforcementForCli(
                 completedBatchIndexes.add(batchIndex);
                 completedBatches = completedBatchIndexes.size;
                 persistBatchState();
-                if (batchDelayMs > 0 && batchIndex < batches.length - 1) {
+                if (batchDelayMs > 0 && batchIndex < batches.length - 1 && !maintenanceRunDeadlineReached()) {
                   await new Promise((resolve) => setTimeout(resolve, batchDelayMs));
                 }
                 continue;
@@ -513,7 +520,7 @@ export async function runExtractReinforcementForCli(
               completedBatchIndexes.add(batchIndex);
               completedBatches = completedBatchIndexes.size;
               persistBatchState();
-              if (batchDelayMs > 0 && batchIndex < batches.length - 1) {
+              if (batchDelayMs > 0 && batchIndex < batches.length - 1 && !maintenanceRunDeadlineReached()) {
                 await new Promise((resolve) => setTimeout(resolve, batchDelayMs));
               }
               continue;
@@ -554,7 +561,7 @@ export async function runExtractReinforcementForCli(
           completedBatches = completedBatchIndexes.size;
           persistBatchState();
 
-          if (batchDelayMs > 0 && batchIndex < batches.length - 1) {
+          if (batchDelayMs > 0 && batchIndex < batches.length - 1 && !maintenanceRunDeadlineReached()) {
             await new Promise((resolve) => setTimeout(resolve, batchDelayMs));
           }
         }

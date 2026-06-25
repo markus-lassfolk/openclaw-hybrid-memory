@@ -8,6 +8,8 @@ import type { DatabaseSync } from "node:sqlite";
 import { nowIso } from "../utils/dates.js";
 import {
   clearMaintenanceRunDeadline,
+  maintenanceRunDeadlineReached,
+  remainingMaintenanceRunMs,
   setMaintenanceRunDeadlineMs,
 } from "../utils/maintenance-run-deadline.js";
 import { is429OrWrapped } from "./chat.js";
@@ -592,8 +594,14 @@ export async function runMaintenanceOrchestrator(
       continue;
     }
 
-    if (lastWasLlmStep && isLlmProviderStep(step.llmTier) && llmCooldownMs > 0) {
-      await sleep(llmCooldownMs);
+    if (lastWasLlmStep && isLlmProviderStep(step.llmTier) && llmCooldownMs > 0 && !maintenanceRunDeadlineReached()) {
+      const remaining = remainingMaintenanceRunMs();
+      const cooldownMs = Number.isFinite(remaining)
+        ? Math.min(llmCooldownMs, Math.max(0, Math.floor(remaining)))
+        : llmCooldownMs;
+      if (cooldownMs > 0) {
+        await sleep(cooldownMs);
+      }
     }
 
     const stepStarted = Date.now();

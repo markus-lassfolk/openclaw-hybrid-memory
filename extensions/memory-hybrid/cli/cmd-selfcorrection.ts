@@ -64,6 +64,7 @@ import {
 import { MaintenanceJobRun } from "../services/maintenance-job-run/job-run.js";
 import { selfCorrectionStatusToJobRunOutcome } from "../services/maintenance-job-run/semantic-outcome.js";
 import { formatDateUtc, nowIso } from "../utils/dates.js";
+import { maintenanceRunDeadlineReached } from "../utils/maintenance-run-deadline.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getCorrectionSignalRegex } from "../utils/language-keywords.js";
 import { parseSelfCorrectionLLMResponse } from "../services/self-correction-llm-parser.js";
@@ -244,6 +245,7 @@ function chunkSelfCorrectionIncidents<T>(items: T[], batchSize: number): T[][] {
 }
 
 async function sleepSelfCorrectionBackoff(ms: number): Promise<void> {
+  if (maintenanceRunDeadlineReached()) return;
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
@@ -1130,6 +1132,12 @@ export async function runSelfCorrectionRunForCli(
       );
 
       for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        if (maintenanceRunDeadlineReached()) {
+          logger.warn?.(
+            `memory-hybrid: ${SCAN_TYPE} stopped — maintenance run deadline reached`,
+          );
+          break;
+        }
         if (completedBatchIndexes.has(batchIndex)) continue;
         const batch = batches[batchIndex];
         const globalIncidentOffset = globalIncidentOffsetForBatch(batches, batchIndex);
@@ -1138,9 +1146,20 @@ export async function runSelfCorrectionRunForCli(
           `memory-hybrid: ${SCAN_TYPE} batch ${batchIndex + 1}/${batches.length} start incidents=${batch.length}`,
         );
         await processBatchResult(batchIndex, batch, globalIncidentOffset);
-        if (batchDelayMs > 0 && batchIndex < batches.length - 1) {
+        if (batchDelayMs > 0 && batchIndex < batches.length - 1 && !maintenanceRunDeadlineReached()) {
           await sleepSelfCorrectionBackoff(batchDelayMs);
         }
+      }
+
+      if (
+        maintenanceRunDeadlineReached() &&
+        completedBatchIndexes.size > 0 &&
+        completedBatchIndexes.size < batches.length
+      ) {
+        persistBatchState();
+        logger.warn?.(
+          `memory-hybrid: ${SCAN_TYPE} partial run — maintenance deadline (batches ${completedBatchIndexes.size}/${batches.length})`,
+        );
       }
 
       if (opts.verbose && analysed.length > 0) {
