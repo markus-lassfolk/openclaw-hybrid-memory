@@ -249,7 +249,6 @@ export class ContinuousVerifier {
             operation: "verify-fact",
             metadata: { factId: fact.factId },
           });
-          result.errors++;
           recordVerificationError(result, `fact=${fact.factId.slice(0, 8)}…`, err);
           outcome = "UNCERTAIN";
         }

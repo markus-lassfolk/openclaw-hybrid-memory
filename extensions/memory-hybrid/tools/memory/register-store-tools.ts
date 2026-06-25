@@ -240,14 +240,20 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
           const storeWal = resolveToolVaultWal(runtime, typeof vaultParam === "string" ? vaultParam : undefined);
 
           // --- Early input validation (must run before any side effects) ---
-          if (text.trim().length === 0) {
+          const trimmedText = typeof text === "string" ? text.trim() : "";
+          if (trimmedText.length === 0) {
             return {
-              content: [{ type: "text", text: "memory_store: text must not be empty or whitespace." }],
+              content: [
+                {
+                  type: "text",
+                  text: "memory_store: text is required and must be non-empty (received empty or non-string text)",
+                },
+              ],
               details: { error: "invalid_text" },
             };
           }
 
-          const textToStore = prepareMemoryTextForStorage(text, cfg.captureMaxChars);
+          const textToStore = prepareMemoryTextForStorage(trimmedText, cfg.captureMaxChars);
           if (!textToStore || !isSubstantiveMemoryText(textToStore)) {
             return {
               content: [

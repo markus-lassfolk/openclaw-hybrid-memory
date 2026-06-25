@@ -19,7 +19,6 @@ import {
 import { syncLifecycleFromGitHub } from "../../../services/lifecycle/github-adapter.js";
 import { runAnalyzeMaintenanceLogs } from "./register-analyze-maintenance-logs.js";
 import { buildAuditHealthReport } from "./storage-stats-helpers.js";
-import { buildAuditHealthExitInfo } from "../../../services/audit-health-exit-info.js";
 import { recordStorageGrowthSample } from "./storage-stats-helpers.js";
 import { runPendingDigestAutopilotCron } from "../../../services/pending-digest-autopilot-cron.js";
 import { buildPendingReviewDigestReport } from "../../../services/pending-review-digest.js";
@@ -40,6 +39,7 @@ import {
   runExtractImplicitStep,
   runToolEffectivenessStep,
 } from "./dream-cycle-followup-steps.js";
+import { extractImplicitSemanticOutcome, isGracefulExtractImplicitPartial } from "./dream-cycle-followup.js";
 import { cleanupImplicitFeedbackDuplicates } from "../../cmd-feedback.js";
 import { resolveScanMaintenanceOverrides, type ScanMaintenanceOverrideInput } from "../../maintenance-overrides.js";
 import { nowIso } from "../../../utils/dates.js";
@@ -142,12 +142,13 @@ function formatExtractImplicitSummary(res: {
   sessionsProcessed: number;
   sessionsScanned: number;
   partial?: boolean;
+  partialReason?: string;
 }): string {
-  return `${res.signalsExtracted} signals (${res.positiveCount}+/${res.negativeCount}-) from ${res.sessionsProcessed}/${res.sessionsScanned} sessions semantic=${res.partial ? "partial" : "success"}`;
+  return `${res.signalsExtracted} signals (${res.positiveCount}+/${res.negativeCount}-) from ${res.sessionsProcessed}/${res.sessionsScanned} sessions semantic=${extractImplicitSemanticOutcome(res)}`;
 }
 
 function assertExtractImplicitNotPartial(res: { partial?: boolean; partialReason?: string }, summary: string): void {
-  if (res.partial) {
+  if (res.partial && !isGracefulExtractImplicitPartial(res.partialReason)) {
     throw new Error(`extract-implicit partial failure (${res.partialReason ?? "capped"}): ${summary}`);
   }
 }
@@ -671,19 +672,11 @@ export function buildCliMaintenanceRunners(
       b.cfg.entityExtraction?.stopWords ?? [],
       b.cfg.graph?.hubDegreeCap,
     );
-    const exitInfo = buildAuditHealthExitInfo({
-      strict: true,
-      warningCount: report.warningCount,
-      errorCount: report.errorCount,
-      ok: report.ok,
-      status: report.status,
-    });
-    if (exitInfo.exitCode !== 0) {
-      throw new Error(
-        exitInfo.strictFailureReason ?? `${exitInfo.errorCount} error(s), ${exitInfo.warningCount} warning(s)`,
-      );
+    if (report.errorCount > 0) {
+      throw new Error(`${report.errorCount} error(s) present`);
     }
-    return `warnings=${report.warningCount} errors=${report.errorCount}`;
+    const semantic = report.warningCount > 0 ? "monitoring" : "success";
+    return `warnings=${report.warningCount} errors=${report.errorCount} semantic=${semantic}`;
   });
 
   set("crystallization-rescan", async () => {

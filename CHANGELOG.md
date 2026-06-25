@@ -27,6 +27,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.6.258] - 2026-06-25
+
+### Fixed
+
+- **Maintenance nightly exit codes (#1949):** Treat `extract-implicit` budget-cap partial runs (`maxWallClock`, session/signal/trajectory caps) as successful monitoring steps instead of failures; stop counting continuous-verification LLM downgrades to `UNCERTAIN` as errors and do not fail nightly when all facts receive uncertain verdicts; run orchestrator `audit-health` non-strict (warnings only) while still failing on report errors. Cron exit validator ignores legacy `all_uncertain` degraded machine-status lines.
+- **memory_store empty args (#1950):** Require string `text` before validation so streaming-parser `{}` or malformed args return structured `invalid_text` instead of throwing on `undefined.trim()` or coercing objects to `[object Object]`.
+- **Maintenance guard (#1949 review):** Allow cron guard advancement when summary validation reports monitoring-only degraded semantics with no blocking issues.
+
+---
+
 ## [2026.6.256] - 2026-06-25
 
 ### Fixed

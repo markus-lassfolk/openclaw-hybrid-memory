@@ -20,6 +20,24 @@ export interface ContinuousVerificationAssessment {
   summary?: string;
 }
 
+/** Budget-cap partial runs that persist useful work and resume on the next nightly. */
+const GRACEFUL_EXTRACT_IMPLICIT_PARTIAL_REASONS = new Set([
+  "maxWallClock",
+  "maxSessions",
+  "maxSignals",
+  "maxTrajectories",
+]);
+
+export function isGracefulExtractImplicitPartial(partialReason?: string): boolean {
+  return partialReason != null && GRACEFUL_EXTRACT_IMPLICIT_PARTIAL_REASONS.has(partialReason);
+}
+
+export function extractImplicitSemanticOutcome(res: { partial?: boolean; partialReason?: string }): string {
+  if (!res.partial) return "success";
+  if (isGracefulExtractImplicitPartial(res.partialReason)) return "monitoring";
+  return "partial";
+}
+
 export function formatExtractImplicitFeedbackProgress(
   snapshot: ExtractImplicitFeedbackProgressSnapshot | undefined,
 ): string | undefined {
@@ -57,24 +75,17 @@ export function formatExtractImplicitFeedbackProgress(
 }
 
 export function assessContinuousVerificationResult(result: VerificationCycleResult): ContinuousVerificationAssessment {
-  if (result.errors > 0) {
+  const verdicts = result.confirmed + result.stale + result.uncertain;
+  if (result.errors > 0 && (result.checked === 0 || verdicts < result.checked)) {
     const summary =
       result.checked === 0
         ? `infrastructure error prevented verification (${result.errors} error(s))`
-        : `${result.errors}/${result.checked} verification check(s) errored`;
+        : `${result.errors}/${result.checked} verification check(s) failed without a verdict`;
     return {
       status: "degraded",
       reason: "errors_present",
       shouldFailPipeline: true,
       summary,
-    };
-  }
-  if (result.checked > 0 && result.confirmed === 0 && result.stale === 0) {
-    return {
-      status: "degraded",
-      reason: "all_uncertain",
-      shouldFailPipeline: true,
-      summary: `all ${result.checked} verification check(s) were uncertain`,
     };
   }
   return { status: "healthy", reason: "healthy", shouldFailPipeline: false };

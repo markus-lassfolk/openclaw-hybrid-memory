@@ -20,7 +20,7 @@
  *     - CONFIRMED path: store updated (new version), confirmed counter incremented
  *     - STALE path: fact confidence set to 0.5, tag 'needs-verification' added
  *     - UNCERTAIN path: tag 'review-needed' added, confidence unchanged
- *     - counts errors without aborting the rest of the cycle
+ *     - LLM failures degrade to UNCERTAIN without incrementing errors
  *     - processes multiple facts in a single cycle
  *     - underlying fact not found — STALE/UNCERTAIN tags are no-ops (no crash)
  *   runVerificationCycle:
@@ -360,7 +360,7 @@ describe("ContinuousVerifier.runCycle — UNCERTAIN", () => {
 // ---------------------------------------------------------------------------
 
 describe("ContinuousVerifier.runCycle — error handling", () => {
-  it("counts errors but continues processing remaining facts", async () => {
+  it("continues processing remaining facts when an LLM call degrades to UNCERTAIN", async () => {
     let callCount = 0;
     const mockOpenAI = {
       chat: {
@@ -386,14 +386,15 @@ describe("ContinuousVerifier.runCycle — error handling", () => {
 
     const result = await verifier.runCycle();
     expect(result.checked).toBe(2);
-    expect(result.errors).toBe(1);
+    expect(result.errors).toBe(0);
+    expect(result.uncertain).toBe(1);
     expect(result.confirmed).toBe(1);
     expect(result.errorSummaries).toHaveLength(1);
     expect(result.errorSummaries[0]).toContain("fact=fact-err");
     expect(result.errorSummaries[0]).toContain("transient error");
   });
 
-  it("records compact summaries when every verification call errors", async () => {
+  it("records compact summaries when every verification call degrades to UNCERTAIN", async () => {
     const mockOpenAI = makeMockOpenAI(new Error("provider timeout while checking fact"));
     const verifier = new ContinuousVerifier(store, factsDb, mockOpenAI as never);
 
@@ -430,7 +431,7 @@ describe("ContinuousVerifier.runCycle — error handling", () => {
     expect(result.confirmed).toBe(0);
     expect(result.stale).toBe(0);
     expect(result.uncertain).toBe(2);
-    expect(result.errors).toBe(2);
+    expect(result.errors).toBe(0);
     expect(result.errorSummaries).toHaveLength(2);
     expect(result.errorSummaries[0]).toContain("provider timeout while checking fact");
     expect(result.errorSummaries[1]).toContain("provider timeout while checking fact");

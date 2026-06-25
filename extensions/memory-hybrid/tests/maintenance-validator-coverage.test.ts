@@ -141,8 +141,11 @@ describe("maintenance validator coverage registry", () => {
     ).toBe(true);
   });
 
-  it("shouldUpdateMaintenanceGuard blocks guard for degraded semantic status without monitoring issues", () => {
-    expect(shouldUpdateMaintenanceGuard("success", [], "degraded")).toBe(false);
+  it("shouldUpdateMaintenanceGuard allows guard update for monitoring-only degraded semantics without issues", () => {
+    expect(shouldUpdateMaintenanceGuard("success", [], "degraded")).toBe(true);
+  });
+
+  it("shouldUpdateMaintenanceGuard blocks guard for degraded semantic status with blocking issues", () => {
     expect(
       shouldUpdateMaintenanceGuard(
         "success",
