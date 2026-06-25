@@ -1809,11 +1809,11 @@ export function shouldUpdateMaintenanceGuard(
   if (reportableIssues.some(isGuardBlockingSemanticIssue)) return false;
   if (semanticStatus === "semantic_fail") return false;
   if (semanticStatus === "degraded") {
-    return (
-      reportableIssues.length > 0 &&
-      reportableIssues.every((issue) =>
-        (MONITORING_ONLY_FAILURE_CLASSES as readonly string[]).includes(issue.failureClass),
-      )
+    // Monitoring-only step semantics (budget caps, advisory audit warnings) can leave
+    // semanticStatus degraded without reportable issues when summary.json validation runs.
+    if (reportableIssues.length === 0) return true;
+    return reportableIssues.every((issue) =>
+      (MONITORING_ONLY_FAILURE_CLASSES as readonly string[]).includes(issue.failureClass),
     );
   }
   return true;

@@ -2246,6 +2246,52 @@ error: unknown command 'bar'
       expect(result.guardUpdated).toBe(false);
     });
 
+    it("updates guard for successful nightly summary with monitoring-only step semantics", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-monitoring-"));
+      const summaryPath = join(tmpDir, "maintenance-nightly-run.summary.json");
+      const exitPath = join(tmpDir, "maintenance-nightly-run.exit.txt");
+      const logPath = join(tmpDir, "maintenance-nightly-run.log");
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: "orch-monitoring",
+          tierLabel: "nightly",
+          startedAt: "2026-06-05T02:00:00.000Z",
+          finishedAt: "2026-06-05T02:30:00.000Z",
+          durationMs: 1000,
+          exitCode: 0,
+          summaryLine: "ok with monitoring semantics",
+          steps: [
+            {
+              name: "extract-implicit",
+              status: "ok",
+              summary:
+                "128 signals (106+/22-) from 116/471 sessions semantic=monitoring",
+              durationMs: 1200000,
+              semanticOutcome: "monitoring",
+            },
+            {
+              name: "audit-health",
+              status: "ok",
+              summary: "warnings=7 errors=0 semantic=monitoring",
+              durationMs: 1200,
+              semanticOutcome: "monitoring",
+            },
+          ],
+          counts: { ok: 2, skipped: 0, deferred: 0, failed: 0, rateLimited: 0 },
+        }),
+      );
+      writeFileSync(exitPath, "2026-06-05T02:30:00Z maintenance-nightly exit=0\n");
+      writeFileSync(logPath, "");
+
+      const result = validateFromSummaryJson(summaryPath, exitPath, logPath, ["maintenance-nightly"], true);
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.semanticStatus).toBe("degraded");
+      expect(result.guardUpdated).toBe(true);
+      expect(result.failedSteps).toHaveLength(0);
+    });
+
     it("falls back to HM_EXIT validation for empty consolidated summary", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-empty-consolidated-"));
       const summaryPath = join(tmpDir, "maintenance-nightly-run.summary.json");

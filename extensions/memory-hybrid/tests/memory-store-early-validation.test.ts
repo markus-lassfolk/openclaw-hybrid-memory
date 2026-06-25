@@ -153,6 +153,25 @@ describe("memory_store early validation — invalid text", () => {
     expect(embeddings.embed).not.toHaveBeenCalled();
   });
 
+  it("returns invalid_text error for non-string text without persisting garbage", async () => {
+    const walWrite = vi.fn().mockResolvedValue("wal-id");
+    const embeddings = makeMockEmbeddings();
+    const { api } = setupTool(walWrite, embeddings);
+
+    const storeTool = api.getTool("memory_store");
+    const result = (await storeTool?.execute("call-object-text", {
+      text: { note: "not a string" },
+    })) as {
+      content: Array<{ text: string }>;
+      details: { error: string };
+    };
+
+    expect(result.details.error).toBe("invalid_text");
+    expect(walWrite).not.toHaveBeenCalled();
+    expect(embeddings.embed).not.toHaveBeenCalled();
+    expect(factsDb.getAll()).toHaveLength(0);
+  });
+
   it("returns invalid_text error for empty string without writing WAL", async () => {
     const walWrite = vi.fn().mockResolvedValue("wal-id");
     const embeddings = makeMockEmbeddings();

@@ -240,7 +240,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
           const storeWal = resolveToolVaultWal(runtime, typeof vaultParam === "string" ? vaultParam : undefined);
 
           // --- Early input validation (must run before any side effects) ---
-          const trimmedText = String(text ?? "").trim();
+          const trimmedText = typeof text === "string" ? text.trim() : "";
           if (trimmedText.length === 0) {
             return {
               content: [
