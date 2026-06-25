@@ -444,23 +444,19 @@ export function trajectoryCallTimeoutMs(deadlineMs: number, nowMs: number = Date
   return remaining > 0 ? Math.max(1, remaining) : 0;
 }
 
-/** Propagate a source abort signal into a target controller (first abort wins). */
-export function propagateAbortSignal(source: AbortSignal, target: AbortController): void {
-  if (source.aborted) {
+/** Propagate a source abort signal into a target controller (first abort wins). Returns a disposer. */
+export function propagateAbortSignal(source: AbortSignal, target: AbortController): () => void {
+  const onAbort = () => {
     if (!target.signal.aborted) {
       target.abort(source.reason ?? new Error("aborted"));
     }
-    return;
+  };
+  if (source.aborted) {
+    onAbort();
+    return () => {};
   }
-  source.addEventListener(
-    "abort",
-    () => {
-      if (!target.signal.aborted) {
-        target.abort(source.reason ?? new Error("aborted"));
-      }
-    },
-    { once: true },
-  );
+  source.addEventListener("abort", onAbort, { once: true });
+  return () => source.removeEventListener("abort", onAbort);
 }
 
 /** Run async work over items with a bounded worker pool. */
@@ -1160,8 +1156,9 @@ export async function runExtractImplicitFeedbackForCli(
                 }
                 const llmBudgetMs = resolveTrajectoryLlmBudgetMs(remainingWallClockMs());
                 if (llmBudgetMs === 0) {
+                  // Stop scheduling new calls, but do not abort in-flight workers that already
+                  // claimed budget — remaining wall-clock may be <1s while calls finish.
                   stopTrajectoryLlm = true;
-                  runWallClockAbort.abort(new Error("implicit-feedback wall-clock budget exceeded"));
                   return;
                 }
                 const deadlineMs = Date.now() + llmBudgetMs;
@@ -1170,7 +1167,7 @@ export async function runExtractImplicitFeedbackForCli(
                   () => perCallAbort.abort(new Error("implicit-feedback trajectory LLM budget exceeded")),
                   llmBudgetMs,
                 );
-                propagateAbortSignal(runWallClockAbort.signal, perCallAbort);
+                const disposeRunAbortLink = propagateAbortSignal(runWallClockAbort.signal, perCallAbort);
                 const chatFn = async (opts: { model?: string; messages: Array<{ role: string; content: string }> }) => {
                   const userMessage = opts.messages.find((m) => m.role === "user");
                   if (!userMessage) throw new Error("No user message found");
@@ -1216,6 +1213,7 @@ export async function runExtractImplicitFeedbackForCli(
                   });
                 } finally {
                   clearTimeout(perCallTimeout);
+                  disposeRunAbortLink();
                 }
                 if (wallClockLimitReached()) {
                   stopTrajectoryLlm = true;

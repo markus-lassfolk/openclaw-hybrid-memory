@@ -1757,9 +1757,19 @@ describe("trajectory LLM budget (#1953)", () => {
   it("propagateAbortSignal aborts target when source aborts", () => {
     const source = new AbortController();
     const target = new AbortController();
-    propagateAbortSignal(source.signal, target);
+    const dispose = propagateAbortSignal(source.signal, target);
     source.abort(new Error("wall clock"));
     expect(target.signal.aborted).toBe(true);
+    dispose();
+  });
+
+  it("propagateAbortSignal disposer removes listener before source aborts", () => {
+    const source = new AbortController();
+    const target = new AbortController();
+    const dispose = propagateAbortSignal(source.signal, target);
+    dispose();
+    source.abort(new Error("wall clock"));
+    expect(target.signal.aborted).toBe(false);
   });
 });
 
