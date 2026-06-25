@@ -27,6 +27,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.6.252] - 2026-06-25
+
+### Fixed
+
+- **Project-state LWW entity-reuse heuristic (#1945):** Count distinct PR/issue refs per fact instead of across both facts in a pair, so legitimate project-state transitions no longer false-positive as `possible-entity-reuse`.
+- **Distill vector dedupe (#1947):** Wire LanceDB neighbour candidates into `storeWithResult`, restore `hasDuplicate` fallback when vector search degrades, pass structured fields into the lexical pre-check, and allow distillation project facts to vector-dedupe across entity slug drift while preserving the #1276 guard for other sources.
+
+### Changed
+
+- Version set to **2026.6.252**.
+
+---
+
 ## [2026.6.250] - 2026-06-25
 
 ### Fixed

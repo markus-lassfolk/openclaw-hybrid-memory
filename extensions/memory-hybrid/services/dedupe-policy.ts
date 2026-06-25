@@ -60,6 +60,9 @@ export function resolveDedupeProfile(source: string | null | undefined, store: S
   if (profiles[sourceKey]) {
     const normalized = normalizeProfile(sourceKey, profiles[sourceKey]);
     const merged = { ...base, ...normalized };
+    if (sourceKey === "distillation" && normalized.vectorThreshold === undefined) {
+      merged.vectorThreshold = DISTILL_DEDUP_THRESHOLD;
+    }
     // If user configured a source-specific profile without explicit onDuplicate, default to "store"
     if (normalized.onDuplicate === undefined) {
       merged.onDuplicate = "store";
@@ -72,7 +75,6 @@ export function resolveDedupeProfile(source: string | null | undefined, store: S
     if (globToRegExp(pattern).test(sourceKey)) {
       const normalized = normalizeProfile(pattern, profile);
       const merged = { ...base, ...normalized };
-      // If user configured a glob profile without explicit onDuplicate, default to "store"
       if (normalized.onDuplicate === undefined) {
         merged.onDuplicate = "store";
       }
@@ -274,7 +276,14 @@ export function applyDedupe(
       const matched = ctx.db
         .prepare("SELECT entity, key FROM facts WHERE id = ? AND superseded_at IS NULL LIMIT 1")
         .get(vectorDup.id) as { entity: string | null; key: string | null } | undefined;
-      if (matched?.entity === entity && matched?.key === key) {
+      if (!matched) {
+        return { action: "store" };
+      }
+      // Distillation re-extractions may drift entity slug while keeping the same key (#1947).
+      // Active-task projection still requires exact entity+key for other sources (#1276).
+      const sameKey = matched.key === key;
+      const sameEntityAndKey = matched.entity === entity && sameKey;
+      if (sameEntityAndKey || (candidate.source === "distillation" && sameKey)) {
         return mapOnDuplicate(profile, vectorDup.id, "vector");
       }
     }

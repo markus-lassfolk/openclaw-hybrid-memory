@@ -71,71 +71,14 @@ import type { MaintenanceJobRun } from "../services/maintenance-job-run/job-run.
 import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 import type { DistillCliResult, DistillCliSink, DistillWindowResult, RecordDistillResult } from "./types.js";
+import {
+  classifyStoreDedupeMode,
+  resolveDistillVectorCandidates,
+} from "./vector-dedupe-helpers.js";
 
 // Constants used only by distill functions
 const FULL_DISTILL_MAX_DAYS = 90;
 const INCREMENTAL_MIN_DAYS = 3;
-const VECTOR_CANDIDATE_LIMIT = 10;
-const VECTOR_CANDIDATE_OVERFETCH_LIMIT = 50;
-const VECTOR_CANDIDATE_MIN_SCORE = 0;
-
-function getVectorSearchFailReason(vectorDb: unknown): string | null {
-  const getter = (vectorDb as { getLastSearchFailReason?: unknown }).getLastSearchFailReason;
-  if (typeof getter !== "function") return null;
-  try {
-    const reason = getter.call(vectorDb);
-    return typeof reason === "string" && reason.length > 0 ? reason : null;
-  } catch {
-    return null;
-  }
-}
-
-function isLiveFact(candidate: { supersededAt?: number | null; expiresAt?: number | null }): boolean {
-  const nowSec = Math.floor(Date.now() / 1000);
-  return candidate.supersededAt == null && (candidate.expiresAt == null || candidate.expiresAt > nowSec);
-}
-
-/** Filter LanceDB neighbours to live distillation facts for write-time dedupe (#1947). */
-export function filterDistillVectorCandidates(
-  neighbors: Array<{ entry: { id: string }; score: number }>,
-  factsDb: {
-    getById: (
-      id: string,
-    ) => {
-      supersededAt?: number | null;
-      expiresAt?: number | null;
-      source?: string | null;
-      embeddingModel?: string | null;
-      scope?: string | null;
-      scopeTarget?: string | null;
-    } | null;
-  },
-  embeddingModelName: string | null,
-  candidateScope = "global",
-  candidateScopeTarget: string | null = null,
-): Array<{ id: string; score: number }> {
-  return neighbors
-    .map((candidate) => ({
-      id: candidate.entry.id,
-      score: candidate.score,
-    }))
-    .filter(
-      (candidate) =>
-        typeof candidate.id === "string" && candidate.id.length > 0 && Number.isFinite(candidate.score),
-    )
-    .filter((candidate) => {
-      const live = factsDb.getById(candidate.id);
-      return (
-        live != null &&
-        isLiveFact(live) &&
-        live.source === "distillation" &&
-        (live.scope ?? "global") === candidateScope &&
-        (live.scope === "global" ? null : (live.scopeTarget ?? null)) === candidateScopeTarget &&
-        (embeddingModelName == null || live.embeddingModel == null || live.embeddingModel === embeddingModelName)
-      );
-    })
-    .slice(0, VECTOR_CANDIDATE_LIMIT);
-}
 
 export function gatherSessionFiles(opts: {
   all?: boolean;
@@ -779,6 +722,11 @@ export async function runDistillForCli(
     };
     let stored = 0;
     let skipped = 0;
+    const fuzzyDedupeEnabled = cfg.store.fuzzyDedupe === true;
+    let vectorSearchDegraded = false;
+    let vectorDedupeStores = 0;
+    let lexicalOnlyDedupeStores = 0;
+    let usedHasDuplicateFallback = false;
     for (const fact of allFacts) {
       const parsed = tryParseCredentialForVault(fact.text, fact.entity ?? null, fact.key ?? null, fact.value, {
         requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
@@ -876,7 +824,12 @@ export async function runDistillForCli(
         continue;
       }
 
-      if (factsDb.hasDuplicate(fact.text, "distillation")) {
+      const category = (isValidCategory(fact.category) ? fact.category : "other") as MemoryCategory;
+      const entity = fact.entity ?? null;
+      const key = fact.key ?? null;
+      const factValue = fact.value ?? null;
+
+      if (factsDb.hasDuplicate(fact.text, "distillation", { category, entity, key, value: factValue })) {
         skipped++;
         continue;
       }
@@ -884,46 +837,58 @@ export async function runDistillForCli(
         const redactedText = redactMaintenancePrivateText(fact.text);
         const redactedValue = fact.value ? redactMaintenancePrivateText(fact.value) : redactedText.slice(0, 200);
         const vector = await embeddings.embed(redactedText);
-        let vectorCandidates: Array<{ id: string; score: number }> | undefined;
-        if (cfg.store?.fuzzyDedupe ?? true) {
-          try {
-            const embeddingModelName =
-              typeof embeddings.modelName === "string" && embeddings.modelName.trim().length > 0
-                ? embeddings.modelName
-                : null;
-            const neighbors = await vectorDb.search(
-              vector,
-              VECTOR_CANDIDATE_OVERFETCH_LIMIT,
-              VECTOR_CANDIDATE_MIN_SCORE,
-            );
-            if (!getVectorSearchFailReason(vectorDb)) {
-              vectorCandidates = filterDistillVectorCandidates(neighbors, factsDb, embeddingModelName);
-            }
-          } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "cli",
-              operation: "runDistillForCli:vector-candidates",
-            });
-          }
+        const embeddingModelName =
+          typeof embeddings.modelName === "string" && embeddings.modelName.trim().length > 0
+            ? embeddings.modelName
+            : null;
+        const vectorResolve = await resolveDistillVectorCandidates({
+          fuzzyDedupe: fuzzyDedupeEnabled,
+          vector,
+          vectorDb,
+          factsDb,
+          embeddingModelName,
+        });
+        vectorSearchDegraded = vectorSearchDegraded || vectorResolve.vectorSearchDegraded;
+        if (vectorResolve.usedHasDuplicateFallback) {
+          usedHasDuplicateFallback = true;
+        }
+        if (vectorResolve.skipAsDuplicate) {
+          skipped++;
+          continue;
         }
         const storeResult = factsDb.storeWithResult(
           {
             text: redactedText,
-            category: (isValidCategory(fact.category) ? fact.category : "other") as MemoryCategory,
+            category,
             importance: BATCH_STORE_IMPORTANCE,
-            entity: fact.entity ?? null,
-            key: fact.key ?? null,
+            entity,
+            key,
             value: redactedValue,
             source: "distillation",
             sourceDate: sourceDateSec(fact.source_date),
             tags: fact.tags?.length ? fact.tags : extractTags(redactedText, fact.entity ?? undefined),
           },
           {
-            vectorCandidates,
+            vectorCandidates: vectorResolve.vectorCandidates,
             warnContext: "distill",
             suppressVectorFallbackWarning: true,
           },
         );
+        const factDedupeMode = classifyStoreDedupeMode({
+          fuzzyDedupe: fuzzyDedupeEnabled,
+          vectorSearchDegraded: vectorResolve.vectorSearchDegraded,
+          vectorCandidates: vectorResolve.vectorCandidates,
+          usedHasDuplicateFallback: vectorResolve.usedHasDuplicateFallback,
+          skipAsDuplicate: vectorResolve.skipAsDuplicate,
+        });
+        if (factDedupeMode === "vector") {
+          vectorDedupeStores++;
+        } else if (factDedupeMode === "mixed") {
+          vectorDedupeStores++;
+          lexicalOnlyDedupeStores++;
+        } else {
+          lexicalOnlyDedupeStores++;
+        }
         if (storeResult.skipped) {
           continue;
         }
@@ -978,6 +943,18 @@ export async function runDistillForCli(
     } else if (batchFailures > 0) {
       sink.warn(`memory-hybrid: distill partial failure: ${batchFailures} batch(es) failed; scan cursor not advanced`);
     }
+    const dedupeDegraded = vectorSearchDegraded;
+    const distillDedupeMode =
+      vectorDedupeStores > 0 && lexicalOnlyDedupeStores > 0
+        ? "mixed"
+        : vectorDedupeStores > 0
+          ? "vector"
+          : "lexical-only";
+    if (dedupeDegraded && !opts.dryRun) {
+      sink.warn(
+        `memory-hybrid: distill DEGRADED — vector neighbour search unavailable${usedHasDuplicateFallback ? "; used hasDuplicate fallback where applicable" : ""}`,
+      );
+    }
     return withDistillJobRun({
       sessionsScanned: filesToProcess.length,
       factsExtracted: allFacts.length,
@@ -987,6 +964,8 @@ export async function runDistillForCli(
       semanticEmpty,
       partialFailure: batchFailures > 0,
       batchFailures,
+      dedupeDegraded,
+      distillDedupeMode,
     });
   } finally {
     if (shouldAcquireLock && !opts.dryRun) clearScanLock(SCAN_TYPE);

@@ -18,10 +18,14 @@ import { acquireScanSlot, clearScanLock } from "./shared.js";
 
 import { resolveExtractSessionFilePaths } from "../services/extract-session-paths.js";
 import { getMaxMtime } from "./cmd-extract-sessions.js";
-
-const VECTOR_CANDIDATE_LIMIT = 10;
-const VECTOR_CANDIDATE_OVERFETCH_LIMIT = 50;
-const VECTOR_CANDIDATE_MIN_SCORE = 0;
+import {
+  VECTOR_CANDIDATE_LIMIT,
+  VECTOR_CANDIDATE_MIN_SCORE,
+  VECTOR_CANDIDATE_OVERFETCH_LIMIT,
+  getVectorSearchFailReason,
+  isLiveFact,
+  mapValidVectorCandidates,
+} from "./vector-dedupe-helpers.js";
 
 /**
  * Identifies transient/retryable store errors (SQLite busy, network issues) vs permanent errors.
@@ -49,22 +53,6 @@ function isRetryableStoreError(err: unknown): boolean {
 
   // All other errors (TypeError, schema bugs, programming errors) are permanent
   return false;
-}
-
-function getVectorSearchFailReason(vectorDb: unknown): string | null {
-  const getter = (vectorDb as { getLastSearchFailReason?: unknown }).getLastSearchFailReason;
-  if (typeof getter !== "function") return null;
-  try {
-    const reason = getter.call(vectorDb);
-    return typeof reason === "string" && reason.length > 0 ? reason : null;
-  } catch {
-    return null;
-  }
-}
-
-function isLiveFact(candidate: { supersededAt?: number | null; expiresAt?: number | null }): boolean {
-  const nowSec = Math.floor(Date.now() / 1000);
-  return candidate.supersededAt == null && (candidate.expiresAt == null || candidate.expiresAt > nowSec);
 }
 
 export async function runExtractDirectivesForCli(
@@ -199,7 +187,7 @@ export async function runExtractDirectivesForCli(
           let vectorCandidates: Array<{ id: string; score: number }> | undefined;
           try {
             vector = await embeddings.embed(incident.extractedRule);
-            if (cfg.store?.fuzzyDedupe ?? true) {
+            if (cfg.store.fuzzyDedupe === true) {
               const sourceScope = "global";
               const sourceScopeTarget = null;
               const embeddingModelName =
@@ -212,26 +200,18 @@ export async function runExtractDirectivesForCli(
                 VECTOR_CANDIDATE_MIN_SCORE,
               );
               if (!getVectorSearchFailReason(vectorDb)) {
-                vectorCandidates = neighbors
-                  .map((candidate) => ({
-                    id: candidate.entry.id,
-                    score: candidate.score,
-                  }))
-                  .filter(
-                    (candidate) =>
-                      typeof candidate.id === "string" && candidate.id.length > 0 && Number.isFinite(candidate.score),
-                  )
+                vectorCandidates = mapValidVectorCandidates(neighbors)
                   .filter((candidate) => {
-                    const fact = factsDb.getById(candidate.id);
+                    const liveFact = factsDb.getById(candidate.id);
                     return (
-                      fact != null &&
-                      isLiveFact(fact) &&
-                      fact.source.startsWith("directive:") &&
-                      (fact.scope ?? "global") === sourceScope &&
-                      (fact.scope === "global" ? null : (fact.scopeTarget ?? null)) === sourceScopeTarget &&
+                      liveFact != null &&
+                      isLiveFact(liveFact) &&
+                      liveFact.source.startsWith("directive:") &&
+                      (liveFact.scope ?? "global") === sourceScope &&
+                      (liveFact.scope === "global" ? null : (liveFact.scopeTarget ?? null)) === sourceScopeTarget &&
                       (embeddingModelName == null ||
-                        fact.embeddingModel == null ||
-                        fact.embeddingModel === embeddingModelName)
+                        liveFact.embeddingModel == null ||
+                        liveFact.embeddingModel === embeddingModelName)
                     );
                   })
                   .slice(0, VECTOR_CANDIDATE_LIMIT);
@@ -245,7 +225,7 @@ export async function runExtractDirectivesForCli(
           }
           const usedLexicalOnlyFallback = shouldReportVectorDedupeFallback({
             source,
-            fuzzyDedupe: cfg.store?.fuzzyDedupe ?? true,
+            fuzzyDedupe: cfg.store.fuzzyDedupe === true,
             storeConfig: cfg.store,
             vectorCandidates,
           });

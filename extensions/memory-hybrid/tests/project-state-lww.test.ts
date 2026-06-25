@@ -288,6 +288,35 @@ describe("project-state-lww: overloaded entity detection", () => {
     expect(candidate).toBeDefined();
     expect(candidate?.possibleOverloadedEntity).toBe(true);
   });
+
+  it("still flags when a single fact alone references many distinct PR/issue numbers", () => {
+    const older = storeProjectFact({
+      entity: "agent:pr-steward:subagent:abc",
+      key: "status",
+      value: "in_progress",
+      text: "Task status: in_progress",
+      confidence: 1.0,
+    });
+    const newer = storeProjectFact({
+      entity: "agent:pr-steward:subagent:abc",
+      key: "status",
+      value: "done",
+      text: "Subagent session done. Completed: rebased PRs #1597, #1596, #1600, #1599, #1571, #1565 onto main",
+      confidence: 1.0,
+      createdAtOffset: 30,
+    });
+
+    db.recordContradiction(newer.id, older.id);
+
+    const result = db.resolveContradictionsProjectStateLww({ dryRun: true });
+    const candidate = result.groups
+      .flatMap((g) => g.candidates)
+      .find((c) => c.factIdNew === newer.id || c.factIdOld === older.id);
+
+    expect(candidate).toBeDefined();
+    expect(candidate?.possibleOverloadedEntity).toBe(true);
+    expect(candidate?.action).toBe("manual-review");
+  });
 });
 
 // ---------------------------------------------------------------------------
