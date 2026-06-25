@@ -27,6 +27,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.6.251] - 2026-06-25
+
+### Fixed
+
+- **Project-state LWW entity-reuse heuristic (#1945):** Count distinct PR/issue refs per fact instead of across both facts in a pair, so legitimate project-state transitions (e.g. `status` / `next` mentioning different PRs in old vs new values) no longer false-positive as `possible-entity-reuse` and block LWW supersede.
+
+### Changed
+
+- Version set to **2026.6.251**.
+
+---
+
 ## [2026.6.250] - 2026-06-25
 
 ### Fixed
