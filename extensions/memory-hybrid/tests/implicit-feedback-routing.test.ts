@@ -8,7 +8,7 @@
  *   - CLI command 'extract-implicit' is registered in ManageContext
  */
 
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1113,6 +1113,33 @@ describe("implicit feedback routing — cleanup progress reporting", () => {
         });
       } finally {
         vi.useRealTimers();
+      }
+    });
+
+    it("does not advance scan cursor when a session read fails but a later session succeeds", async () => {
+      const db = makeDb(capsTmpDir);
+      writePositiveSession(capsSessionsDir, "2026-01-01-a.jsonl");
+      writePositiveSession(capsSessionsDir, "2026-01-01-b.jsonl");
+      const olderMtime = new Date("2026-01-01T00:00:00.000Z");
+      const newerMtime = new Date("2026-01-02T00:00:00.000Z");
+      const unreadablePath = join(capsSessionsDir, "2026-01-01-a.jsonl");
+      utimesSync(unreadablePath, olderMtime, olderMtime);
+      utimesSync(join(capsSessionsDir, "2026-01-01-b.jsonl"), newerMtime, newerMtime);
+      chmodSync(unreadablePath, 0o000);
+
+      try {
+        const ctx = makeCtx(db, capsSessionsDir, { feedToSelfCorrection: false });
+        const result = await runExtractImplicitFeedbackForCli(ctx, {
+          days: 365,
+          dryRun: false,
+          includeTrajectories: false,
+          includeClosedLoop: false,
+        });
+        expect(result.sessionsSkipped).toBe(1);
+        expect(result.sessionsProcessed).toBe(1);
+        expect(db.getScanCursor("extract-implicit-feedback")).toBeNull();
+      } finally {
+        chmodSync(unreadablePath, 0o644);
       }
     });
 

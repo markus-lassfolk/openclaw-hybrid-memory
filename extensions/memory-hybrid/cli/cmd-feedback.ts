@@ -861,7 +861,6 @@ export async function runExtractImplicitFeedbackForCli(
         subsystem: "implicit-feedback",
       });
       emitProgress();
-      lastProcessedFilePath = filePath;
       continue;
     }
 
@@ -1541,7 +1540,12 @@ export async function runExtractImplicitFeedbackForCli(
   progress.stage = "done";
   emitProgress();
 
-  if (!opts.dryRun && implicitCfg.triggerSelfCorrectionRun && bridgeIncidents.length > 0) {
+  if (
+    !opts.dryRun &&
+    implicitCfg.triggerSelfCorrectionRun &&
+    bridgeIncidents.length > 0 &&
+    !wallClockLimitReached()
+  ) {
     if (implicitCfg.llmSignalAnalysis !== false) {
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
       try {
@@ -1569,7 +1573,12 @@ export async function runExtractImplicitFeedbackForCli(
     }
   }
 
-  if (!opts.dryRun && implicitCfg.triggerSelfCorrectionRun && bridgeIncidents.length > 0) {
+  if (
+    !opts.dryRun &&
+    implicitCfg.triggerSelfCorrectionRun &&
+    bridgeIncidents.length > 0 &&
+    !wallClockLimitReached()
+  ) {
     const cap = implicitCfg.selfCorrectionBridgeMaxIncidents ?? 5;
     const incidents = bridgeIncidents.slice(0, cap);
     const workspace = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
@@ -1588,7 +1597,7 @@ export async function runExtractImplicitFeedbackForCli(
   }
 
   // Update scan cursor with the last fully processed session
-  if (!opts.dryRun && lastProcessedFilePath && progress.sessionsProcessed > 0) {
+  if (!opts.dryRun && lastProcessedFilePath && progress.sessionsProcessed > 0 && progress.sessionsReadErrors === 0) {
     const shouldAdvanceCursor =
       !partial ||
       partialReason === "maxSessions" ||

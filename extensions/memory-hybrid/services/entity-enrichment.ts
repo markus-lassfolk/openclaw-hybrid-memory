@@ -16,19 +16,17 @@ import {
 } from "../utils/entity-mention-quality.js";
 import { isEntityStopWord as isConfiguredEntityStopWord } from "../utils/entity-stopwords.js";
 import { stripThinkingWrapperBlocks, parseFirstJsonObjectValue } from "../utils/llm-json-array.js";
-import { extractAssistantMessageText } from "../utils/llm-message.js";
 import {
+  chatCompleteWithRetry,
   is403QuotaOrRateLimitLike,
   is429OrWrapped,
   is500OrWrapped,
   isConnectionErrorLike,
   parseRetryAfterMs,
-  withLLMRetry,
+  resolveMaintenanceChatTimeoutMs,
 } from "./chat.js";
-import { withCostFeature } from "./cost-context.js";
 import { errorIndicatesLlmTimeout } from "./entity-enrichment-adaptive.js";
 import { capturePluginError } from "./error-reporter.js";
-import { chatCompletionTokenParams } from "./model-capabilities.js";
 
 const MIN_CHARS = 24;
 const MAX_CHARS = 8000;
@@ -158,19 +156,16 @@ INPUT:
 ${body}`;
 
   try {
-    const resp = await withCostFeature("entity-enrichment", () =>
-      withLLMRetry(
-        () =>
-          openai.chat.completions.create({
-            model,
-            messages: [{ role: "user", content: prompt }],
-            temperature: 0,
-            ...chatCompletionTokenParams(model, 1200),
-          }),
-        { maxRetries: 2 },
-      ),
-    );
-    const content = extractAssistantMessageText(resp.choices[0]?.message).text;
+    const content = await chatCompleteWithRetry({
+      model,
+      content: prompt,
+      temperature: 0,
+      maxTokens: 1200,
+      openai,
+      label: "memory-hybrid: entity-enrichment",
+      feature: "entity-enrichment",
+      timeoutMs: resolveMaintenanceChatTimeoutMs(model),
+    });
     const raw = parseMentionJson(content);
     const mentions: ExtractedMention[] = [];
     const rejectedMentions: EntityMentionRejection[] = [];
