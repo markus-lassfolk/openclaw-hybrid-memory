@@ -128,13 +128,28 @@ describe("maintenance validator coverage registry", () => {
 
   it("shouldUpdateMaintenanceGuard allows guard update when only monitoring issues remain", () => {
     expect(
-      shouldUpdateMaintenanceGuard("success", [
-        {
-          ...semanticIssue("resolve-contradictions"),
-          failureClass: "resolve_contradictions_degraded_backlog",
-        },
-      ]),
+      shouldUpdateMaintenanceGuard(
+        "success",
+        [
+          {
+            ...semanticIssue("resolve-contradictions"),
+            failureClass: "resolve_contradictions_degraded_backlog",
+          },
+        ],
+        "degraded",
+      ),
     ).toBe(true);
+  });
+
+  it("shouldUpdateMaintenanceGuard blocks guard for degraded semantic status without monitoring issues", () => {
+    expect(shouldUpdateMaintenanceGuard("success", [], "degraded")).toBe(false);
+    expect(
+      shouldUpdateMaintenanceGuard(
+        "success",
+        [{ ...semanticIssue("extract-reinforcement"), failureClass: "extract_reinforcement_semantic_empty" }],
+        "degraded",
+      ),
+    ).toBe(false);
   });
 
   it("resolveValidateCronExitCode distinguishes semantic-only failures from mechanical ones", () => {
