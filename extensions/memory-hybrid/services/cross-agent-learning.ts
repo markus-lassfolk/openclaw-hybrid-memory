@@ -18,7 +18,12 @@ import type { CrossAgentLearningConfig } from "../config/types/features.js";
 import type { MemoryEntry } from "../types/memory.js";
 import { fillPrompt, loadPrompt as loadPromptSync } from "../utils/prompt-loader.js";
 import { parseTags, serializeTags } from "../utils/tags.js";
-import { chatCompleteWithRetry } from "./chat.js";
+import {
+  capTimeoutByMaintenanceRunDeadline,
+  getMaintenanceRunAbortSignal,
+  maintenanceRunDeadlineReached,
+} from "../utils/maintenance-run-deadline.js";
+import { chatCompleteWithRetry, resolveMaintenanceChatTimeoutMs } from "./chat.js";
 import { CostFeature } from "./cost-feature-labels.js";
 import { capturePluginError } from "./error-reporter.js";
 
@@ -210,7 +215,10 @@ async function callLLMForGeneralisation(
     fallbackModels,
     content: prompt,
     maxTokens: 2000,
-    timeoutMs: 40000,
+    timeoutMs: capTimeoutByMaintenanceRunDeadline(
+      Math.min(40_000, resolveMaintenanceChatTimeoutMs(model)),
+    ),
+    signal: getMaintenanceRunAbortSignal(),
     feature: CostFeature.crossAgentLearning,
   });
 
@@ -303,6 +311,10 @@ export async function runCrossAgentLearning(
 
     let batchIndex = 0;
     for (const batch of batches) {
+      if (maintenanceRunDeadlineReached()) {
+        logger.warn?.("cross-agent-learning: maintenance run deadline reached; stopping batches");
+        break;
+      }
       batchIndex++;
       if (runOpts?.verbose) {
         logger.info?.(
