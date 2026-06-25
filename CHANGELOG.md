@@ -27,6 +27,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.6.257] - 2026-06-25
+
+### Fixed
+
+- **memory_store empty args (#1950):** Guard missing or non-string `text` with `String(text ?? "").trim()` so streaming-parser `{}` args return a structured `invalid_text` error instead of throwing `Cannot read properties of undefined (reading 'trim')`.
+
+---
+
 ## [2026.6.256] - 2026-06-25
 
 ### Fixed
