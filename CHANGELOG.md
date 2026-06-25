@@ -31,7 +31,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+<<<<<<< HEAD
 - **Maintenance nightly exit codes (#1949):** Treat `extract-implicit` budget-cap partial runs (`maxWallClock`, session/signal/trajectory caps) as successful monitoring steps instead of failures; stop counting continuous-verification LLM downgrades to `UNCERTAIN` as errors and do not fail nightly when all facts receive uncertain verdicts; run orchestrator `audit-health` non-strict (warnings only) while still failing on report errors. Cron exit validator ignores legacy `all_uncertain` degraded machine-status lines.
+=======
+- **memory_store empty args (#1950):** Guard missing or non-string `text` with `String(text ?? "").trim()` so streaming-parser `{}` args return a structured `invalid_text` error instead of throwing `Cannot read properties of undefined (reading 'trim')`.
+>>>>>>> 2b1d5c0ec (fix(memory_store): handle missing text from empty tool args (#1950))
 
 ---
 
