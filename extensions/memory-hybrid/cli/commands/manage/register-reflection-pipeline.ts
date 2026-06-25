@@ -56,7 +56,7 @@ function logContradictionProgressOutcome(params: {
   suggestions?: ContradictionProgressJsonSummary["suggestions"];
 }): void {
   const { mode, metrics, evaluation, jsonMode, suggestions } = params;
-  if (evaluation.exitCode !== 0) process.exitCode = evaluation.exitCode;
+  // Degraded backlog is a monitoring signal for cron wrappers (hm_step/set -e); JSON still reports exitCode.
   if (jsonMode) {
     console.log(
       JSON.stringify(
@@ -68,7 +68,7 @@ function logContradictionProgressOutcome(params: {
   console.log(formatContradictionProgressSummaryLine(mode, metrics, evaluation));
   if (evaluation.degraded) {
     console.log(
-      `Backlog alert: ambiguous=${metrics.ambiguous} with auto-resolved=0 meets or exceeds degraded threshold ${evaluation.degradedAmbiguousThreshold} for ${evaluation.consecutiveNoProgressRuns} consecutive run(s) (exit code 2).`,
+      `Backlog alert: ambiguous=${metrics.ambiguous} with auto-resolved=0 meets or exceeds degraded threshold ${evaluation.degradedAmbiguousThreshold} for ${evaluation.consecutiveNoProgressRuns} consecutive run(s) (monitoring signal; JSON exitCode=${evaluation.exitCode}, shell exit 0).`,
     );
   } else if (
     evaluation.noProgress &&

@@ -72,6 +72,33 @@ function reflectRulesDiagnosticsIndicateFailure(
   return !d.parseSuccess || rulesStored === 0;
 }
 
+function formatReflectRulesMaintenanceSummary(r: {
+  rulesStored: number;
+  rulesExtracted: number;
+  diagnostics?:
+    | {
+        parseSuccess: boolean;
+        status: "ok" | "partial" | "degraded";
+        zeroRulesReason?: string;
+        modelResponseChars?: number;
+      }
+    | undefined;
+}): string {
+  const d = r.diagnostics;
+  const failed = reflectRulesDiagnosticsIndicateFailure(d, r.rulesStored);
+  return [
+    `rulesStored=${r.rulesStored}`,
+    `rulesExtracted=${r.rulesExtracted}`,
+    d ? `parse_success=${d.parseSuccess}` : null,
+    d?.zeroRulesReason ? `zero_rules_reason=${d.zeroRulesReason}` : null,
+    d ? `status=${d.status}` : null,
+    typeof d?.modelResponseChars === "number" ? `model_response_chars=${d.modelResponseChars}` : null,
+    failed ? "semantic=failed" : "semantic=success",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 export interface BuildCliRunnersOptions {
   verbose?: boolean;
   backfillDecayMarker?: string;
@@ -457,19 +484,11 @@ export function buildCliMaintenanceRunners(
 
   set("reflect-rules", async () => {
     const r = await b.runReflectionRules({ dryRun: false, model: b.reflectionConfig.model, verbose });
-    const d = r.diagnostics;
-    const summary = [
-      `rulesStored=${r.rulesStored}`,
-      `rulesExtracted=${r.rulesExtracted}`,
-      d ? `parse_success=${d.parseSuccess}` : null,
-      d?.zeroRulesReason ? `zero_rules_reason=${d.zeroRulesReason}` : null,
-      d ? `status=${d.status}` : null,
-      d?.status === "degraded" || reflectRulesDiagnosticsIndicateFailure(d, r.rulesStored) ? "semantic=failed" : null,
-    ]
-      .filter(Boolean)
-      .join(" ");
-    if (d?.status === "degraded" || reflectRulesDiagnosticsIndicateFailure(d, r.rulesStored)) {
-      throw new Error(`reflect-rules semantic failure (${d?.zeroRulesReason ?? "degraded"}): ${summary}`);
+    const summary = formatReflectRulesMaintenanceSummary(r);
+    if (reflectRulesDiagnosticsIndicateFailure(r.diagnostics, r.rulesStored)) {
+      throw new Error(
+        `reflect-rules semantic failure (${r.diagnostics?.zeroRulesReason ?? r.diagnostics?.status ?? "failed"}): ${summary}`,
+      );
     }
     return summary;
   });

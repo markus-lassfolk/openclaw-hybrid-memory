@@ -385,6 +385,32 @@ describe("maintenance-orchestrator", () => {
     expect(result.exitCode).toBe(1);
   });
 
+  it("accepts reflect-rules tolerated invalid_response_format flake without aborting nightly", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const flakeSummary =
+      "rulesStored=0 rulesExtracted=0 parse_success=false zero_rules_reason=invalid_response_format status=degraded model_response_chars=128 semantic=success";
+    const runners = new Map<string, () => Promise<string>>([
+      ["reflect", async () => "patternsStored=1 facts=2 semantic=success"],
+      ["reflect-rules", async () => flakeSummary],
+      ["reflect-meta", async () => "metaStored=0 status=ok semantic=success"],
+    ]);
+    const result = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      {
+        tiers: ["nightly"],
+        force: true,
+        verbose: false,
+        include: ["reflect", "reflect-rules", "reflect-meta"],
+      },
+    );
+    expect(result.steps).toHaveLength(3);
+    const reflectRules = result.steps.find((s) => s.name === "reflect-rules");
+    expect(reflectRules?.status).toBe("ok");
+    expect(reflectRules?.semanticOutcome).toBe("success");
+    expect(result.steps.find((s) => s.name === "reflect-meta")?.status).toBe("ok");
+    expect(result.exitCode).toBe(0);
+  });
+
   it("fails reflect-rules when runner summary has parse_success=false without semantic token", async () => {
     openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
     const runners = new Map<string, () => Promise<string>>([

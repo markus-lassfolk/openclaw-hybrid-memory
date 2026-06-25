@@ -716,7 +716,7 @@ describe("resolve-contradictions CLI contract mode", () => {
 
       await mem.parseAsync(["resolve-contradictions", "--degraded-ambiguous-threshold", "1"], { from: "user" });
 
-      expect(process.exitCode).toBe(2);
+      expect(process.exitCode ?? 0).toBe(0);
       expect(
         lines.some((l) => l.includes("resolve-contradictions summary mode=default auto_resolved=0 ambiguous=2")),
       ).toBe(true);
@@ -815,7 +815,7 @@ describe("resolve-contradictions CLI contract mode", () => {
         exitCode: 2,
         exitReason: "ambiguous_backlog_no_progress",
       });
-      expect(process.exitCode).toBe(2);
+      expect(process.exitCode ?? 0).toBe(0);
       expect(lines.some((l) => l.includes("contradiction-auto summary total=222"))).toBe(false);
     } finally {
       if (originalHome !== undefined) process.env.OPENCLAW_HOME = originalHome;
