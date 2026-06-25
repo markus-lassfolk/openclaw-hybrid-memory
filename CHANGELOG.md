@@ -27,7 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
-## [2026.6.257] - 2026-06-25
+## [2026.6.258] - 2026-06-25
 
 ### Fixed
 
