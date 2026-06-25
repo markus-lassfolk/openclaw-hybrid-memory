@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import type { StoreConfig, StoreDedupeAction, StoreOverflowAction } from "../config/types/core.js";
+import { DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
 import { normalizedHash } from "../utils/tags.js";
 
 export type ResolvedDedupeProfile = {
@@ -77,6 +78,10 @@ export function resolveDedupeProfile(source: string | null | undefined, store: S
       }
       return merged;
     }
+  }
+
+  if (sourceKey === "distillation") {
+    return { ...base, vectorThreshold: DISTILL_DEDUP_THRESHOLD };
   }
 
   return base;
@@ -176,6 +181,32 @@ function tokenJaccard(a: Set<string>, b: Set<string>): number {
 const JACCARD_LOOKBACK_SEC = 120 * 24 * 60 * 60;
 const JACCARD_ROW_LIMIT = 200;
 
+function resolveVectorDuplicateCandidate(
+  profile: ResolvedDedupeProfile,
+  ctx: ApplyDedupeContext,
+): { id: string; score: number } | null {
+  if (
+    profile.vectorThreshold == null ||
+    profile.vectorThreshold <= 0 ||
+    profile.vectorThreshold > 1 ||
+    !ctx.vectorCandidates ||
+    ctx.vectorCandidates.length === 0
+  ) {
+    return null;
+  }
+  let bestVec: { id: string; score: number } | null = null;
+  for (const cand of ctx.vectorCandidates) {
+    if (
+      typeof cand.score === "number" &&
+      cand.score >= profile.vectorThreshold &&
+      (bestVec === null || cand.score > bestVec.score)
+    ) {
+      bestVec = { id: cand.id, score: cand.score };
+    }
+  }
+  return bestVec;
+}
+
 /**
  * Decide how a candidate fact should be handled before insert.
  * Side-effect free (no SQL writes).
@@ -238,6 +269,15 @@ export function applyDedupe(
     if (existing) {
       return mapOnDuplicate(profile, existing.id, "exact");
     }
+    const vectorDup = resolveVectorDuplicateCandidate(profile, ctx);
+    if (vectorDup) {
+      const matched = ctx.db
+        .prepare("SELECT entity, key FROM facts WHERE id = ? AND superseded_at IS NULL LIMIT 1")
+        .get(vectorDup.id) as { entity: string | null; key: string | null } | undefined;
+      if (matched?.entity === entity && matched?.key === key) {
+        return mapOnDuplicate(profile, vectorDup.id, "vector");
+      }
+    }
     return { action: "store" };
   }
 
@@ -299,16 +339,7 @@ export function applyDedupe(
     ctx.vectorCandidates &&
     ctx.vectorCandidates.length > 0
   ) {
-    let bestVec: { id: string; score: number } | null = null;
-    for (const cand of ctx.vectorCandidates) {
-      if (
-        typeof cand.score === "number" &&
-        cand.score >= profile.vectorThreshold &&
-        (bestVec === null || cand.score > bestVec.score)
-      ) {
-        bestVec = { id: cand.id, score: cand.score };
-      }
-    }
+    const bestVec = resolveVectorDuplicateCandidate(profile, ctx);
     if (bestVec) {
       return mapOnDuplicate(profile, bestVec.id, "vector");
     }
