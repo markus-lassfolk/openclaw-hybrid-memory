@@ -32,7 +32,7 @@ function sleepSync(ms: number): void {
   Atomics.wait(SQLITE_BUSY_STORE_SLEEP, 0, 0, ms);
 }
 
-function runWithSqliteBusyRetry(db: DatabaseSync, run: () => void): void {
+export function runWithSqliteBusyRetry(db: DatabaseSync, run: () => void): void {
   for (let attempt = 0; attempt <= SQLITE_BUSY_STORE_MAX_RETRIES; attempt += 1) {
     try {
       run();
