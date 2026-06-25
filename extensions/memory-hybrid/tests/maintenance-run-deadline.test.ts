@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   capTimeoutByMaintenanceRunDeadline,
   clearMaintenanceRunDeadline,
+  getMaintenanceRunAbortSignal,
   getMaintenanceRunDeadlineMs,
   maintenanceRunDeadlineReached,
   remainingMaintenanceRunMs,
@@ -34,5 +35,21 @@ describe("maintenance-run-deadline", () => {
     setMaintenanceRunDeadlineMs(10_000);
     expect(capTimeoutByMaintenanceRunDeadline(45_000, 9_000)).toBe(1_000);
     expect(capTimeoutByMaintenanceRunDeadline(45_000, 10_000)).toBe(0);
+  });
+
+  it("getMaintenanceRunAbortSignal aborts when run deadline elapses", () => {
+    vi.useFakeTimers();
+    try {
+      setMaintenanceRunDeadlineMs(Date.now() + 5_000);
+      const signal = getMaintenanceRunAbortSignal();
+      expect(signal).toBeDefined();
+      expect(signal?.aborted).toBe(false);
+      vi.advanceTimersByTime(5_001);
+      expect(signal?.aborted).toBe(true);
+      expect(maintenanceRunDeadlineReached()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+      clearMaintenanceRunDeadline();
+    }
   });
 });

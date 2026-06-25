@@ -1609,7 +1609,7 @@ export async function runExtractImplicitFeedbackForCli(
       const stat = statSync(lastProcessedFilePath);
       const lastSessionTs = stat.mtimeMs;
       const lastSessionFile = basename(lastProcessedFilePath);
-      factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs, progress.sessionsVisited, lastSessionFile);
+      factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs, progress.sessionsProcessed, lastSessionFile);
     }
   }
 

@@ -12,7 +12,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import { getMemoryCategories, isValidCategory } from "../config.js";
 import { tryParseFirstJsonArray } from "../utils/llm-json-array.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
-import { capTimeoutByMaintenanceRunDeadline, maintenanceRunDeadlineReached } from "../utils/maintenance-run-deadline.js";
+import { capTimeoutByMaintenanceRunDeadline, getMaintenanceRunAbortSignal, maintenanceRunDeadlineReached } from "../utils/maintenance-run-deadline.js";
 import {
   chatCompleteWithRetry,
   is404Like,
@@ -160,6 +160,7 @@ async function discoverCategoriesFromOther(
         label: "memory-hybrid: category-discovery",
         feature: "auto-classify",
         timeoutMs,
+        signal: getMaintenanceRunAbortSignal(),
       });
       // chatComplete strips literal "[]" as a placeholder; empty array is valid discovery output.
       const content = raw.trim().length > 0 ? raw : "[]";
@@ -277,6 +278,7 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
       label: "memory-hybrid: classify-batch",
       feature: "auto-classify",
       timeoutMs,
+      signal: getMaintenanceRunAbortSignal(),
     });
     // chatComplete strips literal "[]" as a placeholder; empty array is valid classify output.
     const content = raw.trim().length > 0 ? raw : "[]";

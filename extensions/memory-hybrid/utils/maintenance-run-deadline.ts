@@ -5,16 +5,47 @@
 
 const MAINTENANCE_RUN_DEADLINE_ENV = "HM_MAINTENANCE_RUN_DEADLINE_MS";
 
+let deadlineAbortTimer: ReturnType<typeof setTimeout> | null = null;
+let deadlineAbortController: AbortController | null = null;
+
+function clearDeadlineAbortResources(): void {
+  if (deadlineAbortTimer != null) {
+    clearTimeout(deadlineAbortTimer);
+    deadlineAbortTimer = null;
+  }
+  deadlineAbortController = null;
+}
+
+/** AbortSignal that fires when the orchestrator run deadline is reached (aborts in-flight LLM calls). */
+export function getMaintenanceRunAbortSignal(): AbortSignal | undefined {
+  return deadlineAbortController?.signal;
+}
+
 export function setMaintenanceRunDeadlineMs(deadlineMs: number | undefined): void {
+  clearDeadlineAbortResources();
   if (deadlineMs == null || !Number.isFinite(deadlineMs)) {
     delete process.env[MAINTENANCE_RUN_DEADLINE_ENV];
     return;
   }
-  process.env[MAINTENANCE_RUN_DEADLINE_ENV] = String(Math.floor(deadlineMs));
+  const floored = Math.floor(deadlineMs);
+  process.env[MAINTENANCE_RUN_DEADLINE_ENV] = String(floored);
+  deadlineAbortController = new AbortController();
+  const remainingMs = Math.max(0, floored - Date.now());
+  if (remainingMs <= 0) {
+    deadlineAbortController.abort(new Error("maintenance run deadline reached"));
+    return;
+  }
+  deadlineAbortTimer = setTimeout(() => {
+    deadlineAbortController?.abort(new Error("maintenance run deadline reached"));
+  }, remainingMs);
+  if (typeof deadlineAbortTimer.unref === "function") {
+    deadlineAbortTimer.unref();
+  }
 }
 
 export function clearMaintenanceRunDeadline(): void {
   delete process.env[MAINTENANCE_RUN_DEADLINE_ENV];
+  clearDeadlineAbortResources();
 }
 
 export function getMaintenanceRunDeadlineMs(): number | undefined {

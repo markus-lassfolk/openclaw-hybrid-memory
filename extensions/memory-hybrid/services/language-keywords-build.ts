@@ -19,15 +19,27 @@ import {
   type LanguageKeywordsFile,
 } from "../utils/language-keywords.js";
 import { parseFirstJsonObjectValue, tryParseFirstJsonArray } from "../utils/llm-json-array.js";
-import { extractAssistantMessageText } from "../utils/llm-message.js";
 import { capturePluginError } from "./error-reporter.js";
 import { nowIso } from "../utils/dates.js";
+import {
+  capTimeoutByMaintenanceRunDeadline,
+  getMaintenanceRunAbortSignal,
+  maintenanceRunDeadlineReached,
+} from "../utils/maintenance-run-deadline.js";
 import { EXTRACTION_INTENTS, KEYWORD_GROUP_INTENTS, STRUCTURAL_TRIGGER_INTENTS } from "./intent-template.js";
-import { chatCompletionTokenParams } from "./model-capabilities.js";
+import { chatCompleteWithRetry, resolveMaintenanceChatTimeoutMs } from "./chat.js";
 
 const LANG_FILE_NAME = ".language-keywords.json";
 const MAX_SAMPLES = 50;
 const CHARS_PER_SAMPLE = 400;
+
+function resolveLangKeywordsLlmOpts(model: string, maxTokens: number) {
+  return {
+    maxTokens,
+    timeoutMs: capTimeoutByMaintenanceRunDeadline(resolveMaintenanceChatTimeoutMs(model)),
+    signal: getMaintenanceRunAbortSignal(),
+  };
+}
 
 const KEYWORD_GROUPS = Object.keys(ENGLISH_KEYWORDS) as KeywordGroup[];
 
@@ -77,19 +89,20 @@ Do not include any other text. If you see only one or two languages, return 1 or
 
 Samples:
 ${block}`;
+  if (maintenanceRunDeadlineReached()) return [];
+  const llmOpts = resolveLangKeywordsLlmOpts(model, 100);
+  if (llmOpts.timeoutMs <= 0) return [];
   try {
-    const { withLLMRetry } = await import("./chat.js");
-    const resp = await withLLMRetry(
-      () =>
-        openai.chat.completions.create({
-          model,
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0,
-          ...chatCompletionTokenParams(model, 100),
-        }),
-      { maxRetries: 2 },
-    );
-    const content = extractAssistantMessageText(resp.choices[0]?.message).text;
+    const raw = await chatCompleteWithRetry({
+      model,
+      content: prompt,
+      temperature: 0,
+      openai,
+      label: "memory-hybrid: detect-top-languages",
+      feature: "language-keywords",
+      ...llmOpts,
+    });
+    const content = raw.trim().length > 0 ? raw : "[]";
     const arr = tryParseFirstJsonArray(content);
     if (!arr) return [];
     if (!Array.isArray(arr)) return [];
@@ -249,19 +262,25 @@ async function generateIntentBasedLanguages(
 
   const prompt = buildIntentPrompt(toTranslate, englishPayload);
 
+  if (maintenanceRunDeadlineReached()) {
+    return { translations: {}, triggerStructures: {}, extraction: {} };
+  }
+  const llmOpts = resolveLangKeywordsLlmOpts(model, 6000);
+  if (llmOpts.timeoutMs <= 0) {
+    return { translations: {}, triggerStructures: {}, extraction: {} };
+  }
+
   try {
-    const { withLLMRetry } = await import("./chat.js");
-    const resp = await withLLMRetry(
-      () =>
-        openai.chat.completions.create({
-          model,
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0.2,
-          ...chatCompletionTokenParams(model, 6000),
-        }),
-      { maxRetries: 2 },
-    );
-    const content = extractAssistantMessageText(resp.choices[0]?.message).text;
+    const raw = await chatCompleteWithRetry({
+      model,
+      content: prompt,
+      temperature: 0.2,
+      openai,
+      label: "memory-hybrid: generate-intent-languages",
+      feature: "language-keywords",
+      ...llmOpts,
+    });
+    const content = raw.trim();
     const parsed = parseFirstJsonObjectValue(content) as Record<
       string,
       Record<string, unknown> & { triggerStructures?: string[]; extraction?: unknown }
@@ -335,19 +354,21 @@ Reply with ONLY valid JSON in this exact shape (no markdown, no explanation):
 Each key must be one of: ${KEYWORD_GROUPS.join(", ")}.
 Each value must be an array of translated strings in the same order as the English list. Translate correctionSignals as natural phrases users say when correcting an AI (e.g. "that was wrong", "try again", "you misunderstood") in the target language.`;
 
+  if (maintenanceRunDeadlineReached()) return {};
+  const llmOpts = resolveLangKeywordsLlmOpts(model, 4000);
+  if (llmOpts.timeoutMs <= 0) return {};
+
   try {
-    const { withLLMRetry } = await import("./chat.js");
-    const resp = await withLLMRetry(
-      () =>
-        openai.chat.completions.create({
-          model,
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0.2,
-          ...chatCompletionTokenParams(model, 4000),
-        }),
-      { maxRetries: 2 },
-    );
-    const content = extractAssistantMessageText(resp.choices[0]?.message).text;
+    const raw = await chatCompleteWithRetry({
+      model,
+      content: prompt,
+      temperature: 0.2,
+      openai,
+      label: "memory-hybrid: translate-keywords",
+      feature: "language-keywords",
+      ...llmOpts,
+    });
+    const content = raw.trim();
     const parsed = parseFirstJsonObjectValue(content) as Record<string, Record<string, string[]>> | null;
     if (!parsed) return {};
     const result: Record<string, Record<KeywordGroup, string[]>> = {};
@@ -381,8 +402,14 @@ export async function runBuildLanguageKeywords(
   sqliteDir: string,
   opts: { model: string; dryRun?: boolean },
 ): Promise<BuildLanguageKeywordsResult> {
+  if (maintenanceRunDeadlineReached()) {
+    return { ok: false, error: "maintenance run deadline reached" };
+  }
   const samples = collectSamplesFromFacts(facts);
   const topLanguages = await detectTopLanguages(samples, openai, opts.model);
+  if (maintenanceRunDeadlineReached()) {
+    return { ok: false, error: "maintenance run deadline reached" };
+  }
   const toTranslate = topLanguages.filter((c) => c !== "en");
   if (toTranslate.length === 0 && samples.length > 0) {
     return { ok: true, path: join(sqliteDir, LANG_FILE_NAME), topLanguages: ["en"], languagesAdded: 0 };
@@ -408,6 +435,10 @@ export async function runBuildLanguageKeywords(
     }
   } catch {
     // File missing or malformed — proceed with full build
+  }
+
+  if (maintenanceRunDeadlineReached()) {
+    return { ok: false, error: "maintenance run deadline reached" };
   }
 
   const { translations, triggerStructures, extraction } = await generateIntentBasedLanguages(

@@ -1232,6 +1232,7 @@ describe("implicit feedback routing — cleanup progress reporting", () => {
       expect(result.sessionsDeferred).toBe(1);
       expect(result.backlogSessionsEstimate).toBe(1);
       expect(db.getScanCursor("extract-implicit-feedback")?.lastSessionFile).toBe("2026-01-01-a.jsonl");
+      expect(db.getScanCursor("extract-implicit-feedback")?.sessionsProcessed).toBe(1);
     });
 
     it("processes one oversized session instead of stalling on per-run caps", async () => {
