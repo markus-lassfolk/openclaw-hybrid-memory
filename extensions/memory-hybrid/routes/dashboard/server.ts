@@ -7,7 +7,7 @@
  *   GET /api/status — JSON data for all dashboard sections
  */
 
-import type { Server } from "node:http";
+import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
@@ -86,6 +86,58 @@ function workshopCtx(ctx: DashboardContext): WorkshopDashboardContext | null {
     changeFeed: ctx.changeFeed ?? null,
     dreamCycleLogDir: ctx.dreamCycleLogDir,
   };
+}
+
+function extractDashboardAuthToken(req: IncomingMessage): string | null {
+  const bearer = req.headers.authorization;
+  if (typeof bearer === "string" && bearer.startsWith("Bearer ")) {
+    const token = bearer.slice("Bearer ".length).trim();
+    if (token) return token;
+  }
+  const header = req.headers["x-dashboard-token"];
+  if (typeof header === "string" && header.trim()) return header.trim();
+  if (Array.isArray(header) && typeof header[0] === "string" && header[0].trim()) return header[0].trim();
+  return null;
+}
+
+/** When `dashboard.token` is configured, require Bearer or X-Dashboard-Token on write routes. */
+export function isDashboardWriteAuthorized(req: IncomingMessage, ctx: DashboardContext): boolean {
+  const expected = ctx.hybridCfg?.dashboard?.token?.trim();
+  if (!expected) return true;
+  return extractDashboardAuthToken(req) === expected;
+}
+
+function rejectUnauthorizedDashboardWrite(res: ServerResponse): void {
+  res.writeHead(401, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ error: "Unauthorized" }));
+}
+
+const GRAPHQL_MUTATION_ROOT_FIELDS = [
+  "createFact",
+  "updateFact",
+  "deleteFact",
+  "supersedeFact",
+  "createLink",
+  "deleteLink",
+  "importFacts",
+  "pruneFacts",
+  "consolidateFacts",
+  "recomputeEmbeddings",
+] as const;
+
+/** Detect named and anonymous GraphQL mutations for dashboard.token auth. */
+export function graphqlBodyIsMutation(body: unknown): boolean {
+  if (typeof body !== "object" || body == null) return false;
+  const query = (body as { query?: unknown }).query;
+  if (typeof query !== "string") return false;
+  const trimmed = query.replace(/^\s*(#[^\n]*\n)*/m, "").trimStart();
+  if (trimmed.startsWith("mutation") || /\bmutation\b/.test(trimmed.slice(0, 500))) return true;
+  if (trimmed.startsWith("{")) {
+    for (const field of GRAPHQL_MUTATION_ROOT_FIELDS) {
+      if (new RegExp(`\\b${field}\\s*\\(`).test(trimmed)) return true;
+    }
+  }
+  return false;
 }
 
 export interface DashboardServer {
@@ -609,6 +661,10 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
 
     // POST /api/viewer/facts/:id/verify
     if (req.method === "POST" && pathname.match(/^\/api\/viewer\/facts\/[^/]+\/verify$/)) {
+      if (!isDashboardWriteAuthorized(req, ctx)) {
+        rejectUnauthorizedDashboardWrite(res);
+        return;
+      }
       const factIdRaw = pathname.split("/")[4];
       const factId = parseUrlPathSegment(factIdRaw ?? "");
       if (!factId) {
@@ -618,8 +674,8 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
       }
 
       readJsonBody(req, MAX_DASHBOARD_JSON_BODY_BYTES)
-        .then((parsed) => {
-          const result = performFactAction(ctx, "verify", factId, parsed);
+        .then(async (parsed) => {
+          const result = await performFactAction(ctx, "verify", factId, parsed);
           res.writeHead(result.ok ? 200 : 400, { "Content-Type": "application/json" });
           res.end(JSON.stringify(result));
         })
@@ -637,6 +693,10 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
 
     // POST /api/viewer/facts/:id/forget
     if (req.method === "POST" && pathname.match(/^\/api\/viewer\/facts\/[^/]+\/forget$/)) {
+      if (!isDashboardWriteAuthorized(req, ctx)) {
+        rejectUnauthorizedDashboardWrite(res);
+        return;
+      }
       const factIdRaw = pathname.split("/")[4];
       const factId = parseUrlPathSegment(factIdRaw ?? "");
       if (!factId) {
@@ -647,19 +707,19 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
 
       // Drain any body (defensive) and enforce size.
       readJsonBody(req, MAX_DASHBOARD_JSON_BODY_BYTES)
-        .then(() => {
-          const result = performFactAction(ctx, "forget", factId, {});
+        .then(async () => {
+          const result = await performFactAction(ctx, "forget", factId, {});
           res.writeHead(result.ok ? 200 : 400, { "Content-Type": "application/json" });
           res.end(JSON.stringify(result));
         })
-        .catch((err: unknown) => {
+        .catch(async (err: unknown) => {
           if (err instanceof Error && err.message === "Request body too large") {
             res.writeHead(413, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ error: "PayloadTooLarge" }));
             return;
           }
           // Body content is ignored for forget; malformed JSON should not block the action.
-          const result = performFactAction(ctx, "forget", factId, {});
+          const result = await performFactAction(ctx, "forget", factId, {});
           res.writeHead(result.ok ? 200 : 400, { "Content-Type": "application/json" });
           res.end(JSON.stringify(result));
         });
@@ -758,6 +818,10 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     }
 
     if (pathname === "/api/workshop/changes/revert" && wctx && req.method === "POST") {
+      if (!isDashboardWriteAuthorized(req, ctx)) {
+        rejectUnauthorizedDashboardWrite(res);
+        return;
+      }
       readJsonBody(req, MAX_DASHBOARD_JSON_BODY_BYTES)
         .then((body) => {
           const id = typeof body.id === "string" ? body.id.trim() : "";
@@ -798,6 +862,10 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         return;
       }
       if (req.method === "POST" && actionMatch) {
+        if (!isDashboardWriteAuthorized(req, ctx)) {
+          rejectUnauthorizedDashboardWrite(res);
+          return;
+        }
         const id = parseUrlPathSegment(actionMatch[1] ?? "");
         const action = actionMatch[2];
         if (!id) {
@@ -873,6 +941,10 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
       // Handle GraphQL API requests using the shared Yoga server created at dashboard startup.
       try {
         const graphQlBody = await readJsonBody(req, MAX_DASHBOARD_JSON_BODY_BYTES);
+        if (graphqlBodyIsMutation(graphQlBody) && !isDashboardWriteAuthorized(req, ctx)) {
+          rejectUnauthorizedDashboardWrite(res);
+          return;
+        }
         const headers = new Headers();
         for (const [name, value] of Object.entries(req.headers)) {
           if (typeof value === "string") headers.set(name, value);

@@ -619,6 +619,9 @@ export function createPluginService(ctx: PluginServiceContext) {
               toolProposalStore: toolProposalStore ?? null,
               dreamCycleLogDir: resolveDreamCycleLogDir(),
               changeFeed: changeFeed ?? null,
+              cfg,
+              embeddings,
+              embeddingRegistry,
             },
             cfg.dashboard.port,
           );

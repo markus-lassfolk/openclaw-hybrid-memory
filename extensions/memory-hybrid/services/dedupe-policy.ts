@@ -29,6 +29,15 @@ function globToRegExp(pattern: string): RegExp {
   return new RegExp(`^${escaped}$`);
 }
 
+/** Distillation re-extractions may drift entity slug within the same project namespace (#1947). */
+function entitiesCompatibleForDistillation(candidateEntity: string, matchedEntity: string | null): boolean {
+  if (!matchedEntity) return false;
+  const a = candidateEntity.trim();
+  const b = matchedEntity.trim();
+  if (a === b) return true;
+  return a.startsWith(`${b}-`) || b.startsWith(`${a}-`);
+}
+
 function normalizeProfile(sourcePattern: string, raw?: StoreConfig["defaultProfile"]): Partial<ResolvedDedupeProfile> {
   const partial: Partial<ResolvedDedupeProfile> = { sourcePattern };
   if (typeof raw?.vectorThreshold === "number" && raw.vectorThreshold > 0 && raw.vectorThreshold <= 1) {
@@ -209,6 +218,48 @@ function resolveVectorDuplicateCandidate(
   return bestVec;
 }
 
+function resolveProjectVectorDuplicateCandidate(
+  profile: ResolvedDedupeProfile,
+  ctx: ApplyDedupeContext,
+  entity: string,
+  key: string,
+  candidateSource: string,
+): { id: string; score: number } | null {
+  if (
+    profile.vectorThreshold == null ||
+    profile.vectorThreshold <= 0 ||
+    profile.vectorThreshold > 1 ||
+    !ctx.vectorCandidates ||
+    ctx.vectorCandidates.length === 0
+  ) {
+    return null;
+  }
+  const ranked = [...ctx.vectorCandidates]
+    .filter((cand) => typeof cand.score === "number" && cand.score >= profile.vectorThreshold!)
+    .sort((a, b) => b.score - a.score);
+  for (const vectorDup of ranked) {
+    const matched = ctx.db
+      .prepare("SELECT entity, key, category FROM facts WHERE id = ? AND superseded_at IS NULL LIMIT 1")
+      .get(vectorDup.id) as { entity: string | null; key: string | null; category: string | null } | undefined;
+    if (!matched || matched.category?.trim().toLowerCase() !== "project") {
+      continue;
+    }
+    const matchedEntity = matched.entity?.trim() ?? null;
+    const matchedKey = matched.key?.trim() ?? null;
+    const sameKey = matchedKey === key;
+    const sameEntityAndKey = matchedEntity === entity && sameKey;
+    if (
+      sameEntityAndKey ||
+      (candidateSource === "distillation" &&
+        sameKey &&
+        entitiesCompatibleForDistillation(entity, matchedEntity))
+    ) {
+      return vectorDup;
+    }
+  }
+  return null;
+}
+
 /**
  * Decide how a candidate fact should be handled before insert.
  * Side-effect free (no SQL writes).
@@ -271,21 +322,9 @@ export function applyDedupe(
     if (existing) {
       return mapOnDuplicate(profile, existing.id, "exact");
     }
-    const vectorDup = resolveVectorDuplicateCandidate(profile, ctx);
+    const vectorDup = resolveProjectVectorDuplicateCandidate(profile, ctx, entity, key, candidate.source);
     if (vectorDup) {
-      const matched = ctx.db
-        .prepare("SELECT entity, key FROM facts WHERE id = ? AND superseded_at IS NULL LIMIT 1")
-        .get(vectorDup.id) as { entity: string | null; key: string | null } | undefined;
-      if (!matched) {
-        return { action: "store" };
-      }
-      // Distillation re-extractions may drift entity slug while keeping the same key (#1947).
-      // Active-task projection still requires exact entity+key for other sources (#1276).
-      const sameKey = matched.key === key;
-      const sameEntityAndKey = matched.entity === entity && sameKey;
-      if (sameEntityAndKey || (candidate.source === "distillation" && sameKey)) {
-        return mapOnDuplicate(profile, vectorDup.id, "vector");
-      }
+      return mapOnDuplicate(profile, vectorDup.id, "vector");
     }
     return { action: "store" };
   }

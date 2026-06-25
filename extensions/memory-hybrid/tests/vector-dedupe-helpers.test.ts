@@ -22,11 +22,35 @@ describe("vector-dedupe-helpers", () => {
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
-  it("resolveDistillVectorCandidates falls back to hasDuplicate when vector search is degraded", async () => {
+  it("resolveDistillVectorCandidates skips hasDuplicate when vector schema is invalid", async () => {
     const vectorDb = {
-      search: vi.fn(),
+      search: vi.fn().mockResolvedValue([]),
       hasDuplicate: vi.fn().mockResolvedValue(true),
       getLastSearchFailReason: vi.fn().mockReturnValue("schema_invalid"),
+      isMemoriesVectorSchemaValid: vi.fn().mockReturnValue(false),
+    };
+
+    const result = await resolveDistillVectorCandidates({
+      fuzzyDedupe: true,
+      vector: [0.1, 0.2],
+      vectorDb,
+      factsDb: { getById: () => null },
+      embeddingModelName: "test-embedding",
+    });
+
+    expect(vectorDb.search).toHaveBeenCalledOnce();
+    expect(vectorDb.hasDuplicate).not.toHaveBeenCalled();
+    expect(result.skipAsDuplicate).toBe(false);
+    expect(result.vectorSearchDegraded).toBe(true);
+    expect(result.usedHasDuplicateFallback).toBe(false);
+  });
+
+  it("resolveDistillVectorCandidates falls back to hasDuplicate when vector search is degraded but schema is valid", async () => {
+    const vectorDb = {
+      search: vi.fn().mockResolvedValue([]),
+      hasDuplicate: vi.fn().mockResolvedValue(true),
+      getLastSearchFailReason: vi.fn().mockReturnValue("lance_error"),
+      isMemoriesVectorSchemaValid: vi.fn().mockReturnValue(true),
     };
 
     const result = await resolveDistillVectorCandidates({
@@ -39,9 +63,41 @@ describe("vector-dedupe-helpers", () => {
 
     expect(vectorDb.search).toHaveBeenCalledOnce();
     expect(vectorDb.hasDuplicate).toHaveBeenCalledWith([0.1, 0.2], DISTILL_DEDUP_THRESHOLD);
-    expect(result.skipAsDuplicate).toBe(true);
+    expect(result.skipAsDuplicate).toBe(false);
     expect(result.vectorSearchDegraded).toBe(true);
     expect(result.usedHasDuplicateFallback).toBe(true);
+  });
+
+  it("resolveDistillVectorCandidates uses scoped neighbours when search is degraded", async () => {
+    dir = mkdtempSync(join(tmpdir(), "vector-dedupe-degraded-"));
+    db = new FactsDB(join(dir, "facts.db"));
+    const scoped = db.store({
+      text: "Scoped distill fact",
+      category: "project",
+      importance: 0.8,
+      entity: "hybrid-memory",
+      key: "status",
+      value: "in_progress",
+      source: "distillation",
+    });
+    const vectorDb = {
+      search: vi.fn().mockResolvedValue([{ entry: { id: scoped.id }, score: 0.93 }]),
+      hasDuplicate: vi.fn().mockResolvedValue(true),
+      getLastSearchFailReason: vi.fn().mockReturnValue("lance_error"),
+      isMemoriesVectorSchemaValid: vi.fn().mockReturnValue(true),
+    };
+
+    const result = await resolveDistillVectorCandidates({
+      fuzzyDedupe: true,
+      vector: [0.1, 0.2],
+      vectorDb,
+      factsDb: db,
+      embeddingModelName: null,
+    });
+
+    expect(result.skipAsDuplicate).toBe(false);
+    expect(result.vectorCandidates).toEqual([{ id: scoped.id, score: 0.93 }]);
+    expect(vectorDb.hasDuplicate).not.toHaveBeenCalled();
   });
 
   it("resolveDistillVectorCandidates skips vector work when fuzzyDedupe is disabled", async () => {

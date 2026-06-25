@@ -36,9 +36,8 @@ import {
 } from "./recalled-context-assembler.js";
 import type { ProvenanceService } from "./provenance.js";
 import { cleanupEvictedVector } from "./vector-maintenance.js";
-import { checkCaptureDedupWindow, computeCaptureDedupHash } from "./capture-dedup.js";
+import { runCaptureStoreWithDedupWindow } from "./capture-dedup.js";
 import { dotProductSimilarity, normalizeVector } from "./reflection.js";
-import { createTransaction } from "../utils/sqlite-transaction.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -603,6 +602,7 @@ export async function runPassiveObserver(
         if (!storedText || !isSubstantiveMemoryText(storedText)) continue;
         const storedCategory =
           (prepareMemoryMetadataForStorage(fact.category) as MemoryCategory | undefined) ?? fact.category;
+        const identity = isIdentityFact(storedText, opts.agentName);
 
         // Embed new fact for dedup check
         let vec: number[];
@@ -629,6 +629,8 @@ export async function runPassiveObserver(
         // While OpenAI embeddings are pre-normalized, Ollama and some other providers return
         // unnormalized vectors, causing the L2 distance to be scaled by vector magnitude.
         const normalizedVec = normalizeVector(vec);
+        const dedupScope = identity ? "global" : "session";
+        const dedupScopeTarget = identity ? null : sessionId;
 
         // Dedup check via LanceDB ANN search — O(log n) instead of O(n*m) brute-force.
         // Replaces the old recentVectors[] linear scan and eliminates the embedBatch()
@@ -637,16 +639,26 @@ export async function runPassiveObserver(
         try {
           const dupeResults = await vectorDb.search(normalizedVec, 1, similarityThreshold);
           if (dupeResults.length > 0) {
-            isDuplicate = true;
-            // Confidence reinforcement: boost the matched fact instead of silently skipping (Issue #147)
-            if (reinforcementEnabled && !opts.dryRun) {
-              const matchedId = dupeResults[0].entry.id;
-              if (matchedId) {
-                try {
-                  const boosted = factsDb.boostConfidence(matchedId, passiveBoost, maxConfidence);
-                  if (boosted) result.factsReinforced++;
-                } catch {
-                  // Non-fatal — don't fail passive observer because of boost error
+            const matchedId = dupeResults[0].entry.id;
+            const matched = matchedId ? factsDb.getById(matchedId) : null;
+            const nowSec = Math.floor(Date.now() / 1000);
+            const scopeMatches =
+              matched != null &&
+              matched.supersededAt == null &&
+              (matched.expiresAt == null || matched.expiresAt > nowSec) &&
+              (matched.scope ?? "global") === dedupScope &&
+              (dedupScope === "global" ? null : (matched.scopeTarget ?? null)) === dedupScopeTarget;
+            if (scopeMatches) {
+              isDuplicate = true;
+              // Confidence reinforcement: boost the matched fact instead of silently skipping (Issue #147)
+              if (reinforcementEnabled && !opts.dryRun) {
+                if (matchedId) {
+                  try {
+                    const boosted = factsDb.boostConfidence(matchedId, passiveBoost, maxConfidence);
+                    if (boosted) result.factsReinforced++;
+                  } catch {
+                    // Non-fatal — don't fail passive observer because of boost error
+                  }
                 }
               }
             }
@@ -725,7 +737,6 @@ export async function runPassiveObserver(
 
         // Identity fact promotion (Issue #306): if this fact describes the agent itself,
         // store it as global/permanent so it persists across sessions.
-        const identity = isIdentityFact(storedText, opts.agentName);
         if (identity) {
           logger.info(`passive-observer: promoting identity fact to global/permanent: "${storedText.slice(0, 60)}..."`);
         }
@@ -735,21 +746,16 @@ export async function runPassiveObserver(
           text: storedText,
           entity: null,
           key: null,
-          scope: identity ? "global" : "session",
-          scopeTarget: identity ? null : sessionId,
+          scope: dedupScope,
+          scopeTarget: dedupScopeTarget,
         };
 
-        const storeWithDedupCheck = createTransaction(
-          factsDb.getRawDb(),
-          () => {
-            if (dedupWindow > 0 && typeof factsDb.getRawDb === "function") {
-              const dedupCheck = checkCaptureDedupWindow(factsDb.getRawDb(), dedupInput, dedupWindow);
-              if (dedupCheck.skip) {
-                return { skipped: true };
-              }
-            }
-
-            const storeResult = factsDb.storeWithResult({
+        const txResult = runCaptureStoreWithDedupWindow(
+          factsDb,
+          dedupWindow,
+          dedupInput,
+          () =>
+            factsDb.storeWithResult({
               text: storedText,
               category: storedCategory,
               importance: identity ? Math.max(fact.importance, 0.9) : fact.importance,
@@ -765,22 +771,8 @@ export async function runPassiveObserver(
               provenanceSession: sessionId,
               extractionMethod: "passive",
               extractionConfidence: fact.importance,
-            });
-
-            if (!storeResult.skipped && storeResult.newlyStored !== false && dedupWindow > 0) {
-              const dedupHash = computeCaptureDedupHash(dedupInput);
-              factsDb
-                .getRawDb()
-                .prepare("UPDATE facts SET content_dedup_hash = ? WHERE id = ?")
-                .run(dedupHash, storeResult.entry.id);
-            }
-
-            return { skipped: false, storeResult };
-          },
-          "IMMEDIATE",
+            }),
         );
-
-        const txResult = storeWithDedupCheck();
         if (txResult.skipped) {
           continue;
         }

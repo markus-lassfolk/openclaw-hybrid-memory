@@ -257,6 +257,34 @@ describe("project-state-lww: overloaded entity detection", () => {
     expect(candidate?.action).toBe("supersede");
   });
 
+  it("flags when refs are asymmetrically split across facts (2+1)", () => {
+    const older = storeProjectFact({
+      entity: "hybrid-memory / next",
+      key: "next",
+      value: "merge PR #1597 next",
+      text: "Queue head: PR #1596 and PR #1597",
+      confidence: 1.0,
+    });
+    const newer = storeProjectFact({
+      entity: "hybrid-memory / next",
+      key: "next",
+      value: "merge next",
+      text: "Updated queue: PR #1599",
+      confidence: 1.0,
+      createdAtOffset: 30,
+    });
+
+    db.recordContradiction(newer.id, older.id);
+
+    const result = db.resolveContradictionsProjectStateLww({ dryRun: true });
+    const candidate = result.groups
+      .flatMap((g) => g.candidates)
+      .find((c) => c.factIdNew === newer.id || c.factIdOld === older.id);
+
+    expect(candidate).toBeDefined();
+    expect(candidate?.possibleOverloadedEntity).toBe(true);
+  });
+
   it("flags when entity/key values reference many distinct PR/issue numbers", () => {
     const older = storeProjectFact({
       entity: "hybrid-memory-issue-1272-pr",

@@ -22,6 +22,7 @@ import { BROADCAST_CHANGE_SESSION_KEY } from "../services/change-feed-emit.js";
 import type { ChangeFeed } from "../services/change-feed.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { summarizeSkillProposalValidation } from "../services/generated-skill-validation.js";
+import { resolveWorkerLeasesConfig } from "../services/worker-lease.js";
 
 interface CrystallizationToolsContext {
   crystallizationStore: CrystallizationStore;
@@ -55,15 +56,31 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
           cfg.crystallization,
           changeFeedEmit,
         );
+        const workerLeases = resolveWorkerLeasesConfig(cfg.maintenance.orchestrator?.workerLeases);
+        const rawDb =
+          workerLeases.enabled && typeof factsDb.getRawDb === "function" ? factsDb.getRawDb() : null;
+        if (workerLeases.enabled && !rawDb) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Crystallization unavailable: facts database is not initialized for worker leases.",
+              },
+            ],
+            details: { error: "facts_db_unavailable", proposed: 0, skipped: 0, reasons: [] },
+          };
+        }
         // Issue: skill proposal lifecycle — tool-triggered crystallization should never install directly.
         const result = proposer.runCycle({
           autoApproveOverride: false,
-          leaseContext: {
-            db: factsDb.getRawDb(),
-            ownerSessionId: `plugin-${process.pid}`,
-            workerLeases: cfg.maintenance.orchestrator?.workerLeases,
-            logger: api.logger,
-          },
+          leaseContext: rawDb
+            ? {
+                db: rawDb,
+                ownerSessionId: `plugin-${process.pid}`,
+                workerLeases: cfg.maintenance.orchestrator?.workerLeases,
+                logger: api.logger,
+              }
+            : undefined,
         });
 
         const lines: string[] = [];

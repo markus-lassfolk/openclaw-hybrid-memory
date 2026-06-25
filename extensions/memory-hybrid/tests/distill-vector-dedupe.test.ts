@@ -175,6 +175,42 @@ describe("distill vector dedupe (#1947)", () => {
     expect(db.count()).toBe(1);
   });
 
+  it("does not vector-dedupe distillation project facts across unrelated entities with the same key", () => {
+    dir = mkdtempSync(join(tmpdir(), "distill-vector-dedupe-"));
+    db = new FactsDB(join(dir, "facts.db"));
+    const original = db.store({
+      text: "Hybrid memory maintenance resolves contradictions automatically",
+      category: "project",
+      importance: 0.8,
+      entity: "hybrid-memory",
+      key: "status",
+      value: "in_progress",
+      source: "distillation",
+    });
+    const profile = resolveDedupeProfile("distillation", { fuzzyDedupe: true });
+    const dedupe = applyDedupe(
+      profile,
+      {
+        text: "Humanizer pipeline maintenance resolves contradictions automatically overnight",
+        source: "distillation",
+        scope: "global",
+        scopeTarget: null,
+        category: "project",
+        entity: "humanizer",
+        key: "status",
+        value: "in_progress",
+      },
+      {
+        db: db.getRawDb(),
+        nowSec: Math.floor(Date.now() / 1000),
+        fuzzyDedupe: true,
+        vectorCandidates: [{ id: original.id, score: 0.95 }],
+      },
+    );
+
+    expect(dedupe.action).toBe("store");
+  });
+
   it("does not vector-dedupe distillation project facts across different keys", () => {
     dir = mkdtempSync(join(tmpdir(), "distill-vector-dedupe-"));
     db = new FactsDB(join(dir, "facts.db"));
@@ -208,6 +244,41 @@ describe("distill vector dedupe (#1947)", () => {
       },
     );
 
+    expect(dedupe.action).toBe("store");
+  });
+
+  it("does not vector-dedupe when entity slugs share only a shallow prefix", () => {
+    dir = mkdtempSync(join(tmpdir(), "distill-vector-dedupe-prefix-"));
+    db = new FactsDB(join(dir, "facts.db"));
+    const original = db.store({
+      text: "Hybrid memory maintenance resolves contradictions automatically",
+      category: "project",
+      importance: 0.8,
+      entity: "hybrid-memory-maintenance",
+      key: "status",
+      value: "in_progress",
+      source: "distillation",
+    });
+    const profile = resolveDedupeProfile("distillation", { fuzzyDedupe: true });
+    const dedupe = applyDedupe(
+      profile,
+      {
+        text: "Hybrid memory other project maintenance resolves contradictions automatically overnight",
+        source: "distillation",
+        scope: "global",
+        scopeTarget: null,
+        category: "project",
+        entity: "hybrid-memory-other-project",
+        key: "status",
+        value: "in_progress",
+      },
+      {
+        db: db.getRawDb(),
+        nowSec: Math.floor(Date.now() / 1000),
+        fuzzyDedupe: true,
+        vectorCandidates: [{ id: original.id, score: 0.95 }],
+      },
+    );
     expect(dedupe.action).toBe("store");
   });
 

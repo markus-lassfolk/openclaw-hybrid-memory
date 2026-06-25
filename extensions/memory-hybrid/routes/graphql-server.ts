@@ -8,10 +8,11 @@ interface MemoryPluginContext {
   [key: string]: unknown;
 }
 
-import { createSchema, createYoga, createPubSub } from "graphql-yoga";
+import { createSchema, createYoga } from "graphql-yoga";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import { graphqlSchema } from "./graphql-schema.js";
+import { graphqlPubSub } from "./graphql-pubsub.js";
 import { pluginLogger } from "../utils/logger.js";
 import { resolvers, type GraphQLContext } from "./graphql-resolvers.js";
 
@@ -21,14 +22,7 @@ type FactDeletedPayload = { id: string; category?: string };
 type LinkCreatedPayload = { link: unknown; sourceId?: string; targetId?: string };
 type StatsUpdatedPayload = { stats: unknown };
 
-// PubSub for subscriptions
-const pubSub = createPubSub<{
-  factCreated: [FactSubscriptionPayload];
-  factUpdated: [FactUpdatedPayload];
-  factDeleted: [FactDeletedPayload];
-  linkCreated: [LinkCreatedPayload];
-  statsUpdated: [StatsUpdatedPayload];
-}>();
+const pubSub = graphqlPubSub;
 
 function recordValue(value: unknown, key: string): unknown {
   return value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
@@ -260,7 +254,7 @@ subscription WatchNewFacts {
  * Publish fact created event
  */
 export function publishFactCreated(
-  pubSub: ReturnType<typeof createPubSub>,
+  pubSub: typeof graphqlPubSub,
   fact: unknown,
   category?: string,
   scope?: string,
@@ -271,21 +265,21 @@ export function publishFactCreated(
 /**
  * Publish fact updated event
  */
-export function publishFactUpdated(pubSub: ReturnType<typeof createPubSub>, fact: unknown) {
+export function publishFactUpdated(pubSub: typeof graphqlPubSub, fact: unknown) {
   pubSub.publish("factUpdated", { fact, factId: factId(fact), category: factCategory(fact) });
 }
 
 /**
  * Publish fact deleted event
  */
-export function publishFactDeleted(pubSub: ReturnType<typeof createPubSub>, id: string, category?: string) {
+export function publishFactDeleted(pubSub: typeof graphqlPubSub, id: string, category?: string) {
   pubSub.publish("factDeleted", { id, category });
 }
 
 /**
  * Publish stats updated event
  */
-export function publishLinkCreated(pubSub: ReturnType<typeof createPubSub>, link: unknown) {
+export function publishLinkCreated(pubSub: typeof graphqlPubSub, link: unknown) {
   pubSub.publish("linkCreated", {
     link,
     sourceId: linkEndpoint(link, "sourceId"),
@@ -293,6 +287,6 @@ export function publishLinkCreated(pubSub: ReturnType<typeof createPubSub>, link
   });
 }
 
-export function publishStatsUpdated(pubSub: ReturnType<typeof createPubSub>, stats: unknown) {
+export function publishStatsUpdated(pubSub: typeof graphqlPubSub, stats: unknown) {
   pubSub.publish("statsUpdated", { stats });
 }

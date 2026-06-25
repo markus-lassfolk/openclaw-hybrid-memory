@@ -347,6 +347,7 @@ export function buildCliMaintenanceRunners(
   });
 
   set("evolution-pass", async () => {
+    if (typeof b.factsDb.getRawDb !== "function") return "skipped (factsDb unavailable)";
     const { runEvolutionPass } = await import("../../../services/evolution-pass.js");
     const { resolveReflectionModelAndFallbacks } = await import("../../../config/index.js");
     const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(b.cfg, "maintenance");
@@ -933,7 +934,8 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
     );
   }
 
-  runners.set("evolution-pass", async () => {
+  runners.  set("evolution-pass", async () => {
+    if (typeof deps.factsDb.getRawDb !== "function") return "skipped (factsDb unavailable)";
     const { runEvolutionPass } = await import("../../../services/evolution-pass.js");
     const { resolveReflectionModelAndFallbacks } = await import("../../../config/index.js");
     const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(deps.cfg, "maintenance");

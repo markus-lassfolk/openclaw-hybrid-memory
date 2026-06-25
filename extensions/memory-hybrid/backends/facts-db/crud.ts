@@ -250,11 +250,20 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
 
   const entryCategory = entry.category ?? "";
   const entrySource = entry.source ?? "";
+  if (isPromptArtifactOrReasoningTrace(entry.text)) {
+    return {
+      skipped: true,
+      rejected: true,
+      evictedFactId: null,
+      embeddingStale: false,
+      newlyStored: false,
+      preMergeText: null,
+      entry: createSkippedStorePlaceholder(entry),
+    };
+  }
   if (
     !ctx.allowPreStoreGuardBypass &&
-    (BLOCKED_CATEGORIES.has(entryCategory) ||
-      BLOCKED_SOURCES.has(entrySource) ||
-      isPromptArtifactOrReasoningTrace(entry.text))
+    (BLOCKED_CATEGORIES.has(entryCategory) || BLOCKED_SOURCES.has(entrySource))
   ) {
     return {
       skipped: true,

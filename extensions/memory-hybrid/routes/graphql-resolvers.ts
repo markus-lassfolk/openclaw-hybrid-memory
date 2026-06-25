@@ -7,9 +7,19 @@ import { isPreStoreGuardBlocked } from "../backends/facts-db/crud.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import { DECAY_CLASSES, type DecayClass } from "../config.js";
 import type { MemoryLinkType } from "../backends/facts-db/types.js";
+import { isPromptArtifactOrReasoningTrace } from "../services/capture-utils.js";
 import type { MemoryEntry } from "../types/memory.js";
-import { cleanupEvictedVector } from "../services/vector-maintenance.js";
+import type { EmbeddingProvider } from "../services/embeddings/types.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
+import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
 import { pluginLogger } from "../utils/logger.js";
+import {
+  notifyGraphqlFactCreated,
+  notifyGraphqlFactDeleted,
+  notifyGraphqlFactUpdated,
+  notifyGraphqlLinkCreated,
+} from "./graphql-pubsub.js";
 
 export type GraphQLContext = {
   factsDb: FactsDB;
@@ -42,6 +52,63 @@ function asNumber(value: unknown): number | undefined {
 
 function asStringArray(value: unknown): string[] | undefined {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined;
+}
+
+function getGraphqlEmbeddings(context: GraphQLContext): EmbeddingProvider | undefined {
+  const candidate = context.pluginContext?.embeddings;
+  if (
+    candidate &&
+    typeof candidate === "object" &&
+    typeof (candidate as EmbeddingProvider).embed === "function" &&
+    typeof (candidate as EmbeddingProvider).modelName === "string"
+  ) {
+    return candidate as EmbeddingProvider;
+  }
+  return undefined;
+}
+
+function parsePruneOlderThan(value: unknown): number {
+  const asNum = asNumber(value);
+  if (asNum !== undefined) return asNum;
+  if (typeof value === "string" && value.trim()) {
+    const ms = Date.parse(value);
+    if (Number.isFinite(ms)) return Math.floor(ms / 1000);
+  }
+  throw new Error("pruneFacts requires valid olderThan (unix seconds or ISO DateTime)");
+}
+
+async function indexGraphqlFactVector(context: GraphQLContext, entry: MemoryEntry): Promise<void> {
+  const embeddings = getGraphqlEmbeddings(context);
+  if (!context.vectorDb || !embeddings) return;
+  try {
+    const vector = await embeddings.embed(entry.text);
+    context.factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+    if (!(await context.vectorDb.hasDuplicate(vector))) {
+      await context.vectorDb.store({
+        text: entry.text,
+        vector,
+        importance: entry.importance,
+        category: entry.category,
+        id: entry.id,
+      });
+    }
+    persistCanonicalFactEmbedding(
+      context.factsDb,
+      entry.id,
+      embeddings.modelName,
+      vector,
+      "graphql-mutation-index",
+      "graphql",
+      (msg) => pluginLogger.warn(msg),
+    );
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "graphql",
+      operation: "indexGraphqlFactVector",
+      factId: entry.id,
+    });
+    pluginLogger.warn(`memory-hybrid: GraphQL vector index failed for ${entry.id}: ${err}`);
+  }
 }
 
 function allFacts(factsDb: FactsDB, includeSuperseded = false): MemoryEntry[] {
@@ -83,12 +150,14 @@ function searchFacts(
   const tags = asStringArray(input.tags);
   const minImportance = asNumber(input.minImportance);
   const minConfidence = asNumber(input.minConfidence);
+  const scope = asString(input.scope);
   const includeSuperseded = input.includeSuperseded === true;
   const includeExpired = input.includeExpired === true;
-  const now = Date.now();
+  const nowSec = Math.floor(Date.now() / 1000);
 
   let facts = allFacts(context.factsDb, includeSuperseded);
-  if (!includeExpired) facts = facts.filter((fact) => fact.expiresAt == null || fact.expiresAt > now);
+  if (!includeExpired) facts = facts.filter((fact) => isActiveFact(fact, nowSec));
+  if (scope) facts = facts.filter((fact) => fact.scope === scope);
   if (categories?.length) facts = facts.filter((fact) => categories.includes(fact.category));
   if (tags?.length) facts = facts.filter((fact) => tags.some((tag) => fact.tags?.includes(tag)));
   if (minImportance !== undefined) facts = facts.filter((fact) => fact.importance >= minImportance);
@@ -194,14 +263,14 @@ export const resolvers: GraphQLResolvers = {
       const scope = asString(input.scope);
       const includeSuperseded = input.includeSuperseded === true;
       const includeExpired = input.includeExpired === true;
-      const now = Date.now();
+      const nowSec = Math.floor(Date.now() / 1000);
 
       let facts = allFacts(context.factsDb, includeSuperseded);
       if (category) facts = facts.filter((fact) => fact.category === category);
       if (decayClass) facts = facts.filter((fact) => fact.decayClass === decayClass);
       if (tags?.length) facts = facts.filter((fact) => tags.some((tag) => fact.tags?.includes(tag)));
       if (scope) facts = facts.filter((fact) => fact.scope === scope);
-      if (!includeExpired) facts = facts.filter((fact) => fact.expiresAt == null || fact.expiresAt > now);
+      if (!includeExpired) facts = facts.filter((fact) => isActiveFact(fact, nowSec));
       return facts.sort((a, b) => b.createdAt - a.createdAt).slice(offset, offset + limit);
     },
 
@@ -236,11 +305,29 @@ export const resolvers: GraphQLResolvers = {
       const factId = asString(input.factId);
       if (!factId) return [];
       const maxDepth = Math.max(1, Math.min(5, asNumber(input.maxDepth) ?? 1));
-      return context.factsDb
-        .getConnectedFactIds([factId], maxDepth)
-        .filter((id) => id !== factId)
+      const linkTypes = asStringArray(input.linkTypes);
+      const nowSec = Math.floor(Date.now() / 1000);
+      let neighborIds: string[];
+      if (linkTypes?.length) {
+        neighborIds = [
+          ...new Set(
+            getAllLinks(context.factsDb)
+              .filter(
+                (link) =>
+                  linkTypes.includes(link.linkType) &&
+                  (link.sourceId === factId || link.targetId === factId),
+              )
+              .flatMap((link) => [link.sourceId, link.targetId]),
+          ),
+        ].filter((id) => id !== factId);
+      } else {
+        neighborIds = context.factsDb
+          .getConnectedFactIds([factId], maxDepth)
+          .filter((id) => id !== factId);
+      }
+      return neighborIds
         .map((id) => context.factsDb.getById(id))
-        .filter((fact): fact is MemoryEntry => fact !== null);
+        .filter((fact): fact is MemoryEntry => fact != null && isActiveFact(fact, nowSec));
     },
 
     entityFacts: (_parent, args, context) => {
@@ -248,7 +335,10 @@ export const resolvers: GraphQLResolvers = {
       const entity = asString(input.entity);
       const key = asString(input.key);
       if (!entity) return [];
-      return allFacts(context.factsDb).filter((fact) => fact.entity === entity && (!key || fact.key === key));
+      const nowSec = Math.floor(Date.now() / 1000);
+      return allFacts(context.factsDb).filter(
+        (fact) => fact.entity === entity && (!key || fact.key === key) && isActiveFact(fact, nowSec),
+      );
     },
 
     graph: (_parent, args, context) => {
@@ -262,6 +352,23 @@ export const resolvers: GraphQLResolvers = {
       if (decayClasses?.length) facts = facts.filter((fact) => decayClasses.includes(fact.decayClass));
       if (minImportance !== undefined) facts = facts.filter((fact) => fact.importance >= minImportance);
       if (scope) facts = facts.filter((fact) => fact.scope === scope);
+      const factIds = new Set(facts.map((fact) => fact.id));
+      const linkEdges = getAllLinks(context.factsDb)
+        .filter((link) => factIds.has(link.sourceId) && factIds.has(link.targetId))
+        .map((link) => ({
+          source: link.sourceId,
+          target: link.targetId,
+          linkType: link.linkType,
+          weight: link.weight,
+        }));
+      const supersedeEdges = facts
+        .filter((fact) => fact.supersededBy)
+        .map((fact) => ({
+          source: fact.id,
+          target: fact.supersededBy as string,
+          linkType: "superseded_by",
+          weight: 1,
+        }));
       return {
         nodes: facts.map((fact) => ({
           id: fact.id,
@@ -272,14 +379,7 @@ export const resolvers: GraphQLResolvers = {
           decayClass: fact.decayClass,
           factCount: 1,
         })),
-        edges: facts
-          .filter((fact) => fact.supersededBy)
-          .map((fact) => ({
-            source: fact.id,
-            target: fact.supersededBy as string,
-            linkType: "superseded_by",
-            weight: 1,
-          })),
+        edges: [...linkEdges, ...supersedeEdges],
       };
     },
 
@@ -305,8 +405,11 @@ export const resolvers: GraphQLResolvers = {
         factsByCategory: [...byCategory].map(([category, count]) => ({ category, count })),
         factsByDecayClass: [...byDecay].map(([decayClass, count]) => ({ decayClass, count })),
         totalEpisodes: 0,
-        totalLinks: 0,
-        databaseSizeBytes: 0,
+        totalLinks: getAllLinks(context.factsDb).length,
+        databaseSizeBytes:
+          typeof context.factsDb.estimateStorageBytes === "function"
+            ? context.factsDb.estimateStorageBytes().sqliteBytes
+            : 0,
         oldestFactDate: facts.length ? Math.min(...facts.map((fact) => fact.createdAt)) : null,
         newestFactDate: facts.length ? Math.max(...facts.map((fact) => fact.createdAt)) : null,
       };
@@ -321,6 +424,10 @@ export const resolvers: GraphQLResolvers = {
         throw new Error("Fact rejected: artifact or reasoning trace text cannot be stored");
       }
       await cleanupGraphqlEviction(context, result.evictedFactId);
+      if (result.newlyStored) {
+        await indexGraphqlFactVector(context, result.entry);
+        notifyGraphqlFactCreated(result.entry, result.entry.category, result.entry.scope);
+      }
       return result.entry;
     },
 
@@ -331,6 +438,9 @@ export const resolvers: GraphQLResolvers = {
       const existing = context.factsDb.getById(id);
       if (!existing) throw new Error(`Fact not found: ${id}`);
       const updatedText = asString(input.text) ?? existing.text;
+      if (isPromptArtifactOrReasoningTrace(updatedText)) {
+        throw new Error("Fact rejected: artifact or reasoning trace text cannot be stored");
+      }
       const result = context.factsDb.storeWithResult(
         {
           text: updatedText,
@@ -352,17 +462,41 @@ export const resolvers: GraphQLResolvers = {
       // Skip supersede if store was rejected (artifact text) or deduped to an existing row
       if (result.entry.id !== "" && result.newlyStored) {
         context.factsDb.supersede(existing.id, result.entry.id);
+        if (context.vectorDb) {
+          await deleteVectorForFactId({
+            vectorDb: context.vectorDb,
+            factId: existing.id,
+            logger: pluginLogger,
+            context: "graphql-update-supersede",
+          });
+        }
+        await indexGraphqlFactVector(context, result.entry);
+        notifyGraphqlFactUpdated(result.entry);
       }
       await cleanupGraphqlEviction(context, result.evictedFactId);
       return result.entry;
     },
 
-    deleteFact: (_parent, args, context) => {
+    deleteFact: async (_parent, args, context) => {
       const id = asString(asRecord(args).id);
-      return id ? context.factsDb.delete(id) : false;
+      if (!id) return false;
+      const existing = context.factsDb.getById(id);
+      const deleted = context.factsDb.delete(id);
+      if (deleted && context.vectorDb) {
+        await deleteVectorForFactId({
+          vectorDb: context.vectorDb,
+          factId: id,
+          logger: pluginLogger,
+          context: "graphql-delete-fact",
+        });
+      }
+      if (deleted) {
+        notifyGraphqlFactDeleted(id, existing?.category);
+      }
+      return deleted;
     },
 
-    supersedeFact: (_parent, args, context) => {
+    supersedeFact: async (_parent, args, context) => {
       const input = asRecord(args);
       const oldFactId = asString(input.oldFactId);
       const newFactId = asString(input.newFactId);
@@ -373,6 +507,15 @@ export const resolvers: GraphQLResolvers = {
       if (!newFact) throw new Error(`Fact not found: ${newFactId}`);
       const applied = context.factsDb.supersede(oldFactId, newFactId);
       if (!applied) throw new Error(`Fact supersede did not apply: ${oldFactId}`);
+      if (context.vectorDb) {
+        await deleteVectorForFactId({
+          vectorDb: context.vectorDb,
+          factId: oldFactId,
+          logger: pluginLogger,
+          context: "graphql-supersede",
+        });
+      }
+      notifyGraphqlFactUpdated(newFact);
       return newFact;
     },
 
@@ -385,7 +528,9 @@ export const resolvers: GraphQLResolvers = {
       if (!sourceId || !targetId) throw new Error("Missing link endpoint");
       if (!isMemoryLinkType(linkType)) throw new Error(`Unsupported link type: ${linkType}`);
       const id = context.factsDb.createLink(sourceId, targetId, linkType, weight);
-      return getAllLinks(context.factsDb).find((link) => link.id === id);
+      const link = getAllLinks(context.factsDb).find((entry) => entry.id === id);
+      if (link) notifyGraphqlLinkCreated(link);
+      return link;
     },
     deleteLink: (_parent, args, context) => {
       const id = asString(asRecord(args).id);
@@ -410,28 +555,48 @@ export const resolvers: GraphQLResolvers = {
         const result = context.factsDb.storeWithResult(input);
         if (result.entry.id !== "" && result.newlyStored) {
           stored.push(result.entry);
+          await indexGraphqlFactVector(context, result.entry);
+          notifyGraphqlFactCreated(result.entry, result.entry.category, result.entry.scope);
         }
         await cleanupGraphqlEviction(context, result.evictedFactId);
       }
       return stored;
     },
 
-    pruneFacts: (_parent, args, context) => {
+    pruneFacts: async (_parent, args, context) => {
       const input = asRecord(args);
-      const olderThan = asNumber(input.olderThan);
+      if (input.olderThan == null) {
+        throw new Error("pruneFacts requires olderThan (unix seconds or ISO DateTime)");
+      }
+      const olderThan = parsePruneOlderThan(input.olderThan);
       const category = asString(input.category);
       const toDelete = allFacts(context.factsDb).filter(
-        (fact) => (olderThan === undefined || fact.createdAt < olderThan) && (!category || fact.category === category),
+        (fact) => fact.createdAt < olderThan && (!category || fact.category === category),
       );
       let deleted = 0;
       for (const fact of toDelete) {
-        if (context.factsDb.delete(fact.id)) deleted++;
+        if (context.factsDb.delete(fact.id)) {
+          deleted++;
+          notifyGraphqlFactDeleted(fact.id, fact.category);
+          if (context.vectorDb) {
+            await deleteVectorForFactId({
+              vectorDb: context.vectorDb,
+              factId: fact.id,
+              logger: pluginLogger,
+              context: "graphql-prune-facts",
+            });
+          }
+        }
       }
       return deleted;
     },
 
-    consolidateFacts: () => null,
-    recomputeEmbeddings: () => null,
+    consolidateFacts: () => {
+      throw new Error("consolidateFacts is not implemented; use maintenance CLI consolidate instead");
+    },
+    recomputeEmbeddings: () => {
+      throw new Error("recomputeEmbeddings is not implemented; use the reindex CLI command instead");
+    },
   },
 
   Fact: {

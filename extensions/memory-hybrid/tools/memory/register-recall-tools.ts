@@ -498,13 +498,16 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       scopeFilter?: ScopeFilter;
     },
   ): SearchResult[] {
-    const ftsHits = searchFts(factsDb.getRawDb(), query, {
-      limit: recallLimit,
-      entityFilter: opts.entity,
-      tagFilter: opts.tag,
-      includeSuperseded: opts.includeSuperseded,
-      asOf: opts.asOfSec,
-    });
+    const ftsHits =
+      typeof factsDb.getRawDb === "function"
+        ? searchFts(factsDb.getRawDb(), query, {
+            limit: recallLimit,
+            entityFilter: opts.entity,
+            tagFilter: opts.tag,
+            includeSuperseded: opts.includeSuperseded,
+            asOf: opts.asOfSec,
+          })
+        : [];
     const out: SearchResult[] = [];
     for (const hit of ftsHits) {
       const getByIdOpts =
@@ -1320,6 +1323,12 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       async execute() {
         const workerLeases = resolveWorkerLeasesConfig(cfg.maintenance.orchestrator?.workerLeases);
         const now = Math.floor(Date.now() / 1000);
+        if (typeof factsDb.getRawDb !== "function") {
+          return {
+            content: [{ type: "text", text: "Worker lease status unavailable (factsDb has no raw DB handle)." }],
+            details: { workers: [] },
+          };
+        }
         const leases = listWorkerLeases(factsDb.getRawDb());
         const workers = leases.map((l) => {
           const quietEnd = isInQuietWindow(workerLeases) ? quietWindowEndEpochSec(workerLeases) : null;

@@ -1,3 +1,4 @@
+import { capturePluginError } from "../services/error-reporter.js";
 import { DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
 
 export const VECTOR_CANDIDATE_LIMIT = 10;
@@ -14,6 +15,7 @@ export type VectorCandidateFact = {
   embeddingModel?: string | null;
   scope?: string | null;
   scopeTarget?: string | null;
+  category?: string | null;
 };
 
 export function getVectorSearchFailReason(vectorDb: unknown): string | null {
@@ -24,6 +26,16 @@ export function getVectorSearchFailReason(vectorDb: unknown): string | null {
     return typeof reason === "string" && reason.length > 0 ? reason : null;
   } catch {
     return null;
+  }
+}
+
+function isVectorSchemaValid(vectorDb: unknown): boolean {
+  const checker = (vectorDb as { isMemoriesVectorSchemaValid?: unknown }).isMemoriesVectorSchemaValid;
+  if (typeof checker !== "function") return true;
+  try {
+    return checker.call(vectorDb) !== false;
+  } catch {
+    return true;
   }
 }
 
@@ -51,6 +63,7 @@ export function filterDistillVectorCandidates(
   embeddingModelName: string | null,
   candidateScope = "global",
   candidateScopeTarget: string | null = null,
+  candidateCategory: string | null = null,
 ): VectorCandidate[] {
   return mapValidVectorCandidates(neighbors)
     .filter((candidate) => {
@@ -59,6 +72,8 @@ export function filterDistillVectorCandidates(
         live != null &&
         isLiveFact(live) &&
         live.source === "distillation" &&
+        (candidateCategory == null ||
+          (live.category ?? "").trim().toLowerCase() === candidateCategory.trim().toLowerCase()) &&
         (live.scope ?? "global") === candidateScope &&
         (live.scope === "global" ? null : (live.scopeTarget ?? null)) === candidateScopeTarget &&
         (embeddingModelName == null || live.embeddingModel == null || live.embeddingModel === embeddingModelName)
@@ -78,6 +93,46 @@ type VectorDbForDistillDedupe = {
   search: (vector: number[], limit: number, minScore: number) => Promise<VectorNeighbor[]>;
   hasDuplicate: (vector: number[], threshold?: number) => Promise<boolean>;
 };
+
+async function tryHasDuplicateFallback(input: {
+  vectorDb: VectorDbForDistillDedupe;
+  vector: number[];
+  threshold: number;
+  neighbors: VectorNeighbor[];
+  factsDb: { getById: (id: string) => VectorCandidateFact | null };
+  embeddingModelName: string | null;
+  candidateScope: string;
+  candidateScopeTarget: string | null;
+}): Promise<{
+  skipAsDuplicate: boolean;
+  usedHasDuplicateFallback: boolean;
+  vectorCandidates?: VectorCandidate[];
+}> {
+  if (!isVectorSchemaValid(input.vectorDb)) {
+    // hasDuplicate() also returns false when schema is invalid — skip the useless call.
+    return { skipAsDuplicate: false, usedHasDuplicateFallback: false };
+  }
+  const scopedFromNeighbors = filterDistillVectorCandidates(
+    input.neighbors,
+    input.factsDb,
+    input.embeddingModelName,
+    input.candidateScope,
+    input.candidateScopeTarget,
+  );
+  if (scopedFromNeighbors.length > 0) {
+    return {
+      skipAsDuplicate: false,
+      usedHasDuplicateFallback: true,
+      vectorCandidates: scopedFromNeighbors,
+    };
+  }
+  const hasGlobalDuplicate = await input.vectorDb.hasDuplicate(input.vector, input.threshold);
+  if (!hasGlobalDuplicate) {
+    return { skipAsDuplicate: false, usedHasDuplicateFallback: true };
+  }
+  // Unscoped hasDuplicate alone must not skip distill writes — fall back to lexical dedupe at store time.
+  return { skipAsDuplicate: false, usedHasDuplicateFallback: true };
+}
 
 /** Pre-compute vector neighbours for distill store, with LanceDB fallback when search is degraded (#1947). */
 export async function resolveDistillVectorCandidates(input: {
@@ -109,11 +164,21 @@ export async function resolveDistillVectorCandidates(input: {
     );
     const searchFailReason = getVectorSearchFailReason(input.vectorDb);
     if (searchFailReason) {
-      const skipAsDuplicate = await input.vectorDb.hasDuplicate(input.vector, threshold);
+      const fallback = await tryHasDuplicateFallback({
+        vectorDb: input.vectorDb,
+        vector: input.vector,
+        threshold,
+        neighbors,
+        factsDb: input.factsDb,
+        embeddingModelName: input.embeddingModelName,
+        candidateScope: scope,
+        candidateScopeTarget: scopeTarget,
+      });
       return {
         vectorSearchDegraded: true,
-        usedHasDuplicateFallback: true,
-        skipAsDuplicate,
+        usedHasDuplicateFallback: fallback.usedHasDuplicateFallback,
+        skipAsDuplicate: fallback.skipAsDuplicate,
+        vectorCandidates: fallback.vectorCandidates,
       };
     }
     return {
@@ -128,12 +193,27 @@ export async function resolveDistillVectorCandidates(input: {
       usedHasDuplicateFallback: false,
       skipAsDuplicate: false,
     };
-  } catch {
-    const skipAsDuplicate = await input.vectorDb.hasDuplicate(input.vector, threshold);
+  } catch (err) {
+    capturePluginError(err as Error, {
+      subsystem: "cli",
+      operation: "resolveDistillVectorCandidates:search",
+      severity: "info",
+    });
+    const fallback = await tryHasDuplicateFallback({
+      vectorDb: input.vectorDb,
+      vector: input.vector,
+      threshold,
+      neighbors: [],
+      factsDb: input.factsDb,
+      embeddingModelName: input.embeddingModelName,
+      candidateScope: scope,
+      candidateScopeTarget: scopeTarget,
+    });
     return {
       vectorSearchDegraded: true,
-      usedHasDuplicateFallback: true,
-      skipAsDuplicate,
+      usedHasDuplicateFallback: fallback.usedHasDuplicateFallback,
+      skipAsDuplicate: fallback.skipAsDuplicate,
+      vectorCandidates: fallback.vectorCandidates,
     };
   }
 }

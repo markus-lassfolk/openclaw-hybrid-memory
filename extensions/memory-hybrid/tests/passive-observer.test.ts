@@ -481,7 +481,15 @@ describe("runPassiveObserver", () => {
     // vectorDb.search returns a match — signals the fact is a duplicate
     const matchResult = [{ entry: { id: "existing-fact-id" }, score: 0.95 }];
     const vectorDb = makeVectorDb(matchResult);
-    const factsDb = makeFactsDb({ detectContradictions: vi.fn(), setEmbeddingModel: vi.fn() });
+    const factsDb = makeFactsDb({
+      detectContradictions: vi.fn(),
+      setEmbeddingModel: vi.fn(),
+      getById: vi.fn().mockImplementation((id: string) =>
+        id === "existing-fact-id"
+          ? { id, scope: "session", scopeTarget: "dedup-test", supersededAt: null, expiresAt: null }
+          : null,
+      ),
+    });
 
     const cfg = makeConfig({ sessionsDir });
     const result = await runPassiveObserver(
@@ -719,6 +727,11 @@ describe("runPassiveObserver — LanceDB dedup (Issue #499)", () => {
     const vectorDb = makeVectorDb(matchResult);
     const factsDb = makeFactsDb({
       boostConfidence: vi.fn().mockReturnValue(true),
+      getById: vi.fn().mockImplementation((id: string) =>
+        id === matchedFactId
+          ? { id, scope: "session", scopeTarget: "reinforce-test", supersededAt: null, expiresAt: null }
+          : null,
+      ),
     });
     const cfg = makeConfig({ sessionsDir });
 

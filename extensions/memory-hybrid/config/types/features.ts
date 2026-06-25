@@ -437,6 +437,8 @@ export type DashboardConfig = {
   enabled: boolean;
   /** Port for the dashboard HTTP server (default: 7700). */
   port: number;
+  /** Optional bearer token for dashboard write APIs (verify/forget/workshop/GraphQL mutations). */
+  token?: string;
   /** Optional owner/repo for GitHub queries (e.g. "markus-lassfolk/openclaw-hybrid-memory"). */
   gitRepo?: string;
 };

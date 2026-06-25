@@ -827,15 +827,21 @@ export async function runDistillForCli(
       const category = (isValidCategory(fact.category) ? fact.category : "other") as MemoryCategory;
       const entity = fact.entity ?? null;
       const key = fact.key ?? null;
-      const factValue = fact.value ?? null;
+      const redactedText = redactMaintenancePrivateText(fact.text);
+      const redactedValue = fact.value ? redactMaintenancePrivateText(fact.value) : redactedText.slice(0, 200);
 
-      if (factsDb.hasDuplicate(fact.text, "distillation", { category, entity, key, value: factValue })) {
+      if (
+        factsDb.hasDuplicate(redactedText, "distillation", {
+          category,
+          entity,
+          key,
+          value: redactedValue,
+        })
+      ) {
         skipped++;
         continue;
       }
       try {
-        const redactedText = redactMaintenancePrivateText(fact.text);
-        const redactedValue = fact.value ? redactMaintenancePrivateText(fact.value) : redactedText.slice(0, 200);
         const vector = await embeddings.embed(redactedText);
         const embeddingModelName =
           typeof embeddings.modelName === "string" && embeddings.modelName.trim().length > 0
@@ -853,6 +859,10 @@ export async function runDistillForCli(
           usedHasDuplicateFallback = true;
         }
         if (vectorResolve.skipAsDuplicate) {
+          skipped++;
+          continue;
+        }
+        if (!fuzzyDedupeEnabled && (await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD))) {
           skipped++;
           continue;
         }
@@ -890,6 +900,7 @@ export async function runDistillForCli(
           lexicalOnlyDedupeStores++;
         }
         if (storeResult.skipped) {
+          skipped++;
           continue;
         }
         if (storeResult.newlyStored === false && !storeResult.embeddingStale) {

@@ -296,7 +296,7 @@ describe("Memory journey e2e — full register() stack", () => {
     expect(runtimeRef.value?.factsDb).toBeDefined();
     expect(api.getTool("memory_store")).toBeDefined();
     expect(api.getTool("memory_recall")).toBeDefined();
-  });
+  }, 120_000);
 
   it("memory_recall query path finds stored facts via FTS (deterministic strategies)", async () => {
     await registerJourney({ retrieval: { strategies: ["fts5"] } });

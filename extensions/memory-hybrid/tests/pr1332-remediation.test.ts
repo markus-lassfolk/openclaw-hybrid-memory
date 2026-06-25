@@ -128,6 +128,137 @@ describe("PR #1332 unresolved feedback remediation", () => {
     expect(context.factsDb.supersede).toHaveBeenCalledWith(existing.id, replacement.id);
   });
 
+  it("rejects GraphQL updateFact when new text is an artifact/reasoning trace", async () => {
+    const existing = {
+      id: "legacy-compact",
+      text: "old compact text",
+      category: "fact",
+      importance: 0.5,
+      confidence: 0.9,
+      decayClass: "normal",
+      source: "compact",
+      tags: [],
+      entity: null,
+      key: null,
+      value: null,
+      scope: "global",
+      scopeTarget: null,
+      expiresAt: null,
+    };
+    const context = {
+      factsDb: {
+        getById: vi.fn((id: string) => (id === existing.id ? existing : null)),
+        storeWithResult: vi.fn(),
+        supersede: vi.fn(),
+      },
+    } as unknown as ResolverContext;
+
+    await expect(
+      resolvers.Mutation.updateFact(
+        null,
+        { input: { id: existing.id, text: "NOOP | duplicate fact" } } as ResolverArgs,
+        context,
+      ),
+    ).rejects.toThrow(/artifact or reasoning trace/);
+    expect(context.factsDb.storeWithResult).not.toHaveBeenCalled();
+  });
+
+  it("GraphQL facts query treats expiresAt as unix seconds", () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const base = {
+      category: "fact",
+      importance: 0.5,
+      confidence: 1,
+      decayClass: "normal",
+      source: "test",
+      tags: [],
+      entity: null,
+      key: null,
+      value: null,
+      scope: "global",
+      scopeTarget: null,
+      supersededAt: null,
+      supersededBy: null,
+      createdAt: nowSec,
+    };
+    const active = { ...base, id: "active", text: "still valid", expiresAt: nowSec + 3600 };
+    const expired = { ...base, id: "expired", text: "past ttl", expiresAt: nowSec - 60 };
+    const context = {
+      factsDb: {
+        getAll: vi.fn(() => [active, expired]),
+      },
+    } as unknown as ResolverContext;
+
+    const rows = resolvers.Query.facts(null, {}, context) as Array<{ id: string }>;
+    expect(rows.map((row) => row.id)).toEqual(["active"]);
+  });
+
+  it("GraphQL updateFact deletes vector for superseded fact id", async () => {
+    const existing = {
+      id: "old",
+      text: "old text",
+      category: "fact",
+      importance: 0.5,
+      confidence: 0.9,
+      decayClass: "normal",
+      source: "graphql",
+      tags: [],
+      entity: null,
+      key: null,
+      value: null,
+      scope: "global",
+      scopeTarget: null,
+      expiresAt: null,
+    };
+    const replacement = { ...existing, id: "new", text: "new text" };
+    const vectorDb = { delete: vi.fn().mockResolvedValue(true) };
+    const context = {
+      factsDb: {
+        getById: vi.fn((id: string) => (id === existing.id ? existing : null)),
+        storeWithResult: vi.fn(() => ({ entry: replacement, skipped: false, newlyStored: true })),
+        supersede: vi.fn(() => true),
+      },
+      vectorDb,
+    } as unknown as ResolverContext;
+
+    await resolvers.Mutation.updateFact(
+      null,
+      { input: { id: existing.id, text: "new text" } } as ResolverArgs,
+      context,
+    );
+
+    expect(vectorDb.delete).toHaveBeenCalledWith(existing.id);
+  });
+
+  it("GraphQL supersedeFact deletes vector for superseded fact id", async () => {
+    const oldFact = { id: "old", text: "old", category: "fact" };
+    const newFact = { id: "new", text: "new", category: "fact" };
+    const vectorDb = { delete: vi.fn().mockResolvedValue(true) };
+    const context = {
+      factsDb: {
+        getById: vi.fn((id: string) => (id === "old" ? oldFact : id === "new" ? newFact : null)),
+        supersede: vi.fn(() => true),
+      },
+      vectorDb,
+    } as unknown as ResolverContext;
+
+    await resolvers.Mutation.supersedeFact(
+      null,
+      { oldFactId: "old", newFactId: "new" } as ResolverArgs,
+      context,
+    );
+
+    expect(vectorDb.delete).toHaveBeenCalledWith("old");
+  });
+
+  it("GraphQL pruneFacts requires olderThan", async () => {
+    const context = {
+      factsDb: { getAll: vi.fn(() => []), delete: vi.fn() },
+    } as unknown as ResolverContext;
+
+    await expect(resolvers.Mutation.pruneFacts(null, {} as ResolverArgs, context)).rejects.toThrow(/olderThan/);
+  });
+
   it("prevalidates GraphQL importFacts before storing guarded facts", async () => {
     const storeWithResult = vi.fn((input: { text: string }) => ({
       entry: { id: input.text, text: input.text },
@@ -157,7 +288,7 @@ describe("PR #1332 unresolved feedback remediation", () => {
     expect(vectorDb.delete).toHaveBeenCalledWith("evicted");
   });
 
-  it("fails GraphQL supersede mutation when the old fact is missing or already superseded", () => {
+  it("fails GraphQL supersede mutation when the old fact is missing or already superseded", async () => {
     const facts = new Map([
       ["new", { id: "new", text: "new" }],
       ["old", { id: "old", text: "old" }],
@@ -169,16 +300,16 @@ describe("PR #1332 unresolved feedback remediation", () => {
       },
     } as unknown as ResolverContext;
 
-    expect(() =>
+    await expect(
       resolvers.Mutation.supersedeFact(null, { oldFactId: "missing", newFactId: "new" } as ResolverArgs, context),
-    ).toThrow(/missing/);
-    expect(() =>
+    ).rejects.toThrow(/missing/);
+    await expect(
       resolvers.Mutation.supersedeFact(null, { oldFactId: "old", newFactId: "new" } as ResolverArgs, context),
-    ).not.toThrow();
+    ).resolves.toBeDefined();
     context.factsDb.supersede = vi.fn(() => false) as never;
-    expect(() =>
+    await expect(
       resolvers.Mutation.supersedeFact(null, { oldFactId: "old", newFactId: "new" } as ResolverArgs, context),
-    ).toThrow(/did not apply/);
+    ).rejects.toThrow(/did not apply/);
   });
 
   it("does not treat an OpenAI key as Google provider configuration", async () => {
