@@ -259,6 +259,7 @@ export function buildHybridMemCronTaskMessage(
   const orchestration = [
     "EXECUTION (durable logs + per-step exits)",
     "Run the bash below in ONE foreground shell session and wait until it exits. Do not background this work and end the turn while commands are still running.",
+    "TOOLING: Use the exec tool with a full shell command string (e.g. bash with the script body). Do NOT use deferred tool surfaces (tool_call, tool_describe, tool_search) — they strip exec arguments in isolated cron sessions (#1961).",
     "- HM_LOG: full stdout/stderr for the run. HM_EXIT: one line per hm_step with UTC timestamp and exit= (first command in the pipeline).",
     "",
     "```bash",

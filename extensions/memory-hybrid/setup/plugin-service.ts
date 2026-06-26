@@ -638,9 +638,20 @@ export function createPluginService(ctx: PluginServiceContext) {
       // Unified maintenance tick (cycle tier) — replaces scattered prune/classify/language/observer timers
       let maintenanceTickInFlight = false;
       const runMaintenanceCycleTick = async (label: string) => {
-        if (maintenanceTickInFlight || shuttingDown) return;
-        if (typeof factsDb.isOpen === "function" && !factsDb.isOpen()) return;
+        if (maintenanceTickInFlight) {
+          api.logger.debug?.(`memory-hybrid: maintenance tick (${label}) skipped: in_flight`);
+          return;
+        }
+        if (shuttingDown) {
+          api.logger.debug?.(`memory-hybrid: maintenance tick (${label}) skipped: shutting_down`);
+          return;
+        }
+        if (typeof factsDb.isOpen === "function" && !factsDb.isOpen()) {
+          api.logger.debug?.(`memory-hybrid: maintenance tick (${label}) skipped: db_closed`);
+          return;
+        }
         maintenanceTickInFlight = true;
+        const tickStartedMs = Date.now();
         try {
           const runCompaction = async () =>
             factsDb.retier(
@@ -779,9 +790,16 @@ export function createPluginService(ctx: PluginServiceContext) {
               verbose: false,
             },
           );
+          const durationMs = Date.now() - tickStartedMs;
+          const summaryTrunc =
+            result.summaryLine.length > 240 ? `${result.summaryLine.slice(0, 237)}...` : result.summaryLine;
           if (result.exitCode !== 0) {
             api.logger.warn?.(
-              `memory-hybrid: maintenance tick (${label}) exit=${result.exitCode}: ${result.summaryLine}`,
+              `memory-hybrid: maintenance tick (${label}) exit=${result.exitCode} durationMs=${durationMs}: ${summaryTrunc}`,
+            );
+          } else {
+            api.logger.info?.(
+              `memory-hybrid: maintenance tick (${label}) ok durationMs=${durationMs} stepsRun=${result.steps.length}: ${summaryTrunc}`,
             );
           }
         } catch (err) {

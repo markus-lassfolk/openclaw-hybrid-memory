@@ -23,6 +23,15 @@ export const DEPRECATED_HYBRID_MEM_CRON_TOKENS: readonly DeprecatedCronToken[] =
     replacement: `enrich-entities --limit "\${HYBRID_MEM_CLI_JOB_ENRICH_LIMIT:-25}" --verbose`,
     note: "Old monthly-consolidation entity enrichment cap was too large for live throughput; use the safe configurable cap.",
   },
+  {
+    token: "audit health --strict --json",
+    replacement: "audit health --strict-errors --json",
+    note: "Weekly audit-health cron should use --strict-errors so sustained store-backlog warnings do not hard-fail (#1955).",
+  },
+  {
+    token: "Workshop approval reminder. Run:",
+    note: "Free-form workshop reminder predates bash harness digest step (#1962).",
+  },
 ];
 
 function escapeRegExpLiteral(token: string): string {

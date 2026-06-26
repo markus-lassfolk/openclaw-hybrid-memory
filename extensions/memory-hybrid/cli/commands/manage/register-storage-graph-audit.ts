@@ -118,7 +118,7 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
     );
 
   const runAuditHealth = async (
-    opts?: { json?: boolean; format?: string; strict?: boolean; timeoutMs?: string; output?: string },
+    opts?: { json?: boolean; format?: string; strict?: boolean; strictErrors?: boolean; timeoutMs?: string; output?: string },
     cmd?: CommanderOptsParent,
   ) => {
     const parsedTimeoutMs = Number.parseInt(String(opts?.timeoutMs ?? "30000"), 10);
@@ -248,9 +248,11 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
           lastReembedProgress,
         },
       );
-      const strict = opts?.strict === true;
+      const strict = opts?.strict === true || opts?.strictErrors === true;
+      const strictErrorsOnly = opts?.strictErrors === true && opts?.strict !== true;
       const exitInfo = buildAuditHealthExitInfo({
         strict,
+        strictErrorsOnly,
         warningCount: report.warningCount,
         errorCount: report.errorCount,
         ok: report.ok,
@@ -296,7 +298,7 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
       });
       if (wantsJson || outputPath) {
         try {
-          const strict = opts?.strict === true;
+          const strict = opts?.strict === true || opts?.strictErrors === true;
           emitJsonArtifact(
             buildAuditFailureArtifact(err, Date.now() - startedAtMs, strict, preReportErrors, preReportWarnings),
           );
@@ -325,6 +327,10 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
       "Exit 2 when warnings/errors or partial/failed status are present. JSON includes exitCode/exitReason/strictFailureReason.",
     )
     .option(
+      "--strict-errors",
+      "Exit 2 only on errors or degraded status — warnings are informational (#1955). JSON includes exitCode/exitReason/strictFailureReason.",
+    )
+    .option(
       "--output <path>",
       "Write JSON artifact atomically to this path (tmp+rename) instead of stdout. Always written even on strict failure (#1823).",
     )
@@ -340,6 +346,10 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
     .option(
       "--strict",
       "Exit 2 when warnings/errors or partial/failed status are present. JSON includes exitCode/exitReason/strictFailureReason.",
+    )
+    .option(
+      "--strict-errors",
+      "Exit 2 only on errors or degraded status — warnings are informational (#1955). JSON includes exitCode/exitReason/strictFailureReason.",
     )
     .option(
       "--output <path>",

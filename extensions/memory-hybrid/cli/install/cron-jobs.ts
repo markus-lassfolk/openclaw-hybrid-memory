@@ -170,7 +170,7 @@ const CONSOLIDATED_CRON_JOBS: Array<
     channel: "system",
     message: buildHybridMemCronTaskMessage("maintenance-nightly", {
       preamble:
-        "Unified hybrid-memory maintenance. The orchestrator runs due nightly/weekly/monthly steps with staggered per-step guards. Report summary counts.",
+        "Unified hybrid-memory maintenance. The orchestrator runs due nightly/weekly/monthly steps with staggered per-step guards. Report summary counts. Use exec/bash only — never deferred tool_call.",
       steps: [{ name: "maintenance-nightly", cmd: "openclaw hybrid-mem maintenance nightly --verbose" }],
     }),
     isolated: true,
@@ -216,9 +216,12 @@ function ensureHybridMemCronMessageHasEnvSanitizer(message: string): string | nu
   return next === message ? null : next;
 }
 
-/** Agent-turn reminder for operator workshop/pending review backlog (#1921). */
-export const WORKSHOP_APPROVAL_REMINDER_MESSAGE =
-  "Workshop approval reminder. Run: openclaw hybrid-mem digest pending --since 7d. If pending items are listed, summarize for the operator with approve/review instructions. If the command fails (unknown subcommand or non-zero exit), report the error — do not treat it as empty. If throttled or empty, reply briefly.";
+/** Agent-turn reminder for operator workshop/pending review backlog (#1921, #1962). */
+export const WORKSHOP_APPROVAL_REMINDER_MESSAGE = buildHybridMemCronTaskMessage("workshop-approval-reminder", {
+  preamble:
+    "Workshop approval reminder. Run digest pending, then summarize pending approve/review actions for cron delivery. Do NOT use the message tool — cron announce delivery sends your final reply to the operator.",
+  steps: [{ name: "digest-pending", cmd: "openclaw hybrid-mem digest pending --since 7d --format md" }],
+});
 
 // buildGuardPrefix is imported from services/cron-guard.ts (issue #305).
 
@@ -406,7 +409,7 @@ const MAINTENANCE_CRON_JOBS: Array<
     message: buildHybridMemCronTaskMessage("weekly-audit-health", {
       preamble:
         "Weekly operator health audit. Run in strict mode, summarize warnings/remediation, and alert the user if the command exits non-zero.",
-      steps: [{ name: "audit-health", cmd: "openclaw hybrid-mem audit health --strict --json" }],
+      steps: [{ name: "audit-health", cmd: "openclaw hybrid-mem audit health --strict-errors --json" }],
     }),
     isolated: true,
     modelTier: "nano",

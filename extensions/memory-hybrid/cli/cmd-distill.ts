@@ -445,6 +445,7 @@ export async function runDistillForCli(
     let batchNum = 0;
     let cursorBlock = 0;
     let shrinkBudget = 8;
+    let truncatedBatches = 0;
     let nonAdaptiveBatchFactor = 1;
     let nonAdaptiveOutFactor = 1;
     const minBatchForModel = Math.max(2048, promptTokens + 256);
@@ -465,6 +466,7 @@ export async function runDistillForCli(
         catalogBatchTokenLimit,
         catalogMaxOutputTokens,
         minBatchTokenLimit: minBatchForModel,
+        minMaxOutputTokens: Math.max(2048, Math.floor(catalogMaxOutputTokens * 0.25)),
       });
     };
 
@@ -519,6 +521,8 @@ export async function runDistillForCli(
     };
 
     let batchFailures = 0;
+    let lengthRetriesAtCursor = 0;
+    const maxLengthRetriesPerCursor = 8;
 
     while (cursorBlock < blocks.length) {
       if (maintenanceRunDeadlineReached()) {
@@ -588,7 +592,9 @@ export async function runDistillForCli(
             ),
           signal: getMaintenanceRunAbortSignal(),
         });
-        if (detail.finishReason?.toLowerCase() === "length") {
+        const outputTruncated = detail.finishReason?.toLowerCase() === "length";
+        if (outputTruncated) {
+          truncatedBatches++;
           logger.warn?.(
             `memory-hybrid: distill batch ${batchNum} output truncated (finish=length); extracted facts may be incomplete`,
           );
@@ -600,14 +606,33 @@ export async function runDistillForCli(
             );
             continue;
           }
+          if (!opts.dryRun && lengthRetriesAtCursor < maxLengthRetriesPerCursor) {
+            lengthRetriesAtCursor++;
+            shrinkForRetry("other", detail.modelUsed ?? model);
+            if (!adaptiveEnabled) {
+              nonAdaptiveBatchFactor *= 0.6;
+              nonAdaptiveOutFactor = Math.max(nonAdaptiveOutFactor, 0.5);
+            }
+            logger.warn?.(
+              `memory-hybrid: distill batch ${batchNum} truncated — splitting batch (retry ${lengthRetriesAtCursor}/${maxLengthRetriesPerCursor} at cursor=${cursorBlock})`,
+            );
+            continue;
+          }
+          if (!opts.dryRun) {
+            logger.warn?.(
+              `memory-hybrid: distill batch ${batchNum} truncated — accepting partial output after ${lengthRetriesAtCursor} split retries`,
+            );
+          }
         }
+        const acceptingTruncatedPartial =
+          outputTruncated && !opts.dryRun && lengthRetriesAtCursor >= maxLengthRetriesPerCursor;
         if (detail.modelUsed !== model) {
           const src = fallbackSources.get(detail.modelUsed) ?? "fallback";
           logger.info?.(
             `memory-hybrid: distill batch ${batchNum} succeeded with fallback model ${detail.modelUsed} (source=${src})`,
           );
         }
-        if (adaptiveEnabled && !opts.dryRun && adaptiveStatePath) {
+        if (adaptiveEnabled && !opts.dryRun && !outputTruncated && adaptiveStatePath) {
           const usedLimits = effectiveLimitsForModel(detail.modelUsed);
           recordAdaptiveSuccess({
             state: adaptiveState,
@@ -654,8 +679,16 @@ export async function runDistillForCli(
             capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:parse-json" });
           }
         }
-        cursorBlock += batch.count;
-        processedBlocks += batch.count;
+        let advanceBlocks = batch.count;
+        if (acceptingTruncatedPartial && batch.count > 1) {
+          advanceBlocks = Math.max(1, Math.floor(batch.count / 2));
+          logger.warn?.(
+            `memory-hybrid: distill batch ${batchNum} force-split — advancing ${advanceBlocks}/${batch.count} blocks at cursor=${cursorBlock}`,
+          );
+        }
+        cursorBlock += advanceBlocks;
+        processedBlocks += advanceBlocks;
+        lengthRetriesAtCursor = 0;
         progress.update(processedBlocks);
       } catch (err) {
         const e = err instanceof Error ? err : new Error(String(err));
@@ -706,6 +739,11 @@ export async function runDistillForCli(
       }
     }
     progress.done();
+    if (truncatedBatches > 0) {
+      sink.warn(
+        `memory-hybrid: distill truncatedBatches=${truncatedBatches} — some batches hit finish=length; consider resetting .adaptive-llm-limits.json or using --force with smaller --days`,
+      );
+    }
     const semanticEmpty = filesToProcess.length > 0 && allFacts.length === 0;
     if (semanticEmpty) {
       sink.warn(
@@ -987,7 +1025,7 @@ export async function runDistillForCli(
       dedupSkipped: skipped,
       dryRun: false,
       semanticEmpty,
-      partialFailure: batchFailures > 0,
+      partialFailure: batchFailures > 0 || truncatedBatches > 0,
       batchFailures,
       dedupeDegraded,
       distillDedupeMode,

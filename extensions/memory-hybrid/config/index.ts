@@ -282,6 +282,40 @@ export function getDefaultCronModel(pluginConfig: CronModelConfig | undefined, t
   return preferred[0] ?? (tier === "heavy" ? OPENAI_HEAVY_CRON_MODEL : OPENAI_DEFAULT_CRON_MODEL);
 }
 
+/**
+ * Resolve continuous-verification model from config, skipping disabled providers (#1956).
+ * Falls back through nano → maintenance → default tiers before the legacy OpenAI default.
+ */
+export function resolveVerificationModel(pluginConfig: CronModelConfig | undefined, explicit?: string): string {
+  const disabledSet = getDisabledProviderSet(pluginConfig);
+  const trimmed = explicit?.trim();
+  if (trimmed) {
+    const allowed = filterModelsByDisabled([trimmed], disabledSet);
+    if (allowed.length > 0) return allowed[0];
+  }
+  const candidates = [
+    ...getLLMModelPreference(pluginConfig, "nano"),
+    ...getLLMModelPreference(pluginConfig, "maintenance"),
+    ...getLLMModelPreference(pluginConfig, "default"),
+  ];
+  const enabled = candidates.find((m) => m.trim().length > 0);
+  if (enabled) return enabled;
+  const legacyDefault = filterModelsByDisabled([OPENAI_DEFAULT_CRON_MODEL], disabledSet)[0];
+  if (legacyDefault) return legacyDefault;
+  const heavyFallback = filterModelsByDisabled([OPENAI_HEAVY_CRON_MODEL], disabledSet)[0];
+  if (heavyFallback) return heavyFallback;
+  // All tier preferences were disabled — scan unfiltered lists once more before a bare default.
+  const unfilteredCandidates = filterModelsByDisabled(
+    [
+      ...getLLMModelPreferenceUnfiltered(pluginConfig, "nano"),
+      ...getLLMModelPreferenceUnfiltered(pluginConfig, "maintenance"),
+      ...getLLMModelPreferenceUnfiltered(pluginConfig, "default"),
+    ],
+    disabledSet,
+  );
+  return unfilteredCandidates.find((m) => m.trim().length > 0) ?? OPENAI_DEFAULT_CRON_MODEL;
+}
+
 /** Build minimal config for getDefaultCronModel from full HybridMemoryConfig (used by cron jobs and self-correction spawn). */
 export function getCronModelConfig(cfg: HybridMemoryConfig): CronModelConfig {
   return {

@@ -117,6 +117,44 @@ describe("buildAuditHealthExitInfo strict mode (#1823)", () => {
     expect(info.exitCode).toBe(0);
     expect(info.exitReason).toBe("ok");
   });
+
+  it("returns exitCode 0 when strict-errors and only warnings present (#1955)", () => {
+    const info = buildAuditHealthExitInfo({
+      strict: true,
+      strictErrorsOnly: true,
+      warningCount: 7,
+      errorCount: 0,
+      ok: false,
+      status: "partial",
+    });
+    expect(info.exitCode).toBe(0);
+    expect(info.exitReason).toBe("warnings");
+    expect(info.strictFailureReason).toBeUndefined();
+  });
+
+  it("returns exitCode 2 when strict-errors and report status is failed (#1955)", () => {
+    const info = buildAuditHealthExitInfo({
+      strict: true,
+      strictErrorsOnly: true,
+      warningCount: 0,
+      errorCount: 0,
+      ok: false,
+      status: "failed",
+    });
+    expect(info.exitCode).toBe(2);
+    expect(info.exitReason).toBe("strict_failed");
+  });
+
+  it("returns exitCode 2 when strict-errors and errors present (#1955)", () => {
+    const info = buildAuditHealthExitInfo({
+      strict: true,
+      strictErrorsOnly: true,
+      warningCount: 3,
+      errorCount: 1,
+    });
+    expect(info.exitCode).toBe(2);
+    expect(info.exitReason).toBe("strict_errors");
+  });
 });
 
 // ─── Integration: strict failure produces a parseable artifact ───────────────
@@ -163,6 +201,40 @@ describe("strict audit failure artifact integration (#1823)", () => {
     expect(parsed.warningCount).toBeGreaterThanOrEqual(1);
     expect(Array.isArray(parsed.warnings)).toBe(true);
     expect(Array.isArray(parsed.errors)).toBe(true);
+
+    db.close();
+  });
+
+  it("strict-errors exits 0 on warning-only report shape from buildAuditHealthReport (#1955)", () => {
+    const db = new FactsDB(":memory:");
+    db.store({
+      text: "Unconfigured category test fact",
+      category: "off-roster-unconfigured",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    const report = buildAuditHealthReport(db as never, () => ["technical"], [], 500);
+    expect(report.ok).toBe(false);
+    expect(report.status).toBe("partial");
+    expect(report.errorCount).toBe(0);
+    expect(report.warningCount).toBeGreaterThanOrEqual(1);
+
+    const exitInfo = buildAuditHealthExitInfo({
+      strict: true,
+      strictErrorsOnly: true,
+      warningCount: report.warningCount,
+      errorCount: report.errorCount,
+      ok: report.ok,
+      status: report.status,
+    });
+
+    expect(exitInfo.exitCode).toBe(0);
+    expect(exitInfo.exitReason).toBe("warnings");
+    expect(exitInfo.strictFailureReason).toBeUndefined();
 
     db.close();
   });

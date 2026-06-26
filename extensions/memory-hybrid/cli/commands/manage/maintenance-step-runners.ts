@@ -143,8 +143,20 @@ function formatExtractImplicitSummary(res: {
   sessionsScanned: number;
   partial?: boolean;
   partialReason?: string;
+  sessionsDeferred?: number;
 }): string {
-  return `${res.signalsExtracted} signals (${res.positiveCount}+/${res.negativeCount}-) from ${res.sessionsProcessed}/${res.sessionsScanned} sessions semantic=${extractImplicitSemanticOutcome(res)}`;
+  const base = `${res.signalsExtracted} signals (${res.positiveCount}+/${res.negativeCount}-) from ${res.sessionsProcessed}/${res.sessionsScanned} sessions semantic=${extractImplicitSemanticOutcome(res)}`;
+  if (
+    res.partial &&
+    isGracefulExtractImplicitPartial(res.partialReason) &&
+    res.sessionsProcessed > 0 &&
+    res.sessionsScanned > res.sessionsProcessed
+  ) {
+    const remaining = res.sessionsDeferred ?? res.sessionsScanned - res.sessionsProcessed;
+    const estimatedRunsToComplete = Math.ceil(remaining / res.sessionsProcessed);
+    return `${base} sessionsRemaining=${remaining} estimatedRunsToComplete=${estimatedRunsToComplete} partialReason=${res.partialReason ?? "capped"}`;
+  }
+  return base;
 }
 
 function assertExtractImplicitNotPartial(res: { partial?: boolean; partialReason?: string }, summary: string): void {
