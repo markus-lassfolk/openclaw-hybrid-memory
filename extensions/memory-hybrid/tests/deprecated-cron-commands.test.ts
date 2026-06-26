@@ -24,6 +24,18 @@ describe("deprecated-cron-commands", () => {
     expect(hits).toContain("workshop remind-pending");
   });
 
+  it("detects legacy audit health --strict cron step (#1955)", () => {
+    const msg = "hm_step audit-health openclaw hybrid-mem audit health --strict --json";
+    const hits = findDeprecatedHybridMemCronTokens(msg).map((h) => h.token);
+    expect(hits).toContain("audit health --strict --json");
+  });
+
+  it("detects free-form workshop reminder without bash harness (#1962)", () => {
+    const msg = "Workshop approval reminder. Run: openclaw hybrid-mem digest pending --since 7d";
+    const hits = findDeprecatedHybridMemCronTokens(msg).map((h) => h.token);
+    expect(hits).toContain("Workshop approval reminder. Run:");
+  });
+
   it("verify --fix path normalizes stale workshop remind-pending messages", () => {
     const openclawDir = mkdtempSync(join(tmpdir(), "hm-test-openclaw-"));
     try {

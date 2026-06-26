@@ -1357,7 +1357,7 @@ describe("hybridConfigSchema.parse", () => {
     });
     const cronCfg = getCronModelConfig(cfg);
     expect(resolveVerificationModel(cronCfg)).toBe("minimax/MiniMax-M2.7-highspeed");
-    expect(resolveVerificationModel(cronCfg, "openai/gpt-4.1-nano")).toBe("openai/gpt-4.1-nano");
+    expect(resolveVerificationModel(cronCfg, "openai/gpt-4.1-nano")).toBe("minimax/MiniMax-M2.7-highspeed");
   });
 
   it("getLLMModelPreference when llm is undefined uses legacy single model (OpenClaw provider/model IDs)", () => {

@@ -521,6 +521,8 @@ export async function runDistillForCli(
     };
 
     let batchFailures = 0;
+    let lengthRetriesAtCursor = 0;
+    const maxLengthRetriesPerCursor = 8;
 
     while (cursorBlock < blocks.length) {
       if (maintenanceRunDeadlineReached()) {
@@ -603,13 +605,22 @@ export async function runDistillForCli(
             );
             continue;
           }
-          if (!opts.dryRun) {
-            nonAdaptiveBatchFactor *= 0.6;
-            nonAdaptiveOutFactor = Math.max(nonAdaptiveOutFactor, 0.5);
+          if (!opts.dryRun && lengthRetriesAtCursor < maxLengthRetriesPerCursor) {
+            lengthRetriesAtCursor++;
+            shrinkForRetry("other", detail.modelUsed ?? model);
+            if (!adaptiveEnabled) {
+              nonAdaptiveBatchFactor *= 0.6;
+              nonAdaptiveOutFactor = Math.max(nonAdaptiveOutFactor, 0.5);
+            }
             logger.warn?.(
-              `memory-hybrid: distill batch ${batchNum} truncated — splitting batch after shrink budget exhausted`,
+              `memory-hybrid: distill batch ${batchNum} truncated — splitting batch (retry ${lengthRetriesAtCursor}/${maxLengthRetriesPerCursor} at cursor=${cursorBlock})`,
             );
             continue;
+          }
+          if (!opts.dryRun) {
+            logger.warn?.(
+              `memory-hybrid: distill batch ${batchNum} truncated — accepting partial output after ${lengthRetriesAtCursor} split retries`,
+            );
           }
         }
         if (detail.modelUsed !== model) {
@@ -667,6 +678,7 @@ export async function runDistillForCli(
         }
         cursorBlock += batch.count;
         processedBlocks += batch.count;
+        lengthRetriesAtCursor = 0;
         progress.update(processedBlocks);
       } catch (err) {
         const e = err instanceof Error ? err : new Error(String(err));

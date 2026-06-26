@@ -49,20 +49,24 @@ export function buildAuditHealthExitInfo(input: {
   const errorCount = Math.max(0, input.errorCount || 0);
   const strict = input.strict === true;
   const strictErrorsOnly = input.strictErrorsOnly === true;
+  const strictFlagLabel = strictErrorsOnly ? "--strict-errors" : "--strict";
 
   const looksDegraded = input.ok === false || (input.status != null && input.status !== "ok");
-  const strictFailed =
-    strict &&
-    (errorCount > 0 || looksDegraded || (!strictErrorsOnly && warningCount > 0));
+  const strictFailed = strict
+    ? strictErrorsOnly
+      ? input.errorCount > 0 || input.status === "failed"
+      : errorCount > 0 || warningCount > 0 || looksDegraded
+    : false;
 
   if (strictFailed) {
     const strictFailureReason = (() => {
       if (errorCount > 0 && warningCount > 0) {
-        return `${errorCount} error(s) and ${warningCount} warning(s) present and --strict was set`;
+        return `${errorCount} error(s) and ${warningCount} warning(s) present and ${strictFlagLabel} was set`;
       }
-      if (errorCount > 0) return `${errorCount} error(s) present and --strict was set`;
-      if (warningCount > 0) return `${warningCount} warning(s) present and --strict was set`;
-      return "--strict was set and the report was not ok";
+      if (errorCount > 0) return `${errorCount} error(s) present and ${strictFlagLabel} was set`;
+      if (warningCount > 0) return `${warningCount} warning(s) present and ${strictFlagLabel} was set`;
+      if (input.status === "failed") return `${strictFlagLabel} was set and the report status was failed`;
+      return `${strictFlagLabel} was set and the report was not ok`;
     })();
     return {
       exitCode: 2,
