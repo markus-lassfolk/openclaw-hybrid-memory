@@ -28,6 +28,23 @@ export function createProgressReporter(
 }
 
 /**
+ * Remove OpenClaw-core keys that hybrid-mem install previously wrote but the gateway schema rejects.
+ * Returns true when config was modified.
+ */
+export function stripInvalidOpenClawCoreKeys(root: Record<string, unknown>): boolean {
+  let changed = false;
+  const agents = root.agents as Record<string, unknown> | undefined;
+  const defaults = agents?.defaults as Record<string, unknown> | undefined;
+  const compaction = defaults?.compaction as Record<string, unknown> | undefined;
+  const memoryFlush = compaction?.memoryFlush as Record<string, unknown> | undefined;
+  if (memoryFlush && Object.prototype.hasOwnProperty.call(memoryFlush, "flushEveryCompaction")) {
+    delete memoryFlush.flushEveryCompaction;
+    changed = true;
+  }
+  return changed;
+}
+
+/**
  * Deep merge utility that safely merges source into target, skipping prototype-related keys.
  * Exported for testing purposes.
  *
@@ -167,7 +184,6 @@ export function buildInstallDefaults(pluginId: string = PLUGIN_ID): Record<strin
           memoryFlush: {
             enabled: true,
             softThresholdTokens: 4000,
-            flushEveryCompaction: true,
             systemPrompt:
               "Session nearing compaction. You MUST save all important context NOW using BOTH memory systems before it is lost. This is your last chance to preserve this information.",
             prompt:

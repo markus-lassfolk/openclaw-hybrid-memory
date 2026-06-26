@@ -15,7 +15,19 @@ import { hybridConfigSchema } from "../config.js";
 import { _testing } from "../index.js";
 import { capturePluginError, getErrorReporterMuteReason, setErrorReporterMuted } from "../services/error-reporter.js";
 import { type PluginServiceContext, createPluginService } from "../setup/plugin-service.js";
+import { createDashboardServer } from "../routes/dashboard-server.js";
 import { MIN_OPENCLAW_VERSION, RECOMMENDED_OPENCLAW_VERSION } from "../utils/version-check.js";
+
+vi.mock("../routes/dashboard-server.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../routes/dashboard-server.js")>();
+  return {
+    ...actual,
+    createDashboardServer: vi.fn(async (_ctx, port) => ({
+      port: port === 0 ? 17700 : port,
+      close: vi.fn(),
+    })),
+  };
+});
 
 const { FactsDB, VectorDB } = _testing;
 
@@ -248,6 +260,47 @@ describe("createPluginService startup — version check wiring", () => {
 
     const warnCalls = api.logger.warn.mock.calls.map((c: unknown[]) => c[0] as string);
     expect(warnCalls.some((msg) => msg.includes("update available") && msg.includes(publishedNewer))).toBe(true);
+
+    (ctx.factsDb as InstanceType<typeof FactsDB>).close();
+    (ctx.vectorDb as InstanceType<typeof VectorDB>).close();
+  });
+});
+
+describe("createPluginService startup — dashboard wiring (#1968)", () => {
+  let tmpDir: string;
+  let timers: ReturnType<typeof makeTimers>;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "plugin-svc-dashboard-"));
+    timers = makeTimers();
+    vi.mocked(createDashboardServer).mockClear();
+  });
+
+  afterEach(() => {
+    clearTimers(timers);
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("passes embeddingRegistry to createDashboardServer without ReferenceError", async () => {
+    const api = makeMockApi(MIN_OPENCLAW_VERSION);
+    const registry = { kind: "registry" } as never;
+    const ctx = buildMinimalCtx(tmpDir, api, timers, {
+      dashboard: { enabled: true, port: 0 },
+    });
+    ctx.embeddingRegistry = registry;
+
+    await createPluginService(ctx).start();
+
+    expect(createDashboardServer).toHaveBeenCalled();
+    const dashboardCtx = vi.mocked(createDashboardServer).mock.calls[0]?.[0];
+    expect(dashboardCtx?.embeddingRegistry).toBe(registry);
+
+    const infoCalls = api.logger.info.mock.calls.map((c: unknown[]) => c[0] as string);
+    expect(infoCalls.some((msg) => msg.includes("dashboard started"))).toBe(true);
+
+    const warnCalls = api.logger.warn.mock.calls.map((c: unknown[]) => c[0] as string);
+    expect(warnCalls.some((msg) => msg.includes("embeddingRegistry is not defined"))).toBe(false);
+    expect(warnCalls.some((msg) => msg.includes("dashboard server failed to start"))).toBe(false);
 
     (ctx.factsDb as InstanceType<typeof FactsDB>).close();
     (ctx.vectorDb as InstanceType<typeof VectorDB>).close();
