@@ -23,6 +23,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.6.261] - 2026-06-26
+
+### Fixed
+
+- **Dashboard startup (#1968):** Destructure `embeddingRegistry` in plugin service context so Mission Control starts instead of failing with `ReferenceError: embeddingRegistry is not defined`.
+- **Install config schema (#1969):** Stop merging OpenClaw-invalid `flushEveryCompaction` into core `compaction.memoryFlush`; strip legacy keys on `hybrid-mem install`.
+- **Consolidation LLM:** Pass the `openai` client parameter to `chatCompleteWithRetryDetailed` instead of undefined `opts.openai`.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.6.261**.
+
+---
+
 ## [2026.6.260] - 2026-06-26
 
 ### Fixed

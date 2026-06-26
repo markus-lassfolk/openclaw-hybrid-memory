@@ -137,6 +137,7 @@ export function createPluginService(ctx: PluginServiceContext) {
     edictStore,
     vectorDb,
     embeddings,
+    embeddingRegistry,
     credentialsDb,
     proposalsDb,
     wal,

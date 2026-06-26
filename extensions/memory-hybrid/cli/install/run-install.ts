@@ -17,6 +17,7 @@ import {
   deepMerge,
   getPluginEntryConfig,
   inspectExistingEmbeddingSetup,
+  stripInvalidOpenClawCoreKeys,
 } from "./config-merge.js";
 import { applyDetectedEmbeddingSetup, detectRecommendedEmbeddingSetup, getDashboardUrl } from "./embedding-detect.js";
 import { ensureMaintenanceCronJobs, readConsolidatedCronJobsFlag } from "./cron-jobs.js";
@@ -83,6 +84,7 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
   if (!config.plugins || typeof config.plugins !== "object") config.plugins = {};
   if (!(config.agents && typeof config.agents === "object")) config.agents = { defaults: {} };
   deepMerge(config, fullDefaults as unknown as Record<string, unknown>);
+  stripInvalidOpenClawCoreKeys(config);
   if (isRealKey) {
     const entries = (config.plugins as Record<string, unknown>).entries as Record<string, unknown>;
     const mh = entries[PLUGIN_ID] as Record<string, unknown>;

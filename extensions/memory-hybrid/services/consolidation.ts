@@ -218,7 +218,7 @@ export async function runConsolidate(
           content: prompt,
           temperature: 0,
           maxTokens: 300,
-          openai: opts.openai,
+          openai,
           label: "memory-hybrid: consolidate",
           timeoutMs: capTimeoutByMaintenanceRunDeadline(resolveMaintenanceChatTimeoutMs(opts.model, opts.thinkingMode)),
           signal: getMaintenanceRunAbortSignal(),
