@@ -36,6 +36,60 @@ describe("deprecated-cron-commands", () => {
     expect(hits).toContain("Workshop approval reminder. Run:");
   });
 
+  it("verify --fix path normalizes stale audit health --strict cron messages (#1955)", () => {
+    const openclawDir = mkdtempSync(join(tmpdir(), "hm-test-openclaw-"));
+    try {
+      mkdirSync(join(openclawDir, "cron"), { recursive: true });
+      writeFileSync(join(openclawDir, "openclaw.json"), "{}", "utf-8");
+
+      const jobsPath = join(openclawDir, "cron", "jobs.json");
+      writeFileSync(
+        jobsPath,
+        JSON.stringify(
+          {
+            jobs: [
+              {
+                pluginJobId: "hybrid-mem:weekly-audit-health",
+                id: "hybrid-mem:weekly-audit-health",
+                name: "weekly-audit-health",
+                schedule: { kind: "cron", expr: "0 5 * * 0" },
+                enabled: true,
+                sessionTarget: "isolated",
+                payload: {
+                  kind: "agentTurn",
+                  message:
+                    'EXECUTION\n```bash\nhm_step "audit-health" openclaw hybrid-mem audit health --strict --json\n```',
+                },
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      const result = ensureMaintenanceCronJobs(openclawDir, undefined, {
+        normalizeExisting: true,
+        reEnableDisabled: false,
+        consolidatedCronJobs: false,
+      });
+      expect(result.normalized).toContain("weekly-audit-health");
+
+      const next = JSON.parse(readFileSync(jobsPath, "utf-8")) as { jobs: Array<Record<string, unknown>> };
+      const job = next.jobs.find((j) => j.pluginJobId === "hybrid-mem:weekly-audit-health") as
+        | Record<string, unknown>
+        | undefined;
+      expect(job).toBeTruthy();
+      const payload = job?.payload as { message?: unknown } | undefined;
+      const msg = String(payload?.message ?? job?.message ?? "");
+      expect(msg).toContain("openclaw hybrid-mem audit health --strict-errors --json");
+      expect(msg).not.toContain("audit health --strict --json");
+    } finally {
+      rmSync(openclawDir, { recursive: true, force: true });
+    }
+  });
+
   it("verify --fix path normalizes stale workshop remind-pending messages", () => {
     const openclawDir = mkdtempSync(join(tmpdir(), "hm-test-openclaw-"));
     try {

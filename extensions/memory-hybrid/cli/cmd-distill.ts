@@ -623,6 +623,10 @@ export async function runDistillForCli(
             );
           }
         }
+        const acceptingTruncatedPartial =
+          detail.finishReason?.toLowerCase() === "length" &&
+          !opts.dryRun &&
+          lengthRetriesAtCursor >= maxLengthRetriesPerCursor;
         if (detail.modelUsed !== model) {
           const src = fallbackSources.get(detail.modelUsed) ?? "fallback";
           logger.info?.(
@@ -676,8 +680,15 @@ export async function runDistillForCli(
             capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:parse-json" });
           }
         }
-        cursorBlock += batch.count;
-        processedBlocks += batch.count;
+        let advanceBlocks = batch.count;
+        if (acceptingTruncatedPartial && batch.count > 1) {
+          advanceBlocks = Math.max(1, Math.floor(batch.count / 2));
+          logger.warn?.(
+            `memory-hybrid: distill batch ${batchNum} force-split — advancing ${advanceBlocks}/${batch.count} blocks at cursor=${cursorBlock}`,
+          );
+        }
+        cursorBlock += advanceBlocks;
+        processedBlocks += advanceBlocks;
         lengthRetriesAtCursor = 0;
         progress.update(processedBlocks);
       } catch (err) {
