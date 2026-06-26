@@ -154,6 +154,21 @@ All tools use **underscore** names. Below is a compact index — not every deplo
 | **Issues & proposals** | `memory_issue_*`, `persona_propose`, `persona_proposals_list`, `memory_propose_tool`, `memory_tool_proposals`, `memory_tool_approve`, `memory_tool_reject` |
 | **Workflows & capture** | `memory_workflows`, `apitap_capture`, `apitap_list`, `apitap_peek`, `apitap_to_skill`, `memory_session_observability` |
 
+### Procedures workflow
+
+1. **Recall** — call `memory_recall_procedures` before repeating a known task pattern; use the returned **`id`** for feedback.
+2. **Execute** the steps from the recalled recipe.
+3. **Feedback** — call `memory_procedure_feedback` with that exact `id`, `success`, and optional `context`.
+4. **First run / no procedure yet** — either:
+   - `memory_record_episode` (+ `memory_store` for durable facts); maintenance `extract-procedures` promotes patterns asynchronously, **or**
+   - `memory_procedure_feedback` with `registerIfMissing: true`, plus `taskPattern` and `steps[]` (creates a **draft** procedure, then records feedback).
+
+**Anti-patterns**
+
+- Do **not** invent slug ids and retry `memory_procedure_feedback` after `procedure_not_found` — that error is **`isError: true`**; stop after one failure unless using `registerIfMissing`.
+- Do **not** use `memory_procedure_feedback` to create procedures without `registerIfMissing` — it updates existing rows only.
+- `memory_store` writes **facts**, not procedure rows.
+
 When vault is **off**, credential-like content is blocked from ordinary `memory_store`. When vault is **on**, use `credential_get` — recall returns pointers, not secrets.
 
 ## Credentials vault (when `credentials.enabled: true`)
