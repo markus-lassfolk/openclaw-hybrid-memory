@@ -21,15 +21,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+---
+
+## [2026.6.260] - 2026-06-26
+
 ### Fixed
 
-- **memory_procedure_feedback procedure_not_found (#1965):** Unknown `procedureId` now returns `isError: true` with actionable text and stable `details.hint`; prevents agent tool retry loops.
-- **Credentials vault type=url:** Reject invalid credential types at store time; auto-migrate legacy `type=url` rows (merge URL into sibling bearer/token entry or convert to `type=other` with `url` field). Clarify in tools/docs that endpoint URLs use the `url` parameter, not `type`.
+- **Audit health strict mode (#1955):** Add `audit health --strict-errors` so weekly cron fails only on errors/degraded status, not sustained store-backlog warnings; cron normalize migrates stale `--strict` jobs.
+- **Continuous verification model (#1956):** `resolveVerificationModel()` skips disabled providers; all-UNCERTAIN cycles classify as monitoring (`all_uncertain`) instead of silent success.
+- **Distill truncation (#1959):** Bounded retry/split on `finish=length`, output-token floor, `truncatedBatches` logging, and `partialFailure` when output is truncated.
+- **Cron delivery (#1961, #1962):** Bash harness forbids deferred `tool_call`; maintenance-nightly and workshop-approval-reminder use exec/bash-only guidance and digest harness.
+- **memory_procedure_feedback procedure_not_found (#1965):** Unknown `procedureId` returns `isError: true` with actionable text and stable `details.hint`; prevents agent tool retry loops.
+- **Maintenance observability (#1960):** Unified maintenance cycle tick logs success (info) and skip reasons (debug).
+- **writeFileSync regression (#1963):** Regression test ensures maintenance modules import `writeFileSync` from `node:fs`.
 
 ### Added
 
+- **Extract-implicit ETA (#1957):** Orchestrator summary includes `sessionsRemaining` and `estimatedRunsToComplete` on graceful `maxWallClock` partials.
+- **Contradiction backlog alert (#1958):** Auto summary emits `backlog_alert` and triage command when ambiguous backlog exceeds threshold with no auto-progress.
 - **Procedural memory first-run capture (#1967):** `memory_procedure_feedback` accepts optional `registerIfMissing` with `taskPattern` + `steps[]` to register a draft procedure and record feedback in one call.
 - **Procedures workflow docs (#1966):** Tool schema and bundled `hybrid-memory` SKILL document recall → feedback vs first-run paths and anti-patterns.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.6.260**.
 
 ---
 
