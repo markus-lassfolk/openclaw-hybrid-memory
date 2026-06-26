@@ -592,7 +592,8 @@ export async function runDistillForCli(
             ),
           signal: getMaintenanceRunAbortSignal(),
         });
-        if (detail.finishReason?.toLowerCase() === "length") {
+        const outputTruncated = detail.finishReason?.toLowerCase() === "length";
+        if (outputTruncated) {
           truncatedBatches++;
           logger.warn?.(
             `memory-hybrid: distill batch ${batchNum} output truncated (finish=length); extracted facts may be incomplete`,
@@ -624,16 +625,14 @@ export async function runDistillForCli(
           }
         }
         const acceptingTruncatedPartial =
-          detail.finishReason?.toLowerCase() === "length" &&
-          !opts.dryRun &&
-          lengthRetriesAtCursor >= maxLengthRetriesPerCursor;
+          outputTruncated && !opts.dryRun && lengthRetriesAtCursor >= maxLengthRetriesPerCursor;
         if (detail.modelUsed !== model) {
           const src = fallbackSources.get(detail.modelUsed) ?? "fallback";
           logger.info?.(
             `memory-hybrid: distill batch ${batchNum} succeeded with fallback model ${detail.modelUsed} (source=${src})`,
           );
         }
-        if (adaptiveEnabled && !opts.dryRun && adaptiveStatePath) {
+        if (adaptiveEnabled && !opts.dryRun && !outputTruncated && adaptiveStatePath) {
           const usedLimits = effectiveLimitsForModel(detail.modelUsed);
           recordAdaptiveSuccess({
             state: adaptiveState,
@@ -1026,7 +1025,7 @@ export async function runDistillForCli(
       dedupSkipped: skipped,
       dryRun: false,
       semanticEmpty,
-      partialFailure: batchFailures > 0,
+      partialFailure: batchFailures > 0 || truncatedBatches > 0,
       batchFailures,
       dedupeDegraded,
       distillDedupeMode,

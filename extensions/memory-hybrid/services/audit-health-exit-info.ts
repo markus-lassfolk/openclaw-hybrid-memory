@@ -54,7 +54,7 @@ export function buildAuditHealthExitInfo(input: {
   const looksDegraded = input.ok === false || (input.status != null && input.status !== "ok");
   const strictFailed = strict
     ? strictErrorsOnly
-      ? input.errorCount > 0 || input.status === "failed"
+      ? errorCount > 0 || input.status === "failed"
       : errorCount > 0 || warningCount > 0 || looksDegraded
     : false;
 

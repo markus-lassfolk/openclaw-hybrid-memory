@@ -302,11 +302,18 @@ export function resolveVerificationModel(pluginConfig: CronModelConfig | undefin
   if (enabled) return enabled;
   const legacyDefault = filterModelsByDisabled([OPENAI_DEFAULT_CRON_MODEL], disabledSet)[0];
   if (legacyDefault) return legacyDefault;
-  const heavyFallback = filterModelsByDisabled(
-    [OPENAI_HEAVY_CRON_MODEL],
+  const heavyFallback = filterModelsByDisabled([OPENAI_HEAVY_CRON_MODEL], disabledSet)[0];
+  if (heavyFallback) return heavyFallback;
+  // All tier preferences were disabled — scan unfiltered lists once more before a bare default.
+  const unfilteredCandidates = filterModelsByDisabled(
+    [
+      ...getLLMModelPreferenceUnfiltered(pluginConfig, "nano"),
+      ...getLLMModelPreferenceUnfiltered(pluginConfig, "maintenance"),
+      ...getLLMModelPreferenceUnfiltered(pluginConfig, "default"),
+    ],
     disabledSet,
-  )[0];
-  return heavyFallback ?? OPENAI_DEFAULT_CRON_MODEL;
+  );
+  return unfilteredCandidates.find((m) => m.trim().length > 0) ?? OPENAI_DEFAULT_CRON_MODEL;
 }
 
 /** Build minimal config for getDefaultCronModel from full HybridMemoryConfig (used by cron jobs and self-correction spawn). */

@@ -1360,6 +1360,22 @@ describe("hybridConfigSchema.parse", () => {
     expect(resolveVerificationModel(cronCfg, "openai/gpt-4.1-nano")).toBe("minimax/MiniMax-M2.7-highspeed");
   });
 
+  it("resolveVerificationModel falls back through unfiltered tiers when filtered lists are empty (#1956)", () => {
+    const cfg = hybridConfigSchema.parse({
+      ...validBase,
+      llm: {
+        nano: ["openai/gpt-4.1-nano"],
+        maintenance: ["minimax/MiniMax-M2.7-highspeed"],
+        default: ["openai/gpt-4.1-mini"],
+        disabledProviders: ["openai"],
+      },
+      embedding: { provider: "openai", apiKey: "openai-key-10ch", model: "text-embedding-3-small" },
+    });
+    const cronCfg = getCronModelConfig(cfg);
+    // Explicit disabled model should fall through to maintenance tier.
+    expect(resolveVerificationModel(cronCfg, "openai/gpt-4.1-mini")).toBe("minimax/MiniMax-M2.7-highspeed");
+  });
+
   it("getLLMModelPreference when llm is undefined uses legacy single model (OpenClaw provider/model IDs)", () => {
     const cronCfg = undefined;
     const defaultList = getLLMModelPreference(cronCfg, "default");
