@@ -46,7 +46,7 @@ describe("ensureMaintenanceCronJobs sessionKey normalization (#977)", () => {
     const target = jobs.find((j) => j.pluginJobId === "hybrid-mem:weekly-audit-health");
     expect(target).toBeTruthy();
     expect(target?.name).toBe("weekly-audit-health");
-    expect(JSON.stringify(target)).toContain("openclaw hybrid-mem audit health --strict --json");
+    expect(JSON.stringify(target)).toContain("openclaw hybrid-mem audit health --strict-errors --json");
   });
 
   it("publishes the weekly pending digest maintenance job", () => {

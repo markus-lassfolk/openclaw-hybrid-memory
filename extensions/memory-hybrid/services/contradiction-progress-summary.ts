@@ -131,7 +131,29 @@ export function formatContradictionProgressSummaryLine(
   metrics: ContradictionProgressMetrics,
   evaluation: ContradictionProgressEvaluation,
 ): string {
-  return `resolve-contradictions summary mode=${mode} auto_resolved=${metrics.autoResolved} ambiguous=${metrics.ambiguous} no_progress=${evaluation.noProgress ? 1 : 0} degraded=${evaluation.degraded ? 1 : 0} threshold_enabled=${evaluation.degradedThresholdEnabled ? 1 : 0} threshold=${evaluation.degradedAmbiguousThreshold} consecutive=${evaluation.consecutiveNoProgressRuns} consecutive_threshold=${evaluation.degradedConsecutiveThreshold}`;
+  const parts = [
+    `resolve-contradictions summary mode=${mode}`,
+    `auto_resolved=${metrics.autoResolved}`,
+    `ambiguous=${metrics.ambiguous}`,
+    `no_progress=${evaluation.noProgress ? 1 : 0}`,
+    `degraded=${evaluation.degraded ? 1 : 0}`,
+    `threshold_enabled=${evaluation.degradedThresholdEnabled ? 1 : 0}`,
+    `threshold=${evaluation.degradedAmbiguousThreshold}`,
+    `consecutive=${evaluation.consecutiveNoProgressRuns}`,
+    `consecutive_threshold=${evaluation.degradedConsecutiveThreshold}`,
+  ];
+  if (
+    evaluation.noProgress &&
+    evaluation.degradedThresholdEnabled &&
+    metrics.ambiguous >= evaluation.degradedAmbiguousThreshold
+  ) {
+    parts.push("backlog_alert=1");
+    parts.push("triage_cmd=openclaw hybrid-mem resolve-contradictions --details --limit 20");
+    if (evaluation.consecutiveNoProgressRuns >= evaluation.degradedConsecutiveThreshold) {
+      parts.push("operator_action=manual_triage_required");
+    }
+  }
+  return parts.join(" ");
 }
 
 export function buildContradictionProgressJsonSummary(

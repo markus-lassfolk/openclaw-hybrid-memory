@@ -282,6 +282,22 @@ export function getDefaultCronModel(pluginConfig: CronModelConfig | undefined, t
   return preferred[0] ?? (tier === "heavy" ? OPENAI_HEAVY_CRON_MODEL : OPENAI_DEFAULT_CRON_MODEL);
 }
 
+/**
+ * Resolve continuous-verification model from config, skipping disabled providers (#1956).
+ * Falls back through nano → maintenance → default tiers before the legacy OpenAI default.
+ */
+export function resolveVerificationModel(pluginConfig: CronModelConfig | undefined, explicit?: string): string {
+  const trimmed = explicit?.trim();
+  if (trimmed) return trimmed;
+  const candidates = [
+    ...getLLMModelPreference(pluginConfig, "nano"),
+    ...getLLMModelPreference(pluginConfig, "maintenance"),
+    ...getLLMModelPreference(pluginConfig, "default"),
+  ];
+  const enabled = candidates.find((m) => m.trim().length > 0);
+  return enabled ?? OPENAI_DEFAULT_CRON_MODEL;
+}
+
 /** Build minimal config for getDefaultCronModel from full HybridMemoryConfig (used by cron jobs and self-correction spawn). */
 export function getCronModelConfig(cfg: HybridMemoryConfig): CronModelConfig {
   return {

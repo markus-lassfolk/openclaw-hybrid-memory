@@ -38,6 +38,8 @@ export type AuditHealthExitInfo = {
 
 export function buildAuditHealthExitInfo(input: {
   strict: boolean;
+  /** When true with --strict, exit only on errors/degraded status — warnings are informational (#1955). */
+  strictErrorsOnly?: boolean;
   warningCount: number;
   errorCount: number;
   ok?: boolean;
@@ -46,9 +48,12 @@ export function buildAuditHealthExitInfo(input: {
   const warningCount = Math.max(0, input.warningCount || 0);
   const errorCount = Math.max(0, input.errorCount || 0);
   const strict = input.strict === true;
+  const strictErrorsOnly = input.strictErrorsOnly === true;
 
   const looksDegraded = input.ok === false || (input.status != null && input.status !== "ok");
-  const strictFailed = strict && (warningCount > 0 || errorCount > 0 || looksDegraded);
+  const strictFailed =
+    strict &&
+    (errorCount > 0 || looksDegraded || (!strictErrorsOnly && warningCount > 0));
 
   if (strictFailed) {
     const strictFailureReason = (() => {

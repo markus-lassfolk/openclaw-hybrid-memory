@@ -10,6 +10,7 @@ import {
   getMemoryCategories,
   resolveReflectionModelAndFallbacks,
   resolveReflectionThinkingMode,
+  resolveVerificationModel,
 } from "../../config.js";
 import { runClassifyForCli } from "../../services/auto-classifier.js";
 import { runConsolidate } from "../../services/consolidation.js";
@@ -533,7 +534,7 @@ export function buildCliContextServices(
       const verbose = !!opts?.verbose;
       return runVerificationCycle(verificationStore, factsDb, openai, {
         cycleDays: cfg.verification.cycleDays,
-        verificationModel: cfg.verification.verificationModel,
+        verificationModel: resolveVerificationModel(getCronModelConfig(cfg), cfg.verification.verificationModel),
         ...(verbose
           ? {
               onProgress: (message: string) => {

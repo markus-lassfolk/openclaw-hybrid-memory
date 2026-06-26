@@ -13,6 +13,7 @@ import {
   getProvidersWithKeys,
   hybridConfigSchema,
   isValidCategory,
+  resolveVerificationModel,
   resolveReflectionModelAndFallbacks,
   setMemoryCategories,
   vectorDimsForModel,
@@ -1341,6 +1342,22 @@ describe("hybridConfigSchema.parse", () => {
     expect(getLLMModelPreference(cronCfg, "heavy")).toEqual([]);
     expect(getProvidersWithKeys(cronCfg)).toEqual(expect.arrayContaining(["google", "openai"]));
     expect(getProvidersWithKeys(cronCfg)).not.toContain("anthropic");
+  });
+
+  it("resolveVerificationModel skips disabled providers (#1956)", () => {
+    const cfg = hybridConfigSchema.parse({
+      ...validBase,
+      llm: {
+        nano: ["openai/gpt-4.1-nano"],
+        maintenance: ["minimax/MiniMax-M2.7-highspeed"],
+        default: ["openai/gpt-4.1-mini"],
+        disabledProviders: ["openai"],
+      },
+      embedding: { provider: "openai", apiKey: "openai-key-10ch", model: "text-embedding-3-small" },
+    });
+    const cronCfg = getCronModelConfig(cfg);
+    expect(resolveVerificationModel(cronCfg)).toBe("minimax/MiniMax-M2.7-highspeed");
+    expect(resolveVerificationModel(cronCfg, "openai/gpt-4.1-nano")).toBe("openai/gpt-4.1-nano");
   });
 
   it("getLLMModelPreference when llm is undefined uses legacy single model (OpenClaw provider/model IDs)", () => {

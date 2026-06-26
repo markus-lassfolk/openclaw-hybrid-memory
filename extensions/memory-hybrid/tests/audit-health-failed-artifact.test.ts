@@ -117,6 +117,31 @@ describe("buildAuditHealthExitInfo strict mode (#1823)", () => {
     expect(info.exitCode).toBe(0);
     expect(info.exitReason).toBe("ok");
   });
+
+  it("returns exitCode 0 when strict-errors and only warnings present (#1955)", () => {
+    const info = buildAuditHealthExitInfo({
+      strict: true,
+      strictErrorsOnly: true,
+      warningCount: 7,
+      errorCount: 0,
+      ok: true,
+      status: "ok",
+    });
+    expect(info.exitCode).toBe(0);
+    expect(info.exitReason).toBe("warnings");
+    expect(info.strictFailureReason).toBeUndefined();
+  });
+
+  it("returns exitCode 2 when strict-errors and errors present (#1955)", () => {
+    const info = buildAuditHealthExitInfo({
+      strict: true,
+      strictErrorsOnly: true,
+      warningCount: 3,
+      errorCount: 1,
+    });
+    expect(info.exitCode).toBe(2);
+    expect(info.exitReason).toBe("strict_errors");
+  });
 });
 
 // ─── Integration: strict failure produces a parseable artifact ───────────────

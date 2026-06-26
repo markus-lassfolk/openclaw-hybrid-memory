@@ -445,6 +445,7 @@ export async function runDistillForCli(
     let batchNum = 0;
     let cursorBlock = 0;
     let shrinkBudget = 8;
+    let truncatedBatches = 0;
     let nonAdaptiveBatchFactor = 1;
     let nonAdaptiveOutFactor = 1;
     const minBatchForModel = Math.max(2048, promptTokens + 256);
@@ -465,6 +466,7 @@ export async function runDistillForCli(
         catalogBatchTokenLimit,
         catalogMaxOutputTokens,
         minBatchTokenLimit: minBatchForModel,
+        minMaxOutputTokens: Math.max(2048, Math.floor(catalogMaxOutputTokens * 0.25)),
       });
     };
 
@@ -589,6 +591,7 @@ export async function runDistillForCli(
           signal: getMaintenanceRunAbortSignal(),
         });
         if (detail.finishReason?.toLowerCase() === "length") {
+          truncatedBatches++;
           logger.warn?.(
             `memory-hybrid: distill batch ${batchNum} output truncated (finish=length); extracted facts may be incomplete`,
           );
@@ -597,6 +600,14 @@ export async function runDistillForCli(
             shrinkForRetry("other", detail.modelUsed ?? model);
             logger.warn?.(
               `memory-hybrid: distill batch ${batchNum} truncated — shrinking and retrying (budget left=${shrinkBudget})`,
+            );
+            continue;
+          }
+          if (!opts.dryRun) {
+            nonAdaptiveBatchFactor *= 0.6;
+            nonAdaptiveOutFactor = Math.max(nonAdaptiveOutFactor, 0.5);
+            logger.warn?.(
+              `memory-hybrid: distill batch ${batchNum} truncated — splitting batch after shrink budget exhausted`,
             );
             continue;
           }
@@ -706,6 +717,11 @@ export async function runDistillForCli(
       }
     }
     progress.done();
+    if (truncatedBatches > 0) {
+      sink.warn(
+        `memory-hybrid: distill truncatedBatches=${truncatedBatches} — some batches hit finish=length; consider resetting .adaptive-llm-limits.json or using --force with smaller --days`,
+      );
+    }
     const semanticEmpty = filesToProcess.length > 0 && allFacts.length === 0;
     if (semanticEmpty) {
       sink.warn(

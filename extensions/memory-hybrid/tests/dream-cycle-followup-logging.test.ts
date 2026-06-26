@@ -107,7 +107,7 @@ describe("dream-cycle follow-up heartbeat logging", () => {
     expect(extractImplicitSemanticOutcome({ partial: true, partialReason: "reinforcementError" })).toBe("partial");
   });
 
-  it("treats all-uncertain verification results as healthy when the cycle completed", () => {
+  it("treats all-uncertain verification results as monitoring when errors=0", () => {
     const assessment = assessContinuousVerificationResult({
       checked: 12,
       confirmed: 0,
@@ -117,12 +117,12 @@ describe("dream-cycle follow-up heartbeat logging", () => {
       errorSummaries: [],
     });
 
-    expect(assessment.status).toBe("healthy");
-    expect(assessment.reason).toBe("healthy");
+    expect(assessment.status).toBe("degraded");
+    expect(assessment.reason).toBe("all_uncertain");
     expect(assessment.shouldFailPipeline).toBe(false);
   });
 
-  it("treats LLM-downgraded uncertain outcomes as healthy when every fact got a verdict", () => {
+  it("treats LLM-downgraded uncertain outcomes as monitoring when every fact got a verdict", () => {
     const assessment = assessContinuousVerificationResult({
       checked: 5,
       confirmed: 0,
@@ -135,8 +135,8 @@ describe("dream-cycle follow-up heartbeat logging", () => {
       ],
     });
 
-    expect(assessment.status).toBe("healthy");
-    expect(assessment.reason).toBe("healthy");
+    expect(assessment.status).toBe("degraded");
+    expect(assessment.reason).toBe("all_uncertain");
     expect(assessment.shouldFailPipeline).toBe(false);
   });
 

@@ -88,6 +88,20 @@ export function assessContinuousVerificationResult(result: VerificationCycleResu
       summary,
     };
   }
+  if (
+    result.checked > 0 &&
+    result.errors === 0 &&
+    result.confirmed === 0 &&
+    result.stale === 0 &&
+    result.uncertain === result.checked
+  ) {
+    return {
+      status: "degraded",
+      reason: "all_uncertain",
+      shouldFailPipeline: false,
+      summary: `all ${result.checked} fact(s) returned UNCERTAIN — check verificationModel and provider availability`,
+    };
+  }
   return { status: "healthy", reason: "healthy", shouldFailPipeline: false };
 }
 
