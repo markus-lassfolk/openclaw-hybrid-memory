@@ -93,4 +93,23 @@ describe("buildVectorlessSloRepairRecommendation", () => {
     expect(slo.sloMetAfterRun).toBe(true);
     expect(slo.vectorlessToClearForSlo).toBe(0);
   });
+
+  it("uses source-scoped counts when sloScope is source", () => {
+    const slo = buildVectorlessSloRepairRecommendation({
+      sloScope: "source",
+      activeFacts: 200,
+      vectorlessBefore: 40,
+      vectorlessAfter: 10,
+      embeddedThisRun: 30,
+      runLimit: 50,
+      scopedSource: "session:abc",
+      scopedVectorlessBefore: 40,
+      scopedVectorlessAfter: 10,
+    });
+
+    expect(slo.sloScope).toBe("source");
+    expect(slo.vectorlessRatioAfter).toBe(0.05);
+    expect(slo.sloMetAfterRun).toBe(false);
+    expect(slo.scopedSource).toBe("session:abc");
+  });
 });

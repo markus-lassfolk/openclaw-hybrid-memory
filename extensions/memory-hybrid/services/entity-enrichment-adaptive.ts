@@ -52,8 +52,8 @@ export type EntityEnrichmentAdaptiveSummary = {
 };
 
 export type VectorlessSloRepairRecommendation = {
-  /** SLO ratio uses global vectorless counts (audit-health target is store-wide). */
-  sloScope: "global";
+  /** Global when no --source filter; source when the run scoped re-embed to one source. */
+  sloScope: "global" | "source";
   targetVectorlessRatio: number;
   activeFacts: number;
   vectorlessBefore: number;
@@ -200,10 +200,12 @@ export function buildVectorlessSloRepairRecommendation(input: {
   embeddedThisRun: number;
   runLimit: number;
   effectiveBatchSize?: number;
+  sloScope?: "global" | "source";
   scopedSource?: string;
   scopedVectorlessBefore?: number;
   scopedVectorlessAfter?: number;
 }): VectorlessSloRepairRecommendation {
+  const sloScope = input.sloScope ?? "global";
   const activeFacts = Math.max(0, input.activeFacts);
   const vectorlessBefore = Math.max(0, input.vectorlessBefore);
   const vectorlessAfter = Math.max(0, input.vectorlessAfter);
@@ -217,7 +219,7 @@ export function buildVectorlessSloRepairRecommendation(input: {
   const estimatedRunsToReachSlo = Math.ceil(vectorlessToClearForSlo / embeddedPerRun);
 
   return {
-    sloScope: "global",
+    sloScope,
     targetVectorlessRatio: VECTORLESS_SLO_TARGET_RATIO,
     activeFacts,
     vectorlessBefore,

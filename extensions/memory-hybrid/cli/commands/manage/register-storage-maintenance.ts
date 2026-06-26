@@ -1101,16 +1101,19 @@ function registerManageStorageMaintenanceOnParent(
               };
             }
             const globalVectorlessAfter = opts?.apply ? factsDb.countVectorlessActiveFacts() : globalVectorlessBefore;
+            const sloSource = opts?.source;
+            const useSourceScopedSlo = sloSource != null && sloSource !== "";
             const vectorSloRepairResult = buildVectorlessSloRepairRecommendation({
-              activeFacts: factsDb.getCount(),
-              vectorlessBefore: globalVectorlessBefore,
-              vectorlessAfter: globalVectorlessAfter,
+              sloScope: useSourceScopedSlo ? "source" : "global",
+              activeFacts: useSourceScopedSlo ? factsDb.countBySource(sloSource) : factsDb.getCount(),
+              vectorlessBefore: useSourceScopedSlo ? before : globalVectorlessBefore,
+              vectorlessAfter: useSourceScopedSlo ? after : globalVectorlessAfter,
               embeddedThisRun: embedded,
               runLimit: limit,
               effectiveBatchSize: adaptiveCatchUp ? effectiveBatchSize : batchSize,
-              scopedSource: opts?.source,
-              scopedVectorlessBefore: opts?.source ? before : undefined,
-              scopedVectorlessAfter: opts?.source ? after : undefined,
+              scopedSource: useSourceScopedSlo ? sloSource : undefined,
+              scopedVectorlessBefore: useSourceScopedSlo ? before : undefined,
+              scopedVectorlessAfter: useSourceScopedSlo ? after : undefined,
             });
             report.vectorSloRepair = vectorSloRepairResult;
             // Persist last-run metrics for audit-health progress reporting (#1808).

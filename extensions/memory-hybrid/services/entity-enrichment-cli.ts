@@ -624,7 +624,7 @@ export async function runEntityEnrichmentForCli(
     emitProgress(currentBacklog.total);
 
     if (adaptiveCatchUp) {
-      const hadPressure = batchStats.batchPressureSignals > 0 || batchStats.batchFailures > 0;
+      const hadPressure = batchStats.batchPressureSignals > 0;
       const previousBatchSize = effectiveBatchSize;
       const previousDelayMs = effectiveDelayMs;
       const previousConcurrency = effectiveConcurrency;
@@ -689,14 +689,14 @@ export async function runEntityEnrichmentForCli(
     }
   }
 
+  const finalBacklog = factsDb.getEntityEnrichmentBacklogSummary(24);
   if (stopReason !== "time_budget" && stopReason !== "provider_budget") {
     const allIdsAttempted = index >= ids.length;
     const hasRunPressure =
       llmFailures > 0 || rateLimitCount > 0 || timeoutFailureCount > 0 || transientFailureCount > 0;
-    stopReason = allIdsAttempted && !hasRunPressure ? "completed" : "exhausted";
+    const backlogCleared = finalBacklog.total === 0;
+    stopReason = allIdsAttempted && !hasRunPressure && backlogCleared ? "completed" : "exhausted";
   }
-
-  const finalBacklog = factsDb.getEntityEnrichmentBacklogSummary(24);
   const adaptiveSummary = adaptiveCatchUp
     ? buildEntityEnrichmentAdaptiveSummary({
         startedAtMs,
