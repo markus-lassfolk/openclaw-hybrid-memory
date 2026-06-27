@@ -586,6 +586,11 @@ const errorDedup = new Map<string, number>(); // Rate limiting: fingerprint -> t
 const CHRONIC_FINGERPRINT_DEDUPE_MS = 24 * 60 * 60 * 1000;
 let telemetryMuteReason: string | null = null;
 
+/** Test-only: clear in-memory rate-limit state between cases. */
+export function resetErrorDedupForTests(): void {
+  errorDedup.clear();
+}
+
 function buildFingerprintKey(fingerprint: string[]): string {
   return fingerprint.map((part) => scrubString(String(part))).join(":");
 }
@@ -834,9 +839,9 @@ export function capturePluginError(
       ? buildFingerprintKey(context.fingerprint)
       : `${error.name}:${scrubString(error.message).slice(0, 100)}`;
   const dedupeWindowMs =
+    context.operation === "invalid_goal_registry_entry" &&
     Array.isArray(context.fingerprint) &&
-    context.fingerprint.length > 0 &&
-    (context.severity === "warning" || context.operation === "invalid_goal_registry_entry")
+    context.fingerprint.length > 0
       ? CHRONIC_FINGERPRINT_DEDUPE_MS
       : 60000;
   const now = Date.now();

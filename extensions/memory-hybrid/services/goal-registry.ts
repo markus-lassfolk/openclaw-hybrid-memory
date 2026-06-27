@@ -164,6 +164,24 @@ async function persistCorruptReportKey(goalsDir: string, dedupeKey: string): Pro
   }
 }
 
+async function removeCorruptReportKey(goalsDir: string, dedupeKey: string): Promise<void> {
+  await loadPersistedCorruptReports(goalsDir);
+  if (!reportedCorruptGoalFiles.delete(dedupeKey)) return;
+  const ledgerPath = join(goalsDir, CORRUPT_REPORTED_LEDGER);
+  try {
+    if (reportedCorruptGoalFiles.size === 0) {
+      await rm(ledgerPath, { force: true });
+      return;
+    }
+    atomicWriteGoalText(
+      ledgerPath,
+      JSON.stringify({ updatedAt: nowIso(), keys: [...reportedCorruptGoalFiles].sort() }, null, 2),
+    );
+  } catch {
+    /* best-effort */
+  }
+}
+
 function isGoalRegistryJsonFilename(filename: string): boolean {
   if (filename.endsWith(GOAL_CORRUPT_SUFFIX)) return false;
   return filename.endsWith(".json") && filename !== INDEX_FILENAME && !filename.startsWith(GOAL_HOUSEKEEPING_PREFIX);
@@ -214,7 +232,7 @@ export async function repairQuarantinedGoalFile(
       return { goalId, ok: true, action: "skipped", error: "dry-run (would restore)" };
     }
     await rename(corruptPath, destPath);
-    reportedCorruptGoalFiles.delete(join(goalsDir, `${goalId}.json`));
+    await removeCorruptReportKey(goalsDir, join(goalsDir, `${goalId}.json`));
     return { goalId, ok: true, action: "restored" };
   } catch (err) {
     return {
@@ -261,8 +279,13 @@ async function handleCorruptGoalRegistryEntry(goalsDir: string, filename: string
   const dedupeKey = join(goalsDir, filename);
   await loadPersistedCorruptReports(goalsDir);
   if (reportedCorruptGoalFiles.has(dedupeKey)) return;
-  await persistCorruptReportKey(goalsDir, dedupeKey);
   await quarantineCorruptGoalFile(goalsDir, filename);
+  const srcPath = join(goalsDir, filename);
+  if (existsSync(srcPath)) {
+    /* Quarantine failed — do not ledger-suppress future retries (#1988). */
+    return;
+  }
+  await persistCorruptReportKey(goalsDir, dedupeKey);
   captureInvalidGoalRegistryEntry(filename, err);
 }
 
@@ -360,15 +383,7 @@ export async function auditGoalIndexDrift(goalsDir: string): Promise<GoalIndexDr
   }
   for (const f of files) {
     if (!isGoalRegistryJsonFilename(f)) continue;
-    const id = f.replace(/\.json$/i, "");
-    fileIds.add(id);
-    try {
-      const g = await readGoal(goalsDir, id);
-      if (!g) continue;
-      /* index comparison below */
-    } catch {
-      /* corrupt files handled elsewhere */
-    }
+    fileIds.add(f.replace(/\.json$/i, ""));
     await yieldEventLoop();
   }
 

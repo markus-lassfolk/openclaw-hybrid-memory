@@ -102,7 +102,8 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
       if (opts.fix) {
         await rebuildGoalIndex(goalsDir);
         log(`  → Rebuilt goals/_index.json`);
-        warnings.pop();
+        const driftIdx = warnings.findIndex((w) => w.startsWith("Goal index drift detected"));
+        if (driftIdx >= 0) warnings.splice(driftIdx, 1);
       }
     }
   }
