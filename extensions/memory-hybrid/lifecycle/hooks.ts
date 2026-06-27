@@ -37,6 +37,7 @@ import { registerDirectiveStoreNudge } from "./stage-directive-store-nudge.js";
 import { runInjectionStage } from "./stage-injection.js";
 import { buildDegradedFtsHotRecallStage } from "./stage-recall/degraded-recall.js";
 import { runRecallStage } from "./stage-recall.js";
+import { beforeAgentStartRemainingMs, shouldSkipOptionalBeforeAgentStartStage } from "../services/before-agent-start-budget.js";
 import { runSetupStage } from "./stage-setup.js";
 import { formatPreFinalizationGuardMessage, evaluatePreFinalizationGuard } from "../services/pre-finalization-guard.js";
 import { TASK_LEDGER_CATEGORY } from "../services/task-ledger-facts.js";
@@ -80,6 +81,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         if (capturedFirstRecallBegin) {
           firstRecallCheckpointCaptured = true;
         }
+        if (beforeAgentStartRemainingMs(ctx.beforeAgentStartTurnRef) < 500) {
+          api.logger.warn?.(
+            `memory-hybrid: before_agent_start budget nearly exhausted (${beforeAgentStartRemainingMs(ctx.beforeAgentStartTurnRef)}ms left) — skipping recall`,
+          );
+          return undefined;
+        }
         try {
           const recallStageResult = await runRecallStage(event, rApi, ctx, sessionState);
           if (isStaleLifecycleGeneration(ctx)) {
@@ -89,6 +96,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             return undefined;
           }
           if (!recallStageResult) {
+            if (shouldSkipOptionalBeforeAgentStartStage(ctx.beforeAgentStartTurnRef)) {
+              api.logger.warn?.("memory-hybrid: recall budget exhausted — skipping degraded fallback");
+              return undefined;
+            }
             api.logger.warn?.("memory-hybrid: recall stage returned no result — attempting FTS+HOT degraded fallback");
             const degraded = await buildDegradedFtsHotRecallStage(event, rApi, ctx, sessionState, "timeout");
             if (capturedFirstRecallBegin) {

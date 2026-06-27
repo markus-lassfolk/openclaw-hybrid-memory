@@ -15,6 +15,7 @@ import { VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
 import { shouldSuppressEmbeddingError } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { applyPrependBudget } from "../services/prepend-budget.js";
+import { runOptionalBeforeAgentStartStage } from "../services/before-agent-start-budget.js";
 import { filterByScope, mergeResults } from "../services/merge-results.js";
 import { assembleRecallPrependContext } from "../services/recalled-context-assembler.js";
 import type { ScopeFilter } from "../types/memory.js";
@@ -51,7 +52,8 @@ export function registerAuthFailureRecall(
   const currentAgentIdRef = ctx.currentAgentIdRef;
 
   // Two-arg hook: merge PluginHookAgentContext into api before resolveSessionKey (#1005).
-  api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
+  api.on("before_agent_start", async (event: unknown, hookCtx: unknown) =>
+    runOptionalBeforeAgentStartStage(ctx.beforeAgentStartTurnRef, "auth-failure-recall", api.logger, async () => {
     const rApi = withHookResolutionApi(api, hookCtx);
     const e = event as { prompt?: string; messages?: unknown[] };
     if (!e.prompt && (!e.messages || !Array.isArray(e.messages))) return;
@@ -187,5 +189,6 @@ export function registerAuthFailureRecall(
       }
       api.logger.warn(`memory-hybrid: auth failure recall failed: ${String(err)}`);
     }
-  });
+  }),
+  );
 }

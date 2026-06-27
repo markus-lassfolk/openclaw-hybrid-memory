@@ -8,13 +8,15 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { detectUserStoreDirective } from "../services/directive-extract.js";
 import { formatDirectiveStoreNudgeBlock } from "../services/directive-store-nudge.js";
 import { applyPrependBudget } from "../services/prepend-budget.js";
+import { runOptionalBeforeAgentStartStage } from "../services/before-agent-start-budget.js";
 import type { LifecycleContext } from "./types.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
 
 export function registerDirectiveStoreNudge(api: ClawdbotPluginApi, ctx: LifecycleContext): void {
   if (!ctx.cfg.autoCapture || !ctx.cfg.autoRecall.enabled || ctx.cfg.verbosity === "silent") return;
 
-  api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
+  api.on("before_agent_start", async (event: unknown, hookCtx: unknown) =>
+    runOptionalBeforeAgentStartStage(ctx.beforeAgentStartTurnRef, "directive-store-nudge", api.logger, async () => {
     const rApi = withHookResolutionApi(api, hookCtx);
     const e = event as {
       prompt?: string;
@@ -43,5 +45,6 @@ export function registerDirectiveStoreNudge(api: ClawdbotPluginApi, ctx: Lifecyc
       `memory-hybrid: directive store nudge (${directive.categories.join(", ")}) textLen=${directive.storeText.length}`,
     );
     return { prependContext: prepend };
-  });
+  }),
+  );
 }

@@ -15,6 +15,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { isGoalStewardshipInjectionEnabled, listActiveGoals } from "../services/goal-stewardship.js";
 import { matchesHeartbeat } from "../services/goal-stewardship-heartbeat.js";
 import { applyPrependBudget } from "../services/prepend-budget.js";
+import { runOptionalBeforeAgentStartStage } from "../services/before-agent-start-budget.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
 import { resolveSessionKeyFromHookEvent } from "./session-state.js";
@@ -28,7 +29,8 @@ export function registerGoalContextInjection(
   const gs = ctx.cfg.goalStewardship;
   if (!gs.injectActiveGoalsEveryTurn || ctx.cfg.verbosity === "silent") return;
 
-  api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
+  api.on("before_agent_start", async (event: unknown, hookCtx: unknown) =>
+    runOptionalBeforeAgentStartStage(ctx.beforeAgentStartTurnRef, "goal-context", api.logger, async () => {
     try {
       const injectionEnabled = await isGoalStewardshipInjectionEnabled(ctx.cfg, goalsDir);
       if (!injectionEnabled) return undefined;
@@ -75,5 +77,6 @@ export function registerGoalContextInjection(
       api.logger?.warn?.(`memory-hybrid: goal context injection failed: ${String(err)}`);
       return undefined;
     }
-  });
+  }),
+  );
 }

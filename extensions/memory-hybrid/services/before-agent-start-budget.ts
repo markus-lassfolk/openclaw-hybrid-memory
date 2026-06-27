@@ -40,6 +40,43 @@ export function shouldSkipOptionalBeforeAgentStartStage(ref?: BeforeAgentStartTu
   return beforeAgentStartRemainingMs(ref) < BEFORE_AGENT_START_OPTIONAL_STAGE_MIN_MS;
 }
 
+/** Log when a single optional stage exceeds this wall clock (ms). */
+export const BEFORE_AGENT_START_STAGE_SLOW_MS = 2000;
+
+type BeforeAgentStartLogger = { debug?: (msg: string) => void; warn?: (msg: string) => void } | undefined;
+
+/**
+ * Run an optional prepend stage under the shared gateway hook budget (#1979).
+ * Skips when budget is exhausted; logs per-stage and cumulative slow-path timing.
+ */
+export async function runOptionalBeforeAgentStartStage<T>(
+  ref: BeforeAgentStartTurnRef | undefined,
+  stage: string,
+  logger: BeforeAgentStartLogger,
+  fn: () => Promise<T | undefined>,
+): Promise<T | undefined> {
+  if (shouldSkipOptionalBeforeAgentStartStage(ref)) {
+    logger?.debug?.(
+      `memory-hybrid: ${stage} skipped — before_agent_start budget exhausted (${beforeAgentStartRemainingMs(ref)}ms left)`,
+    );
+    return undefined;
+  }
+  const stageStart = Date.now();
+  try {
+    return await fn();
+  } finally {
+    const stageMs = Date.now() - stageStart;
+    const remaining = beforeAgentStartRemainingMs(ref);
+    if (stageMs >= BEFORE_AGENT_START_STAGE_SLOW_MS) {
+      logger?.warn?.(
+        `memory-hybrid: before_agent_start stage ${stage} took ${stageMs}ms (${remaining}ms budget remaining, ${beforeAgentStartElapsedMs(ref)}ms total)`,
+      );
+    } else {
+      logSlowBeforeAgentStartIfNeeded(logger, ref, stage);
+    }
+  }
+}
+
 export function logSlowBeforeAgentStartIfNeeded(
   logger: { warn?: (msg: string) => void } | undefined,
   ref: BeforeAgentStartTurnRef | undefined,

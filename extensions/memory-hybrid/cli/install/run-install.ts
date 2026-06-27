@@ -34,6 +34,8 @@ import {
   resolveAgentWorkspaceRoot,
   resolveUpgradeExtensionsParentDir,
   verifyUpgradePluginBundle,
+  resolveNpmProjectRootForPlugin,
+  verifyNpmProjectDependencyPin,
 } from "./workspace.js";
 
 export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
@@ -370,26 +372,15 @@ function rollbackUpgradePluginDir(pluginDir: string, backupDir: string): void {
 }
 
 function findNpmProjectRootForPlugin(pluginRootDir: string): string | undefined {
-  const nodeModulesDir = dirname(pluginRootDir);
-  if (basename(nodeModulesDir) !== "node_modules") return undefined;
-  const projectRoot = dirname(nodeModulesDir);
-  const pkgPath = join(projectRoot, "package.json");
-  if (!existsSync(pkgPath)) return undefined;
-  try {
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { dependencies?: Record<string, string> };
-    if (typeof pkg.dependencies?.[PLUGIN_ID] === "string") return projectRoot;
-  } catch {
-    return undefined;
-  }
-  return undefined;
+  return resolveNpmProjectRootForPlugin(pluginRootDir);
 }
 
 async function updateNpmProjectDependencyPin(
   pluginRootDir: string,
   version: string,
-): Promise<{ updated: boolean; warning?: string }> {
+): Promise<{ required: boolean; updated: boolean; error?: string }> {
   const projectRoot = findNpmProjectRootForPlugin(pluginRootDir);
-  if (!projectRoot) return { updated: false };
+  if (!projectRoot) return { required: false, updated: false };
   const { spawnSync } = await import("node:child_process");
   const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
   const r = spawnSync(npmCmd, ["install", `${PLUGIN_ID}@${version}`, "--save-exact"], {
@@ -399,11 +390,20 @@ async function updateNpmProjectDependencyPin(
   });
   if (r.status !== 0) {
     return {
+      required: true,
       updated: false,
-      warning: `npm project pin update failed in ${projectRoot} (exit ${r.status ?? "unknown"}). Run: npm install ${PLUGIN_ID}@${version} --save-exact`,
+      error: `npm project pin update failed in ${projectRoot} (exit ${r.status ?? "unknown"}). Run: npm install ${PLUGIN_ID}@${version} --save-exact`,
     };
   }
-  return { updated: true };
+  const pinError = verifyNpmProjectDependencyPin(projectRoot, version);
+  if (pinError) {
+    return { required: true, updated: false, error: pinError };
+  }
+  const bundleError = verifyUpgradePluginBundle(pluginRootDir);
+  if (bundleError) {
+    return { required: true, updated: false, error: bundleError };
+  }
+  return { required: true, updated: true };
 }
 
 export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: string): Promise<UpgradeCliResult> {
@@ -487,9 +487,22 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
   }
 
   const npmPin = await updateNpmProjectDependencyPin(extDir, installedVersion);
-  if (npmPin.warning) {
-    logger?.warn?.(`memory-hybrid: upgrade — ${npmPin.warning}`);
-  } else if (npmPin.updated) {
+  if (npmPin.required && !npmPin.updated) {
+    try {
+      rollbackUpgradePluginDir(extDir, backupDir);
+    } catch (e) {
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:rollback-npm-pin" });
+      return {
+        ok: false,
+        error: `${npmPin.error ?? "npm project pin update failed"}. Rollback also failed: ${e}. Run manually: npm install ${PLUGIN_ID}@${installedVersion} --save-exact`,
+      };
+    }
+    return {
+      ok: false,
+      error: `${npmPin.error ?? "npm project pin update failed"}. Previous plugin version restored from backup.`,
+    };
+  }
+  if (npmPin.updated) {
     logger?.info?.(`memory-hybrid: upgrade — npm project dependency pinned to ${installedVersion}`);
   }
 

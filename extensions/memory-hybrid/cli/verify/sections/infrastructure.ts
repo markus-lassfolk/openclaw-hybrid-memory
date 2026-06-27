@@ -9,7 +9,7 @@
  */
 
 import { writeFileSync } from "node:fs";
-import { capturePluginError } from "../../../services/error-reporter.js";
+import { capturePluginError, getPendingErrorReportCount, isErrorReporterActive } from "../../../services/error-reporter.js";
 import { PLUGIN_ID } from "../../../utils/constants.js";
 
 import type { VerifyRunState } from "../verify-run-state.js";
@@ -47,6 +47,20 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
   } = state;
 
   log("\n───── Infrastructure ─────");
+
+  if (cfg.errorReporting?.enabled !== false && cfg.errorReporting?.consent !== false) {
+    const pendingReports = getPendingErrorReportCount();
+    if (isErrorReporterActive()) {
+      if (pendingReports > 0) {
+        warnings.push(`Error reporter has ${pendingReports} pending telemetry report(s)`);
+        log(`${WARN_LINE} Error reporter: ${pendingReports} pending report(s) in queue (retries on startup/shutdown flush)`);
+      } else {
+        log(`${OK} Error reporter: pending queue empty`);
+      }
+    } else if (cfg.errorReporting?.enabled === true) {
+      log(`${WARN_LINE} Error reporter: not active (check consent and DSN)`);
+    }
+  }
 
   if (
     cfg.embedding.provider === "openai" &&

@@ -4,8 +4,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  isNpmProjectPluginLayout,
+  resolveNpmProjectRootForPlugin,
   resolveUpgradeExtensionsParentDir,
   UPGRADE_REQUIRED_BUNDLE_PATHS,
+  verifyNpmProjectDependencyPin,
   verifyUpgradePluginBundle,
 } from "../cli/cmd-install.js";
 
@@ -58,5 +61,32 @@ describe("runUpgrade helpers", () => {
     expect(UPGRADE_REQUIRED_BUNDLE_PATHS).toContain("workspace-snippets/TOOLS-hybrid-memory-body.md");
     expect(UPGRADE_REQUIRED_BUNDLE_PATHS).toContain("dist/index.js");
     expect(UPGRADE_REQUIRED_BUNDLE_PATHS).toContain("openclaw.plugin.json");
+  });
+
+  it("detects npm-project plugin layout (#1985)", () => {
+    const pluginDir = join(tmp, "npm", "projects", "openclaw-hybrid-memory", "node_modules", "openclaw-hybrid-memory");
+    const projectRoot = join(tmp, "npm", "projects", "openclaw-hybrid-memory");
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(projectRoot, "package.json"),
+      JSON.stringify({ dependencies: { "openclaw-hybrid-memory": "2026.6.271" } }),
+    );
+    expect(isNpmProjectPluginLayout(pluginDir)).toBe(true);
+    expect(resolveNpmProjectRootForPlugin(pluginDir)).toBe(projectRoot);
+  });
+
+  it("verifyNpmProjectDependencyPin fails on mismatched version (#1985)", () => {
+    const projectRoot = join(tmp, "npm-project");
+    mkdirSync(projectRoot, { recursive: true });
+    writeFileSync(
+      join(projectRoot, "package.json"),
+      JSON.stringify({ dependencies: { "openclaw-hybrid-memory": "2026.6.261" } }),
+    );
+    expect(verifyNpmProjectDependencyPin(projectRoot, "2026.6.271")).toMatch(/expected 2026.6.271/);
+    writeFileSync(
+      join(projectRoot, "package.json"),
+      JSON.stringify({ dependencies: { "openclaw-hybrid-memory": "2026.6.271" } }),
+    );
+    expect(verifyNpmProjectDependencyPin(projectRoot, "2026.6.271")).toBeUndefined();
   });
 });

@@ -733,15 +733,31 @@ function scheduleStartupErrorReporterDrain(): void {
   void (async () => {
     try {
       await reporter?.initPersistentQueue();
-      const count = reporter?.getPendingCount() ?? 0;
-      if (count === 0) return;
-      logger.info?.(`[ErrorReporter] Draining ${count} pending report(s) from previous run`);
-      const flushed = await reporter?.flush(computeShutdownFlushTimeoutMs(count));
-      if (flushed) {
-        logger.info?.("[ErrorReporter] Startup pending queue drained");
-      } else {
-        const remaining = reporter?.getPendingCount() ?? 0;
-        logger.debug?.(`[ErrorReporter] Startup drain incomplete (${remaining} remaining)`);
+      const maxAttempts = 3;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const count = reporter?.getPendingCount() ?? 0;
+        if (count === 0) {
+          if (attempt === 1) return;
+          logger.info?.("[ErrorReporter] Startup pending queue drained");
+          return;
+        }
+        if (attempt === 1) {
+          logger.info?.(`[ErrorReporter] Draining ${count} pending report(s) from previous run`);
+        }
+        const flushed = await reporter?.flush(computeShutdownFlushTimeoutMs(count));
+        if (flushed) {
+          logger.info?.("[ErrorReporter] Startup pending queue drained");
+          return;
+        }
+        if (attempt < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      }
+      const remaining = reporter?.getPendingCount() ?? 0;
+      if (remaining > 0) {
+        logger.warn?.(
+          `[ErrorReporter] Startup drain incomplete (${remaining} pending); run \`openclaw hybrid-mem verify\` to inspect the telemetry queue`,
+        );
       }
     } catch (err) {
       logger.debug?.(

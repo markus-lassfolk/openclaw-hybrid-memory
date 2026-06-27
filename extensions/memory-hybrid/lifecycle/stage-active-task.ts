@@ -25,7 +25,7 @@ import {
 import { loadTaskLedgerFromFactsWithMetrics, syncActiveTaskEntryToFacts } from "../services/task-ledger-facts.js";
 import { recordStartupMemoryCheckpoint } from "../services/startup-memory-attribution.js";
 import { applyPrependBudget, capBudgetToPrependRemaining } from "../services/prepend-budget.js";
-import { shouldSkipOptionalBeforeAgentStartStage } from "../services/before-agent-start-budget.js";
+import { runOptionalBeforeAgentStartStage } from "../services/before-agent-start-budget.js";
 import { parseDuration } from "../utils/duration.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
@@ -41,12 +41,9 @@ export function registerActiveTaskInjection(
   if (!ctx.cfg.activeTask.enabled || ctx.cfg.verbosity === "silent") return;
   let firstActiveTaskProjectionCaptured = false;
 
-  api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
+  api.on("before_agent_start", async (event: unknown, hookCtx: unknown) =>
+    runOptionalBeforeAgentStartStage(ctx.beforeAgentStartTurnRef, "active-task-injection", api.logger, async () => {
     try {
-      if (shouldSkipOptionalBeforeAgentStartStage(ctx.beforeAgentStartTurnRef)) {
-        api.logger?.debug?.("memory-hybrid: active-task injection skipped — before_agent_start budget exhausted");
-        return undefined;
-      }
       const staleMinutes = parseDuration(ctx.cfg.activeTask.staleThreshold);
       let activeForInjection: import("../services/active-task.js").ActiveTaskEntry[] = [];
       let completedForWrite: import("../services/active-task.js").ActiveTaskEntry[] = [];
@@ -214,5 +211,6 @@ export function registerActiveTaskInjection(
       });
       api.logger?.warn?.(`memory-hybrid: active task injection failed: ${err}`);
     }
-  });
+  }),
+  );
 }

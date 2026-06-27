@@ -16,7 +16,9 @@
 import { randomBytes } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve as pathResolve, relative } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve as pathResolve, relative } from "node:path";
+
+import { PLUGIN_ID } from "../../utils/constants.js";
 
 import { atomicWriteFile } from "../../utils/atomic-write.js";
 import { getEnv } from "../../utils/env-manager.js";
@@ -101,6 +103,45 @@ export function verifyUpgradePluginBundle(pluginRootDir: string): string | undef
     }
   }
   return undefined;
+}
+
+/** True when the plugin lives under an npm project `node_modules/` tree (#1985). */
+export function isNpmProjectPluginLayout(pluginRootDir: string): boolean {
+  return resolveNpmProjectRootForPlugin(pluginRootDir) !== undefined;
+}
+
+/** npm project root when plugin is installed as a dependency; otherwise undefined. */
+export function resolveNpmProjectRootForPlugin(pluginRootDir: string): string | undefined {
+  const nodeModulesDir = dirname(pluginRootDir);
+  if (basename(nodeModulesDir) !== "node_modules") return undefined;
+  const projectRoot = dirname(nodeModulesDir);
+  const pkgPath = join(projectRoot, "package.json");
+  if (!existsSync(pkgPath)) return undefined;
+  try {
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { dependencies?: Record<string, string> };
+    if (typeof pkg.dependencies?.[PLUGIN_ID] === "string") return projectRoot;
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+/** Verify npm-project package.json pin matches installed version (#1985). */
+export function verifyNpmProjectDependencyPin(projectRoot: string, version: string): string | undefined {
+  const pkgPath = join(projectRoot, "package.json");
+  try {
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { dependencies?: Record<string, string> };
+    const pin = pkg.dependencies?.[PLUGIN_ID];
+    if (typeof pin !== "string" || pin.trim().length === 0) {
+      return `package.json missing dependencies.${PLUGIN_ID}`;
+    }
+    if (pin !== version) {
+      return `package.json pins ${PLUGIN_ID}@${pin}, expected ${version}`;
+    }
+    return undefined;
+  } catch (err) {
+    return `Could not read ${pkgPath}: ${err instanceof Error ? err.message : String(err)}`;
+  }
 }
 
 function bundledHybridMemorySkillDir(pluginRootDir: string): string {
