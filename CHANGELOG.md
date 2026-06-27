@@ -23,6 +23,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.6.275] - 2026-06-27
+
+### Fixed
+
+- **Upgrade dual install paths (#1989):** Use post-install `installedPluginDir` for bundle verify, workspace refresh, npm pin checks, and CLI output; rollback cleans extensions install on failure.
+- **Graph auto-link (#1994):** When a store vector exists, semantic auto-linking no longer falls back to classification heuristics after an empty embedding search — similarity threshold is enforced.
+
+### Added
+
+- **Graph config (#1993–#1995, merged from #1996):** `autoLinkStrength` + `autoLinkSimilarityThreshold` (legacy `autoLinkMinScore` deprecated); embedding-gated `autoLinkSemanticallySimilarFacts`; canonical `createOrStrengthenRelatedLink`; `autoSupersede` contradiction rows; enhanced/complete presets align GraphRAG (`defaultExpand`, `retrieval.strategies` includes `graph`); boot warnings via `warnGraphRecallConfigMisconfiguration`.
+- **Verify (#1989):** Warn when npm-project and extensions plugin copies both exist.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.6.275**.
+
+---
+
 ## [2026.6.274] - 2026-06-27
 
 ### Fixed

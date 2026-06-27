@@ -39,9 +39,7 @@ export async function autoLinkSemanticallySimilarFacts(
       graph.autoLinkSimilarityThreshold,
       { scope, scopeTarget },
     );
-  }
-
-  if (candidates.length === 0) {
+  } else {
     candidates = deps.factsDb.findSimilarForClassification(
       deps.text,
       deps.entity,

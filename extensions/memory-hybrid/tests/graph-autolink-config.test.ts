@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { parseGraphConfig } from "../config/parsers/features.js";
 import { warnGraphRecallConfigMisconfiguration } from "../services/graph-recall-config.js";
+import { pluginLogger } from "../utils/logger.js";
 import type { HybridMemoryConfig } from "../config.js";
 
 describe("parseGraphConfig auto-link fields", () => {
@@ -10,6 +11,13 @@ describe("parseGraphConfig auto-link fields", () => {
     expect(graph.autoLinkStrength).toBe(0.82);
     expect(graph.autoLinkSimilarityThreshold).toBe(0.82);
     expect(graph.autoLinkMinScore).toBe(0.82);
+  });
+
+  it("warns when only legacy autoLinkMinScore is configured (#1993)", () => {
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+    parseGraphConfig({ graph: { autoLinkMinScore: 0.75 } });
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("autoLinkMinScore is deprecated"));
+    warnSpy.mockRestore();
   });
 
   it("prefers explicit autoLinkStrength and autoLinkSimilarityThreshold", () => {
@@ -57,5 +65,37 @@ describe("warnGraphRecallConfigMisconfiguration", () => {
       (msg) => warnings.push(msg),
     );
     expect(warnings.some((w) => w.includes("useInRecall is redundant"))).toBe(true);
+  });
+
+  it("warns when graph.autoLink is on but retrieval.strategies omits graph", () => {
+    const warnings: string[] = [];
+    warnGraphRecallConfigMisconfiguration(
+      {
+        graph: {
+          enabled: true,
+          autoLink: true,
+          autoLinkStrength: 0.7,
+          autoLinkSimilarityThreshold: 0.7,
+          autoLinkMinScore: 0.7,
+          autoLinkLimit: 3,
+          maxTraversalDepth: 2,
+          useInRecall: false,
+          coOccurrenceWeight: 0.3,
+          autoSupersede: true,
+          strengthenOnRecall: false,
+          hubDegreeCap: 500,
+          hubScorePenalty: null,
+        },
+        graphRetrieval: {
+          enabled: true,
+          defaultExpand: false,
+          maxExpandDepth: 2,
+          maxExpandedResults: 12,
+        },
+        retrieval: { strategies: ["semantic", "fts5"] },
+      } as HybridMemoryConfig,
+      (msg) => warnings.push(msg),
+    );
+    expect(warnings.some((w) => w.includes('omits "graph"'))).toBe(true);
   });
 });

@@ -74,6 +74,15 @@ export function parseGraphConfig(cfg: Record<string, unknown>): GraphConfig {
     graphRaw?.autoLinkSimilarityThreshold ?? legacyMinScore,
     0.7,
   );
+  if (
+    legacyMinScore !== undefined &&
+    graphRaw?.autoLinkStrength === undefined &&
+    graphRaw?.autoLinkSimilarityThreshold === undefined
+  ) {
+    pluginLogger.warn?.(
+      "memory-hybrid: graph.autoLinkMinScore is deprecated — use graph.autoLinkStrength (RELATED_TO weight) and graph.autoLinkSimilarityThreshold (embedding cosine gate).",
+    );
+  }
   return {
     enabled: graphRaw?.enabled !== false,
     autoLink: graphRaw?.autoLink === true,
