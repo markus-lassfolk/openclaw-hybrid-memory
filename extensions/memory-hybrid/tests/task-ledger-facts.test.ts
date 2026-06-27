@@ -38,6 +38,7 @@ import {
   consumePendingTaskSignalsFacts,
   renderActiveTaskMarkdownFile,
   syncActiveTaskEntryToFacts,
+  mirrorMemoryStoreToActiveTaskLedger,
   taskEntityKey,
   upsertProjectTaskKey,
   type ActiveTaskHygienePlan,
@@ -798,6 +799,53 @@ describe("task-ledger-facts", () => {
       expect(allLabels).not.toContain("some-random-note");
       expect(allLabels).not.toContain("release-history");
       expect(allLabels).toContain("real-active-task");
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("mirrorMemoryStoreToActiveTaskLedger syncs task-shaped project keys to active-task source", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "mirror-ledger-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    const vectorDb = {
+      hasDuplicate: async () => true,
+      store: async () => {},
+    } as unknown as VectorDB;
+    const embeddings = {
+      modelName: "test-model",
+      embed: async () => new Float32Array([0.1, 0.2, 0.3]),
+    } as unknown as EmbeddingProvider;
+    try {
+      const result = await mirrorMemoryStoreToActiveTaskLedger({
+        factsDb: db,
+        vectorDb,
+        embeddings,
+        activeTaskEnabled: true,
+        category: "project",
+        entity: "mirror-task",
+        key: "status",
+        value: "in_progress",
+        scope: "global",
+      });
+      expect(result.synced).toBe(true);
+      expect(result.autoTaskUpdated).toBe(true);
+
+      const { active } = loadTaskLedgerFromFacts(db);
+      expect(active.map((t) => t.label)).toContain("mirror-task");
+
+      const arbitrary = await mirrorMemoryStoreToActiveTaskLedger({
+        factsDb: db,
+        vectorDb,
+        embeddings,
+        activeTaskEnabled: true,
+        category: "project",
+        entity: "notes",
+        key: "pr_1338_plan",
+        value: "some plan",
+        scope: "global",
+      });
+      expect(arbitrary.synced).toBe(false);
     } finally {
       db.close();
       await rm(dir, { recursive: true, force: true });

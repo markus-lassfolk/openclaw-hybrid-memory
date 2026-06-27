@@ -19,7 +19,7 @@ function storeProjectFact(db: FactsDB, entity: string, key: string, value: strin
     entity,
     key,
     value,
-    source: "maeve-fixture",
+    source: "active-task",
     decayClass: "permanent",
   });
 }
