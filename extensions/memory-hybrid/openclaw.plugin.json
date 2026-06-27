@@ -674,7 +674,11 @@
     },
     "goalStewardship.injectActiveGoalsEveryTurn": {
       "label": "Inject goals every turn",
-      "help": "Prepend compact active-goals summary on normal turns (default: true when stewardship enabled). Skipped on heartbeat-pattern turns and subagent sessions."
+      "help": "Prepend compact active-goals summary on normal turns (default: true when stewardship enabled). Skipped on heartbeat-pattern turns. Subagent sessions receive linked-goal context when related_goal or label-prefix matches."
+    },
+    "goalStewardship.autoEnableWhenGoalsPresent": {
+      "label": "Auto-enable goal injection",
+      "help": "When true (default), goal context injection activates automatically when active goals exist on disk, even if goalStewardship.enabled was not set. Goal tools still require explicit enabled: true."
     },
     "goalStewardship.circuitBreaker.enabled": {
       "label": "Goal circuit breaker",
@@ -2396,7 +2400,11 @@
         "properties": {
           "enabled": {
             "type": "boolean",
-            "description": "Enable goal stewardship (default: false)"
+            "description": "Enable goal stewardship tools and full automation (default: false). Injection may still auto-enable when goals exist — see autoEnableWhenGoalsPresent."
+          },
+          "autoEnableWhenGoalsPresent": {
+            "type": "boolean",
+            "description": "Auto-enable goal context injection when active goals exist on disk (default: true). Goal tools still require enabled: true."
           },
           "goalsDir": {
             "type": "string",
@@ -2488,7 +2496,7 @@
           },
           "injectActiveGoalsEveryTurn": {
             "type": "boolean",
-            "description": "Prepend compact active-goals summary on every turn when stewardship enabled (default: true). Skipped on heartbeat and subagent sessions."
+            "description": "Prepend compact active-goals summary on every turn when stewardship injection is active (default: true). Skipped on heartbeat turns. Subagents get linked-goal context when related_goal or label-prefix matches."
           },
           "everyTurnGoalMaxChars": {
             "type": "number",

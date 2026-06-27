@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCompactActiveGoalsPrepend, buildLightweightStewardshipDirective } from "../services/goal-context-injection.js";
+import { buildCompactActiveGoalsPrepend, buildLightweightStewardshipDirective, buildSubagentLinkedGoalsPrepend } from "../services/goal-context-injection.js";
 import type { Goal } from "../services/goal-stewardship-types.js";
 
 function makeGoal(overrides: Partial<Goal> = {}): Goal {
@@ -62,5 +62,12 @@ describe("goal-context-injection", () => {
     );
     expect(directive).toContain("goal-stewardship-hint");
     expect(directive).toContain("stale-goal");
+  });
+
+  it("buildSubagentLinkedGoalsPrepend adds checkpoint nudge", () => {
+    const text = buildSubagentLinkedGoalsPrepend([makeGoal()], { maxChars: 2500 });
+    expect(text).toContain("<subagent-goal-context>");
+    expect(text).toContain("active_task_checkpoint");
+    expect(text).toContain("deploy-api");
   });
 });

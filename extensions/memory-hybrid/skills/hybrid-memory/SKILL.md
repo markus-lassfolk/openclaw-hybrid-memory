@@ -42,9 +42,10 @@ When goal stewardship is enabled, use these tools for long-running, multi-sessio
 | --- | --- | --- |
 | List or read registered goals | `goal_list`, `goal_get` | `memory_recall` (searches facts, not `state/goals/`) |
 | Save a durable fact | `memory_store` | `goal_register` (strategic outcomes only) |
-| Checkpoint tactical work-in-progress | `active_task_checkpoint` | ad-hoc `memory_store` without project fields |
+| Checkpoint tactical work-in-progress | `active_task_checkpoint` | unstructured `memory_store` (non-ledger keys) |
+| Update task state via structured facts | `memory_store` with `category:project` + ledger keys (`status`, `next`, `related_session`, `title`, …) | arbitrary project keys (not mirrored to ledger) |
 
-**Every turn:** When stewardship is enabled, the plugin prepends a compact `<active-goals-summary>` block (config: `injectActiveGoalsEveryTurn`, default on). Use it — do not ignore active goals.
+**Every turn:** When stewardship is enabled (or auto-enabled because active goals exist on disk), the plugin prepends `<active-goals-summary>`. Goal-linked **subagent** sessions get a compact linked-goal block when `related_goal` / label-prefix matches.
 
 **Two automation layers (do not confuse them):**
 
