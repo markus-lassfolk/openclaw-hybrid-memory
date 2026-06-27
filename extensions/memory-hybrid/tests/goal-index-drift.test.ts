@@ -6,6 +6,7 @@ import {
   auditGoalIndexDrift,
   createGoal,
   readGoal,
+  readGoalByLabel,
   rebuildGoalIndex,
   updateGoal,
 } from "../services/goal-registry.js";
@@ -89,6 +90,61 @@ describe("goal index drift (#1987)", () => {
     expect(index.goals.map((x) => x.id)).toEqual([g.id]);
     const body = await readGoal(dir, g.id);
     expect(body?.description).toBe("original");
+  });
+
+  it("auditGoalIndexDrift does not false-positive when filename stem differs from goal.id (#1999)", async () => {
+    dir = await makeTempDir();
+    const goalId = "smart-pool-qa-code-review-0001";
+    const label = "smart-pool-qa-code-review";
+    await writeFile(
+      join(dir, `${label}.json`),
+      JSON.stringify({
+        id: goalId,
+        label,
+        description: "d",
+        acceptanceCriteria: ["c"],
+        status: "active",
+        priority: "normal",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        lastAssessedAt: null,
+        lastDispatchedAt: null,
+        assessmentCount: 0,
+        dispatchCount: 0,
+        currentBlockers: [],
+        lastOutcome: null,
+        maxDispatches: 5,
+        maxAssessments: 10,
+        cooldownMinutes: 5,
+        escalateAfterFailures: 3,
+        consecutiveFailures: 0,
+        linkedTasks: [],
+        history: [],
+      }),
+      "utf-8",
+    );
+    await writeFile(
+      join(dir, "_index.json"),
+      JSON.stringify({
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        goals: [
+          {
+            id: goalId,
+            label,
+            status: "active",
+            priority: "normal",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            lastAssessedAt: null,
+          },
+        ],
+      }),
+      "utf-8",
+    );
+
+    const drift = await auditGoalIndexDrift(dir);
+    expect(drift.missingInIndex).toEqual([]);
+    expect(drift.orphanInIndex).toEqual([]);
+    expect(drift.staleFields).toEqual([]);
+    expect(await readGoal(dir, goalId)).toMatchObject({ label });
   });
 });
 

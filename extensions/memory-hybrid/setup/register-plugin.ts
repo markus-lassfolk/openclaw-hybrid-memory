@@ -24,6 +24,7 @@ import { walRemove, walWrite } from "../services/wal-helpers.js";
 import { registerHybridMemCliMetadataOnly } from "./cli-context/metadata.js";
 import { registerHybridMemCliHelpOnlyWithApi } from "./cli-context/register-help.js";
 import { registerHybridMemCliCredentialsOnlyWithApi } from "./cli-context/register-credentials-only.js";
+import { registerHybridMemCliUpgradeOnlyWithApi } from "./cli-context/register-upgrade-only.js";
 import { registerHybridMemCliWithApi } from "./cli-context/register-full.js";
 import { parseHybridMemPluginConfig } from "./parse-plugin-config.js";
 import "./cli-context.js";
@@ -57,6 +58,7 @@ import { registerTools } from "./register-tools.js";
 import { PLUGIN_ID } from "../utils/constants.js";
 import { isHybridMemHelpInvocation } from "../index-help.js";
 import { isHybridMemCredentialsOnlyInvocation } from "../index-credentials-cli.js";
+import { isHybridMemUpgradeOnlyInvocation } from "../index-upgrade-cli.js";
 import { wrapApiLoggerStderrForJsonCli, restoreStdoutAfterJsonCli } from "../utils/hybrid-mem-json-cli.js";
 import {
   getCategoryDecisionRegex,
@@ -193,6 +195,12 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
   // Examples: `openclaw hybrid-mem --help`, `openclaw hybrid-mem verify --help`.
   if (isHybridMemHelpInvocation(process.argv)) {
     registerHybridMemCliHelpOnlyWithApi(api);
+    return;
+  }
+
+  // Upgrade-only path skips DB bootstrap and live config parse (issue #2000).
+  if (isHybridMemUpgradeOnlyInvocation(process.argv)) {
+    registerHybridMemCliUpgradeOnlyWithApi(api);
     return;
   }
 

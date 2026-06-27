@@ -102,6 +102,12 @@ const stagingDir = path.join(
 
 try {
 	console.log(`Installing openclaw-hybrid-memory@${version} to ${pluginDir}\n`);
+	console.log(
+		"Note: this bypasses OpenClaw config validation when hybrid-mem upgrade is unavailable (schema drift).",
+	);
+	console.log(
+		`Docs: https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/UPGRADE-PLUGIN.md\n`,
+	);
 
 	if (fs.existsSync(stagingDir)) {
 		fs.rmSync(stagingDir, { recursive: true, force: true });
