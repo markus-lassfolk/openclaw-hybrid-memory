@@ -3,7 +3,8 @@
  * Aligns hybrid-mem active-tasks with memory_store / memory_recall workflows.
  */
 
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rm, stat, chmod, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import type { FactsDB } from "../backends/facts-db.js";
@@ -30,6 +31,7 @@ import {
   deleteSignal,
   detectStaleTasks,
   flushCompletedTaskToMemory,
+  inferTerminalStatusFromTaskContent,
   isNonActionableSubagentPlaceholderTask,
   isTerminalActiveTaskStatus,
   normalizePlaceholderTaskNext,
@@ -129,6 +131,16 @@ export async function mirrorMemoryStoreToActiveTaskLedger(
   const value = opts.value?.trim();
   if (!entity || !key || !value || !isActiveTaskLedgerKey(key)) {
     return { synced: false, autoTaskUpdated: false };
+  }
+
+  if (key.toLowerCase() === "status" && !isTerminalFactStatus(value)) {
+    const previous = findLatestActiveTaskKeyFact(opts.factsDb, entity, "status");
+    if (previous?.value && isTerminalFactStatus(String(previous.value))) {
+      opts.log?.warn?.(
+        `memory-hybrid: skipped memory_store mirror regressing terminal status for [${entity}] from ${previous.value} to ${value}`,
+      );
+      return { synced: false, autoTaskUpdated: false };
+    }
   }
 
   await upsertProjectTaskKey(opts.factsDb, opts.vectorDb, opts.embeddings, entity, key, value, opts.log);
@@ -263,7 +275,7 @@ export function buildTaskEntriesFromGroupedFacts(byEntity: Map<string, Map<strin
     // Entities with no explicit `status` key must not default to in-progress.
     const statusRaw = f.status?.trim();
     if (!statusRaw) continue;
-    const disp = factStatusToDisplay(statusRaw);
+    let disp = factStatusToDisplay(statusRaw);
     const started = resolveTaskStarted(f, bounds);
     const updated = resolveTaskUpdated(f, bounds);
     let handoff: ActiveTaskEntry["handoff"];
@@ -283,14 +295,88 @@ export function buildTaskEntriesFromGroupedFacts(byEntity: Map<string, Map<strin
       updated,
       ...(handoff ? { handoff } : {}),
     };
-    if (isTerminalFactStatus(statusRaw) || disp === "Done") {
-      completed.push({ ...entry, status: "Done" });
+    const inferredTerminal = inferTerminalStatusFromTaskContent(entry);
+    if (inferredTerminal && !isTerminalActiveTaskStatus(entry.status)) {
+      entry.status = inferredTerminal;
+      disp = inferredTerminal;
+    }
+    const effectivelyTerminal =
+      isTerminalFactStatus(statusRaw) || disp === "Done" || inferredTerminal !== null;
+    if (effectivelyTerminal) {
+      completed.push({ ...entry, status: disp === "Failed" ? "Failed" : "Done" });
     } else {
       active.push(entry);
     }
   }
 
   return { active, completed };
+}
+
+function factStatusOverrideForInferredTerminal(inferred: ActiveTaskStatus): string {
+  if (inferred === "Done") return "done";
+  return "abandoned";
+}
+
+/** Rows whose `next`/title imply closure but stored status is still non-terminal. */
+export function findActiveTaskCoherenceRepairs(
+  factsDb: FactsDB,
+  scopeFilter?: ScopeFilter | null,
+): ActiveTaskEntry[] {
+  const facts = factsDb.getProjectFacts(8000, scopeFilter);
+  const grouped = groupProjectFactsByEntity(facts);
+  const repairs: ActiveTaskEntry[] = [];
+  for (const [entity, keyMap] of grouped) {
+    const f = rowToRecord(keyMap);
+    const statusRaw = f.status?.trim();
+    if (!statusRaw || isTerminalFactStatus(statusRaw)) continue;
+    const bounds = createdBoundsFromKeyMap(keyMap);
+    const entry: ActiveTaskEntry = {
+      label: entity,
+      description: titleFromFacts(f),
+      status: factStatusToDisplay(statusRaw),
+      branch: f.branch?.trim() || undefined,
+      stashCommit: f.stash_commit?.trim() || undefined,
+      subagent: f.related_session?.trim() || undefined,
+      next: normalizePlaceholderTaskNext(f.next?.trim(), [entity, f.related_session?.trim()]),
+      relatedGoal: f.related_goal?.trim() || f.goal_id?.trim() || undefined,
+      started: resolveTaskStarted(f, bounds),
+      updated: resolveTaskUpdated(f, bounds),
+    };
+    const inferred = inferTerminalStatusFromTaskContent(entry);
+    if (!inferred || isTerminalActiveTaskStatus(entry.status)) continue;
+    repairs.push({ ...entry, status: inferred, updated: nowIso(), subagent: "" });
+  }
+  return repairs;
+}
+
+/** Persist incoherent rows detected at read/injection time (small batch, best-effort). */
+export async function flushActiveTaskCoherenceRepairs(
+  factsDb: FactsDB,
+  vectorDb: VectorDB,
+  embeddings: EmbeddingProvider,
+  opts: {
+    maxRepairs?: number;
+    log?: { warn?: (m: string) => void; info?: (m: string) => void };
+  } = {},
+): Promise<{ repaired: number; failed: number }> {
+  const repairs = findActiveTaskCoherenceRepairs(factsDb).slice(0, opts.maxRepairs ?? 5);
+  let repaired = 0;
+  let failed = 0;
+  for (const entry of repairs) {
+    clearActiveTaskHandoff(entry);
+    try {
+      await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, entry, opts.log, {
+        statusOverride: factStatusOverrideForInferredTerminal(entry.status),
+      });
+      repaired += 1;
+    } catch (err) {
+      failed += 1;
+      opts.log?.warn?.(
+        `memory-hybrid: coherence repair failed for [${entry.label}]: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  return { repaired, failed };
 }
 
 export function loadTaskLedgerFromFacts(
@@ -1148,6 +1234,17 @@ export async function upsertProjectTaskKey(
     // (c) this is a status write and cache missed (status must not become append-only).
     previous = findLatestActiveTaskKeyFact(factsDb, entity, key);
   }
+  if (
+    key === "status" &&
+    previous?.value &&
+    isTerminalFactStatus(String(previous.value)) &&
+    !isTerminalFactStatus(value)
+  ) {
+    log?.warn?.(
+      `memory-hybrid: refusing to regress terminal active-task status for [${normalizedEntity}] from ${previous.value} to ${value}`,
+    );
+    return { entry: previous, changed: false };
+  }
   const text = `Task [${normalizedEntity}] ${key}: ${value}`;
   const storeResult = factsDb.storeWithResult({
     text,
@@ -1650,7 +1747,7 @@ export async function renderActiveTaskMarkdownFile(
     includeCompleted
       ? "> **History mode:** includes terminal rows (`--include-completed`) for audit context."
       : "> **Default mode:** hides terminal rows; `ACTIVE-TASKS.md` is for active/stale work only. Use `active-tasks render --include-completed` for audit/history.",
-    "> **Timestamps:** **Started** / **Updated** use stored fact fields (`started`, `task_started`, `task_updated`, …) or SQLite row times (min / max `createdAt` per task). The render clock is not used. Missing values show as **Unknown** and count as stale under `staleThreshold`.",
+    "> **Timestamps:** **Started** / **Updated** use stored fact fields (`started`, `task_started`, `task_updated`, …) or SQLite row times (min / max `createdAt` per task). The render clock is not used. Missing values show as **Unknown** (not auto-stale in injection; hygiene may still flag them).",
     "> **Operators:** Update or close tasks via `memory_store` / project facts; run `hybrid-mem active-tasks reconcile` when session rows are obsolete; then `active-tasks render`. See `docs/ACTIVE-TASKS-PROJECTION.md`.",
     "",
   );
@@ -1672,7 +1769,21 @@ export async function renderActiveTaskMarkdownFile(
     }
   }
   await mkdir(dirname(filePath), { recursive: true });
-  await writeFile(filePath, finalContent, "utf-8");
+  const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  let existingMode: number | null = null;
+  try {
+    existingMode = (await stat(filePath)).mode & 0o777;
+  } catch {
+    existingMode = null;
+  }
+  try {
+    await writeFile(tmpPath, finalContent, "utf-8");
+    if (existingMode !== null) await chmod(tmpPath, existingMode);
+    await rename(tmpPath, filePath);
+  } catch (err) {
+    await unlink(tmpPath).catch(() => {});
+    throw err;
+  }
   try {
     await clearActiveTaskProjectionStale(filePath);
   } catch {
@@ -1991,6 +2102,27 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
     });
   }
 
+  for (const task of findActiveTaskCoherenceRepairs(factsDb)) {
+    if (reconciledLabels.includes(task.label)) continue;
+    const previousStatusFact = findLatestActiveTaskKeyFact(factsDb, task.label, "status");
+    const previousStatus = previousStatusFact?.value
+      ? factStatusToDisplay(String(previousStatusFact.value))
+      : task.status;
+    clearActiveTaskHandoff(task);
+    reconciledLabels.push(task.label);
+    toFlush.push(task);
+    toAudit.push({ ...task, status: previousStatus });
+    progress?.onScanItem({
+      index: scanned,
+      total: scanTotal,
+      entity: task.label,
+      action: task.status === "Done" ? "mark_done" : "mark_abandoned",
+      reason: "coherence_repair",
+      previousStatus,
+      elapsedMs: Date.now() - startedAt,
+    });
+  }
+
   progress?.phaseComplete("session-index", {
     sessions: scanTotal,
     candidates: reconciledLabels.length,
@@ -2017,9 +2149,10 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
   const successfullyWritten: ActiveTaskEntry[] = [];
   for (let i = 0; i < toFlush.length; i++) {
     const entry = toFlush[i]!;
+    const statusOverride = factStatusOverrideForInferredTerminal(entry.status);
     try {
       await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, entry, opts.log, {
-        statusOverride: "abandoned",
+        statusOverride,
       });
       factsWritten += 1;
       successfullyWritten.push(entry);

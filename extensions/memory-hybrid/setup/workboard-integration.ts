@@ -139,6 +139,7 @@ export async function armWorkboardIntegration(ctx: WorkboardIntegrationContext):
         ...cfg.workboard,
         syncGoals: cfg.workboard.syncGoals && !!goalsDir,
       },
+      shouldAbort: checkSuperseded,
       loadTasks: () => loadTaskLedgerFromFacts(factsDb),
       loadGoals: async () => {
         if (!goalsDir) return [];

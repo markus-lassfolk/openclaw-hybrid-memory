@@ -6,6 +6,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { capturePluginError } from "../services/error-reporter.js";
 import { emitFrustrationDetected } from "../services/change-feed-emit.js";
 import { applyPrependBudget } from "../services/prepend-budget.js";
+import { runOptionalBeforeAgentStartStage } from "../services/before-agent-start-budget.js";
 import { buildFrustrationHint, detectFrustration, exportAsImplicitSignals } from "../services/frustration-detector.js";
 import type { FrustrationDetectionConfig } from "../config.js";
 import { ToolEffectivenessStore, generateToolHint } from "../services/tool-effectiveness.js";
@@ -54,7 +55,8 @@ export function registerFrustrationHandlers(
   const currentAgentIdRef = ctx.currentAgentIdRef;
 
   // Must use the two-argument hook signature so cron/embedded identity on hookCtx is visible (#1005).
-  api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
+  api.on("before_agent_start", async (event: unknown, hookCtx: unknown) =>
+    runOptionalBeforeAgentStartStage(ctx.beforeAgentStartTurnRef, "frustration-detect", api.logger, async () => {
     const rApi = withHookResolutionApi(api, hookCtx);
     const e = event as {
       prompt?: string;
@@ -172,5 +174,6 @@ export function registerFrustrationHandlers(
       });
     }
     return undefined;
-  });
+  }),
+  );
 }

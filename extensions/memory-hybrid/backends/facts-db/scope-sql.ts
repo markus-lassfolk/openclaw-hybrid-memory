@@ -123,3 +123,8 @@ export function scopeFilterClausePositional(filter: ScopeFilter | null | undefin
   parts.push(")");
   return { clause: ` AND ${parts.join(" ")}`, params };
 }
+
+/** Strip a leading `AND` from scope SQL fragments before joining with ` AND `. */
+export function stripLeadingSqlAnd(fragment: string): string {
+  return fragment.trim().replace(/^\s*AND\s+/i, "");
+}

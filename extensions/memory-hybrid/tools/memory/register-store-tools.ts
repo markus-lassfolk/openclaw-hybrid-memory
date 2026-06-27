@@ -944,7 +944,6 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                       api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
                     }
 
-                    await maybeRefreshProjectActiveTaskProjection(newEntry.category, newEntry.id, newEntry.scope);
                     await syncProjectStoreToActiveTaskLedger({
                       category: newEntry.category,
                       entity,
@@ -952,6 +951,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                       value,
                       scope: newEntry.scope,
                     });
+                    await maybeRefreshProjectActiveTaskProjection(newEntry.category, newEntry.id, newEntry.scope);
 
                     // Issue #159: enqueue contextual variant generation (non-blocking)
                     if (variantQueue) {
@@ -1151,7 +1151,6 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               });
             }
 
-            await maybeRefreshProjectActiveTaskProjection(entry.category, entry.id, entry.scope);
             const ledgerMirror = await syncProjectStoreToActiveTaskLedger({
               category: entry.category,
               entity,
@@ -1159,6 +1158,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               value,
               scope: entry.scope,
             });
+            await maybeRefreshProjectActiveTaskProjection(entry.category, entry.id, entry.scope);
 
             // Issue #150: write event to episodic event log
             if (eventLog) {

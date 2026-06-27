@@ -5,6 +5,7 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 
 import { applyPrependBudget } from "../services/prepend-budget.js";
+import { runOptionalBeforeAgentStartStage } from "../services/before-agent-start-budget.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { BROADCAST_CHANGE_SESSION_KEY, shouldNotifyChangeInChat } from "../services/change-feed-emit.js";
 import type { ChangeEvent } from "../services/change-feed.js";
@@ -127,7 +128,8 @@ export function registerChangeNotifyHandler(
   const { resolveSessionKey, changeNotifyStateMap } = sessionState;
   const lcf = ctx.cfg.liveChangeFeed;
 
-  api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
+  api.on("before_agent_start", async (event: unknown, hookCtx: unknown) =>
+    runOptionalBeforeAgentStartStage(ctx.beforeAgentStartTurnRef, "change-notify", api.logger, async () => {
     const rApi = withHookResolutionApi(api, hookCtx);
     const sessionKey = resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default";
 
@@ -212,5 +214,6 @@ export function registerChangeNotifyHandler(
       });
     }
     return undefined;
-  });
+  }),
+  );
 }

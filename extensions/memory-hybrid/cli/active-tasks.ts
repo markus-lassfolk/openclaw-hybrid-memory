@@ -613,6 +613,21 @@ export async function runActiveTaskReconcile(
     }
     progress?.complete();
 
+    if (!dryRun && result.wrote) {
+      try {
+        await renderActiveTaskMarkdownFile(
+          factsDb,
+          ctx.staleMinutes,
+          ctx.activeTaskFilePath,
+          ctx.projection,
+          undefined,
+          renderProjectionOpts(ctx),
+        );
+      } catch (renderErr) {
+        userLog.warn(`⚠️  Active-task projection render after reconcile failed (non-fatal): ${renderErr}`);
+      }
+    }
+
     return {
       mode,
       ledger: "facts",

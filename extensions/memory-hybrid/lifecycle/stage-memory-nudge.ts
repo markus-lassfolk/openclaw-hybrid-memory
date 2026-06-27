@@ -11,6 +11,7 @@ import {
   DEFAULT_MEMORY_NUDGE_CONFIG,
 } from "../services/memory-nudge.js";
 import { applyPrependBudget } from "../services/prepend-budget.js";
+import { runOptionalBeforeAgentStartStage } from "../services/before-agent-start-budget.js";
 import type { LifecycleContext } from "./types.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
 
@@ -18,7 +19,8 @@ export function registerMemoryNudgeInjection(api: ClawdbotPluginApi, ctx: Lifecy
   const nudgeCfg = ctx.cfg.retrieval?.recallFeedback?.nudge;
   if (!nudgeCfg?.enabled) return;
 
-  api.on("before_agent_start", async (_event: unknown, hookCtx: unknown) => {
+  api.on("before_agent_start", async (_event: unknown, hookCtx: unknown) =>
+    runOptionalBeforeAgentStartStage(ctx.beforeAgentStartTurnRef, "memory-nudge", api.logger, async () => {
     const rApi = withHookResolutionApi(api, hookCtx);
     const sessionKey = rApi.context?.sessionKey ?? "default";
     const throttleHours = nudgeCfg.throttleHours ?? DEFAULT_MEMORY_NUDGE_CONFIG.throttleHours;
@@ -40,5 +42,6 @@ export function registerMemoryNudgeInjection(api: ClawdbotPluginApi, ctx: Lifecy
     const prepend = applyPrependBudget(ctx.prependBudgetRef, `${block}\n\n`);
     if (!prepend) return undefined;
     return { prependContext: prepend };
-  });
+  }),
+  );
 }

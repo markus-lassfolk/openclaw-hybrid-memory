@@ -1,4 +1,5 @@
-import { mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, readdir, rename, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -9,7 +10,10 @@ import {
   readGoal,
   readGoalByLabel,
   rebuildGoalIndex,
+  repairAllQuarantinedGoals,
+  repairQuarantinedGoalFile,
   resolveGoalId,
+  resolveGoalIdResult,
   terminateGoal,
   updateGoal,
   validateGoalLabel,
@@ -222,12 +226,48 @@ describe("goal registry", () => {
     await expect(readGoal(dir, "broken")).rejects.toThrow(/corrupt or unreadable/i);
   });
 
+  it("resolveGoalIdResult maps corrupt goal JSON to structured corrupt result (#1981)", async () => {
+    dir = await makeTempDir();
+    await writeFile(join(dir, "broken.json"), "{bad", "utf-8");
+    const result = await resolveGoalIdResult(dir, "broken");
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected corrupt result");
+    expect(result.code).toBe("corrupt");
+    expect(result.message).toMatch(/could not be loaded/i);
+  });
+
   it("listGoals skips corrupt goal JSON and continues processing healthy goals", async () => {
     dir = await makeTempDir();
     const healthy = await createGoal(dir, { label: "healthy", description: "d", acceptanceCriteria: ["c"] }, defaults);
     await writeFile(join(dir, "broken.json"), "{bad", "utf-8");
     const listed = await listGoals(dir);
     expect(listed.map((g) => g.id)).toEqual([healthy.id]);
+    expect(existsSync(join(dir, "broken.json.corrupt"))).toBe(true);
+    expect(existsSync(join(dir, "broken.json"))).toBe(false);
+    const listedAgain = await listGoals(dir);
+    expect(listedAgain.map((g) => g.id)).toEqual([healthy.id]);
+  });
+
+  it("repairQuarantinedGoalFile restores valid quarantined goal JSON", async () => {
+    dir = await makeTempDir();
+    const g = await createGoal(dir, { label: "repair_me", description: "d", acceptanceCriteria: ["c"] }, defaults);
+    const activePath = join(dir, `${g.id}.json`);
+    const corruptPath = join(dir, `${g.id}.json.corrupt`);
+    await rename(activePath, corruptPath);
+    const result = await repairQuarantinedGoalFile(dir, g.id);
+    expect(result).toMatchObject({ ok: true, action: "restored" });
+    expect(existsSync(activePath)).toBe(true);
+    expect(existsSync(corruptPath)).toBe(false);
+    expect((await readGoal(dir, g.id))?.label).toBe("repair_me");
+  });
+
+  it("repairAllQuarantinedGoals skips invalid quarantined JSON", async () => {
+    dir = await makeTempDir();
+    await writeFile(join(dir, "bad-id.json.corrupt"), "{not valid goal", "utf-8");
+    const results = await repairAllQuarantinedGoals(dir);
+    expect(results).toHaveLength(1);
+    expect(results[0]?.action).toBe("failed");
+    expect(existsSync(join(dir, "bad-id.json.corrupt"))).toBe(true);
   });
 
   it("ignores housekeeping _*.json files during scans and still registers goals", async () => {

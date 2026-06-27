@@ -122,6 +122,7 @@ export interface MemoryPluginAPI {
   lastAutoRecallPromptRef: { value: string | null };
   /** Per-turn shared prepend token budget across before_agent_start hooks. */
   prependBudgetRef: import("../services/prepend-budget.js").PrependBudgetRef;
+  beforeAgentStartTurnRef: import("../services/before-agent-start-budget.js").BeforeAgentStartTurnRef;
   /** Monotonic lifecycle registration generation for stale-hook guards. */
   registrationGeneration?: number;
   /** Global generation ref updated on each plugin re-registration. */

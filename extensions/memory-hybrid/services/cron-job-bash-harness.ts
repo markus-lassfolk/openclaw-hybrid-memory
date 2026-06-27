@@ -4,6 +4,10 @@
  *
  * The executing agent runs the embedded bash; logs land under ~/.openclaw/logs/cron-hybrid-mem
  * (or a /tmp fallback if that path is not writable).
+ *
+ * HM_EXIT format (one line per hm_step): `{ISO8601Z} {step_name} exit={code}` optionally
+ * followed by `status=` and `reason=`. validate-cron-exit treats an empty ledger with no
+ * `--- steps ---` section in HM_LOG as wrapper abort (`failureClass=wrapper_aborted_before_steps`).
  */
 
 export type HybridMemCronStep = { name: string; cmd: string; optional?: boolean };

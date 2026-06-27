@@ -889,6 +889,20 @@ export function createPluginService(ctx: PluginServiceContext) {
               api.logger.info?.(
                 `memory-hybrid: active-task session reconcile — completed orphan subagent row(s): ${reconciledLabels.join(", ")}`,
               );
+              if (cfg.activeTask.ledger === "facts") {
+                try {
+                  await renderActiveTaskMarkdownFile(
+                    factsDb,
+                    staleMinutes,
+                    activeTaskFilePath,
+                    cfg.activeTask.projection,
+                    api.logger,
+                    activeTaskRenderGoalsOpts(cfg, workspaceRoot),
+                  );
+                } catch (renderErr) {
+                  api.logger.warn?.(`memory-hybrid: active-task projection render after reconcile failed (non-fatal): ${renderErr}`);
+                }
+              }
             }
           } catch (reconcileErr) {
             api.logger.warn?.(`memory-hybrid: active-task session reconcile failed (non-fatal): ${reconcileErr}`);
@@ -1047,14 +1061,14 @@ export function createPluginService(ctx: PluginServiceContext) {
     stop: async () => {
       shuttingDown = true;
       timers.shuttingDownRef.value = true;
-      // Flush pending error reports with timeout so persisted queue replay can reduce dropped diagnostics.
+      clearRuntimeTimers(timers);
+      // Flush pending error reports with adaptive timeout so persisted queue replay can drain.
       if (isErrorReporterActive()) {
-        const flushed = await flushErrorReporter(2000).catch(() => false);
+        const flushed = await flushErrorReporter().catch(() => false);
         if (!flushed) {
           api.logger.warn("memory-hybrid: error reporter flush incomplete; pending reports will retry on next startup");
         }
       }
-      clearRuntimeTimers(timers);
       if (dashboardServer) {
         try {
           dashboardServer.close();

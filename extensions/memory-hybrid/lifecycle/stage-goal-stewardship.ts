@@ -20,6 +20,7 @@ import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
 import { applyPrependBudget } from "../services/prepend-budget.js";
+import { runOptionalBeforeAgentStartStage } from "../services/before-agent-start-budget.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
 import { resolveSessionKeyFromHookEvent } from "./session-state.js";
 import type { LifecycleContext } from "./types.js";
@@ -33,7 +34,12 @@ export function registerGoalStewardshipInjection(
   const gs = ctx.cfg.goalStewardship;
   if (!gs.heartbeatStewardship) return;
 
-  api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
+  api.on("before_agent_start", async (event: unknown, hookCtx: unknown) =>
+    runOptionalBeforeAgentStartStage(
+      ctx.beforeAgentStartTurnRef,
+      "goal-stewardship",
+      api.logger,
+      async () => {
     try {
       const injectionEnabled = await isGoalStewardshipInjectionEnabled(ctx.cfg, goalsDir);
       if (!injectionEnabled) return undefined;
@@ -146,7 +152,10 @@ export function registerGoalStewardshipInjection(
       api.logger?.warn?.(`memory-hybrid: goal stewardship injection error: ${String(err)}`);
       return undefined;
     }
-  });
+  },
+      { timeoutMs: 5000 },
+    ),
+  );
 }
 
 export function resolvedGoalsDirForLifecycle(cfg: HybridMemoryConfig): string {

@@ -8,6 +8,11 @@ import {
   terminateGoal,
   updateGoal,
 } from "../services/goal-stewardship.js";
+import {
+  listQuarantinedGoalIds,
+  repairAllQuarantinedGoals,
+  type RepairQuarantinedGoalResult,
+} from "../services/goal-registry.js";
 import { formatGoalStewardshipConfigLines, workspaceRootForCli } from "./config-feature-summaries.js";
 import { nowIso } from "../utils/dates.js";
 import type { Chainable } from "./shared.js";
@@ -338,5 +343,50 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
       for (const a of result.actions) {
         console.log(`  ${a.label}: ${a.action} — ${a.reason}`);
       }
+    });
+
+  g.command("doctor")
+    .description("Goal registry diagnostics (quarantined corrupt files)")
+    .option("--repair-corrupt", "Restore quarantined *.json.corrupt files that parse as valid goals")
+    .option("--dry-run", "With --repair-corrupt, report actions without renaming files")
+    .option("--json", "Emit structured JSON")
+    .action(async (opts: { repairCorrupt?: boolean; dryRun?: boolean; json?: boolean }) => {
+      const dir = goalsDir(ctx.cfg);
+      const quarantined = listQuarantinedGoalIds(dir);
+      let repairResults: RepairQuarantinedGoalResult[] = [];
+      if (opts.repairCorrupt && quarantined.length > 0) {
+        repairResults = await repairAllQuarantinedGoals(dir, { dryRun: opts.dryRun === true });
+      }
+      const payload = {
+        goalsDir: dir,
+        quarantinedCount: quarantined.length,
+        quarantined,
+        repairResults,
+        repaired: repairResults.filter((r) => r.action === "restored").length,
+      };
+      if (opts.json) {
+        console.log(JSON.stringify(payload, null, 2));
+        if (quarantined.length > 0 && !opts.repairCorrupt) process.exitCode = 1;
+        return;
+      }
+      console.log(`Goals directory: ${dir}`);
+      if (quarantined.length === 0) {
+        console.log("No quarantined corrupt goal files.");
+        return;
+      }
+      console.log(`Quarantined corrupt goals (${quarantined.length}): ${quarantined.join(", ")}`);
+      if (!opts.repairCorrupt) {
+        console.log("\nRepair: openclaw hybrid-mem goals doctor --repair-corrupt");
+        process.exitCode = 1;
+        return;
+      }
+      for (const r of repairResults) {
+        const note = r.error ? ` — ${r.error}` : "";
+        console.log(`  ${r.goalId}: ${r.action}${note}`);
+      }
+      const restored = repairResults.filter((r) => r.action === "restored").length;
+      const failed = repairResults.filter((r) => r.action === "failed").length;
+      console.log(`\nSummary: restored=${restored} failed=${failed} skipped=${repairResults.length - restored - failed}`);
+      if (failed > 0) process.exitCode = 1;
     });
 }

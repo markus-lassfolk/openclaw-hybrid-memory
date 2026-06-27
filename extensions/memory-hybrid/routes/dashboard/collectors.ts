@@ -36,6 +36,12 @@ import { formatTimestampUtc, nowIso } from "../../utils/dates.js";
 import { pluginLogger } from "../../utils/logger.js";
 import { deleteVectorForFactId } from "../../services/vector-maintenance.js";
 import { isValidGhRepoArg } from "../../utils/gh-repo-arg.js";
+import {
+  isErrorReporterActive,
+  resolvePendingErrorReportCount,
+} from "../../services/error-reporter.js";
+import { listQuarantinedGoalIds, resolveGoalsDir } from "../../services/goal-registry.js";
+import { getEnv } from "../../utils/env-manager.js";
 import { execFile as execFileCb } from "../../utils/process-runner.js";
 
 const execFile = promisify(execFileCb);
@@ -312,6 +318,13 @@ interface DashboardStatus {
   costs: CostStats;
   audit: AuditSummaryPayload;
   agentHealth: AgentHealthPayload;
+  infrastructure: InfrastructureSnapshot;
+}
+
+export interface InfrastructureSnapshot {
+  pendingErrorReports: number;
+  errorReporterActive: boolean;
+  quarantinedGoalIds: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -1267,6 +1280,21 @@ export async function performFactAction(
   }
 }
 
+export function collectInfrastructureSnapshot(ctx: DashboardContext): InfrastructureSnapshot {
+  const pendingErrorReports = resolvePendingErrorReportCount(ctx.resolvedSqlitePath);
+  let quarantinedGoalIds: string[] = [];
+  if (ctx.hybridCfg?.goalStewardship?.enabled) {
+    const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
+    const goalsDir = resolveGoalsDir(workspaceRoot, ctx.hybridCfg.goalStewardship.goalsDir);
+    quarantinedGoalIds = listQuarantinedGoalIds(goalsDir);
+  }
+  return {
+    pendingErrorReports,
+    errorReporterActive: isErrorReporterActive(),
+    quarantinedGoalIds,
+  };
+}
+
 export async function collectStatus(ctx: DashboardContext): Promise<DashboardStatus> {
   const [memory, cronJobs, taskQueue, forge, git] = await Promise.all([
     collectMemoryStats(ctx),
@@ -1286,6 +1314,7 @@ export async function collectStatus(ctx: DashboardContext): Promise<DashboardSta
     costs: collectCostStats(ctx),
     audit: collectAuditSummary(ctx),
     agentHealth,
+    infrastructure: collectInfrastructureSnapshot(ctx),
   };
 }
 

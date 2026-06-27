@@ -98,6 +98,50 @@ export function isTerminalActiveTaskStatus(status: ActiveTaskStatus): boolean {
   return status === "Done" || status === "Failed";
 }
 
+/** Next-line prefix written by session/live-state reconcile (#978, #1625). */
+export const AUTO_RECONCILED_NEXT_PREFIX = "Auto-reconciled:";
+
+export function isAutoReconciledTaskNext(next: string | undefined | null): boolean {
+  return (next ?? "").trim().toLowerCase().startsWith(AUTO_RECONCILED_NEXT_PREFIX.toLowerCase());
+}
+
+/**
+ * Infer terminal status from incoherent rows (e.g. reconcile wrote `next` but status was regressed).
+ * Returns null when content does not imply closure.
+ */
+export function inferTerminalStatusFromTaskContent(
+  entry: Pick<ActiveTaskEntry, "status" | "next" | "description">,
+): ActiveTaskStatus | null {
+  const next = entry.next?.trim() ?? "";
+  if (isAutoReconciledTaskNext(next)) {
+    return next.toLowerCase().includes("session transcript not found") ? "Failed" : "Done";
+  }
+  const nextLower = next.toLowerCase();
+  if (
+    /\bstage closed\.?\s*$/.test(nextLower) ||
+    /\(done\)\s*$/.test(nextLower) ||
+    /^completed:\s/.test(nextLower) ||
+    /\bmark complete\b/.test(nextLower) ||
+    /\bmerged\/marked complete\b/.test(nextLower) ||
+    /\bmonitor pr #[0-9]+ ci.*merge\/mark complete/i.test(nextLower)
+  ) {
+    return "Done";
+  }
+  const descLower = (entry.description ?? "").trim().toLowerCase();
+  if (/\bstage closed\.?\s*$/.test(descLower) || /\(done\)\s*$/.test(descLower)) {
+    return "Done";
+  }
+  return null;
+}
+
+/** Active rows whose stored status disagrees with completion/reconcile signals in title or next. */
+export function findIncoherentActiveTaskEntries(active: ActiveTaskEntry[]): ActiveTaskEntry[] {
+  return active.filter((task) => {
+    const inferred = inferTerminalStatusFromTaskContent(task);
+    return inferred !== null && !isTerminalActiveTaskStatus(task.status);
+  });
+}
+
 /** Non-terminal statuses (still active) */
 const ACTIVE_STATUSES: Set<ActiveTaskStatus> = new Set(["In progress", "Waiting", "Stalled", "Failed"]);
 
@@ -800,6 +844,8 @@ export function normalizePlaceholderTaskNext(
 }
 
 export function isNonActionableSubagentPlaceholderTask(task: ActiveTaskEntry): boolean {
+  if (isAutoReconciledTaskNext(task.next)) return true;
+
   const subagent = task.subagent?.trim();
   const label = task.label.trim();
   if (!isSubagentSession(subagent) && !isSubagentSession(label)) return false;

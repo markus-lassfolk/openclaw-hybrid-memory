@@ -12,6 +12,10 @@ import { nowIso } from "../utils/dates.js";
 import { pluginLogger } from "../utils/logger.js";
 import { withTimeout } from "../utils/timeout.js";
 import { clearSessionInjectionDedup } from "../services/session-injection-dedup.js";
+import {
+  markBeforeAgentStartTurn,
+  resolveBeforeAgentStartStageTimeoutMs,
+} from "../services/before-agent-start-budget.js";
 import { formatSessionKeyTruncated, resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
@@ -23,7 +27,9 @@ export function runSetupStage(
   ctx: LifecycleContext,
   sessionState: SessionState,
 ): Promise<void> {
-  return withTimeout(SETUP_TIMEOUT_MS, () => runSetup(event, api, ctx, sessionState)).then(() => {});
+  markBeforeAgentStartTurn(ctx.beforeAgentStartTurnRef);
+  const timeoutMs = resolveBeforeAgentStartStageTimeoutMs(ctx.beforeAgentStartTurnRef, SETUP_TIMEOUT_MS, 200);
+  return withTimeout(timeoutMs, () => runSetup(event, api, ctx, sessionState)).then(() => {});
 }
 
 async function runSetup(
