@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { getEnv } from "../../utils/env-manager.js";
@@ -648,7 +648,7 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
   return {
     ok: true,
     version: installedVersion,
-    pluginDir: extDir,
+    pluginDir: existsSync(extDir) ? realpathSync(extDir) : extDir,
     workspaceSkillPath: skillAfterUpgrade.path,
     workspaceToolsMdPath: toolsAfterUpgrade.path,
     workspaceToolsMdUpdated: toolsAfterUpgrade.updated,

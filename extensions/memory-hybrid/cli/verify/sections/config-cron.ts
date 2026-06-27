@@ -22,6 +22,7 @@ import {
   collectRecentHmExitLedgerPaths,
   findDeprecatedHybridMemCronTokens,
   findDeprecatedTokensInHmExitContent,
+  findDeprecatedTokensInWrapperScripts,
 } from "../../../services/deprecated-cron-commands.js";
 import { resolveMaintenanceSummaryPath } from "../../../services/maintenance-artifact-paths.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
@@ -697,6 +698,20 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
     );
     log(
       `\n${WARN_LINE} Stale cron payload detected: job messages reference deprecated command(s)/step(s). Run \`openclaw hybrid-mem verify --fix\` to normalize managed job messages.`,
+    );
+  }
+
+  const wrapperHits = findDeprecatedTokensInWrapperScripts([join(openclawDir, "scripts")]);
+  if (wrapperHits.length > 0) {
+    const sample = wrapperHits
+      .slice(0, 5)
+      .map((h) => `${h.path} → ${h.token.token}${h.token.replacement ? ` (use: ${h.token.replacement})` : ""}`)
+      .join("; ");
+    state.warnings.push(`deprecated hybrid-mem CLI in wrapper scripts: ${sample}`);
+    log(
+      `\n${WARN_LINE} Wrapper scripts reference deprecated hybrid-mem command(s): ${sample}${
+        wrapperHits.length > 5 ? `; … (${wrapperHits.length - 5} more)` : ""
+      }`,
     );
   }
 

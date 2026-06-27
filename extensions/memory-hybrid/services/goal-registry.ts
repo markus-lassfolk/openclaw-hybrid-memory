@@ -19,11 +19,13 @@ import type {
   GoalStatus,
 } from "./goal-stewardship-types.js";
 import { nowIso } from "../utils/dates.js";
+import { atomicWriteFile } from "../utils/atomic-write.js";
 
 const INDEX_FILENAME = "_index.json";
 const TERMINAL: GoalStatus[] = ["completed", "failed", "abandoned"];
 const GOAL_HOUSEKEEPING_PREFIX = "_";
 export const GOAL_CORRUPT_SUFFIX = ".json.corrupt";
+const CORRUPT_REPORTED_LEDGER = "_corrupt-reported.json";
 
 /** Per-process dedupe so corrupt goal telemetry is not re-enqueued every sync (#1977). */
 const reportedCorruptGoalFiles = new Set<string>();
@@ -128,6 +130,39 @@ async function ensureDir(dir: string): Promise<void> {
   await mkdir(dir, { recursive: true });
 }
 
+function atomicWriteGoalText(targetPath: string, content: string): void {
+  atomicWriteFile(targetPath, content.endsWith("\n") ? content : `${content}\n`);
+}
+
+async function loadPersistedCorruptReports(goalsDir: string): Promise<void> {
+  const ledgerPath = join(goalsDir, CORRUPT_REPORTED_LEDGER);
+  if (!existsSync(ledgerPath)) return;
+  try {
+    const raw = await readFile(ledgerPath, "utf-8");
+    const parsed = JSON.parse(raw) as { keys?: unknown };
+    if (!Array.isArray(parsed.keys)) return;
+    for (const key of parsed.keys) {
+      if (typeof key === "string" && key.length > 0) reportedCorruptGoalFiles.add(key);
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
+async function persistCorruptReportKey(goalsDir: string, dedupeKey: string): Promise<void> {
+  await loadPersistedCorruptReports(goalsDir);
+  reportedCorruptGoalFiles.add(dedupeKey);
+  const ledgerPath = join(goalsDir, CORRUPT_REPORTED_LEDGER);
+  try {
+    atomicWriteGoalText(
+      ledgerPath,
+      JSON.stringify({ updatedAt: nowIso(), keys: [...reportedCorruptGoalFiles].sort() }, null, 2),
+    );
+  } catch {
+    /* best-effort */
+  }
+}
+
 function isGoalRegistryJsonFilename(filename: string): boolean {
   if (filename.endsWith(GOAL_CORRUPT_SUFFIX)) return false;
   return filename.endsWith(".json") && filename !== INDEX_FILENAME && !filename.startsWith(GOAL_HOUSEKEEPING_PREFIX);
@@ -223,8 +258,9 @@ async function quarantineCorruptGoalFile(goalsDir: string, filename: string): Pr
 
 async function handleCorruptGoalRegistryEntry(goalsDir: string, filename: string, err?: unknown): Promise<void> {
   const dedupeKey = join(goalsDir, filename);
+  await loadPersistedCorruptReports(goalsDir);
   if (reportedCorruptGoalFiles.has(dedupeKey)) return;
-  reportedCorruptGoalFiles.add(dedupeKey);
+  await persistCorruptReportKey(goalsDir, dedupeKey);
   await quarantineCorruptGoalFile(goalsDir, filename);
   captureInvalidGoalRegistryEntry(filename, err);
 }
@@ -243,13 +279,14 @@ function isGoalLike(value: unknown): value is Goal {
 
 function captureInvalidGoalRegistryEntry(filename: string, err?: unknown): void {
   const reason = err instanceof Error ? err.message : err === undefined ? "invalid persisted Goal shape" : String(err);
-  capturePluginError(new Error(`invalid_goal_registry_entry: ${filename}: ${reason}`), {
+  capturePluginError(new Error(`invalid_goal_registry_entry: ${filename}`), {
     subsystem: "goal-registry",
     operation: "invalid_goal_registry_entry",
     severity: "warning",
     filename,
     reason,
     fingerprint: ["invalid_goal_registry_entry", filename],
+    tags: { reason },
   });
 }
 
@@ -298,7 +335,82 @@ export async function rebuildGoalIndex(goalsDir: string): Promise<void> {
     }
   }
   const index: GoalIndex = { updatedAt: nowIso(), goals };
-  await writeFile(join(goalsDir, INDEX_FILENAME), JSON.stringify(index, null, 2), "utf-8");
+  atomicWriteGoalText(join(goalsDir, INDEX_FILENAME), JSON.stringify(index, null, 2));
+}
+
+export type GoalIndexDriftReport = {
+  missingInIndex: string[];
+  orphanInIndex: string[];
+  staleFields: Array<{ id: string; field: string; indexValue: string; fileValue: string }>;
+};
+
+/** Compare `_index.json` to live goal files (Issue #1987). */
+export async function auditGoalIndexDrift(goalsDir: string): Promise<GoalIndexDriftReport> {
+  const report: GoalIndexDriftReport = { missingInIndex: [], orphanInIndex: [], staleFields: [] };
+  if (!existsSync(goalsDir)) return report;
+
+  const fileIds = new Set<string>();
+  let files: string[];
+  try {
+    files = await readdir(goalsDir);
+  } catch {
+    return report;
+  }
+  for (const f of files) {
+    if (!isGoalRegistryJsonFilename(f)) continue;
+    const id = f.replace(/\.json$/i, "");
+    fileIds.add(id);
+    try {
+      const g = await readGoal(goalsDir, id);
+      if (!g) continue;
+      /* index comparison below */
+    } catch {
+      /* corrupt files handled elsewhere */
+    }
+  }
+
+  let indexGoals: GoalIndex["goals"] = [];
+  try {
+    const raw = await readFile(join(goalsDir, INDEX_FILENAME), "utf-8");
+    indexGoals = asGoalIndexEntries(JSON.parse(raw) as unknown);
+  } catch {
+    for (const id of fileIds) report.missingInIndex.push(id);
+    return report;
+  }
+
+  const indexById = new Map(indexGoals.map((e) => [e.id, e]));
+  for (const id of fileIds) {
+    if (!indexById.has(id)) report.missingInIndex.push(id);
+  }
+  for (const entry of indexGoals) {
+    if (!fileIds.has(entry.id)) {
+      report.orphanInIndex.push(entry.id);
+      continue;
+    }
+    try {
+      const g = await readGoal(goalsDir, entry.id);
+      if (!g) continue;
+      if (g.status !== entry.status) {
+        report.staleFields.push({
+          id: entry.id,
+          field: "status",
+          indexValue: entry.status,
+          fileValue: g.status,
+        });
+      }
+      if (g.label !== entry.label) {
+        report.staleFields.push({
+          id: entry.id,
+          field: "label",
+          indexValue: entry.label,
+          fileValue: g.label,
+        });
+      }
+    } catch {
+      /* skip unreadable */
+    }
+  }
+  return report;
 }
 
 function normalizeGoalJson(g: Goal): Goal {
@@ -393,7 +505,7 @@ export async function readGoalByLabel(goalsDir: string, label: string): Promise<
 
 export async function writeGoal(goalsDir: string, goal: Goal): Promise<void> {
   await ensureDir(goalsDir);
-  await writeFile(join(goalsDir, `${goal.id}.json`), JSON.stringify(goal, null, 2), "utf-8");
+  atomicWriteGoalText(join(goalsDir, `${goal.id}.json`), JSON.stringify(goal, null, 2));
   await rebuildGoalIndex(goalsDir);
 }
 

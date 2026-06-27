@@ -583,6 +583,7 @@ let reporter: GlitchTipReporter | null = null;
 let initialized = false;
 let logger: any = console; // Default fallback to console
 const errorDedup = new Map<string, number>(); // Rate limiting: fingerprint -> timestamp
+const CHRONIC_FINGERPRINT_DEDUPE_MS = 24 * 60 * 60 * 1000;
 let telemetryMuteReason: string | null = null;
 
 function buildFingerprintKey(fingerprint: string[]): string {
@@ -827,22 +828,28 @@ export function capturePluginError(
     return undefined;
   }
 
-  // Rate limiting: dedup same errors within 60s
+  // Rate limiting: default 60s; chronic fingerprinted warnings use 24h (#1988)
   const fingerprint =
     Array.isArray(context.fingerprint) && context.fingerprint.length > 0
       ? buildFingerprintKey(context.fingerprint)
       : `${error.name}:${scrubString(error.message).slice(0, 100)}`;
+  const dedupeWindowMs =
+    Array.isArray(context.fingerprint) &&
+    context.fingerprint.length > 0 &&
+    (context.severity === "warning" || context.operation === "invalid_goal_registry_entry")
+      ? CHRONIC_FINGERPRINT_DEDUPE_MS
+      : 60000;
   const now = Date.now();
   const lastSeen = errorDedup.get(fingerprint);
-  if (lastSeen && now - lastSeen < 60000) {
+  if (lastSeen && now - lastSeen < dedupeWindowMs) {
     return undefined; // Skip duplicate
   }
   errorDedup.set(fingerprint, now);
 
-  // Prevent memory leak: prune stale entries every 10 new entries
+  // Prevent memory leak: prune stale entries periodically
   if (errorDedup.size % 10 === 0) {
     for (const [key, ts] of errorDedup) {
-      if (now - ts > 60000) errorDedup.delete(key);
+      if (now - ts > CHRONIC_FINGERPRINT_DEDUPE_MS) errorDedup.delete(key);
     }
   }
 

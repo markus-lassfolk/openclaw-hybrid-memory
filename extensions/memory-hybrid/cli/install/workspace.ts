@@ -92,6 +92,10 @@ export const UPGRADE_REQUIRED_BUNDLE_PATHS = [
  * swaps into the same layout as the currently running plugin (extensions or npm-project).
  */
 export function resolveUpgradeExtensionsParentDir(pluginRootDir: string): string {
+  if (isNpmProjectPluginLayout(pluginRootDir)) {
+    const stateExtensions = join(homedir(), ".openclaw", "extensions");
+    if (existsSync(stateExtensions)) return stateExtensions;
+  }
   return dirname(pluginRootDir);
 }
 

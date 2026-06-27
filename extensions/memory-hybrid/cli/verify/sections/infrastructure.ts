@@ -10,7 +10,7 @@
 
 import { writeFileSync } from "node:fs";
 import { capturePluginError, isErrorReporterActive, resolvePendingErrorReportCount } from "../../../services/error-reporter.js";
-import { listQuarantinedGoalIds, resolveGoalsDir } from "../../../services/goal-registry.js";
+import { listQuarantinedGoalIds, resolveGoalsDir, auditGoalIndexDrift, rebuildGoalIndex } from "../../../services/goal-registry.js";
 import { PLUGIN_ID } from "../../../utils/constants.js";
 import { workspaceRootForCli } from "../../config-feature-summaries.js";
 
@@ -74,6 +74,28 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
       log(
         `${WARN_LINE} Goals: ${quarantined.length} quarantined corrupt file(s) (${preview}${suffix}). Restore from state/goals/*.json.corrupt or delete after backup.`,
       );
+    }
+    const drift = await auditGoalIndexDrift(goalsDir);
+    const driftCount =
+      drift.missingInIndex.length + drift.orphanInIndex.length + drift.staleFields.length;
+    if (driftCount > 0) {
+      const parts: string[] = [];
+      if (drift.missingInIndex.length > 0) {
+        parts.push(`missing in index: ${drift.missingInIndex.slice(0, 5).join(", ")}`);
+      }
+      if (drift.orphanInIndex.length > 0) {
+        parts.push(`orphan in index: ${drift.orphanInIndex.slice(0, 5).join(", ")}`);
+      }
+      if (drift.staleFields.length > 0) {
+        parts.push(`${drift.staleFields.length} stale field(s)`);
+      }
+      warnings.push(`Goal index drift detected (${parts.join("; ")})`);
+      log(`${WARN_LINE} Goals: index drift — ${parts.join("; ")}. Run \`openclaw hybrid-mem verify --fix\` to rebuild _index.json.`);
+      if (opts.fix) {
+        await rebuildGoalIndex(goalsDir);
+        log(`  → Rebuilt goals/_index.json`);
+        warnings.pop();
+      }
     }
   }
 
