@@ -796,9 +796,7 @@ const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolea
     /daily-lifecycle-sync|lifecycle sync/i.test(String(j.name ?? "")),
   [`${PLUGIN_JOB_ID_PREFIX}maintenance-nightly`]: (j) =>
     j.id === `${PLUGIN_JOB_ID_PREFIX}maintenance-nightly` ||
-    String(j.name ?? "")
-      .toLowerCase()
-      .includes("maintenance-nightly"),
+    String(j.name ?? "").toLowerCase() === "maintenance-nightly",
 };
 
 /**
