@@ -378,11 +378,35 @@ function rollbackUpgradePluginDir(pluginDir: string, backupDir: string): void {
 
 function removeInstalledPluginDirIfDistinct(installedPluginDir: string, preUpgradePluginDir: string): void {
   if (installedPluginDir === preUpgradePluginDir) return;
+  try {
+    if (existsSync(installedPluginDir) && existsSync(preUpgradePluginDir) && realpathSync(installedPluginDir) === realpathSync(preUpgradePluginDir)) {
+      return;
+    }
+  } catch {
+    /* fall through to path string comparison */
+  }
   if (!existsSync(installedPluginDir)) return;
   try {
     rmSync(installedPluginDir, { recursive: true, force: true });
   } catch (err) {
     capturePluginError(err as Error, { subsystem: "cli", operation: "runUpgradeForCli:cleanup-installed-dir" });
+  }
+}
+
+function rollbackUpgradeToPreInstallState(
+  preUpgradePluginDir: string,
+  installedPluginDir: string,
+  backupDir: string,
+): void {
+  removeInstalledPluginDirIfDistinct(installedPluginDir, preUpgradePluginDir);
+  rollbackUpgradePluginDir(preUpgradePluginDir, backupDir);
+}
+
+function resolveUpgradePluginDirForResult(installedPluginDir: string): string {
+  try {
+    return existsSync(installedPluginDir) ? realpathSync(installedPluginDir) : installedPluginDir;
+  } catch {
+    return installedPluginDir;
   }
 }
 
@@ -495,6 +519,7 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
   }
 
   const backupDir = join(dirname(preUpgradePluginDir), `${basename(preUpgradePluginDir)}.bak-${Date.now()}`);
+  const installedPluginDir = resolveInstalledPluginDir(extensionsParentDir, pluginPackageName);
   try {
     renameSync(preUpgradePluginDir, backupDir);
   } catch (e) {
@@ -514,7 +539,7 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
   });
   if (r.status !== 0) {
     try {
-      rollbackUpgradePluginDir(preUpgradePluginDir, backupDir);
+      rollbackUpgradeToPreInstallState(preUpgradePluginDir, installedPluginDir, backupDir);
     } catch (e) {
       capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:rollback" });
       return {
@@ -528,10 +553,9 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
     };
   }
 
-  const installedPluginDir = resolveInstalledPluginDir(extensionsParentDir, pluginPackageName);
   if (!existsSync(join(installedPluginDir, "openclaw.plugin.json"))) {
     try {
-      rollbackUpgradePluginDir(preUpgradePluginDir, backupDir);
+      rollbackUpgradeToPreInstallState(preUpgradePluginDir, installedPluginDir, backupDir);
     } catch (e) {
       capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:rollback-missing-install" });
       return {
@@ -548,8 +572,7 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
   const bundleError = verifyUpgradePluginBundle(installedPluginDir);
   if (bundleError) {
     try {
-      removeInstalledPluginDirIfDistinct(installedPluginDir, preUpgradePluginDir);
-      rollbackUpgradePluginDir(preUpgradePluginDir, backupDir);
+      rollbackUpgradeToPreInstallState(preUpgradePluginDir, installedPluginDir, backupDir);
     } catch (e) {
       capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:rollback-bundle" });
       return {
@@ -684,7 +707,7 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
   return {
     ok: true,
     version: installedVersion,
-    pluginDir: realpathSync(installedPluginDir),
+    pluginDir: resolveUpgradePluginDirForResult(installedPluginDir),
     workspaceSkillPath: skillAfterUpgrade.path,
     workspaceToolsMdPath: toolsAfterUpgrade.path,
     workspaceToolsMdUpdated: toolsAfterUpgrade.updated,

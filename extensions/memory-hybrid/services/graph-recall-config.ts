@@ -17,7 +17,7 @@ export function warnGraphRecallConfigMisconfiguration(
     );
   }
 
-  if (cfg.graph.autoLink && !cfg.retrieval.strategies.includes("graph")) {
+  if (cfg.graph.autoLink && !(cfg.retrieval?.strategies ?? []).includes("graph")) {
     logWarn(
       'memory-hybrid: graph.autoLink is on but retrieval.strategies omits "graph" — explicit memory_recall will not run orchestrator GraphRAG expansion.',
     );

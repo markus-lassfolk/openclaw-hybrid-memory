@@ -98,4 +98,37 @@ describe("warnGraphRecallConfigMisconfiguration", () => {
     );
     expect(warnings.some((w) => w.includes('omits "graph"'))).toBe(true);
   });
+
+  it("does not throw when retrieval.strategies is missing", () => {
+    const warnings: string[] = [];
+    expect(() =>
+      warnGraphRecallConfigMisconfiguration(
+        {
+          graph: {
+            enabled: true,
+            autoLink: true,
+            autoLinkStrength: 0.7,
+            autoLinkSimilarityThreshold: 0.7,
+            autoLinkMinScore: 0.7,
+            autoLinkLimit: 3,
+            maxTraversalDepth: 2,
+            useInRecall: false,
+            coOccurrenceWeight: 0.3,
+            autoSupersede: true,
+            strengthenOnRecall: false,
+            hubDegreeCap: 500,
+            hubScorePenalty: null,
+          },
+          graphRetrieval: {
+            enabled: true,
+            defaultExpand: false,
+            maxExpandDepth: 2,
+            maxExpandedResults: 12,
+          },
+        } as HybridMemoryConfig,
+        (msg) => warnings.push(msg),
+      ),
+    ).not.toThrow();
+    expect(warnings.some((w) => w.includes('omits "graph"'))).toBe(true);
+  });
 });
