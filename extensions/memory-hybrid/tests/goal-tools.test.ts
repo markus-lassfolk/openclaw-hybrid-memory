@@ -58,6 +58,10 @@ describe("goal tools registry primitives", () => {
     expect(resolved).toBeNull();
   });
 
+  it("resolveGoalId returns null for undefined ref (#1981)", async () => {
+    expect(await resolveGoalId(goalsDir, undefined)).toBeNull();
+  });
+
   it("terminateGoal with completed sets correct status", async () => {
     const g = await createGoal(goalsDir, { label: "finish", description: "d", acceptanceCriteria: ["a"] }, defaults);
     const after = await terminateGoal(goalsDir, g.id, "completed", "all criteria met", "user");
@@ -255,5 +259,55 @@ describe("goal tools registry primitives", () => {
       details?: { goal?: { label?: string } };
     };
     expect(got?.details?.goal?.label).toBe("list-me");
+  });
+
+  it("goal_assess returns structured errors for missing params and corrupt goals (#1981)", async () => {
+    const corruptId = "822b1268-5093-4f70-8585-20bb09b4fd2b";
+    await writeFile(join(goalsDir, `${corruptId}.json`), '{"label":"broken","description":"unterminated', "utf-8");
+
+    const cfg = hybridConfigSchema.parse({
+      embedding: {
+        apiKey: "sk-test-key-that-is-long-enough-to-pass",
+        model: "text-embedding-3-small",
+      },
+      goalStewardship: { enabled: true, goalsDir: "state/goals" },
+    });
+    const tools = new Map<string, { execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }>();
+    const api: Pick<ClawdbotPluginApi, "registerTool"> = {
+      registerTool(toolDefinition: { name: string; execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }) {
+        tools.set(toolDefinition.name, { execute: toolDefinition.execute });
+      },
+    };
+    registerGoalTools(
+      {
+        cfg,
+        goalsDir,
+        workspaceRoot,
+        resolvedActiveTaskPath: join(workspaceRoot, "ACTIVE-TASKS.md"),
+        factsDb: null,
+        vectorDb: null,
+        embeddings: null,
+        eventLog: null,
+        memoryDir: join(workspaceRoot, "memory"),
+      },
+      api as ClawdbotPluginApi,
+    );
+    const assess = tools.get("goal_assess");
+    expect(assess).toBeDefined();
+
+    const missingId = (await assess!.execute("tc", {
+      assessment: "progress",
+      next_action: "continue",
+    })) as { content?: Array<{ text?: string }>; details?: { error?: string } };
+    expect(missingId.details?.error).toBe("invalid_ref");
+    expect(missingId.content?.[0]?.text).toContain("goal_id is required");
+
+    const corrupt = (await assess!.execute("tc", {
+      goal_id: corruptId,
+      assessment: "blocked on corrupt registry",
+      next_action: "repair goal JSON",
+    })) as { content?: Array<{ text?: string }>; details?: { error?: string } };
+    expect(corrupt.details?.error).toBe("corrupt");
+    expect(corrupt.content?.[0]?.text).toContain("Goal state could not be loaded");
   });
 });

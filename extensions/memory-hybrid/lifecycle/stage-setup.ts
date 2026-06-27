@@ -12,6 +12,7 @@ import { nowIso } from "../utils/dates.js";
 import { pluginLogger } from "../utils/logger.js";
 import { withTimeout } from "../utils/timeout.js";
 import { clearSessionInjectionDedup } from "../services/session-injection-dedup.js";
+import { markBeforeAgentStartTurn } from "../services/before-agent-start-budget.js";
 import { formatSessionKeyTruncated, resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
@@ -32,9 +33,10 @@ async function runSetup(
   ctx: LifecycleContext,
   sessionState: SessionState,
 ): Promise<void> {
-  const { currentAgentIdRef, restartPendingClearedRef, prependBudgetRef } = ctx;
+  const { currentAgentIdRef, restartPendingClearedRef, prependBudgetRef, beforeAgentStartTurnRef } = ctx;
   const { touchSession, resolveSessionKey } = sessionState;
 
+  markBeforeAgentStartTurn(beforeAgentStartTurnRef);
   if (prependBudgetRef) {
     prependBudgetRef.value = null;
   }

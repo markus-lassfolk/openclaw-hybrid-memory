@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -10,6 +11,7 @@ import {
   readGoalByLabel,
   rebuildGoalIndex,
   resolveGoalId,
+  resolveGoalIdResult,
   terminateGoal,
   updateGoal,
   validateGoalLabel,
@@ -222,12 +224,26 @@ describe("goal registry", () => {
     await expect(readGoal(dir, "broken")).rejects.toThrow(/corrupt or unreadable/i);
   });
 
+  it("resolveGoalIdResult maps corrupt goal JSON to structured corrupt result (#1981)", async () => {
+    dir = await makeTempDir();
+    await writeFile(join(dir, "broken.json"), "{bad", "utf-8");
+    const result = await resolveGoalIdResult(dir, "broken");
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected corrupt result");
+    expect(result.code).toBe("corrupt");
+    expect(result.message).toMatch(/could not be loaded/i);
+  });
+
   it("listGoals skips corrupt goal JSON and continues processing healthy goals", async () => {
     dir = await makeTempDir();
     const healthy = await createGoal(dir, { label: "healthy", description: "d", acceptanceCriteria: ["c"] }, defaults);
     await writeFile(join(dir, "broken.json"), "{bad", "utf-8");
     const listed = await listGoals(dir);
     expect(listed.map((g) => g.id)).toEqual([healthy.id]);
+    expect(existsSync(join(dir, "broken.json.corrupt"))).toBe(true);
+    expect(existsSync(join(dir, "broken.json"))).toBe(false);
+    const listedAgain = await listGoals(dir);
+    expect(listedAgain.map((g) => g.id)).toEqual([healthy.id]);
   });
 
   it("ignores housekeeping _*.json files during scans and still registers goals", async () => {

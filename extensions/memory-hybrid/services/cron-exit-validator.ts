@@ -91,6 +91,10 @@ export interface ExitValidationResult {
   exitPath?: string;
   /** Error message if validation failed */
   error?: string;
+  /** Primary failure classification when validation fails (e.g. wrapper_aborted_before_steps). */
+  failureClass?: string;
+  /** Wrapper/shell exit code when the harness aborted before any hm_step ran. */
+  wrapperExitCode?: number;
   /** Best-effort grouped maintenance telemetry issues derived from the run. */
   reportableIssues: MaintenanceTelemetryIssue[];
 }
@@ -206,6 +210,86 @@ function logContentIndicatesIntentionalFeatureSkip(text: string): boolean {
   if (/\bpersona\s*proposals?\b.*\b(disabled|skipped|enabled is false)\b/.test(lower)) return true;
   if (/\bskip the script\b.*\b(disabled|reply)\b/.test(lower)) return true;
   return false;
+}
+
+/** True when the bash harness reached the labeled steps section (see cron-job-bash-harness). */
+export function logHasReachedStepsSection(text: string): boolean {
+  return /--- steps ---/.test(text);
+}
+
+/** Best-effort parse of wrapper/shell exit before hm_step lines were written. */
+export function parseWrapperExitCodeFromLog(text: string, jobName?: string): number | undefined {
+  const lines = (text ?? "").split("\n").reverse();
+  const patterns: RegExp[] = [/\bHM_STEP_EXIT=(\d+)\b/i, /\bwrapper\s+exit=(\d+)\b/i];
+  if (jobName) {
+    const escaped = jobName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    patterns.unshift(new RegExp(`\\b${escaped}\\s+exit=(\\d+)\\b`, "i"));
+  }
+  for (const line of lines) {
+    for (const pattern of patterns) {
+      const match = line.match(pattern);
+      if (match) {
+        const code = Number.parseInt(match[1] ?? "", 10);
+        if (Number.isFinite(code)) return code;
+      }
+    }
+  }
+  return undefined;
+}
+
+export interface WrapperAbortDetection {
+  aborted: boolean;
+  jobName: string;
+  wrapperExitCode?: number;
+}
+
+/** Distinguish wrapper/shell abort before hm_step from steps that ran and failed. */
+export function detectWrapperAbortedBeforeSteps(opts: {
+  logContent: string;
+  ledgerSteps: ExitStep[];
+  requiredSteps: string[];
+  missingSteps: string[];
+  exitPath: string;
+}): WrapperAbortDetection {
+  const jobName = extractMaintenanceJobName(opts.exitPath);
+  const base = { aborted: false as const, jobName };
+  if (opts.ledgerSteps.length > 0) return base;
+  if (opts.requiredSteps.length === 0 || opts.missingSteps.length !== opts.requiredSteps.length) return base;
+  if (!opts.logContent.trim()) return base;
+  if (logContentIndicatesIntentionalFeatureSkip(opts.logContent)) return base;
+
+  const reachedSteps = logHasReachedStepsSection(opts.logContent);
+  const hasHmStepInvocation = /\bhm_step\b/.test(opts.logContent);
+  if (reachedSteps && hasHmStepInvocation) return base;
+
+  return {
+    aborted: true,
+    jobName,
+    wrapperExitCode: parseWrapperExitCodeFromLog(opts.logContent, jobName),
+  };
+}
+
+function buildWrapperAbortIssue(
+  wrapperAbort: WrapperAbortDetection,
+  wrapperExitCode: number | undefined,
+  exitPath: string,
+  logPath: string | undefined,
+): MaintenanceTelemetryIssue {
+  return buildMaintenanceIssue({
+    jobName: wrapperAbort.jobName,
+    stepName: "validate-cron-exit",
+    failureCategory: "mechanical_failure",
+    failureClass: "wrapper_aborted_before_steps",
+    message:
+      wrapperExitCode != null
+        ? `${wrapperAbort.jobName} wrapper exited before any hm_step ran (exit=${wrapperExitCode}); HM_EXIT ledger is empty`
+        : `${wrapperAbort.jobName} wrapper aborted before any hm_step ran; HM_EXIT ledger is empty`,
+    semanticStatus: "unknown",
+    hmExitPath: exitPath,
+    hmLogPath: logPath,
+    exitCode: wrapperExitCode,
+    guardStateAfter: "not_updated",
+  });
 }
 
 export function logIndicatesIntentionalFeatureSkip(logPath: string): boolean {
@@ -2016,6 +2100,23 @@ export function validateMaintenanceExecution(
     maintenanceStatus = "success";
   }
 
+  const wrapperAbort = detectWrapperAbortedBeforeSteps({
+    logContent,
+    ledgerSteps: steps,
+    requiredSteps,
+    missingSteps,
+    exitPath,
+  });
+  let failureClass: string | undefined;
+  let wrapperExitCode: number | undefined;
+  let reportedMissingSteps = missingSteps;
+  if (wrapperAbort.aborted) {
+    failureClass = "wrapper_aborted_before_steps";
+    wrapperExitCode = wrapperAbort.wrapperExitCode;
+    reportedMissingSteps = [];
+    maintenanceStatus = "failed";
+  }
+
   let reportableIssues = collectMaintenanceTelemetryIssues({
     exitPath,
     logPath,
@@ -2023,10 +2124,14 @@ export function validateMaintenanceExecution(
     ledgerSteps: steps,
     logContent,
     failedSteps,
-    missingSteps,
+    missingSteps: wrapperAbort.aborted ? [] : missingSteps,
     unknownCommands,
     maintenanceStatus,
   });
+  if (wrapperAbort.aborted) {
+    reportableIssues = reportableIssues.filter((issue) => issue.failureClass !== "missing_required_step");
+    reportableIssues.unshift(buildWrapperAbortIssue(wrapperAbort, wrapperExitCode, exitPath, logPath));
+  }
   if (maintenanceStatus === "success" && reportableIssues.some(isGuardBlockingSemanticIssue)) {
     maintenanceStatus = "failed";
     reportableIssues = collectMaintenanceTelemetryIssues({
@@ -2036,10 +2141,14 @@ export function validateMaintenanceExecution(
       ledgerSteps: steps,
       logContent,
       failedSteps,
-      missingSteps,
+      missingSteps: wrapperAbort.aborted ? [] : missingSteps,
       unknownCommands,
       maintenanceStatus,
     });
+    if (wrapperAbort.aborted) {
+      reportableIssues = reportableIssues.filter((issue) => issue.failureClass !== "missing_required_step");
+      reportableIssues.unshift(buildWrapperAbortIssue(wrapperAbort, wrapperExitCode, exitPath, logPath));
+    }
   }
 
   // Guard should only be updated on full success (not feature-gated skips or guard-blocking semantic failures).
@@ -2048,10 +2157,15 @@ export function validateMaintenanceExecution(
 
   // Build error message
   let error: string | undefined;
-  if (maintenanceStatus === "failed" || maintenanceStatus === "partial") {
+  if (wrapperAbort.aborted) {
+    error =
+      wrapperExitCode != null
+        ? `Wrapper aborted before steps (exit=${wrapperExitCode}); no maintenance steps recorded in HM_EXIT`
+        : "Wrapper aborted before steps; no maintenance steps recorded in HM_EXIT";
+  } else if (maintenanceStatus === "failed" || maintenanceStatus === "partial") {
     const parts: string[] = [];
-    if (missingSteps.length > 0) {
-      parts.push(`Missing steps: ${missingSteps.join(", ")}`);
+    if (reportedMissingSteps.length > 0) {
+      parts.push(`Missing steps: ${reportedMissingSteps.join(", ")}`);
     }
     if (failedSteps.length > 0) {
       parts.push(
@@ -2080,12 +2194,14 @@ export function validateMaintenanceExecution(
     maintenanceStatus,
     semanticStatus,
     steps,
-    missingSteps,
+    missingSteps: reportedMissingSteps,
     failedSteps,
     guardUpdated,
     exitPath,
     logPath,
     error,
+    failureClass,
+    wrapperExitCode,
     reportableIssues,
   };
 }
@@ -2099,6 +2215,8 @@ export function generateCronStatusReport(validation: ExitValidationResult): stri
     {
       maintenanceStatus: validation.maintenanceStatus,
       semanticStatus: validation.semanticStatus,
+      failureClass: validation.failureClass,
+      wrapperExitCode: validation.wrapperExitCode,
       recommendedExitCode: resolveValidateCronExitCode(validation),
       requiredSteps: validation.steps.map((s) => ({
         name: s.step,

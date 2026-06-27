@@ -76,6 +76,33 @@ export function assertSafeRequestedVersionArg(version: string): void {
   if (v.startsWith("-")) throw new Error("Upgrade version must not start with '-'");
 }
 
+/** Relative paths that must exist in the plugin package root after a successful upgrade. */
+export const UPGRADE_REQUIRED_BUNDLE_PATHS = [
+  "skills/hybrid-memory/SKILL.md",
+  "workspace-snippets/TOOLS-hybrid-memory-body.md",
+  "dist/index.js",
+  "openclaw.plugin.json",
+] as const;
+
+/**
+ * Parent directory passed to `OPENCLAW_EXTENSIONS_DIR` so the standalone installer
+ * swaps into the same layout as the currently running plugin (extensions or npm-project).
+ */
+export function resolveUpgradeExtensionsParentDir(pluginRootDir: string): string {
+  return dirname(pluginRootDir);
+}
+
+/** Returns an error message when bundled upgrade assets are missing; otherwise undefined. */
+export function verifyUpgradePluginBundle(pluginRootDir: string): string | undefined {
+  for (const rel of UPGRADE_REQUIRED_BUNDLE_PATHS) {
+    const abs = join(pluginRootDir, rel);
+    if (!existsSync(abs)) {
+      return `Post-upgrade verification failed: missing ${rel} under ${pluginRootDir}`;
+    }
+  }
+  return undefined;
+}
+
 function bundledHybridMemorySkillDir(pluginRootDir: string): string {
   return join(pluginRootDir, "skills", HYBRID_MEMORY_SKILL_DIR);
 }

@@ -11,6 +11,67 @@ import {
 } from "../services/deprecated-cron-commands.js";
 
 describe("deprecated-cron-commands", () => {
+  it("detects deprecated analyze-maintenance-logs flat CLI (#1983)", () => {
+    const msg =
+      'hm_step "analyze-maintenance-logs" openclaw hybrid-mem analyze-maintenance-logs --since 24h --auto-fix --strict';
+    const hits = findDeprecatedHybridMemCronTokens(msg).map((h) => h.token);
+    expect(hits).toContain("hybrid-mem analyze-maintenance-logs");
+  });
+
+  it("verify --fix path normalizes stale analyze-maintenance-logs cron messages (#1983)", () => {
+    const openclawDir = mkdtempSync(join(tmpdir(), "hm-test-openclaw-"));
+    try {
+      mkdirSync(join(openclawDir, "cron"), { recursive: true });
+      writeFileSync(join(openclawDir, "openclaw.json"), "{}", "utf-8");
+
+      const jobsPath = join(openclawDir, "cron", "jobs.json");
+      writeFileSync(
+        jobsPath,
+        JSON.stringify(
+          {
+            jobs: [
+              {
+                pluginJobId: "hybrid-mem:maintenance-log-analyzer",
+                id: "hybrid-mem:maintenance-log-analyzer",
+                name: "maintenance-log-analyzer",
+                schedule: { kind: "cron", expr: "30 3 * * *" },
+                enabled: true,
+                sessionTarget: "isolated",
+                payload: {
+                  kind: "agentTurn",
+                  message:
+                    'EXECUTION\n```bash\nhm_step "analyze-maintenance-logs" openclaw hybrid-mem analyze-maintenance-logs --since 24h --auto-fix --glitchtip --digest md --strict\n```',
+                },
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      const result = ensureMaintenanceCronJobs(openclawDir, undefined, {
+        normalizeExisting: true,
+        reEnableDisabled: false,
+        consolidatedCronJobs: false,
+      });
+      expect(result.normalized).toContain("maintenance-log-analyzer");
+
+      const next = JSON.parse(readFileSync(jobsPath, "utf-8")) as { jobs: Array<Record<string, unknown>> };
+      const job = next.jobs.find((j) => j.pluginJobId === "hybrid-mem:maintenance-log-analyzer") as
+        | Record<string, unknown>
+        | undefined;
+      expect(job).toBeTruthy();
+      const payload = job?.payload as { message?: unknown } | undefined;
+      const msg = String(payload?.message ?? job?.message ?? "");
+      expect(msg).toContain("openclaw hybrid-mem maintenance analyze-logs");
+      expect(msg).not.toContain("hybrid-mem analyze-maintenance-logs");
+    } finally {
+      rmSync(openclawDir, { recursive: true, force: true });
+    }
+  });
+
   it("detects deprecated command tokens in cron message text", () => {
     const msg = "run: openclaw hybrid-mem consolidate-episodes --since 7d";
     const hits = findDeprecatedHybridMemCronTokens(msg).map((h) => h.token);

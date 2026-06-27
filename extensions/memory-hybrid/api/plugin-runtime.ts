@@ -130,6 +130,8 @@ export interface PluginRuntime {
   lastAutoRecallPromptRef: { value: string | null };
   /** Per-turn shared prepend token budget across before_agent_start hooks. */
   prependBudgetRef: import("../services/prepend-budget.js").PrependBudgetRef;
+  /** Turn start timestamp for gateway before_agent_start wall-clock budget (#1979). */
+  beforeAgentStartTurnRef: import("../services/before-agent-start-budget.js").BeforeAgentStartTurnRef;
   /** Last progressive index fact IDs (1-based position → fact id). @deprecated use progressiveIndexBySession */
   lastProgressiveIndexIds: string[];
   progressiveIndexBySession: Map<string, string[]>;

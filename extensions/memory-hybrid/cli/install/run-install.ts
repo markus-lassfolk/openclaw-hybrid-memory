@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
-
 import { getEnv } from "../../utils/env-manager.js";
 import { findPluginRoot } from "../../utils/plugin-root.js";
 
@@ -33,6 +32,8 @@ import {
   npxExecutable,
   PLUGIN_JOB_ID_PREFIX,
   resolveAgentWorkspaceRoot,
+  resolveUpgradeExtensionsParentDir,
+  verifyUpgradePluginBundle,
 } from "./workspace.js";
 
 export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
@@ -354,9 +355,61 @@ export function runUninstallForCli(
   return { ...base, outcome } as UninstallCliResult;
 }
 
+function rollbackUpgradePluginDir(pluginDir: string, backupDir: string): void {
+  if (existsSync(pluginDir)) {
+    const failedDir = join(dirname(pluginDir), `${basename(pluginDir)}.failed-${Date.now()}`);
+    try {
+      renameSync(pluginDir, failedDir);
+    } catch {
+      rmSync(pluginDir, { recursive: true, force: true });
+    }
+  }
+  if (existsSync(backupDir)) {
+    renameSync(backupDir, pluginDir);
+  }
+}
+
+function findNpmProjectRootForPlugin(pluginRootDir: string): string | undefined {
+  const nodeModulesDir = dirname(pluginRootDir);
+  if (basename(nodeModulesDir) !== "node_modules") return undefined;
+  const projectRoot = dirname(nodeModulesDir);
+  const pkgPath = join(projectRoot, "package.json");
+  if (!existsSync(pkgPath)) return undefined;
+  try {
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { dependencies?: Record<string, string> };
+    if (typeof pkg.dependencies?.[PLUGIN_ID] === "string") return projectRoot;
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+async function updateNpmProjectDependencyPin(
+  pluginRootDir: string,
+  version: string,
+): Promise<{ updated: boolean; warning?: string }> {
+  const projectRoot = findNpmProjectRootForPlugin(pluginRootDir);
+  if (!projectRoot) return { updated: false };
+  const { spawnSync } = await import("node:child_process");
+  const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
+  const r = spawnSync(npmCmd, ["install", `${PLUGIN_ID}@${version}`, "--save-exact"], {
+    cwd: projectRoot,
+    stdio: "inherit",
+    shell: false,
+  });
+  if (r.status !== 0) {
+    return {
+      updated: false,
+      warning: `npm project pin update failed in ${projectRoot} (exit ${r.status ?? "unknown"}). Run: npm install ${PLUGIN_ID}@${version} --save-exact`,
+    };
+  }
+  return { updated: true };
+}
+
 export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: string): Promise<UpgradeCliResult> {
   const { cfg, logger } = ctx;
   const extDir = findPluginRoot(import.meta.url);
+  const extensionsParentDir = resolveUpgradeExtensionsParentDir(extDir);
   const { spawnSync } = await import("node:child_process");
   const version = requestedVersion?.trim() || "latest";
   try {
@@ -381,26 +434,17 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
       error: `Could not move plugin directory for upgrade: ${e}. Use standalone installer: npx -y openclaw-hybrid-memory-install ${version}`,
     };
   }
-  // Use standalone installer so upgrade works even when config is invalid (plugin missing).
+  // Standalone installer works even when config is invalid; target the same parent dir as the running plugin.
   const npxArgs = ["-y", "openclaw-hybrid-memory-install", version];
   const r = spawnSync(npxExecutable(), npxArgs, {
     stdio: "inherit",
     cwd: homedir(),
     shell: false,
+    env: { ...process.env, OPENCLAW_EXTENSIONS_DIR: extensionsParentDir },
   });
   if (r.status !== 0) {
-    // Best-effort rollback: restore original plugin directory.
     try {
-      if (existsSync(extDir)) {
-        // Installer might have created a partial directory; avoid clobbering it.
-        const failedDir = join(dirname(extDir), `${basename(extDir)}.failed-${Date.now()}`);
-        try {
-          renameSync(extDir, failedDir);
-        } catch {
-          rmSync(extDir, { recursive: true, force: true });
-        }
-      }
-      renameSync(backupDir, extDir);
+      rollbackUpgradePluginDir(extDir, backupDir);
     } catch (e) {
       capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:rollback" });
       return {
@@ -413,12 +457,24 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
       error: `Install failed (exit ${r.status}). Run manually: npx -y openclaw-hybrid-memory-install ${version}`,
     };
   }
-  try {
-    rmSync(backupDir, { recursive: true, force: true });
-  } catch (e) {
-    // Non-fatal; backup cleanup failure shouldn't block upgrade.
-    capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:cleanup-backup" });
+
+  const bundleError = verifyUpgradePluginBundle(extDir);
+  if (bundleError) {
+    try {
+      rollbackUpgradePluginDir(extDir, backupDir);
+    } catch (e) {
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:rollback-bundle" });
+      return {
+        ok: false,
+        error: `${bundleError}. Rollback also failed: ${e}. Run manually: npx -y openclaw-hybrid-memory-install ${version}`,
+      };
+    }
+    return {
+      ok: false,
+      error: `${bundleError}. Previous plugin version restored from backup.`,
+    };
   }
+
   let installedVersion = version;
   try {
     const pkgAfterPath = join(extDir, "package.json");
@@ -429,6 +485,14 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
   } catch (err) {
     capturePluginError(err as Error, { subsystem: "cli", operation: "runUpgradeForCli:read-version" });
   }
+
+  const npmPin = await updateNpmProjectDependencyPin(extDir, installedVersion);
+  if (npmPin.warning) {
+    logger?.warn?.(`memory-hybrid: upgrade — ${npmPin.warning}`);
+  } else if (npmPin.updated) {
+    logger?.info?.(`memory-hybrid: upgrade — npm project dependency pinned to ${installedVersion}`);
+  }
+
   // Ensure maintenance cron jobs exist (add missing, normalize existing; never re-enable disabled)
   try {
     const openclawDir = join(homedir(), ".openclaw");
@@ -486,14 +550,29 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
   } else if (toolsAfterUpgrade.updated) {
     logger?.info?.(`memory-hybrid: TOOLS.md hybrid block updated at ${toolsAfterUpgrade.path}`);
   }
+
+  const workspaceErrors = [skillAfterUpgrade.error, toolsAfterUpgrade.error].filter(
+    (msg): msg is string => typeof msg === "string" && msg.length > 0,
+  );
+  if (workspaceErrors.length > 0) {
+    return {
+      ok: false,
+      error: `Upgrade installed plugin ${installedVersion} at ${extDir}, but workspace refresh failed: ${workspaceErrors.join("; ")}`,
+    };
+  }
+
+  try {
+    rmSync(backupDir, { recursive: true, force: true });
+  } catch (e) {
+    capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:cleanup-backup" });
+  }
+
   return {
     ok: true,
     version: installedVersion,
     pluginDir: extDir,
     workspaceSkillPath: skillAfterUpgrade.path,
-    workspaceSkillError: skillAfterUpgrade.error,
     workspaceToolsMdPath: toolsAfterUpgrade.path,
-    workspaceToolsMdError: toolsAfterUpgrade.error,
     workspaceToolsMdUpdated: toolsAfterUpgrade.updated,
   };
 }

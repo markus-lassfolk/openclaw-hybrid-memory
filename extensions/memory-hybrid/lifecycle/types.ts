@@ -23,6 +23,7 @@ import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { FrustrationConversationTurn } from "../services/frustration-detector.js";
 import type { PrependBudgetRef } from "../services/prepend-budget.js";
+import type { BeforeAgentStartTurnRef } from "../services/before-agent-start-budget.js";
 import type { ChangeFeed } from "../services/change-feed.js";
 import type { WorkflowTracker } from "../services/workflow-tracker.js";
 import type { MemoryEntry, MemoryScope, SearchResult } from "../types/memory.js";
@@ -93,6 +94,8 @@ export interface LifecycleContext {
   currentRegistrationGenerationRef?: { value: number };
   /** Per-turn shared prepend token budget (initialized by recall, consumed by downstream hooks). */
   prependBudgetRef?: PrependBudgetRef;
+  /** Turn start timestamp for gateway before_agent_start wall-clock budget (#1979). */
+  beforeAgentStartTurnRef?: BeforeAgentStartTurnRef;
   /** Fact IDs already injected this turn (lifecycle + ContextEngine dedup). */
   injectedFactIdsBySession?: import("../services/session-injection-dedup.js").InjectedFactIdsBySession;
   /** Live change feed for operator notifications. */

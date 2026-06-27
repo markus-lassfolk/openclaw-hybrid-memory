@@ -1061,14 +1061,14 @@ export function createPluginService(ctx: PluginServiceContext) {
     stop: async () => {
       shuttingDown = true;
       timers.shuttingDownRef.value = true;
-      // Flush pending error reports with timeout so persisted queue replay can reduce dropped diagnostics.
+      clearRuntimeTimers(timers);
+      // Flush pending error reports with adaptive timeout so persisted queue replay can drain.
       if (isErrorReporterActive()) {
-        const flushed = await flushErrorReporter(2000).catch(() => false);
+        const flushed = await flushErrorReporter().catch(() => false);
         if (!flushed) {
           api.logger.warn("memory-hybrid: error reporter flush incomplete; pending reports will retry on next startup");
         }
       }
-      clearRuntimeTimers(timers);
       if (dashboardServer) {
         try {
           dashboardServer.close();

@@ -20,6 +20,7 @@ import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
 import { applyPrependBudget } from "../services/prepend-budget.js";
+import { shouldSkipOptionalBeforeAgentStartStage } from "../services/before-agent-start-budget.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
 import { resolveSessionKeyFromHookEvent } from "./session-state.js";
 import type { LifecycleContext } from "./types.js";
@@ -35,6 +36,10 @@ export function registerGoalStewardshipInjection(
 
   api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
     try {
+      if (shouldSkipOptionalBeforeAgentStartStage(ctx.beforeAgentStartTurnRef)) {
+        api.logger?.debug?.("memory-hybrid: goal stewardship skipped — before_agent_start budget exhausted");
+        return undefined;
+      }
       const injectionEnabled = await isGoalStewardshipInjectionEnabled(ctx.cfg, goalsDir);
       if (!injectionEnabled) return undefined;
 

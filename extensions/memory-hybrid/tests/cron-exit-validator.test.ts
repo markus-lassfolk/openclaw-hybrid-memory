@@ -445,8 +445,38 @@ error: unknown command 'bar'
 
       expect(result.maintenanceStatus).toBe("failed");
       expect(result.guardUpdated).toBe(false);
-      expect(result.missingSteps).toEqual(["dream-cycle"]);
-      expect(result.error).toContain("Missing steps");
+      expect(result.failureClass).toBe("wrapper_aborted_before_steps");
+      expect(result.missingSteps).toEqual([]);
+      expect(result.error).toContain("Wrapper aborted before steps");
+    });
+
+    it("classifies empty HM_EXIT with wrapper exit 64 as wrapper_aborted_before_steps (#1982)", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "maintenance-20260625T160532Z-17113.exit.txt");
+      const logPath = join(tmpDir, "maintenance-20260625T160532Z-17113.log");
+      writeFileSync(exitPath, "");
+      writeFileSync(
+        logPath,
+        [
+          "HM_JOB=maintenance",
+          "RUN_ID=20260625T160532Z-17113",
+          "HM_STEP_EXIT=64",
+          "FAILED: maintenance",
+        ].join("\n"),
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["maintenance"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.failureClass).toBe("wrapper_aborted_before_steps");
+      expect(result.wrapperExitCode).toBe(64);
+      expect(result.missingSteps).toEqual([]);
+      expect(result.failedSteps).toEqual([]);
+      expect(result.error).toBe(
+        "Wrapper aborted before steps (exit=64); no maintenance steps recorded in HM_EXIT",
+      );
+      expect(result.reportableIssues.some((i) => i.failureClass === "wrapper_aborted_before_steps")).toBe(true);
+      expect(result.reportableIssues.some((i) => i.failureClass === "missing_required_step")).toBe(false);
     });
 
     it("fails dream-cycle validation when continuous verification reports degraded machine status", () => {

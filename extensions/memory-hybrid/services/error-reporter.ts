@@ -130,6 +130,7 @@ class GlitchTipReporter {
   private breadcrumbs: ReportBreadcrumb[] = [];
   private pendingFetches = new Set<Promise<void>>();
   private pendingReports = new Map<string, PendingReportRecord>();
+  private pendingFingerprintIndex = new Map<string, string>();
   private inFlightReportIds = new Set<string>();
   private queueLoadPromise: Promise<void> | null = null;
   private queueLoaded = false;
@@ -297,6 +298,28 @@ class GlitchTipReporter {
     }
   }
 
+  getPendingCount(): number {
+    return this.pendingReports.size;
+  }
+
+  private eventFingerprint(event: GlitchTipEvent): string {
+    if (Array.isArray(event.fingerprint) && event.fingerprint.length > 0) {
+      return buildFingerprintKey(event.fingerprint.map((part) => String(part)));
+    }
+    const exc = event.exception?.values?.[0];
+    const type = typeof exc?.type === "string" ? exc.type : "Error";
+    const msg = typeof exc?.value === "string" ? exc.value : "";
+    return `${type}:${scrubString(msg).slice(0, 100)}`;
+  }
+
+  private rememberPendingFingerprint(eventId: string, event: GlitchTipEvent): void {
+    this.pendingFingerprintIndex.set(this.eventFingerprint(event), eventId);
+  }
+
+  private forgetPendingFingerprint(event: GlitchTipEvent): void {
+    this.pendingFingerprintIndex.delete(this.eventFingerprint(event));
+  }
+
   private trackPending(promise: Promise<void>): void {
     const tracked = promise.finally(() => {
       this.pendingFetches.delete(tracked);
@@ -367,7 +390,13 @@ class GlitchTipReporter {
   private async enqueuePendingReport(eventId: string, event: GlitchTipEvent): Promise<void> {
     if (!this.pendingQueuePath) return;
     await this.withQueueLock(async () => {
+      const fingerprint = this.eventFingerprint(event);
+      const existingId = this.pendingFingerprintIndex.get(fingerprint);
+      if (existingId && this.pendingReports.has(existingId)) {
+        return;
+      }
       this.pendingReports.set(eventId, { id: eventId, event, enqueuedAt: Date.now() });
+      this.rememberPendingFingerprint(eventId, event);
       const pruned = this.prunePendingReportsLocked();
       await this.persistPendingReportsLocked();
       if (pruned > 0) {
@@ -379,6 +408,9 @@ class GlitchTipReporter {
   private async acknowledgeDelivered(eventId: string): Promise<void> {
     if (!this.pendingQueuePath) return;
     await this.withQueueLock(async () => {
+      const record = this.pendingReports.get(eventId);
+      if (!record) return;
+      this.forgetPendingFingerprint(record.event);
       if (!this.pendingReports.delete(eventId)) return;
       await this.persistPendingReportsLocked();
     });
@@ -419,11 +451,17 @@ class GlitchTipReporter {
                 ? parsed.event.event_id
                 : parsed.id;
             const event = { ...parsed.event, event_id: persistedEventId };
+            const fingerprint = this.eventFingerprint(event);
+            const existingId = this.pendingFingerprintIndex.get(fingerprint);
+            if (existingId && this.pendingReports.has(existingId)) {
+              continue;
+            }
             this.pendingReports.set(persistedEventId, {
               id: persistedEventId,
               event,
               enqueuedAt: typeof parsed.enqueuedAt === "number" ? parsed.enqueuedAt : Date.now(),
             });
+            this.rememberPendingFingerprint(persistedEventId, event);
           } catch (err) {
             logger.warn?.(
               `[ErrorReporter] Failed parsing pending-report queue line, skipping: ${err instanceof Error ? err.message : String(err)}`,
@@ -457,6 +495,8 @@ class GlitchTipReporter {
     while (this.pendingReports.size > this.maxPendingReports) {
       const oldestId = this.pendingReports.keys().next().value as string | undefined;
       if (!oldestId) break;
+      const record = this.pendingReports.get(oldestId);
+      if (record) this.forgetPendingFingerprint(record.event);
       this.pendingReports.delete(oldestId);
       pruned++;
     }
@@ -675,6 +715,40 @@ export async function initErrorReporter(
   initialized = true;
   const dsnHost = resolvedDsn.split("@")[1] || "***";
   logger.info?.("[ErrorReporter] Initialized with DSN host:", dsnHost);
+  scheduleStartupErrorReporterDrain();
+}
+
+/** Adaptive shutdown flush budget from pending queue depth (#1978). */
+export function computeShutdownFlushTimeoutMs(pendingCount: number): number {
+  if (pendingCount <= 0) return 2000;
+  return Math.min(30_000, Math.max(2000, pendingCount * 50));
+}
+
+export function getPendingErrorReportCount(): number {
+  return reporter?.getPendingCount() ?? 0;
+}
+
+function scheduleStartupErrorReporterDrain(): void {
+  if (!reporter) return;
+  void (async () => {
+    try {
+      await reporter?.initPersistentQueue();
+      const count = reporter?.getPendingCount() ?? 0;
+      if (count === 0) return;
+      logger.info?.(`[ErrorReporter] Draining ${count} pending report(s) from previous run`);
+      const flushed = await reporter?.flush(computeShutdownFlushTimeoutMs(count));
+      if (flushed) {
+        logger.info?.("[ErrorReporter] Startup pending queue drained");
+      } else {
+        const remaining = reporter?.getPendingCount() ?? 0;
+        logger.debug?.(`[ErrorReporter] Startup drain incomplete (${remaining} remaining)`);
+      }
+    } catch (err) {
+      logger.debug?.(
+        `[ErrorReporter] Startup drain failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  })();
 }
 
 /**
@@ -768,12 +842,16 @@ export function isErrorReporterActive(): boolean {
 /**
  * Flush pending error reports with timeout
  */
-export async function flushErrorReporter(timeoutMs = 2000): Promise<boolean> {
+export async function flushErrorReporter(timeoutMs?: number): Promise<boolean> {
   if (!initialized || !reporter) {
     return false;
   }
+  const budget =
+    typeof timeoutMs === "number" && Number.isFinite(timeoutMs)
+      ? timeoutMs
+      : computeShutdownFlushTimeoutMs(reporter.getPendingCount());
   try {
-    return await reporter.flush(timeoutMs);
+    return await reporter.flush(budget);
   } catch (err) {
     logger.warn?.("[ErrorReporter] Flush failed:", err);
     return false;

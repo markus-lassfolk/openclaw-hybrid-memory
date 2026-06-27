@@ -8,6 +8,7 @@
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { INTERACTIVE_RECALL_STAGE_TIMEOUT_MS } from "../services/retrieval-mode-policy.js";
+import { logSlowBeforeAgentStartIfNeeded, resolveBeforeAgentStartStageTimeoutMs } from "../services/before-agent-start-budget.js";
 import { isRecallContextSuperseded } from "../utils/registration-superseded.js";
 import type { LifecycleContext, RecallStageResult, SessionState } from "./types.js";
 import { buildDegradedFtsHotRecallStage } from "./stage-recall/degraded-recall.js";
@@ -24,6 +25,10 @@ export async function runRecallStage(
   if (isRecallContextSuperseded(ctx)) {
     return { kind: "empty", prependContext: undefined };
   }
+  const stageTimeoutMs = resolveBeforeAgentStartStageTimeoutMs(
+    ctx.beforeAgentStartTurnRef,
+    RECALL_STAGE_TIMEOUT_MS,
+  );
   const ac = new AbortController();
   const { signal } = ac;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -33,7 +38,7 @@ export async function runRecallStage(
       recallSettled = true;
       return result;
     });
-    return await Promise.race([
+    const result = await Promise.race([
       recallPromise,
       new Promise<RecallStageResult | null>((resolve) => {
         timer = setTimeout(() => {
@@ -45,9 +50,11 @@ export async function runRecallStage(
           void buildDegradedFtsHotRecallStage(event, api, ctx, sessionState, "timeout").then((degraded) => {
             if (!recallSettled) resolve(degraded);
           });
-        }, RECALL_STAGE_TIMEOUT_MS);
+        }, stageTimeoutMs);
       }),
     ]);
+    logSlowBeforeAgentStartIfNeeded(api.logger, ctx.beforeAgentStartTurnRef, "recall");
+    return result;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }

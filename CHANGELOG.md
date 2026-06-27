@@ -23,6 +23,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.6.271] - 2026-06-27
+
+### Fixed
+
+- **Upgrade reliability (#1985):** `hybrid-mem upgrade` passes `OPENCLAW_EXTENSIONS_DIR` to the standalone installer, verifies bundled assets before deleting backup, fails on workspace refresh errors, and best-effort pins npm-project dependencies.
+- **Maintenance CLI deprecation (#1983):** Cron template and `verify --fix` normalize `analyze-maintenance-logs` → `maintenance analyze-logs`.
+- **Validate-exit (#1982):** Empty HM_EXIT with wrapper abort before `hm_step` reports `failureClass: wrapper_aborted_before_steps` instead of misleading missing-step errors.
+- **Goal assess (#1981):** Null-safe params and corrupt goal JSON return structured tool errors instead of throwing on `.trim()`.
+- **Episode contradictions (#1976):** Scoped `memory_record_episode` failure scans no longer build invalid SQL (`AND AND`).
+- **Corrupt goal telemetry (#1977):** Quarantine corrupt goal files to `.json.corrupt` and dedupe error-reporter captures per file.
+- **Error reporter drain (#1978):** Adaptive shutdown flush, startup background drain, and fingerprint dedupe in the pending queue.
+- **before_agent_start budget (#1979):** 12s gateway hook budget caps recall timeout and skips optional prepend stages when exhausted.
+- **Workboard shutdown (#1980):** Suppress RPC/update warnings during gateway shutdown; stop timers before error-reporter flush.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.6.271**.
+
+---
+
 ## [2026.6.270] - 2026-06-27
 
 ### Fixed

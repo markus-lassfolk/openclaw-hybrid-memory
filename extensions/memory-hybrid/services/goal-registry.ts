@@ -4,7 +4,7 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 
 import type { EventLog } from "../backends/event-log.js";
@@ -23,6 +23,10 @@ import { nowIso } from "../utils/dates.js";
 const INDEX_FILENAME = "_index.json";
 const TERMINAL: GoalStatus[] = ["completed", "failed", "abandoned"];
 const GOAL_HOUSEKEEPING_PREFIX = "_";
+const GOAL_CORRUPT_SUFFIX = ".json.corrupt";
+
+/** Per-process dedupe so corrupt goal telemetry is not re-enqueued every sync (#1977). */
+const reportedCorruptGoalFiles = new Set<string>();
 
 export function isTerminalStatus(s: GoalStatus): boolean {
   return TERMINAL.includes(s);
@@ -125,7 +129,32 @@ async function ensureDir(dir: string): Promise<void> {
 }
 
 function isGoalRegistryJsonFilename(filename: string): boolean {
+  if (filename.endsWith(GOAL_CORRUPT_SUFFIX)) return false;
   return filename.endsWith(".json") && filename !== INDEX_FILENAME && !filename.startsWith(GOAL_HOUSEKEEPING_PREFIX);
+}
+
+function corruptGoalQuarantinePath(goalsDir: string, filename: string): string {
+  const id = filename.replace(/\.json$/i, "");
+  return join(goalsDir, `${id}${GOAL_CORRUPT_SUFFIX}`);
+}
+
+async function quarantineCorruptGoalFile(goalsDir: string, filename: string): Promise<void> {
+  const srcPath = join(goalsDir, filename);
+  const destPath = corruptGoalQuarantinePath(goalsDir, filename);
+  if (!existsSync(srcPath) || existsSync(destPath)) return;
+  try {
+    await rename(srcPath, destPath);
+  } catch {
+    /* quarantine is best-effort */
+  }
+}
+
+async function handleCorruptGoalRegistryEntry(goalsDir: string, filename: string, err?: unknown): Promise<void> {
+  const dedupeKey = join(goalsDir, filename);
+  if (reportedCorruptGoalFiles.has(dedupeKey)) return;
+  reportedCorruptGoalFiles.add(dedupeKey);
+  await quarantineCorruptGoalFile(goalsDir, filename);
+  captureInvalidGoalRegistryEntry(filename, err);
 }
 
 function isGoalLike(value: unknown): value is Goal {
@@ -148,6 +177,7 @@ function captureInvalidGoalRegistryEntry(filename: string, err?: unknown): void 
     severity: "warning",
     filename,
     reason,
+    fingerprint: ["invalid_goal_registry_entry", filename],
   });
 }
 
@@ -189,10 +219,10 @@ export async function rebuildGoalIndex(goalsDir: string): Promise<void> {
           lastAssessedAt: g.lastAssessedAt,
         });
       } else {
-        captureInvalidGoalRegistryEntry(f);
+        await handleCorruptGoalRegistryEntry(goalsDir, f);
       }
     } catch (err) {
-      captureInvalidGoalRegistryEntry(f, err);
+      await handleCorruptGoalRegistryEntry(goalsDir, f, err);
     }
   }
   const index: GoalIndex = { updatedAt: nowIso(), goals };
@@ -203,6 +233,20 @@ function normalizeGoalJson(g: Goal): Goal {
   return {
     ...g,
     linkedTasks: Array.isArray(g.linkedTasks) ? g.linkedTasks : [],
+    currentBlockers: Array.isArray(g.currentBlockers)
+      ? g.currentBlockers
+          .filter((b): b is string => typeof b === "string")
+          .map((b) => b.trim())
+          .filter(Boolean)
+      : [],
+    assessmentCount: typeof g.assessmentCount === "number" && Number.isFinite(g.assessmentCount) ? g.assessmentCount : 0,
+    dispatchCount: typeof g.dispatchCount === "number" && Number.isFinite(g.dispatchCount) ? g.dispatchCount : 0,
+    maxAssessments:
+      typeof g.maxAssessments === "number" && Number.isFinite(g.maxAssessments) ? g.maxAssessments : 10,
+    maxDispatches: typeof g.maxDispatches === "number" && Number.isFinite(g.maxDispatches) ? g.maxDispatches : 5,
+    lastOutcome: typeof g.lastOutcome === "string" ? g.lastOutcome : null,
+    lastAssessedAt: typeof g.lastAssessedAt === "string" ? g.lastAssessedAt : null,
+    lastDispatchedAt: typeof g.lastDispatchedAt === "string" ? g.lastDispatchedAt : null,
     lastBlockerFingerprint: g.lastBlockerFingerprint ?? null,
     sameBlockerStreak: g.sameBlockerStreak ?? 0,
     circuitBreakerLastProgressAssessmentCount: g.circuitBreakerLastProgressAssessmentCount ?? 0,
@@ -239,7 +283,7 @@ export async function listGoals(goalsDir: string): Promise<Goal[]> {
       if (g) out.push(g);
     } catch (err) {
       // Keep registry scans isolated: one corrupt goal file must not abort all goal processing.
-      captureInvalidGoalRegistryEntry(f, err);
+      await handleCorruptGoalRegistryEntry(goalsDir, f, err);
     }
   }
   return out;
@@ -447,10 +491,37 @@ export async function appendGoalHistory(goalsDir: string, id: string, entry: Goa
   });
 }
 
-export async function resolveGoalId(goalsDir: string, idOrLabel: string): Promise<Goal | null> {
-  const t = idOrLabel.trim();
-  if (!t) return null;
-  const byId = await readGoal(goalsDir, t);
-  if (byId) return byId;
-  return readGoalByLabel(goalsDir, t);
+export type ResolveGoalIdResult =
+  | { ok: true; goal: Goal }
+  | { ok: false; code: "invalid_ref" | "not_found" | "corrupt"; message: string };
+
+export async function resolveGoalIdResult(
+  goalsDir: string,
+  idOrLabel: string | undefined | null,
+): Promise<ResolveGoalIdResult> {
+  const t = typeof idOrLabel === "string" ? idOrLabel.trim() : "";
+  if (!t) {
+    return { ok: false, code: "invalid_ref", message: "goal_id is required." };
+  }
+  try {
+    const byId = await readGoal(goalsDir, t);
+    if (byId) return { ok: true, goal: byId };
+  } catch (err) {
+    return {
+      ok: false,
+      code: "corrupt",
+      message: `Goal state could not be loaded for stewardship processing (${String(err)}). Repair or quarantine state/goals/${t}.json.`,
+    };
+  }
+  const byLabel = await readGoalByLabel(goalsDir, t);
+  if (byLabel) return { ok: true, goal: byLabel };
+  return { ok: false, code: "not_found", message: "Goal not found." };
+}
+
+export async function resolveGoalId(
+  goalsDir: string,
+  idOrLabel: string | undefined | null,
+): Promise<Goal | null> {
+  const result = await resolveGoalIdResult(goalsDir, idOrLabel);
+  return result.ok ? result.goal : null;
 }

@@ -26,6 +26,7 @@ import {
   listActiveGoals,
   recordGoalDispatch,
   resolveGoalId,
+  resolveGoalIdResult,
   terminateGoal,
   updateGoal,
 } from "../services/goal-stewardship.js";
@@ -355,14 +356,41 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
         if (dropped) return dropped;
         try {
           const p = params as {
-            goal_id: string;
-            assessment: string;
-            next_action: string;
+            goal_id?: string;
+            assessment?: string;
+            next_action?: string;
             blockers?: string[];
             dispatched?: boolean;
           };
-          const goal = await resolveGoalId(goalsDir, p.goal_id);
-          if (!goal) return { content: [{ type: "text", text: "Goal not found." }], details: { error: "not_found" } };
+          const goalId = typeof p.goal_id === "string" ? p.goal_id.trim() : "";
+          const assessment = typeof p.assessment === "string" ? p.assessment.trim() : "";
+          const nextAction = typeof p.next_action === "string" ? p.next_action.trim() : "";
+          if (!goalId) {
+            return {
+              content: [{ type: "text", text: "goal_id is required." }],
+              details: { error: "invalid_ref" },
+            };
+          }
+          if (!assessment) {
+            return {
+              content: [{ type: "text", text: "assessment is required." }],
+              details: { error: "invalid_ref" },
+            };
+          }
+          if (!nextAction) {
+            return {
+              content: [{ type: "text", text: "next_action is required." }],
+              details: { error: "invalid_ref" },
+            };
+          }
+          const resolved = await resolveGoalIdResult(goalsDir, goalId);
+          if (!resolved.ok) {
+            return {
+              content: [{ type: "text", text: resolved.message }],
+              details: { error: resolved.code },
+            };
+          }
+          const goal = resolved.goal;
           if (isTerminalStatus(goal.status)) {
             return { content: [{ type: "text", text: `Goal already ${goal.status}` }], details: { error: "terminal" } };
           }
@@ -396,7 +424,12 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             lastDispatchedAt = ts;
           }
           const blockersExplicitlyProvided = p.blockers !== undefined;
-          const newBlockers = blockersExplicitlyProvided ? p.blockers! : goal.currentBlockers;
+          const newBlockers = blockersExplicitlyProvided
+            ? (p.blockers ?? [])
+                .filter((b): b is string => typeof b === "string")
+                .map((b) => b.trim())
+                .filter(Boolean)
+            : goal.currentBlockers;
           const newAssessmentCount = goal.assessmentCount + 1;
           const cbState = blockersExplicitlyProvided
             ? computeCircuitBreakerStateAfterAssess(goal, newBlockers, newAssessmentCount)
@@ -412,7 +445,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             lastAssessedAt: ts,
             dispatchCount,
             lastDispatchedAt,
-            lastOutcome: `${p.assessment.slice(0, 400)} | next: ${p.next_action.slice(0, 200)}`,
+            lastOutcome: `${assessment.slice(0, 400)} | next: ${nextAction.slice(0, 200)}`,
             currentBlockers: newBlockers,
             ...cbState,
           };
@@ -420,7 +453,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           const assessEntry: GoalHistoryEntry = {
             timestamp: ts,
             action: "assessed",
-            detail: `${p.assessment.slice(0, 400)} | next: ${p.next_action.slice(0, 100)}`,
+            detail: `${assessment.slice(0, 400)} | next: ${nextAction.slice(0, 100)}`,
             actor: "steward",
           };
 
@@ -491,7 +524,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             /* */
           }
           return {
-            content: [{ type: "text", text: `Assessed ${updated.label}. Next: ${p.next_action}` }],
+            content: [{ type: "text", text: `Assessed ${updated.label}. Next: ${nextAction}` }],
             details: { goal: updated },
           };
         } catch (err) {

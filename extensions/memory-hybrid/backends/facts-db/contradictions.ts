@@ -12,7 +12,7 @@ import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { nowIso } from "../../utils/dates.js";
 import { parseTags, serializeTags } from "../../utils/tags.js";
 import { rowToMemoryEntry } from "./row-mapper.js";
-import { scopeFilterClauseForAlias, scopeFilterClausePositional } from "./scope-sql.js";
+import { scopeFilterClauseForAlias, scopeFilterClausePositional, stripLeadingSqlAnd } from "./scope-sql.js";
 import type { MemoryLinkType } from "./types.js";
 
 export interface ContradictionDetectionResult {
@@ -1354,7 +1354,7 @@ export function detectEpisodeFailureContradictions(
   }
   const scope = scopeFilterClausePositional(scopeFilter);
   if (scope.clause) {
-    conditions.push(scope.clause.trim().replace(/^ AND /, ""));
+    conditions.push(stripLeadingSqlAnd(scope.clause));
     params.push(...scope.params);
   }
   const rows = db
@@ -1415,11 +1415,11 @@ export function queryContradictionSurface(
   const newScope = scopeFilterClauseForAlias(options.scopeFilter, "f_new");
   const oldScope = scopeFilterClauseForAlias(options.scopeFilter, "f_old");
   if (newScope.clause) {
-    conditions.push(newScope.clause.trim().replace(/^ AND /, ""));
+    conditions.push(stripLeadingSqlAnd(newScope.clause));
     params.push(...newScope.params);
   }
   if (oldScope.clause) {
-    conditions.push(oldScope.clause.trim().replace(/^ AND /, ""));
+    conditions.push(stripLeadingSqlAnd(oldScope.clause));
     params.push(...oldScope.params);
   }
 
