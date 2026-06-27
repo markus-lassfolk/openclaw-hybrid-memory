@@ -23,6 +23,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.6.270] - 2026-06-27
+
+### Fixed
+
+- **Active-task tools (facts ledger):** `loadActiveTasksForTools` destructures `{ active }` from `loadTaskLedgerFromFacts` so `active_task_list` / `active_task_get` no longer throw at runtime.
+- **Active-task ledger split-brain:** Default `activeTask.ledger` is now `facts`; `active_task_checkpoint` syncs `ACTIVE-TASKS.md` when `ledger: markdown` so stored tasks appear in injection and file-based tools.
+- **Active-task injection:** Tasks with missing `task_updated` (`Unknown`) are no longer treated as stale; generic-title projection filter no longer hides tasks from injection; checkpoint default title uses humanized entity label instead of `"Project task"`.
+- **Goal stewardship heartbeat:** Fall back to compact `<active-goals-summary>` when stewardship bundle is empty or dispatch rate-limited, so heartbeat turns still recall registered goals.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.6.270**.
+
+---
+
 ## [2026.6.261] - 2026-06-26
 
 ### Fixed
