@@ -144,7 +144,10 @@ async function withRoundRobinLock<T>(goalsDir: string, fn: () => Promise<T>): Pr
 
 function candidateGoals(goals: Goal[], now: number): Goal[] {
   return goals.filter((goal) => {
-    if (goal.status === "blocked") return false;
+    // Blocked/stalled/verifying goals need stewardship attention even inside cooldown.
+    if (goal.status === "blocked" || goal.status === "stalled" || goal.status === "verifying") {
+      return true;
+    }
     const last = goal.lastAssessedAt ?? goal.createdAt;
     const lastMs = Date.parse(last);
     const elapsed = now - (Number.isNaN(lastMs) ? 0 : lastMs);

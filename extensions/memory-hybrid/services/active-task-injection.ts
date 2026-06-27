@@ -17,6 +17,24 @@ import { applyActiveTaskProjectionFilters } from "./task-ledger-facts.js";
 const ACTIVE_STATUSES = new Set<ActiveTaskStatus>(["In progress", "Waiting", "Stalled", "Failed"]);
 const LABEL_LIST_CAP = 15;
 
+/** One-line warning when stale active tasks were omitted from the main injection block. */
+export function buildOmittedStaleActiveTasksWarning(
+  ledgerTasks: ActiveTaskEntry[],
+  maxChars = 400,
+): string | null {
+  const omitted = ledgerTasks.filter(
+    (t) => ACTIVE_STATUSES.has(t.status) && t.stale && t.status !== "Failed" && !isNonActionableSubagentPlaceholderTask(t),
+  );
+  if (omitted.length === 0) return null;
+  const labels = omitted
+    .slice(0, 10)
+    .map((t) => `[${t.label}]`)
+    .join(", ");
+  const suffix = omitted.length > 10 ? ` …+${omitted.length - 10} more` : "";
+  const line = `⚠️ ${omitted.length} stale active task(s) omitted from injection (need active_task_checkpoint): ${labels}${suffix}. Use active_task_list(include_stale=true).`;
+  return line.length <= maxChars ? line : `${line.slice(0, Math.max(0, maxChars - 3))}…`;
+}
+
 function parseUpdatedMs(updated: string): number {
   if (!updated || updated === "Unknown") return 0;
   const ms = Date.parse(updated);
@@ -83,7 +101,8 @@ export function prepareActiveTasksForInjection(
   if (opts.excludeFailed) {
     prepared = prepared.filter((t) => t.status !== "Failed");
   }
-  prepared = applyActiveTaskProjectionFilters(prepared, opts.projection);
+  // Generic-title filtering is for markdown projection readability, not agent injection recall.
+  prepared = applyActiveTaskProjectionFilters(prepared, { ...opts.projection, excludeGenericTitle: false });
   prepared.sort((a, b) => compareTasksForInjection(a, b, opts.userText, opts.sessionKey));
 
   const filteredActiveCount = prepared.length;
@@ -163,6 +182,15 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
       parts.push(staleResult.text);
       staleWarningTokens = estimateTokens(staleResult.text);
       remainingChars = Math.max(0, remainingChars - staleResult.text.length - 2);
+    }
+  }
+
+  if (remainingChars > 40) {
+    const omitted = buildOmittedStaleActiveTasksWarning(input.ledgerTasks, remainingChars);
+    if (omitted) {
+      parts.push(omitted);
+      staleWarningTokens += estimateTokens(omitted);
+      remainingChars = Math.max(0, remainingChars - omitted.length - 2);
     }
   }
 

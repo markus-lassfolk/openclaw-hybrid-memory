@@ -10,6 +10,7 @@ import {
   recordNudgeEmission,
   DEFAULT_MEMORY_NUDGE_CONFIG,
 } from "../services/memory-nudge.js";
+import { applyPrependBudget } from "../services/prepend-budget.js";
 import type { LifecycleContext } from "./types.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
 
@@ -36,6 +37,8 @@ export function registerMemoryNudgeInjection(api: ClawdbotPluginApi, ctx: Lifecy
 
     recordNudgeEmission(sessionKey);
     const block = formatMemoryNudgeBlock(nudge, config.maxTokens);
-    return { prependContext: `${block}\n\n` };
+    const prepend = applyPrependBudget(ctx.prependBudgetRef, `${block}\n\n`);
+    if (!prepend) return undefined;
+    return { prependContext: prepend };
   });
 }

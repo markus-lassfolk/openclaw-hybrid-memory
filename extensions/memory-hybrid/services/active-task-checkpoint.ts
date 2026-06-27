@@ -17,6 +17,15 @@ import {
   upsertProjectTaskKey,
   activeTaskRenderGoalsOpts,
 } from "./task-ledger-facts.js";
+import { factStatusToDisplay } from "./task-ledger/canonical.js";
+import {
+  completeTask,
+  readActiveTaskFile,
+  upsertTask,
+  writeActiveTaskFile,
+  type ActiveTaskEntry,
+  type ActiveTaskStatus,
+} from "./active-task.js";
 import { buildGuardPrefix } from "./cron-guard.js";
 import { describeCronStoreLocation, readOpenClawCronStore, writeOpenClawCronStore } from "./openclaw-cron-store.js";
 import type { EmbeddingProvider } from "./embeddings.js";
@@ -33,6 +42,8 @@ export interface ActiveTaskCheckpointInput {
   owner?: string;
   next?: string;
   relatedSession?: string;
+  /** Goal registry id (writes project fact `related_goal`). */
+  relatedGoal?: string;
   title?: string;
   resumeAt?: string;
   state?: Record<string, unknown>;
@@ -61,6 +72,7 @@ interface NormalizedCheckpointInput {
   owner?: string;
   next?: string;
   relatedSession?: string;
+  relatedGoal?: string;
   title?: string;
   resumeAtIso?: string;
   resumeAtDate?: Date;
@@ -69,6 +81,11 @@ interface NormalizedCheckpointInput {
   refreshProjection: boolean;
   recordEpisode: boolean;
 }
+
+export type NormalizeCheckpointOptions = {
+  /** When true, refresh ACTIVE-TASKS.md unless refreshProjection is explicitly false. */
+  defaultRefreshProjection?: boolean;
+};
 
 export type ActiveTaskCheckpointStep = "validation" | "facts" | "episode" | "schedule" | "projection";
 
@@ -203,6 +220,7 @@ function isTerminalCheckpointStatus(status: string): boolean {
 function normalizeCheckpointInput(
   input: ActiveTaskCheckpointInput,
   _now: Date,
+  opts: NormalizeCheckpointOptions = {},
 ): {
   normalized?: NormalizedCheckpointInput;
   errors: ActiveTaskCheckpointError[];
@@ -227,6 +245,7 @@ function normalizeCheckpointInput(
   const owner = input.owner !== undefined ? (trimToString(input.owner) ?? "") : undefined;
   const next = input.next !== undefined ? (trimToString(input.next) ?? "") : undefined;
   const relatedSession = input.relatedSession !== undefined ? (trimToString(input.relatedSession) ?? "") : undefined;
+  const relatedGoal = trimToString(input.relatedGoal);
 
   let resumeAtIso: string | undefined;
   let resumeAtDate: Date | undefined;
@@ -254,6 +273,10 @@ function normalizeCheckpointInput(
     return { errors };
   }
 
+  const defaultRefresh = opts.defaultRefreshProjection === true;
+  const refreshProjection =
+    input.refreshProjection === true || (input.refreshProjection !== false && defaultRefresh);
+
   return {
     normalized: {
       entity,
@@ -261,16 +284,82 @@ function normalizeCheckpointInput(
       owner,
       next,
       relatedSession,
+      relatedGoal,
       title,
       resumeAtIso,
       resumeAtDate,
       state: input.state,
       scheduleWake: input.scheduleWake !== false,
-      refreshProjection: input.refreshProjection === true,
+      refreshProjection,
       recordEpisode: input.recordEpisode !== false,
     },
     errors,
   };
+}
+
+function humanizeEntityLabel(entity: string): string {
+  const trimmed = entity.trim();
+  if (!trimmed) return "Active task";
+  return trimmed.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function checkpointStatusToDisplay(status: string): ActiveTaskStatus {
+  return factStatusToDisplay(status);
+}
+
+/** Keep markdown ledger in sync when checkpoint writes canonical facts (#1973 split-brain). */
+export async function syncMarkdownLedgerFromCheckpoint(
+  deps: Pick<ActiveTaskCheckpointDeps, "cfg" | "workspaceRoot">,
+  checkpoint: {
+    entity: string;
+    status: string;
+    owner: string;
+    next: string;
+    relatedSession: string;
+    title?: string;
+    taskUpdated: string;
+    relatedGoal?: string;
+  },
+): Promise<{ attempted: boolean; synced: boolean; path?: string; reason?: string }> {
+  if (!deps.cfg.activeTask.enabled || deps.cfg.activeTask.ledger !== "markdown") {
+    return { attempted: false, synced: false, reason: "ledger_not_markdown" };
+  }
+  const workspaceRoot = resolveWorkspaceRoot(deps.workspaceRoot);
+  const activeTaskPath = isAbsolute(deps.cfg.activeTask.filePath)
+    ? deps.cfg.activeTask.filePath
+    : join(workspaceRoot, deps.cfg.activeTask.filePath);
+  const staleMinutes = parseDuration(deps.cfg.activeTask.staleThreshold);
+  const displayStatus = checkpointStatusToDisplay(checkpoint.status);
+  const entry: ActiveTaskEntry = {
+    label: checkpoint.entity,
+    description: checkpoint.title?.trim() || humanizeEntityLabel(checkpoint.entity),
+    status: displayStatus,
+    subagent: checkpoint.relatedSession.trim() || undefined,
+    next: checkpoint.next.trim() || undefined,
+    relatedGoal: checkpoint.relatedGoal?.trim() || undefined,
+    started: checkpoint.taskUpdated,
+    updated: checkpoint.taskUpdated,
+  };
+
+  const existing = (await readActiveTaskFile(activeTaskPath, staleMinutes)) ?? { active: [], completed: [], raw: "" };
+  let active = existing.active;
+  let completed = existing.completed;
+
+  if (displayStatus === "Done" || isTerminalCheckpointStatus(checkpoint.status)) {
+    const result = completeTask(active, checkpoint.entity);
+    active = result.updated;
+    if (result.completed) {
+      completed = [...completed.filter((t) => t.label !== checkpoint.entity), result.completed];
+    } else {
+      completed = [...completed.filter((t) => t.label !== checkpoint.entity), { ...entry, status: "Done" }];
+    }
+  } else {
+    active = upsertTask(active, entry, true);
+    completed = completed.filter((t) => t.label !== checkpoint.entity);
+  }
+
+  await writeActiveTaskFile(activeTaskPath, active, completed);
+  return { attempted: true, synced: true, path: activeTaskPath };
 }
 
 function slugify(input: string): string {
@@ -649,7 +738,9 @@ export async function runActiveTaskCheckpoint(
   input: ActiveTaskCheckpointInput,
 ): Promise<ActiveTaskCheckpointResult> {
   const now = deps.now?.() ?? new Date();
-  const validation = normalizeCheckpointInput(input, now);
+  const validation = normalizeCheckpointInput(input, now, {
+    defaultRefreshProjection: deps.cfg.activeTask.enabled && deps.cfg.activeTask.ledger === "facts",
+  });
   if (!validation.normalized) {
     return {
       ok: false,
@@ -672,6 +763,7 @@ export async function runActiveTaskCheckpoint(
     "owner",
     "next",
     "related_session",
+    "related_goal",
     "title",
     "resume_at",
   ]);
@@ -700,13 +792,13 @@ export async function runActiveTaskCheckpoint(
         effectiveTitle = existingTitle;
         titleSource = "existing";
       } else {
-        effectiveTitle = "Project task";
+        effectiveTitle = humanizeEntityLabel(checkpoint.entity);
         titleSource = "defaulted";
       }
     }
   } catch (err) {
     deps.logger?.warn?.(`memory-hybrid: active-task checkpoint title lookup failed: ${String(err)}`);
-    effectiveTitle = checkpoint.title ?? "Project task";
+    effectiveTitle = checkpoint.title ?? humanizeEntityLabel(checkpoint.entity);
     titleSource = checkpoint.title ? "provided" : "defaulted";
   }
 
@@ -724,6 +816,10 @@ export async function runActiveTaskCheckpoint(
 
   if (checkpoint.state) {
     updates.push({ key: "checkpoint_state", value: safeJson(checkpoint.state) });
+  }
+
+  if (checkpoint.relatedGoal !== undefined) {
+    updates.push({ key: "related_goal", value: checkpoint.relatedGoal });
   }
 
   const shouldPersistResumeAt = !terminalStatus && !!checkpoint.resumeAtIso;
@@ -777,6 +873,7 @@ export async function runActiveTaskCheckpoint(
         `relatedSession=${resolvedRelatedSession || "n/a"}`,
         `taskUpdated=${taskUpdated}`,
       ];
+      if (checkpoint.relatedGoal) contextLines.push(`relatedGoal=${checkpoint.relatedGoal}`);
       if (checkpoint.resumeAtIso) contextLines.push(`resumeAt=${checkpoint.resumeAtIso}`);
       if (checkpoint.state) contextLines.push(`state=${safeJson(checkpoint.state)}`);
 
@@ -864,6 +961,28 @@ export async function runActiveTaskCheckpoint(
       projection = { attempted: true, refreshed: false, reason: String(err) };
       errors.push(stepError("projection", err));
     }
+  } else if (failedKeys.length === 0 && deps.cfg.activeTask.ledger === "markdown") {
+    try {
+      const md = await syncMarkdownLedgerFromCheckpoint(deps, {
+        entity: checkpoint.entity,
+        status: resolvedStatus,
+        owner: resolvedOwner,
+        next: resolvedNext,
+        relatedSession: resolvedRelatedSession,
+        title: effectiveTitle,
+        taskUpdated,
+        relatedGoal: checkpoint.relatedGoal,
+      });
+      projection = {
+        attempted: md.attempted,
+        refreshed: md.synced,
+        path: md.path,
+        reason: md.reason,
+      };
+    } catch (err) {
+      projection = { attempted: true, refreshed: false, reason: String(err) };
+      errors.push(stepError("projection", err));
+    }
   }
 
   const ok = errors.length === 0;
@@ -884,11 +1003,16 @@ export async function runActiveTaskCheckpoint(
     summaryBits.push(`projection=${projection.refreshed ? "refreshed" : "not_refreshed"}`);
   }
 
+  const coreKeys = new Set(["status", "next", "task_updated", "related_session"]);
+  const coreFailed = failedKeys.some((k) => coreKeys.has(k));
+
   const message = ok
     ? `active_task_checkpoint completed (${summaryBits.join(", ")}).`
     : partial
-      ? `active_task_checkpoint completed with partial failures (${summaryBits.join(", ")}).`
-      : `active_task_checkpoint failed (${summaryBits.join(", ")}).`;
+      ? `active_task_checkpoint PARTIAL FAILURE — ${errors.map((e) => e.message).join("; ")} (${summaryBits.join(", ")}). Re-call with missing fields or fix facts write errors.`
+      : coreFailed
+        ? `active_task_checkpoint FAILED — required fields not persisted: ${failedKeys.join(", ")}. ${errors.map((e) => e.message).join("; ")}`
+        : `active_task_checkpoint failed (${summaryBits.join(", ")}). ${errors.map((e) => e.message).join("; ")}`;
 
   return {
     ok,

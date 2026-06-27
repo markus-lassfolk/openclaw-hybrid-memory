@@ -145,6 +145,8 @@ describe("goal tools registry primitives", () => {
         workspaceRoot,
         resolvedActiveTaskPath: join(workspaceRoot, "ACTIVE-TASKS.md"),
         factsDb: null,
+        vectorDb: null,
+        embeddings: null,
         eventLog: null,
         memoryDir: join(workspaceRoot, "memory"),
       },
@@ -156,8 +158,102 @@ describe("goal tools registry primitives", () => {
     const result = (await goalRegister?.execute("test-call-id", {
       label: "global_rate_file_present",
       description: "register despite housekeeping file",
-      acceptance_criteria: ["goal saved"],
+      acceptance_criteria: ["Plugin persists goal JSON under state/goals with matching label"],
+      confirmed: true,
     })) as { details?: { goal?: { label?: string } } };
     expect(result?.details?.goal?.label).toBe("global_rate_file_present");
+  });
+
+  it("goal_register rejects vague criteria until confirmed", async () => {
+    const cfg = hybridConfigSchema.parse({
+      embedding: {
+        apiKey: "sk-test-key-that-is-long-enough-to-pass",
+        model: "text-embedding-3-small",
+      },
+      goalStewardship: { enabled: true, goalsDir: "state/goals" },
+    });
+    const tools = new Map<string, { execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }>();
+    const api: Pick<ClawdbotPluginApi, "registerTool"> = {
+      registerTool(toolDefinition: { name: string; execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }) {
+        tools.set(toolDefinition.name, { execute: toolDefinition.execute });
+      },
+    };
+    registerGoalTools(
+      {
+        cfg,
+        goalsDir,
+        workspaceRoot,
+        resolvedActiveTaskPath: join(workspaceRoot, "ACTIVE-TASKS.md"),
+        factsDb: null,
+        vectorDb: null,
+        embeddings: null,
+        eventLog: null,
+        memoryDir: join(workspaceRoot, "memory"),
+      },
+      api as ClawdbotPluginApi,
+    );
+    const goalRegister = tools.get("goal_register");
+    const vague = (await goalRegister?.execute("tc", {
+      label: "vague-goal",
+      description: "fix it",
+      acceptance_criteria: ["done"],
+    })) as { details?: { error?: string } };
+    expect(vague?.details?.error).toBe("goal_criteria_unclear");
+
+    const ok = (await goalRegister?.execute("tc", {
+      label: "clear-goal",
+      description: "Fix CI on main branch and restore green required checks.",
+      acceptance_criteria: [
+        "Required CI workflow on main branch completes with exit 0",
+        "Previously failing test suite passes locally with documented command",
+      ],
+      confirmed: true,
+    })) as { details?: { goal?: { label?: string } } };
+    expect(ok?.details?.goal?.label).toBe("clear-goal");
+  });
+
+  it("goal_list and goal_get expose registry goals", async () => {
+    await createGoal(
+      goalsDir,
+      {
+        label: "list-me",
+        description: "List and get test goal with verifiable completion.",
+        acceptanceCriteria: ["Operator can run goal_list and see this label"],
+      },
+      defaults,
+    );
+    const cfg = hybridConfigSchema.parse({
+      embedding: {
+        apiKey: "sk-test-key-that-is-long-enough-to-pass",
+        model: "text-embedding-3-small",
+      },
+      goalStewardship: { enabled: true, goalsDir: "state/goals" },
+    });
+    const tools = new Map<string, { execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }>();
+    const api: Pick<ClawdbotPluginApi, "registerTool"> = {
+      registerTool(toolDefinition: { name: string; execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }) {
+        tools.set(toolDefinition.name, { execute: toolDefinition.execute });
+      },
+    };
+    registerGoalTools(
+      {
+        cfg,
+        goalsDir,
+        workspaceRoot,
+        resolvedActiveTaskPath: join(workspaceRoot, "ACTIVE-TASKS.md"),
+        factsDb: null,
+        vectorDb: null,
+        embeddings: null,
+        eventLog: null,
+        memoryDir: join(workspaceRoot, "memory"),
+      },
+      api as ClawdbotPluginApi,
+    );
+    const list = (await tools.get("goal_list")?.execute("tc", {})) as { details?: { count?: number } };
+    expect(list?.details?.count).toBeGreaterThanOrEqual(1);
+    const got = (await tools.get("goal_get")?.execute("tc", { goal_id: "list-me" })) as {
+      details?: { goal?: { label?: string } };
+    };
+    expect(got?.details?.goal?.label).toBe("list-me");
   });
 });

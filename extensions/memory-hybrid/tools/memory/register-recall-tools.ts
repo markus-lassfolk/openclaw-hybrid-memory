@@ -8,6 +8,7 @@
 import { Type } from "@sinclair/typebox";
 import type { RetrievalConfig } from "../../config.js";
 import { capturePluginError } from "../../services/error-reporter.js";
+import { guardAgainstWrapperArgsDropped } from "../../services/tool-args-guard.js";
 import { expandGraph, formatLinkPath } from "../../services/graph-retrieval.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
 import { QueryExpander } from "../../services/query-expander.js";
@@ -525,6 +526,8 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
   }
 
   async function memoryRecallImpl(params: Record<string, unknown>) {
+    const dropped = guardAgainstWrapperArgsDropped("memory_recall", params, api.logger);
+    if (dropped) return dropped;
     const recallStartedAt = Date.now();
     const {
       query: queryParam,
@@ -732,10 +735,13 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         content: [
           {
             type: "text",
-            text: "Provide a search query or an id (fact id or index from the memory index) to recall memories.",
+            text:
+              "Provide a search query or an id (fact id or index from the memory index) to recall memories. " +
+              "If you intended to store something, use memory_store instead. " +
+              "If this error repeats with empty args, retry via top-level tools (Tool Search wrapper bug #96115).",
           },
         ],
-        details: { count: 0 },
+        details: { count: 0, error: "missing_query_or_id" },
       };
     }
 
@@ -1276,6 +1282,8 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         tags: Type.Optional(Type.Array(Type.String(), { description: "Optional tag filters." })),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
+        const dropped = guardAgainstWrapperArgsDropped("memory_keyword_recall", params, api.logger);
+        if (dropped) return dropped;
         const query = typeof params.query === "string" ? params.query.trim() : "";
         if (!query) {
           return { content: [{ type: "text", text: "Provide a query." }], details: { count: 0 } };

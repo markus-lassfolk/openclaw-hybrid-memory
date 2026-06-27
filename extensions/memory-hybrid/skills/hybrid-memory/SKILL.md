@@ -32,35 +32,62 @@ If **auto-capture** and **auto-recall** are on, many turns need no tool call—b
 
 ## Goal Stewardship (when `goalStewardship.enabled: true`)
 
-When goal stewardship is enabled, use these tools for long-running, multi-session objectives:
+When goal stewardship is enabled, use these tools for long-running, multi-session objectives.
 
 **When to use:** When the user assigns an outcome-oriented goal ("deploy X", "fix Y and get it merged", "keep Z healthy") that will take multiple sessions, subagents, or heartbeat cycles to complete.
 
-**Two layers (do not confuse them):**
+**Critical — goals are NOT memories:**
+
+| Need | Use | Do NOT use |
+| --- | --- | --- |
+| List or read registered goals | `goal_list`, `goal_get` | `memory_recall` (searches facts, not `state/goals/`) |
+| Save a durable fact | `memory_store` | `goal_register` (strategic outcomes only) |
+| Checkpoint tactical work-in-progress | `active_task_checkpoint` | ad-hoc `memory_store` without project fields |
+
+**Every turn:** When stewardship is enabled, the plugin prepends a compact `<active-goals-summary>` block (config: `injectActiveGoalsEveryTurn`, default on). Use it — do not ignore active goals.
+
+**Two automation layers (do not confuse them):**
 
 | Layer | What it does |
 | --- | --- |
 | **Watchdog** (~every 5 min, no LLM) | Updates goal JSON: budgets, stalled/blocked, mechanical verification, PID links. Does **not** start a chat turn. |
-| **Heartbeat stewardship** | On **`before_agent_start`**, if the **last user message** matches **heartbeat patterns** (defaults include `heartbeat`, `scheduled ping`, `cron heartbeat`), prepends goal context so you can run `goal_assess` etc. **Requires a real agent turn** — the plugin does not schedule LLM runs by itself. |
+| **Heartbeat stewardship** | On **`before_agent_start`**, if the **last user message** matches **heartbeat patterns** (defaults include `heartbeat`, `scheduled ping`, `cron heartbeat`), prepends full goal context so you run `goal_assess` etc. **Requires a real agent turn** — schedule via OpenClaw cron. |
 
-**Recall ≠ goals:** `memory_recall` does not replace **`goal_*` tools**. Shared goals require the same **`OPENCLAW_WORKSPACE`** / `goalsDir` and stewardship enabled for whichever agent runs the pulse.
+**Registering goals — clarity first:**
 
-**Tools:**
+1. When the user assigns a multi-session outcome, call **`goal_register`** with a clear `description` and **measurable** `acceptance_criteria` (verifiable commands, PR merge, file exists, health check, test pass, etc.).
+2. If criteria are vague, **`goal_register` returns suggested criteria and follow-up questions** — ask the user, refine, then call again with **`confirmed: true`**.
+3. Optionally pass **`task_entity`** (and `related_session` / `initial_next`) on **`goal_register`** to link an active-task row with `related_goal` in one step.
+4. Never register goals with criteria like "done", "complete", or "fix it" without concrete verification steps.
+5. For **critical/high** priority, `confirmed: true` is required after user approval (confirmation policy).
+
+**While working toward a goal:**
 
 | Tool | When to call |
 |------|-------------|
-| `goal_register` | User assigns a multi-session, outcome-oriented goal. Provide a short `label` (alphanumeric/hyphens/underscores, e.g. `deploy-api`), a `description`, and explicit `acceptance_criteria`. Use `confirmed: true` when confirmation policy requires it. |
-| `goal_assess` | Every heartbeat stewardship turn — record observations, what was tried, and next action |
-| `goal_update` | Goal description, criteria, or priority needs updating as context evolves |
-| `goal_complete` | ALL acceptance criteria are verifiably met — include a clear verification summary |
-| `goal_abandon` | Goal is no longer relevant (user changed their mind) |
-| `active_task_checkpoint` | Atomically checkpoint active work (project facts + episode audit + optional wake schedule + optional ACTIVE-TASKS projection refresh) |
-| `active_task_propose_goal` | Draft a `goal_register` payload from an `ACTIVE-TASKS.md` row (task hygiene) |
+| `goal_list` | Start of pulse turns or when you need the active goal set |
+| `goal_get` | Before acting on a specific goal — read criteria, blockers, linked tasks |
+| `goal_register` | User assigns a new multi-session outcome (after criteria are clear) |
+| `goal_assess` | Every heartbeat stewardship turn — record observations, blockers, next action |
+| `goal_update` | Criteria or description need refinement mid-flight |
+| `goal_complete` | ALL acceptance criteria are **verifiably** met — mechanical verification must pass, or use `confirmed: true` with reason documenting manual acceptance |
+| `goal_abandon` | User explicitly cancels the goal |
+| `active_task_checkpoint` | Before ending a turn with pending external work; set `next`, `status`, `relatedSession`, `relatedGoal` (goal id); defaults `refreshProjection` when ledger=facts |
+| `active_task_list` / `active_task_get` | Discover tasks from facts ledger or ACTIVE-TASKS.md (use when injection is budget-starved) |
+| `active_task_propose_goal` | Promote a long-running task row to a stewardship goal (reads facts when `ledger: facts`) |
+
+**Do not end a turn early when:**
+
+- CI, reviews, deploys, or background commands are still pending — call **`active_task_checkpoint`** with `resumeAt` / wake scheduling when appropriate.
+- A goal-backed task had progress this turn — call **`goal_assess`**.
+- On heartbeat pulses: do **not** reply `HEARTBEAT_OK` until you have assessed active goals and updated checkpoints.
 
 **Subagent naming convention for automatic goal linkage:**
 When spawning a subagent to work on a goal, name the subagent with the goal's label as a prefix.
 For example, for goal `deploy-api`, name subagents `deploy-api-run-tests`, `deploy-api-create-pr`,
 `deploy-api-deploy`. This creates an automatic link between the subagent and the goal.
+
+**Tool Search wrapper:** If `memory_*` or `goal_*` tools return `wrapper_args_dropped`, retry via top-level tools or restart the session (upstream OpenClaw #96115).
 
 **Scheduled “pulse” (OpenClaw cron):** To get recurring **LLM** stewardship, add a job in `~/.openclaw/cron/jobs.json` with `payload.kind: agentTurn` and a **short first line** that matches patterns, e.g. `cron heartbeat` then instructions. You may set **`agentId`** to a dedicated agent (not `main`) and **`sessionTarget: isolated`** so chat stays free. Cadence: often **a few times per day** or **every 4–6 hours** to start; avoid 5-minute pulses unless goals are truly urgent (cost/noise). Full examples and pitfalls: **`docs/GOAL-STEWARDSHIP-OPERATOR.md`** (User guide + verification + logging).
 
@@ -148,7 +175,7 @@ All tools use **underscore** names. Below is a compact index — not every deplo
 | **Procedures & reflection** | `memory_recall_procedures`, `memory_reflect`, `memory_reflect_rules`, `memory_reflect_meta`, `memory_procedure_feedback` |
 | **Graph & documents** | `memory_graph`, `memory_clusters`, `memory_ingest_document`, `memory_ingest_folder`, `memory_path` |
 | **Edicts & verification** | `memory_add_edict`, `memory_update_edict`, `memory_remove_edict`, `memory_list_edicts`, `memory_get_edicts`, `memory_edict_stats`, `memory_verify`, `memory_verification_status`, `memory_verified_list`, `memory_provenance` |
-| **Goals & tasks** | `goal_register`, `goal_assess`, `goal_update`, `goal_complete`, `goal_abandon`, `active_task_checkpoint`, `active_task_propose_goal` |
+| **Goals & tasks** | `goal_list`, `goal_get`, `goal_register`, `goal_assess`, `goal_update`, `goal_complete`, `goal_abandon`, `active_task_list`, `active_task_get`, `active_task_checkpoint`, `active_task_propose_goal` |
 | **Credentials vault** | `credential_store`, `credential_get`, `credential_list`, `credential_delete` — secrets stay in vault; memory holds pointers only |
 | **Crystallization & skills** | `memory_crystallize`, `memory_crystallize_list`, `memory_crystallize_approve`, `memory_crystallize_reject`, `memory_crystallize_skills_rescan`, `memory_workshop` |
 | **Issues & proposals** | `memory_issue_*`, `persona_propose`, `persona_proposals_list`, `memory_propose_tool`, `memory_tool_proposals`, `memory_tool_approve`, `memory_tool_reject` |

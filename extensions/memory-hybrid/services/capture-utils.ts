@@ -4,6 +4,10 @@
 
 import type { MemoryCategory } from "../types/memory.js";
 import { CAPTURE_FILTER_PATTERNS } from "./auto-capture.js";
+import {
+  getCorrectionSignalRegex,
+  getDirectiveSignalRegex,
+} from "../utils/language-keywords.js";
 
 /**
  * Returns true if the text is a memory-classifier artifact or LLM reasoning trace.
@@ -57,7 +61,16 @@ export function shouldCapture(text: string, captureMaxChars: number, memoryTrigg
   const emojiCount = (text.match(/[\u{1F300}-\u{1F9FF}]/gu) || []).length;
   if (emojiCount > 3) return false;
   if (CAPTURE_FILTER_PATTERNS.some((r) => r.test(text))) return false;
-  return memoryTriggers.some((r) => r.test(text));
+  if (memoryTriggers.some((r) => r.test(text))) return true;
+  // Corrections and explicit directives ("remember this", "that's wrong") must survive auto-capture
+  if (getCorrectionSignalRegex().test(text)) return true;
+  if (getDirectiveSignalRegex().test(text)) return true;
+  return false;
+}
+
+/** True when a message is a correction or explicit directive — prioritize in auto-capture batch. */
+export function isHighPriorityCapture(text: string): boolean {
+  return getCorrectionSignalRegex().test(text) || getDirectiveSignalRegex().test(text);
 }
 
 export function detectCategory(

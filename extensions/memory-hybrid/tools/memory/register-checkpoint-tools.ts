@@ -7,6 +7,7 @@
 
 import { Type } from "@sinclair/typebox";
 import { capturePluginError } from "../../services/error-reporter.js";
+import { guardAgainstWrapperArgsDropped } from "../../services/tool-args-guard.js";
 import { runActiveTaskCheckpoint } from "../../services/active-task-checkpoint.js";
 import type { MemoryToolRuntime } from "./runtime.js";
 
@@ -60,6 +61,9 @@ export function registerCheckpointTools(runtime: MemoryToolRuntime): void {
       owner: Type.Optional(Type.String({ description: "Task owner (free-form, e.g. subagent/session/role)." })),
       next: Type.Optional(Type.String({ description: "Next concrete action for safe resume." })),
       relatedSession: Type.Optional(Type.String({ description: "Related OpenClaw session key/id." })),
+      relatedGoal: Type.Optional(
+        Type.String({ description: "Registered goal id to link (writes project fact related_goal for goal_assess guard)." }),
+      ),
       title: Type.Optional(
         Type.String({ description: "Human-readable task title (defaults to existing or Project task)." }),
       ),
@@ -78,7 +82,8 @@ export function registerCheckpointTools(runtime: MemoryToolRuntime): void {
       ),
       refreshProjection: Type.Optional(
         Type.Boolean({
-          description: "When true, best-effort refresh ACTIVE-TASKS.md projection (activeTask.ledger=facts only).",
+          description:
+            "When true, refresh ACTIVE-TASKS.md from facts. Default true when activeTask.ledger=facts; pass false to skip.",
         }),
       ),
       recordEpisode: Type.Optional(
@@ -86,8 +91,10 @@ export function registerCheckpointTools(runtime: MemoryToolRuntime): void {
       ),
     });
     const _activeTaskCheckpointDesc =
-      "Best-effort checkpoint active task state for reliable resume. One call updates project facts (status/next/owner/related_session/task_updated/title), records an episode audit trail, optionally schedules wake/reminder from resumeAt, and optionally refreshes ACTIVE-TASKS.md projection. Returns structured partial-failure details when later steps fail.";
+      "Best-effort checkpoint active task state for reliable resume. One call updates project facts (status/next/owner/related_session/related_goal/task_updated/title), records an episode audit trail, optionally schedules wake/reminder from resumeAt, and refreshes ACTIVE-TASKS.md when ledger=facts (default) unless refreshProjection:false. Returns structured partial-failure details when later steps fail.";
     const _execActiveTaskCheckpoint = async (_toolCallId: string, params: Record<string, unknown>) => {
+      const dropped = guardAgainstWrapperArgsDropped("active_task_checkpoint", params, api.logger);
+      if (dropped) return dropped;
       const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
       try {
         const result = await runActiveTaskCheckpoint(
@@ -105,6 +112,7 @@ export function registerCheckpointTools(runtime: MemoryToolRuntime): void {
             owner?: string;
             next?: string;
             relatedSession?: string;
+            relatedGoal?: string;
             title?: string;
             resumeAt?: string;
             state?: Record<string, unknown>;

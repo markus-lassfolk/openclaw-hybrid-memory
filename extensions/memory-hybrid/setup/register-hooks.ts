@@ -305,9 +305,11 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         "<!-- memory-hybrid: capability hints -->",
         "You have access to long-term memory tools for this session.",
         `Available categories: ${catList}.`,
-        "Use memory_store to save important facts, preferences, and decisions.",
+        "Use memory_store to save important facts, preferences, corrections, and decisions — especially when the user says remember, corrects you, or sets a rule.",
         'Use memory_recall("query") or memory_recall(id: N) to retrieve specific memories.',
         "Use memory_forget(memoryId) to remove stale or incorrect memories.",
+        "If memory_store returns duplicate or noop, do NOT retry — the fact is already recorded.",
+        "If memory_* tools return wrapper_args_dropped, call them at top level (not via tool_search) or restart the session.",
         "Memories are scoped (global / user / agent / session) — prefer global unless scoped context is needed.",
         "<!-- /memory-hybrid: capability hints -->",
       ].join("\n");

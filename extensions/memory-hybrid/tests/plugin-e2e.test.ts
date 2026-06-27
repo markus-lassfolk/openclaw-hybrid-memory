@@ -673,6 +673,7 @@ describe("Core and common flows e2e", () => {
       sqlitePath: join(tmpDir, "facts.db"),
       lanceDbPath: join(tmpDir, "lancedb"),
       store: { fuzzyDedupe: true, classifyBeforeWrite: false },
+      activeTask: { enabled: true, ledger: "facts", filePath: "ACTIVE-TASKS.md" },
     });
     factsDb = new FactsDB(join(tmpDir, "facts.db"), { fuzzyDedupe: true });
     registerTools(buildE2EContext({ tmpDir, factsDb, vectorDb, cfg: cfgDedup, api }) as never, api as never);
@@ -729,10 +730,14 @@ describe("Core and common flows e2e", () => {
     expect(titleResult.details?.action).not.toBe("duplicate");
     expect(titleResult.details?.id).toBeDefined();
 
-    // memory_store writes use source:"memory_store", not source:"active-task",
-    // so they must NOT appear in the active-task projection (fix #1556).
-    // Verify the raw key-aware DB state instead.
-    const projectRows = groupProjectFactsByEntity(factsDb.listFactsByCategory("project", 100));
+    // Task-shaped memory_store writes mirror into source=active-task ledger rows.
+    const { loadTaskLedgerFromFacts } = await import("../services/task-ledger-facts.js");
+    const { active } = loadTaskLedgerFromFacts(factsDb);
+    expect(active.map((t) => t.label)).toContain(entity);
+
+    const projectRows = groupProjectFactsByEntity(
+      factsDb.listFactsByCategory("project", 100).filter((f) => f.source === "active-task"),
+    );
     const row = projectRows.get(entity);
     expect(row?.get("title")?.value).toBe(title);
     expect(row?.get("status")?.value).toBe("in_progress");

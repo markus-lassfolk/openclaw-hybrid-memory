@@ -111,6 +111,15 @@ export const MEMORY_TOOL_EXPECTED_ARG_KEYS: Record<string, readonly string[]> = 
   memory_update_edict: ["id", "text"],
   memory_remove_edict: ["id"],
   memory_get_edicts: ["query", "tags"],
+  active_task_checkpoint: ["entity"],
+  goal_get: ["id", "label"],
+  goal_register: ["description"],
+  goal_assess: ["id", "label"],
+  goal_update: ["id", "label"],
+  goal_complete: ["id", "label"],
+  goal_abandon: ["id", "label"],
+  active_task_get: ["entity"],
+  active_task_propose_goal: ["entity"],
 };
 
 function isMissingRequiredArgsToolResult(result: unknown): boolean {

@@ -5,6 +5,8 @@
   "contracts": {
     "tools": [
       "active_task_checkpoint",
+      "active_task_get",
+      "active_task_list",
       "active_task_propose_goal",
       "apitap_capture",
       "apitap_list",
@@ -19,6 +21,8 @@
       "goal_abandon",
       "goal_assess",
       "goal_complete",
+      "goal_get",
+      "goal_list",
       "goal_register",
       "goal_update",
       "memory_add_edict",
@@ -653,7 +657,7 @@
     },
     "goalStewardship.enabled": {
       "label": "Goal stewardship",
-      "help": "Enable long-running goal registry, agent tools (goal_register, …), heartbeat injection, and optional watchdog health checks. Default: false. See docs/GOAL-STEWARDSHIP-DESIGN.md."
+      "help": "Enable long-running goal registry, agent tools (goal_list, goal_get, goal_register, …), every-turn goal summary, heartbeat injection, and optional watchdog health checks. Default: false. See docs/GOAL-STEWARDSHIP-DESIGN.md."
     },
     "goalStewardship.goalsDir": {
       "label": "Goals directory",
@@ -667,6 +671,10 @@
     "goalStewardship.watchdogHealthCheck": {
       "label": "Watchdog health check",
       "help": "Run deterministic goal health checks on the plugin 5-minute timer. CLI `hybrid-mem goals stewardship-run` still runs checks when stewardship is enabled. Default: true."
+    },
+    "goalStewardship.injectActiveGoalsEveryTurn": {
+      "label": "Inject goals every turn",
+      "help": "Prepend compact active-goals summary on normal turns (default: true when stewardship enabled). Skipped on heartbeat-pattern turns and subagent sessions."
     },
     "goalStewardship.circuitBreaker.enabled": {
       "label": "Goal circuit breaker",
@@ -2258,7 +2266,7 @@
           "ledger": {
             "type": "string",
             "enum": ["markdown", "facts"],
-            "description": "Task ledger backend. \"markdown\" = legacy ACTIVE-TASKS.md file ledger (default). \"facts\" = canonical facts DB with optional ACTIVE-TASKS.md projection via hybrid-mem active-tasks render."
+            "description": "Task ledger backend. \"facts\" = canonical facts DB with optional ACTIVE-TASKS.md projection (default). \"markdown\" = legacy ACTIVE-TASKS.md file ledger."
           },
           "filePath": {
             "type": "string",
@@ -2477,6 +2485,18 @@
           "heartbeatRefreshActiveTask": {
             "type": "boolean",
             "description": "On heartbeat, refresh ACTIVE-TASKS.md Goals mirror"
+          },
+          "injectActiveGoalsEveryTurn": {
+            "type": "boolean",
+            "description": "Prepend compact active-goals summary on every turn when stewardship enabled (default: true). Skipped on heartbeat and subagent sessions."
+          },
+          "everyTurnGoalMaxChars": {
+            "type": "number",
+            "description": "Character cap for every-turn active-goals summary (default: 2500)"
+          },
+          "everyTurnGoalMaxGoals": {
+            "type": "number",
+            "description": "Max goals listed in every-turn summary (default: 5)"
           },
           "confirmationPolicy": {
             "type": "object",

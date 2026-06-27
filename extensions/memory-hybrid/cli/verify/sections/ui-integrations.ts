@@ -88,4 +88,25 @@ export async function runVerifyUiIntegrationsSection(state: VerifyRunState): Pro
       warnings.push("workboard: syncGoals enabled without goal stewardship");
     }
   }
+
+  if (cfg.activeTask?.enabled && !cfg.goalStewardship?.enabled) {
+    log(
+      `\n${WARN_LINE} activeTask.enabled without goalStewardship.enabled — tactical tasks inject but goals/stewardship tools are off. For multi-session reliability, enable both (see docs/GOAL-STEWARDSHIP-OPERATOR.md).`,
+    );
+    warnings.push("activeTask enabled without goalStewardship — enable goalStewardship for multi-session goals");
+  }
+
+  if (cfg.activeTask?.enabled && cfg.activeTask.ledger === "facts" && !cfg.activeTask.liveStateReconcile?.enabled) {
+    log(
+      `${WARN_LINE} activeTask.ledger=facts with liveStateReconcile off — external PR/issue state may drift until heartbeat refresh or manual reconcile.`,
+    );
+    warnings.push("activeTask facts ledger without liveStateReconcile");
+  }
+
+  if (cfg.goalStewardship?.enabled && cfg.activeTask?.enabled && cfg.activeTask.ledger !== "facts") {
+    log(
+      `${WARN_LINE} goal stewardship with activeTask.ledger=file — prefer ledger:facts for checkpoint + related_goal consistency.`,
+    );
+    warnings.push("goal stewardship with markdown task ledger (prefer facts)");
+  }
 }

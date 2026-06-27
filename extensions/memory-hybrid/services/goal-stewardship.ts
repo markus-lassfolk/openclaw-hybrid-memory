@@ -167,3 +167,19 @@ export function goalStewardshipDefaultsFromConfig(cfg: GoalStewardshipConfig): G
     priority: cfg.defaults.priority,
   };
 }
+
+/** Runtime check: explicit enable OR auto-enable when active goals exist on disk. */
+export async function isGoalStewardshipInjectionEnabled(
+  cfg: { goalStewardship: GoalStewardshipConfig },
+  goalsDir: string,
+): Promise<boolean> {
+  if (cfg.goalStewardship.enabled) return true;
+  if (cfg.goalStewardship.autoEnableWhenGoalsPresent === false) return false;
+  try {
+    const { listActiveGoals } = await import("./goal-registry.js");
+    const goals = await listActiveGoals(goalsDir);
+    return goals.length > 0;
+  } catch {
+    return false;
+  }
+}
