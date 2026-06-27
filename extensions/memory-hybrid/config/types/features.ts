@@ -9,7 +9,15 @@ export type EntityExtractionConfig = {
 export type GraphConfig = {
   enabled: boolean;
   autoLink: boolean; // Auto-create RELATED_TO links during storage
-  autoLinkMinScore: number; // Min similarity score for auto-linking (default 0.7)
+  /** Strength (0–1) stored on auto-created RELATED_TO links (default 0.7). */
+  autoLinkStrength: number;
+  /** Minimum embedding cosine similarity required for semantic auto-linking (default 0.7). */
+  autoLinkSimilarityThreshold: number;
+  /**
+   * @deprecated Use `autoLinkStrength` for link weight and `autoLinkSimilarityThreshold` for gating.
+   * When set alone, applies to both fields for backward compatibility.
+   */
+  autoLinkMinScore: number;
   autoLinkLimit: number; // Max similar facts to link per storage (default 3)
   maxTraversalDepth: number; // Max hops for graph traversal in recall (default 2)
   useInRecall: boolean; // Enable graph traversal in memory_recall (default true)

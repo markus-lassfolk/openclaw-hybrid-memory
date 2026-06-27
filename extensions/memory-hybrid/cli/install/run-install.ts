@@ -33,6 +33,8 @@ import {
   PLUGIN_JOB_ID_PREFIX,
   resolveAgentWorkspaceRoot,
   resolveUpgradeExtensionsParentDir,
+  resolveInstalledPluginDir,
+  readPluginPackageVersion,
   verifyUpgradePluginBundle,
   resolveNpmProjectRootForPlugin,
   verifyNpmProjectDependencyPin,
@@ -374,25 +376,60 @@ function rollbackUpgradePluginDir(pluginDir: string, backupDir: string): void {
   }
 }
 
+function removeInstalledPluginDirIfDistinct(installedPluginDir: string, preUpgradePluginDir: string): void {
+  if (installedPluginDir === preUpgradePluginDir) return;
+  try {
+    if (existsSync(installedPluginDir) && existsSync(preUpgradePluginDir) && realpathSync(installedPluginDir) === realpathSync(preUpgradePluginDir)) {
+      return;
+    }
+  } catch {
+    /* fall through to path string comparison */
+  }
+  if (!existsSync(installedPluginDir)) return;
+  try {
+    rmSync(installedPluginDir, { recursive: true, force: true });
+  } catch (err) {
+    capturePluginError(err as Error, { subsystem: "cli", operation: "runUpgradeForCli:cleanup-installed-dir" });
+  }
+}
+
+function rollbackUpgradeToPreInstallState(
+  preUpgradePluginDir: string,
+  installedPluginDir: string,
+  backupDir: string,
+): void {
+  removeInstalledPluginDirIfDistinct(installedPluginDir, preUpgradePluginDir);
+  rollbackUpgradePluginDir(preUpgradePluginDir, backupDir);
+}
+
+function resolveUpgradePluginDirForResult(installedPluginDir: string): string {
+  try {
+    return existsSync(installedPluginDir) ? realpathSync(installedPluginDir) : installedPluginDir;
+  } catch {
+    return installedPluginDir;
+  }
+}
+
 function findNpmProjectRootForPlugin(pluginRootDir: string): string | undefined {
   return resolveNpmProjectRootForPlugin(pluginRootDir);
 }
 
-async function updateNpmProjectDependencyPin(
-  pluginRootDir: string,
-  version: string,
-): Promise<{
+async function updateNpmProjectDependencyPin(opts: {
+  preUpgradePluginDir: string;
+  installedPluginDir: string;
+  version: string;
+}): Promise<{
   required: boolean;
   updated: boolean;
   error?: string;
   pinBackup?: NpmProjectPinBackup;
 }> {
-  const projectRoot = findNpmProjectRootForPlugin(pluginRootDir);
+  const projectRoot = findNpmProjectRootForPlugin(opts.preUpgradePluginDir);
   if (!projectRoot) return { required: false, updated: false };
   const pinBackup = snapshotNpmProjectPinBeforeUpgrade(projectRoot);
   const { spawnSync } = await import("node:child_process");
   const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
-  const r = spawnSync(npmCmd, ["install", `${PLUGIN_ID}@${version}`, "--save-exact"], {
+  const r = spawnSync(npmCmd, ["install", `${PLUGIN_ID}@${opts.version}`, "--save-exact"], {
     cwd: projectRoot,
     stdio: "inherit",
     shell: false,
@@ -403,10 +440,10 @@ async function updateNpmProjectDependencyPin(
       required: true,
       updated: false,
       pinBackup,
-      error: `npm project pin update failed in ${projectRoot} (exit ${r.status ?? "unknown"}). Run: npm install ${PLUGIN_ID}@${version} --save-exact${npmRollback.error ? ` (rollback: ${npmRollback.error})` : ""}`,
+      error: `npm project pin update failed in ${projectRoot} (exit ${r.status ?? "unknown"}). Run: npm install ${PLUGIN_ID}@${opts.version} --save-exact${npmRollback.error ? ` (rollback: ${npmRollback.error})` : ""}`,
     };
   }
-  const pinError = verifyNpmProjectDependencyPin(projectRoot, version);
+  const pinError = verifyNpmProjectDependencyPin(projectRoot, opts.version);
   if (pinError) {
     const npmRollback = rollbackNpmProjectPinAfterUpgradeFailure(pinBackup);
     return {
@@ -416,7 +453,7 @@ async function updateNpmProjectDependencyPin(
       error: `${pinError}${npmRollback.error ? ` (rollback: ${npmRollback.error})` : ""}`,
     };
   }
-  const bundleError = verifyUpgradePluginBundle(pluginRootDir);
+  const bundleError = verifyUpgradePluginBundle(opts.installedPluginDir);
   if (bundleError) {
     const npmRollback = rollbackNpmProjectPinAfterUpgradeFailure(pinBackup);
     return {
@@ -430,7 +467,8 @@ async function updateNpmProjectDependencyPin(
 }
 
 function rollbackUpgradeAfterFailure(opts: {
-  extDir: string;
+  preUpgradePluginDir: string;
+  installedPluginDir: string;
   backupDir: string;
   npmPin?: { pinBackup?: NpmProjectPinBackup; updated?: boolean };
   logger?: HandlerContext["logger"];
@@ -438,8 +476,9 @@ function rollbackUpgradeAfterFailure(opts: {
   let pluginRestored = false;
   let npmRestored = false;
   let error: string | undefined;
+  removeInstalledPluginDirIfDistinct(opts.installedPluginDir, opts.preUpgradePluginDir);
   try {
-    rollbackUpgradePluginDir(opts.extDir, opts.backupDir);
+    rollbackUpgradePluginDir(opts.preUpgradePluginDir, opts.backupDir);
     pluginRestored = true;
   } catch (e) {
     error = `plugin rollback failed: ${e instanceof Error ? e.message : String(e)}`;
@@ -459,8 +498,9 @@ function rollbackUpgradeAfterFailure(opts: {
 
 export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: string): Promise<UpgradeCliResult> {
   const { cfg, logger } = ctx;
-  const extDir = findPluginRoot(import.meta.url);
-  const extensionsParentDir = resolveUpgradeExtensionsParentDir(extDir);
+  const preUpgradePluginDir = findPluginRoot(import.meta.url);
+  const pluginPackageName = basename(preUpgradePluginDir);
+  const extensionsParentDir = resolveUpgradeExtensionsParentDir(preUpgradePluginDir);
   const { spawnSync } = await import("node:child_process");
   const version = requestedVersion?.trim() || "latest";
   try {
@@ -469,15 +509,19 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
     return { ok: false, error: `Invalid requested version: ${e instanceof Error ? e.message : String(e)}` };
   }
 
-  const manifestPath = join(extDir, "openclaw.plugin.json");
-  const pkgPath = join(extDir, "package.json");
+  const manifestPath = join(preUpgradePluginDir, "openclaw.plugin.json");
+  const pkgPath = join(preUpgradePluginDir, "package.json");
   if (!existsSync(manifestPath) || !existsSync(pkgPath)) {
-    return { ok: false, error: `Refusing to upgrade: plugin directory does not look valid: ${extDir}` };
+    return {
+      ok: false,
+      error: `Refusing to upgrade: plugin directory does not look valid: ${preUpgradePluginDir}`,
+    };
   }
 
-  const backupDir = join(dirname(extDir), `${basename(extDir)}.bak-${Date.now()}`);
+  const backupDir = join(dirname(preUpgradePluginDir), `${basename(preUpgradePluginDir)}.bak-${Date.now()}`);
+  const installedPluginDir = resolveInstalledPluginDir(extensionsParentDir, pluginPackageName);
   try {
-    renameSync(extDir, backupDir);
+    renameSync(preUpgradePluginDir, backupDir);
   } catch (e) {
     capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:move-dir" });
     return {
@@ -495,7 +539,7 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
   });
   if (r.status !== 0) {
     try {
-      rollbackUpgradePluginDir(extDir, backupDir);
+      rollbackUpgradeToPreInstallState(preUpgradePluginDir, installedPluginDir, backupDir);
     } catch (e) {
       capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:rollback" });
       return {
@@ -509,10 +553,26 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
     };
   }
 
-  const bundleError = verifyUpgradePluginBundle(extDir);
+  if (!existsSync(join(installedPluginDir, "openclaw.plugin.json"))) {
+    try {
+      rollbackUpgradeToPreInstallState(preUpgradePluginDir, installedPluginDir, backupDir);
+    } catch (e) {
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:rollback-missing-install" });
+      return {
+        ok: false,
+        error: `Post-install plugin missing at ${installedPluginDir}. Rollback also failed: ${e}. Run manually: npx -y openclaw-hybrid-memory-install ${version}`,
+      };
+    }
+    return {
+      ok: false,
+      error: `Post-install plugin missing at ${installedPluginDir}. Previous plugin version restored from backup.`,
+    };
+  }
+
+  const bundleError = verifyUpgradePluginBundle(installedPluginDir);
   if (bundleError) {
     try {
-      rollbackUpgradePluginDir(extDir, backupDir);
+      rollbackUpgradeToPreInstallState(preUpgradePluginDir, installedPluginDir, backupDir);
     } catch (e) {
       capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:rollback-bundle" });
       return {
@@ -527,20 +587,18 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
   }
 
   let installedVersion = version;
-  try {
-    const pkgAfterPath = join(extDir, "package.json");
-    if (existsSync(pkgAfterPath)) {
-      const pkg = JSON.parse(readFileSync(pkgAfterPath, "utf-8")) as { version?: string };
-      installedVersion = pkg.version ?? installedVersion;
-    }
-  } catch (err) {
-    capturePluginError(err as Error, { subsystem: "cli", operation: "runUpgradeForCli:read-version" });
-  }
+  const pkgVersion = readPluginPackageVersion(installedPluginDir);
+  if (pkgVersion) installedVersion = pkgVersion;
 
-  const npmPin = await updateNpmProjectDependencyPin(extDir, installedVersion);
+  const npmPin = await updateNpmProjectDependencyPin({
+    preUpgradePluginDir,
+    installedPluginDir,
+    version: installedVersion,
+  });
   if (npmPin.required && !npmPin.updated) {
     const rollback = rollbackUpgradeAfterFailure({
-      extDir,
+      preUpgradePluginDir,
+      installedPluginDir,
       backupDir,
       npmPin: { pinBackup: npmPin.pinBackup, updated: false },
       logger,
@@ -599,7 +657,7 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
   }
   const skillAfterUpgrade = installHybridMemoryWorkspaceSkill({
     mergedOpenclawConfig: mergedConfig,
-    pluginRootDir: extDir,
+    pluginRootDir: installedPluginDir,
     dryRun: false,
   });
   if (skillAfterUpgrade.error) {
@@ -609,7 +667,7 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
   }
   const toolsAfterUpgrade = applyHybridMemoryToolsMd({
     mergedOpenclawConfig: mergedConfig,
-    pluginRootDir: extDir,
+    pluginRootDir: installedPluginDir,
     dryRun: false,
   });
   if (toolsAfterUpgrade.error) {
@@ -623,7 +681,8 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
   );
   if (workspaceErrors.length > 0) {
     const rollback = rollbackUpgradeAfterFailure({
-      extDir,
+      preUpgradePluginDir,
+      installedPluginDir,
       backupDir,
       npmPin: { pinBackup: npmPin.pinBackup, updated: npmPin.updated },
       logger,
@@ -648,7 +707,7 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
   return {
     ok: true,
     version: installedVersion,
-    pluginDir: existsSync(extDir) ? realpathSync(extDir) : extDir,
+    pluginDir: resolveUpgradePluginDirForResult(installedPluginDir),
     workspaceSkillPath: skillAfterUpgrade.path,
     workspaceToolsMdPath: toolsAfterUpgrade.path,
     workspaceToolsMdUpdated: toolsAfterUpgrade.updated,

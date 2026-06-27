@@ -7,6 +7,9 @@ import {
   isNpmProjectPluginLayout,
   resolveNpmProjectRootForPlugin,
   resolveUpgradeExtensionsParentDir,
+  resolveInstalledPluginDir,
+  readPluginPackageVersion,
+  detectDualPluginInstallVersionMismatch,
   UPGRADE_REQUIRED_BUNDLE_PATHS,
   verifyNpmProjectDependencyPin,
   verifyUpgradePluginBundle,
@@ -51,6 +54,46 @@ describe("runUpgrade helpers", () => {
   it("resolveUpgradeExtensionsParentDir targets traditional extensions layout", () => {
     const pluginDir = join(tmp, ".openclaw", "extensions", "openclaw-hybrid-memory");
     expect(resolveUpgradeExtensionsParentDir(pluginDir)).toBe(join(tmp, ".openclaw", "extensions"));
+  });
+
+  it("resolveInstalledPluginDir points at package under extensions parent (#1989)", () => {
+    const parent = join(tmp, ".openclaw", "extensions");
+    mkdirSync(parent, { recursive: true });
+    expect(resolveInstalledPluginDir(parent)).toBe(join(parent, "openclaw-hybrid-memory"));
+  });
+
+  it("readPluginPackageVersion reads package.json version", () => {
+    const pluginDir = join(tmp, "plugin");
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(join(pluginDir, "package.json"), JSON.stringify({ version: "2026.6.273" }));
+    expect(readPluginPackageVersion(pluginDir)).toBe("2026.6.273");
+  });
+
+  it("detectDualPluginInstallVersionMismatch reports version skew (#1989)", () => {
+    const npmDir = join(tmp, "npm-copy");
+    const extDir = join(tmp, "ext-copy");
+    for (const dir of [npmDir, extDir]) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "openclaw.plugin.json"), "{}");
+    }
+    writeFileSync(join(npmDir, "package.json"), JSON.stringify({ version: "2026.6.270" }));
+    writeFileSync(join(extDir, "package.json"), JSON.stringify({ version: "2026.6.273" }));
+    const msg = detectDualPluginInstallVersionMismatch(npmDir, extDir);
+    expect(msg).toMatch(/version mismatch/i);
+    expect(msg).toMatch(/2026\.6\.270/);
+    expect(msg).toMatch(/2026\.6\.273/);
+  });
+
+  it("detectDualPluginInstallVersionMismatch warns when both copies exist at same version (#1989)", () => {
+    const npmDir = join(tmp, "npm-copy");
+    const extDir = join(tmp, "ext-copy");
+    for (const dir of [npmDir, extDir]) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "openclaw.plugin.json"), "{}");
+      writeFileSync(join(dir, "package.json"), JSON.stringify({ version: "2026.6.273" }));
+    }
+    const msg = detectDualPluginInstallVersionMismatch(npmDir, extDir);
+    expect(msg).toMatch(/Dual plugin install/i);
   });
 
   it("verifyUpgradePluginBundle passes for the live plugin root", () => {

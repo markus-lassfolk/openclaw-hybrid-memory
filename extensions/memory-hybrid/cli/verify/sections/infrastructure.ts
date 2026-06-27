@@ -9,6 +9,12 @@
  */
 
 import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  detectDualPluginInstallVersionMismatch,
+  resolveKnownNpmProjectPluginDir,
+  resolveNpmProjectPluginDirFromLayout,
+} from "../../install/workspace.js";
 import { capturePluginError, isErrorReporterActive, resolvePendingErrorReportCount } from "../../../services/error-reporter.js";
 import { listQuarantinedGoalIds, resolveGoalsDir, auditGoalIndexDrift, rebuildGoalIndex } from "../../../services/goal-registry.js";
 import { PLUGIN_ID } from "../../../utils/constants.js";
@@ -55,6 +61,17 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
   } = state;
 
   log("\n───── Infrastructure ─────");
+
+  const extensionsPluginDir = join(openclawDir, "extensions", PLUGIN_ID);
+  const npmProjectPluginDir =
+    resolveNpmProjectPluginDirFromLayout(extDir) ?? resolveKnownNpmProjectPluginDir();
+  if (npmProjectPluginDir) {
+    const dualInstall = detectDualPluginInstallVersionMismatch(npmProjectPluginDir, extensionsPluginDir);
+    if (dualInstall) {
+      warnings.push(dualInstall);
+      log(`${WARN_LINE} Plugin install layout: ${dualInstall}`);
+    }
+  }
 
   if (cfg.errorReporting?.enabled !== false && cfg.errorReporting?.consent !== false) {
     const pendingReports = resolvePendingErrorReportCount(resolvedSqlitePath);
