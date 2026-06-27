@@ -20,7 +20,11 @@ import {
   stripInvalidOpenClawCoreKeys,
 } from "./config-merge.js";
 import { applyDetectedEmbeddingSetup, detectRecommendedEmbeddingSetup, getDashboardUrl } from "./embedding-detect.js";
-import { ensureMaintenanceCronJobs, readConsolidatedCronJobsFlag } from "./cron-jobs.js";
+import {
+  buildMaintenanceCronFeatureGates,
+  ensureMaintenanceCronJobs,
+  readConsolidatedCronJobsFlag,
+} from "./cron-jobs.js";
 import {
   applyHybridMemoryToolsMd,
   assertSafeRequestedVersionArg,
@@ -214,12 +218,7 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
           pluginCfg as { maintenance?: { orchestrator?: { consolidatedCronJobs?: boolean } } },
         ),
         scheduleOverrides: Object.keys(installScheduleOverrides).length > 0 ? installScheduleOverrides : undefined,
-        featureGates: {
-          "sensorSweep.enabled": (sensorSweepRaw?.enabled as boolean | undefined) === true,
-          "nightlyCycle.enabled": (dreamCycleRaw?.enabled as boolean | undefined) === true,
-          "crystallization.enabled":
-            (pluginCfg?.crystallization as { enabled?: boolean } | undefined)?.enabled === true,
-        },
+        featureGates: buildMaintenanceCronFeatureGates(pluginCfg as Parameters<typeof buildMaintenanceCronFeatureGates>[0]),
         digestWeeklyDelivery: parseDigestWeeklyDeliveryOnly(getPluginEntryConfig(config) ?? {}),
       });
     } catch (err) {
@@ -446,11 +445,7 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
       reEnableDisabled: false,
       consolidatedCronJobs: readConsolidatedCronJobsFlag(cfg),
       scheduleOverrides: Object.keys(scheduleOverrides).length > 0 ? scheduleOverrides : undefined,
-      featureGates: {
-        "sensorSweep.enabled": cfg.sensorSweep?.enabled === true,
-        "nightlyCycle.enabled": cfg.nightlyCycle?.enabled === true,
-        "crystallization.enabled": cfg.crystallization?.enabled === true,
-      },
+      featureGates: buildMaintenanceCronFeatureGates(cfg),
       digestWeeklyDelivery: cfg.digest.weekly.delivery,
     });
     if (added.length > 0 || normalized.length > 0) {

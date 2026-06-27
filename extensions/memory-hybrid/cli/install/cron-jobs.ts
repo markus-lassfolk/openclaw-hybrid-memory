@@ -191,6 +191,23 @@ export function readConsolidatedCronJobsFlag(cfg?: {
   return cfg?.maintenance?.orchestrator?.consolidatedCronJobs;
 }
 
+/** Feature gate booleans for optional maintenance cron jobs (install/verify/upgrade). */
+export function buildMaintenanceCronFeatureGates(cfg: {
+  sensorSweep?: { enabled?: boolean };
+  nightlyCycle?: { enabled?: boolean };
+  crystallization?: { enabled?: boolean };
+  workshop?: { enabled?: boolean };
+  lifecycle?: { adapters?: { github?: { enabled?: boolean } } };
+}): Record<string, boolean> {
+  return {
+    "sensorSweep.enabled": cfg.sensorSweep?.enabled === true,
+    "nightlyCycle.enabled": cfg.nightlyCycle?.enabled === true,
+    "crystallization.enabled": cfg.crystallization?.enabled === true,
+    "workshop.enabled": cfg.workshop?.enabled === true,
+    "lifecycle.adapters.github.enabled": cfg.lifecycle?.adapters?.github?.enabled === true,
+  };
+}
+
 function ensureHybridMemCronMessageHasEnvSanitizer(message: string): string | null {
   if (message.includes(HYBRID_MEM_CRON_ENV_SANITIZER_MARKER)) return null;
   if (!/openclaw\s+hybrid-mem\b/.test(message) && !/\bhm_step\b/.test(message)) return null;
@@ -633,6 +650,33 @@ function isSupersededByConsolidatedOrchestrator(job: (typeof MAINTENANCE_CRON_JO
   return true;
 }
 
+/** Standalone / optional jobs still normalized in consolidated orchestrator mode (#1972). */
+function getConsolidatedOptionalNormalizeJobDefs(): typeof MAINTENANCE_CRON_JOBS {
+  return MAINTENANCE_CRON_JOBS.filter(
+    (job) => job.supersededByOrchestrator === false || job.normalizeOnly === true,
+  );
+}
+
+function buildMaintenanceCronJobDefsForEnsure(options: {
+  useConsolidated: boolean;
+}): typeof MAINTENANCE_CRON_JOBS {
+  if (!options.useConsolidated) return MAINTENANCE_CRON_JOBS;
+  const consolidatedIds = new Set(CONSOLIDATED_CRON_JOBS.map((job) => job.pluginJobId as string));
+  const optional = getConsolidatedOptionalNormalizeJobDefs().filter(
+    (job) => !consolidatedIds.has(job.pluginJobId as string),
+  );
+  return [...CONSOLIDATED_CRON_JOBS, ...optional] as typeof MAINTENANCE_CRON_JOBS;
+}
+
+function shouldSkipAddingMaintenanceCronJob(
+  def: (typeof MAINTENANCE_CRON_JOBS)[number],
+  useConsolidated: boolean,
+): boolean {
+  if (def.normalizeOnly === true) return true;
+  if (!useConsolidated) return false;
+  return !CONSOLIDATED_CRON_JOBS.some((job) => job.pluginJobId === def.pluginJobId);
+}
+
 /** All canonical maintenance cron job `name` values (standalone + orchestrator-superseded). */
 export function getMaintenanceCronJobKeys(): string[] {
   return MAINTENANCE_CRON_JOBS.map((job) => String(job.name));
@@ -750,6 +794,11 @@ const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolea
   [`${PLUGIN_JOB_ID_PREFIX}sensor-sweep`]: (j) => /sensor-sweep|sensor sweep/i.test(String(j.name ?? "")),
   [`${PLUGIN_JOB_ID_PREFIX}daily-lifecycle-sync`]: (j) =>
     /daily-lifecycle-sync|lifecycle sync/i.test(String(j.name ?? "")),
+  [`${PLUGIN_JOB_ID_PREFIX}maintenance-nightly`]: (j) =>
+    j.id === `${PLUGIN_JOB_ID_PREFIX}maintenance-nightly` ||
+    String(j.name ?? "")
+      .toLowerCase()
+      .includes("maintenance-nightly"),
 };
 
 /**
@@ -783,7 +832,7 @@ export function ensureMaintenanceCronJobs(
     consolidatedCronJobs,
   } = options;
   const useConsolidated = isConsolidatedMaintenanceCronEnabled({ consolidatedCronJobs });
-  const activeJobDefs = useConsolidated ? CONSOLIDATED_CRON_JOBS : MAINTENANCE_CRON_JOBS;
+  const activeJobDefs = buildMaintenanceCronJobDefsForEnsure({ useConsolidated });
   const added: string[] = [];
   const normalized: string[] = [];
   const openclawConfigPath = join(openclawDir, "openclaw.json");
@@ -830,7 +879,9 @@ export function ensureMaintenanceCronJobs(
     const id = def.pluginJobId as string;
     const name = def.name as string;
     const scheduleExpr = scheduleOverrides?.[id];
-    const existing = jobsArr.find((j) => j && (j.pluginJobId === id || LEGACY_JOB_MATCHERS[id]?.(j)));
+    const existing = jobsArr.find(
+      (j) => j && (j.pluginJobId === id || j.id === id || LEGACY_JOB_MATCHERS[id]?.(j)),
+    );
     // If feature gate is explicitly disabled, disable existing job (if any) and mark it as
     // feature-gate-disabled so we can re-enable it later when the gate turns back on.
     // This distinguishes system-controlled disable from user-controlled disable.
@@ -857,7 +908,7 @@ export function ensureMaintenanceCronJobs(
       jobsChanged = true;
     }
     if (!existing) {
-      if (def.normalizeOnly === true) continue;
+      if (shouldSkipAddingMaintenanceCronJob(def, useConsolidated)) continue;
       const job = resolveCronJob(def, pluginConfig, agentPrimary, digestWeeklyDelivery) as Record<string, unknown>;
       if (scheduleExpr) job.schedule = { kind: "cron", expr: scheduleExpr };
       if (messageOverrides?.[id]) job.message = messageOverrides[id];
