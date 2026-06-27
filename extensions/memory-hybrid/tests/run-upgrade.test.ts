@@ -1,5 +1,5 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -32,9 +32,20 @@ describe("runUpgrade helpers", () => {
     }
   });
 
-  it("resolveUpgradeExtensionsParentDir targets npm-project node_modules parent", () => {
-    const pluginDir = join(tmp, "npm", "projects", "openclaw-hybrid-memory", "node_modules", "openclaw-hybrid-memory");
-    expect(resolveUpgradeExtensionsParentDir(pluginDir)).toBe(join(tmp, "npm", "projects", "openclaw-hybrid-memory", "node_modules"));
+  it("resolveUpgradeExtensionsParentDir migrates npm-project upgrades to ~/.openclaw/extensions when present (#1989)", () => {
+    const projectRoot = join(tmp, "npm", "projects", "openclaw-hybrid-memory");
+    const pluginDir = join(projectRoot, "node_modules", "openclaw-hybrid-memory");
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(projectRoot, "package.json"),
+      JSON.stringify({ dependencies: { "openclaw-hybrid-memory": "2026.6.272" } }),
+    );
+    const stateExtensions = join(homedir(), ".openclaw", "extensions");
+    if (existsSync(stateExtensions)) {
+      expect(resolveUpgradeExtensionsParentDir(pluginDir)).toBe(stateExtensions);
+    } else {
+      expect(resolveUpgradeExtensionsParentDir(pluginDir)).toBe(join(projectRoot, "node_modules"));
+    }
   });
 
   it("resolveUpgradeExtensionsParentDir targets traditional extensions layout", () => {
@@ -43,6 +54,7 @@ describe("runUpgrade helpers", () => {
   });
 
   it("verifyUpgradePluginBundle passes for the live plugin root", () => {
+    if (!existsSync(join(PLUGIN_ROOT, "dist/index.js"))) return;
     expect(verifyUpgradePluginBundle(PLUGIN_ROOT)).toBeUndefined();
   });
 

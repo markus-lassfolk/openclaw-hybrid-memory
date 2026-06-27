@@ -23,6 +23,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.6.273] - 2026-06-27
+
+### Fixed
+
+- **Goal corrupt-report ledger (#1988):** `repairQuarantinedGoalFile` removes persisted `_corrupt-reported.json` entries so restored goals are not suppressed after restart; quarantine runs before ledger write so failed renames can retry.
+- **Verify `--fix` (#1987):** Removes only the goal index drift warning instead of popping the last warning (e.g. event-loop lag).
+- **Error reporter dedupe (#1988):** 24h chronic dedupe applies only to `invalid_goal_registry_entry`, not all fingerprinted warnings.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.6.273**.
+
+---
+
 ## [2026.6.272] - 2026-06-27
 
 ### Fixed

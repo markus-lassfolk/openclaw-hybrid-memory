@@ -143,4 +143,54 @@ describe("UnconfiguredProviderError guard with mocked fetch", () => {
     expect(result).toBeUndefined();
     expect(mockFetch).not.toHaveBeenCalled();
   });
+
+  it("applies 24h dedupe only to invalid_goal_registry_entry, not other fingerprinted warnings (#1988)", async () => {
+    const { capturePluginError, flushErrorReporter, resetErrorDedupForTests } = await import("../services/error-reporter.js");
+    const fp = ["test-chronic-scope", "unit-file.json"];
+    const t0 = Date.now();
+
+    resetErrorDedupForTests();
+    vi.setSystemTime(t0);
+    mockFetch.mockClear();
+    capturePluginError(new Error("generic warning"), {
+      operation: "goal_registry_scan",
+      severity: "warning",
+      fingerprint: fp,
+    });
+    await flushErrorReporter(500);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    mockFetch.mockClear();
+    vi.setSystemTime(t0 + 90_000);
+    capturePluginError(new Error("generic warning after 90s"), {
+      operation: "goal_registry_scan",
+      severity: "warning",
+      fingerprint: fp,
+    });
+    await flushErrorReporter(500);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    resetErrorDedupForTests();
+    vi.setSystemTime(t0);
+    mockFetch.mockClear();
+    capturePluginError(new Error("invalid goal entry"), {
+      operation: "invalid_goal_registry_entry",
+      severity: "warning",
+      fingerprint: fp,
+    });
+    await flushErrorReporter(500);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    mockFetch.mockClear();
+    vi.setSystemTime(t0 + 90_000);
+    capturePluginError(new Error("invalid goal entry after 90s"), {
+      operation: "invalid_goal_registry_entry",
+      severity: "warning",
+      fingerprint: fp,
+    });
+    await flushErrorReporter(500);
+    expect(mockFetch).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
 });

@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 export interface DeprecatedCronToken {
@@ -126,5 +126,48 @@ export function findDeprecatedTokensInHmExitContent(content: string): Deprecated
       }
     }
   }
+  return hits;
+}
+
+export interface DeprecatedWrapperScriptHit {
+  path: string;
+  token: DeprecatedCronToken;
+}
+
+/** Scan shell/script files for deprecated hybrid-mem CLI tokens (#1990). */
+export function findDeprecatedTokensInWrapperScripts(roots: string[]): DeprecatedWrapperScriptHit[] {
+  const hits: DeprecatedWrapperScriptHit[] = [];
+  const seen = new Set<string>();
+  const walk = (dir: string): void => {
+    if (!existsSync(dir)) return;
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      const full = join(dir, name);
+      try {
+        const st = statSync(full);
+        if (st.isDirectory()) {
+          if (name === "node_modules" || name.startsWith(".")) continue;
+          walk(full);
+          continue;
+        }
+        if (!/\.(sh|bash|inc\.sh)$/.test(name)) continue;
+        const content = readFileSync(full, "utf-8");
+        for (const token of findDeprecatedHybridMemCronTokens(content)) {
+          const key = `${full}::${token.token}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          hits.push({ path: full, token });
+        }
+      } catch {
+        /* skip unreadable */
+      }
+    }
+  };
+  for (const root of roots) walk(root);
   return hits;
 }

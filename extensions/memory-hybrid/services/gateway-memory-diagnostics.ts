@@ -7,6 +7,7 @@ import { getStartupMemoryAttributionEntries } from "./startup-memory-attribution
 import { collectVectorBackendObservability } from "./vector-backend-observability.js";
 import { getDirSize } from "../utils/fs.js";
 import { nowIso } from "../utils/dates.js";
+import { getEventLoopLagSnapshot } from "../utils/event-loop-health.js";
 
 export type GatewayMemoryDiagnosticsContext = {
   factsDb: FactsDB;
@@ -52,6 +53,11 @@ export type GatewayMemoryDiagnostics = {
   eventLoop: {
     activeHandles: number;
     activeRequests: number;
+    lagMeanMs: number | null;
+    lagMaxMs: number | null;
+    lagP99Ms: number | null;
+    health: "healthy" | "degraded" | "unknown";
+    degradedThresholdMs: number;
   };
   leakHints: string[];
   startupAttribution: ReturnType<typeof getStartupMemoryAttributionEntries>;
@@ -227,6 +233,8 @@ export async function buildGatewayMemoryDiagnostics(
     lanceBytes: lanceDirBytes,
   });
 
+  const lag = getEventLoopLagSnapshot();
+
   return {
     generatedAt: nowIso(),
     uptimeSeconds: Math.floor(process.uptime()),
@@ -258,6 +266,11 @@ export async function buildGatewayMemoryDiagnostics(
     eventLoop: {
       activeHandles: activeHandleCount(),
       activeRequests: activeRequestCount(),
+      lagMeanMs: lag.meanMs,
+      lagMaxMs: lag.maxMs,
+      lagP99Ms: lag.p99Ms,
+      health: lag.health,
+      degradedThresholdMs: lag.degradedThresholdMs,
     },
     leakHints: buildLeakHints({ nativeRssBytes, reregisterMetrics, policy }),
     startupAttribution: getStartupMemoryAttributionEntries(),
@@ -270,6 +283,7 @@ export function buildProcessMemorySnapshot(): Pick<
   "generatedAt" | "uptimeSeconds" | "process" | "eventLoop"
 > {
   const usage = process.memoryUsage();
+  const lag = getEventLoopLagSnapshot();
   return {
     generatedAt: nowIso(),
     uptimeSeconds: Math.floor(process.uptime()),
@@ -284,6 +298,11 @@ export function buildProcessMemorySnapshot(): Pick<
     eventLoop: {
       activeHandles: activeHandleCount(),
       activeRequests: activeRequestCount(),
+      lagMeanMs: lag.meanMs,
+      lagMaxMs: lag.maxMs,
+      lagP99Ms: lag.p99Ms,
+      health: lag.health,
+      degradedThresholdMs: lag.degradedThresholdMs,
     },
   };
 }

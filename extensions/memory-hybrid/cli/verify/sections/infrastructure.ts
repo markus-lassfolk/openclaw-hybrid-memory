@@ -10,9 +10,15 @@
 
 import { writeFileSync } from "node:fs";
 import { capturePluginError, isErrorReporterActive, resolvePendingErrorReportCount } from "../../../services/error-reporter.js";
-import { listQuarantinedGoalIds, resolveGoalsDir } from "../../../services/goal-registry.js";
+import { listQuarantinedGoalIds, resolveGoalsDir, auditGoalIndexDrift, rebuildGoalIndex } from "../../../services/goal-registry.js";
 import { PLUGIN_ID } from "../../../utils/constants.js";
 import { workspaceRootForCli } from "../../config-feature-summaries.js";
+import {
+  getEventLoopLagSnapshot,
+  resolveEventLoopDegradedThresholdMs,
+  sampleSchedulerDelayMs,
+  startEventLoopLagMonitor,
+} from "../../../utils/event-loop-health.js";
 
 import type { VerifyRunState } from "../verify-run-state.js";
 import { getCachedFactCount } from "../fact-count.js";
@@ -64,6 +70,8 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
     }
   }
 
+  startEventLoopLagMonitor();
+  const lagBeforeGoals = getEventLoopLagSnapshot();
   if (cfg.goalStewardship?.enabled) {
     const goalsDir = resolveGoalsDir(workspaceRootForCli(), cfg.goalStewardship.goalsDir);
     const quarantined = listQuarantinedGoalIds(goalsDir);
@@ -75,6 +83,50 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
         `${WARN_LINE} Goals: ${quarantined.length} quarantined corrupt file(s) (${preview}${suffix}). Restore from state/goals/*.json.corrupt or delete after backup.`,
       );
     }
+    const drift = await auditGoalIndexDrift(goalsDir);
+    const driftCount =
+      drift.missingInIndex.length + drift.orphanInIndex.length + drift.staleFields.length;
+    if (driftCount > 0) {
+      const parts: string[] = [];
+      if (drift.missingInIndex.length > 0) {
+        parts.push(`missing in index: ${drift.missingInIndex.slice(0, 5).join(", ")}`);
+      }
+      if (drift.orphanInIndex.length > 0) {
+        parts.push(`orphan in index: ${drift.orphanInIndex.slice(0, 5).join(", ")}`);
+      }
+      if (drift.staleFields.length > 0) {
+        parts.push(`${drift.staleFields.length} stale field(s)`);
+      }
+      warnings.push(`Goal index drift detected (${parts.join("; ")})`);
+      log(`${WARN_LINE} Goals: index drift — ${parts.join("; ")}. Run \`openclaw hybrid-mem verify --fix\` to rebuild _index.json.`);
+      if (opts.fix) {
+        await rebuildGoalIndex(goalsDir);
+        log(`  → Rebuilt goals/_index.json`);
+        const driftIdx = warnings.findIndex((w) => w.startsWith("Goal index drift detected"));
+        if (driftIdx >= 0) warnings.splice(driftIdx, 1);
+      }
+    }
+  }
+
+  const lagAfterGoals = getEventLoopLagSnapshot();
+  const schedulerDelayMs = await sampleSchedulerDelayMs();
+  const thresholdMs = resolveEventLoopDegradedThresholdMs();
+  const lagMaxMs = lagAfterGoals.maxMs ?? lagBeforeGoals.maxMs;
+  if (lagAfterGoals.health === "degraded" || (lagMaxMs !== null && lagMaxMs > thresholdMs)) {
+    const detail =
+      lagMaxMs !== null
+        ? `max lag ${lagMaxMs.toFixed(1)}ms (threshold ${thresholdMs}ms, scheduler sample ${schedulerDelayMs.toFixed(1)}ms)`
+        : `scheduler delay ${schedulerDelayMs.toFixed(1)}ms`;
+    warnings.push(`Event loop lag elevated: ${detail}`);
+    log(
+      `${WARN_LINE} Event loop: degraded — ${detail}. Yield points in goal registry and recall reduce gateway health RPC starvation (#931).`,
+    );
+  } else {
+    const healthyDetail =
+      lagMaxMs !== null
+        ? `max lag ${lagMaxMs.toFixed(1)}ms (threshold ${thresholdMs}ms)`
+        : `scheduler sample ${schedulerDelayMs.toFixed(1)}ms`;
+    log(`${OK} Event loop: healthy (${healthyDetail})`);
   }
 
   if (

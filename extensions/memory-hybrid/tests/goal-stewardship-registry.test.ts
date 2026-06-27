@@ -261,6 +261,27 @@ describe("goal registry", () => {
     expect((await readGoal(dir, g.id))?.label).toBe("repair_me");
   });
 
+  it("repairQuarantinedGoalFile removes corrupt-report ledger entry (#1988)", async () => {
+    dir = await makeTempDir();
+    const g = await createGoal(dir, { label: "ledger_clear", description: "d", acceptanceCriteria: ["c"] }, defaults);
+    await writeFile(join(dir, "broken.json"), "{bad", "utf-8");
+    await listGoals(dir);
+    const ledgerPath = join(dir, "_corrupt-reported.json");
+    expect(existsSync(ledgerPath)).toBe(true);
+    const ledgerBefore = JSON.parse(await readFile(ledgerPath, "utf-8")) as { keys: string[] };
+    expect(ledgerBefore.keys.some((k) => k.endsWith("broken.json"))).toBe(true);
+
+    const activePath = join(dir, `${g.id}.json`);
+    const corruptPath = join(dir, `${g.id}.json.corrupt`);
+    await rename(activePath, corruptPath);
+    await repairQuarantinedGoalFile(dir, g.id);
+
+    expect(existsSync(ledgerPath)).toBe(true);
+    const ledgerAfter = JSON.parse(await readFile(ledgerPath, "utf-8")) as { keys: string[] };
+    expect(ledgerAfter.keys.some((k) => k.endsWith(`${g.id}.json`))).toBe(false);
+    expect(ledgerAfter.keys.some((k) => k.endsWith("broken.json"))).toBe(true);
+  });
+
   it("repairAllQuarantinedGoals skips invalid quarantined JSON", async () => {
     dir = await makeTempDir();
     await writeFile(join(dir, "bad-id.json.corrupt"), "{not valid goal", "utf-8");
