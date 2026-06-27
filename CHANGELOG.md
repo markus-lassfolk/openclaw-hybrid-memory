@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.6.276] - 2026-06-27
+
+### Fixed
+
+- **Graph config schema (#1997):** Add missing `coOccurrenceWeight`, `autoSupersede`, and `hubScorePenalty` to `openclaw.plugin.json` graph schema so Maeve-style configs pass gateway validation (`additionalProperties: false`).
+
+### Added
+
+- **Schema parity gate:** `plugin-graph-schema-parity.test.ts` + `GRAPH_CONFIG_INPUT_KEYS` assert parser-accepted graph keys exist in the plugin manifest; wired into `verify:gate` so schema drift is caught before release.
+
+---
+
 ## [2026.6.275] - 2026-06-27
 
 ### Fixed

@@ -1,7 +1,7 @@
 {
   "id": "openclaw-hybrid-memory",
   "kind": "memory",
-  "version": "2026.6.275",
+  "version": "2026.6.276",
   "contracts": {
     "tools": [
       "active_task_checkpoint",
@@ -512,6 +512,14 @@
     "graph.useInRecall": {
       "label": "Use in recall",
       "help": "Enable graph traversal in memory_recall (default true)"
+    },
+    "graph.coOccurrenceWeight": {
+      "label": "Co-occurrence weight",
+      "help": "Strength (0–1) for RELATED_TO links created from shared session or entity context (default 0.3)"
+    },
+    "graph.autoSupersede": {
+      "label": "Auto-supersede contradictions",
+      "help": "When true, mark older facts superseded when entity auto-link detects a contradiction (default true)"
     },
     "graph.strengthenOnRecall": {
       "label": "Strengthen on recall",
@@ -1635,6 +1643,16 @@
             "type": "boolean",
             "description": "Enable graph traversal in memory_recall (default: true)"
           },
+          "coOccurrenceWeight": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Weight for co-occurrence RELATED_TO links when facts share session or entity context (default: 0.3)"
+          },
+          "autoSupersede": {
+            "type": "boolean",
+            "description": "When true, auto-mark superseded facts on contradictory entity auto-link (default: true)"
+          },
           "strengthenOnRecall": {
             "type": "boolean",
             "description": "Strengthen RELATED_TO links when facts are recalled together (default: false)"
@@ -1643,6 +1661,12 @@
             "type": ["number", "null"],
             "minimum": 1,
             "description": "Hub guard: skip nodes above this total link degree and cap per-hop traversable fanout (default: 500; null disables)"
+          },
+          "hubScorePenalty": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Optional hub attenuation (#1192): when set in (0,1), hub nodes' descendants get score multiplied by (1 - penalty) per hop; null uses skip mode"
           }
         },
         "description": "Graph-based spreading activation: typed relationships for zero-LLM recall"
