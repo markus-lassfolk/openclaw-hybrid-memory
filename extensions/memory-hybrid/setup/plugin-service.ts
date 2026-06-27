@@ -889,6 +889,20 @@ export function createPluginService(ctx: PluginServiceContext) {
               api.logger.info?.(
                 `memory-hybrid: active-task session reconcile — completed orphan subagent row(s): ${reconciledLabels.join(", ")}`,
               );
+              if (cfg.activeTask.ledger === "facts") {
+                try {
+                  await renderActiveTaskMarkdownFile(
+                    factsDb,
+                    staleMinutes,
+                    activeTaskFilePath,
+                    cfg.activeTask.projection,
+                    api.logger,
+                    activeTaskRenderGoalsOpts(cfg, workspaceRoot),
+                  );
+                } catch (renderErr) {
+                  api.logger.warn?.(`memory-hybrid: active-task projection render after reconcile failed (non-fatal): ${renderErr}`);
+                }
+              }
             }
           } catch (reconcileErr) {
             api.logger.warn?.(`memory-hybrid: active-task session reconcile failed (non-fatal): ${reconcileErr}`);

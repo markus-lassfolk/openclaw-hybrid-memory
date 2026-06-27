@@ -25,6 +25,9 @@ import {
   deleteSignal,
   detectStaleTasks,
   flushCompletedTaskToMemory,
+  inferTerminalStatusFromTaskContent,
+  isAutoReconciledTaskNext,
+  isNonActionableSubagentPlaceholderTask,
   isSubagentSession,
   OCTAVE_TASK_HANDOFF_SCHEMA,
   parseActiveTaskFile,
@@ -375,6 +378,44 @@ describe("detectStaleTasks", () => {
 
   it("returns empty array for empty input", () => {
     expect(detectStaleTasks([], 1440)).toEqual([]);
+  });
+});
+
+describe("inferTerminalStatusFromTaskContent", () => {
+  it("treats auto-reconciled session missing as Failed", () => {
+    const status = inferTerminalStatusFromTaskContent({
+      status: "In progress",
+      description: "Subagent task",
+      next: "Auto-reconciled: session transcript not found for agent:main:main (subagent bookkeeping cleanup).",
+    });
+    expect(status).toBe("Failed");
+  });
+
+  it("treats stage-closed / done hints as Done", () => {
+    expect(
+      inferTerminalStatusFromTaskContent({
+        status: "In progress",
+        description: "Discovery phase 2 — file and report (DONE)",
+        next: "Stage closed.",
+      }),
+    ).toBe("Done");
+  });
+});
+
+describe("isNonActionableSubagentPlaceholderTask", () => {
+  it("treats auto-reconciled next as non-actionable", () => {
+    expect(
+      isNonActionableSubagentPlaceholderTask({
+        label: "agent:main:subagent:dead",
+        description: "Subagent task (session: agent:main:subagent:dead)",
+        status: "In progress",
+        subagent: "agent:main:subagent:dead",
+        next: "Auto-reconciled: session transcript not found for agent:main:subagent:dead (subagent bookkeeping cleanup).",
+        started: "2026-01-01T00:00:00.000Z",
+        updated: "2026-01-01T00:00:00.000Z",
+      }),
+    ).toBe(true);
+    expect(isAutoReconciledTaskNext("Auto-reconciled: from live GitHub")).toBe(true);
   });
 });
 

@@ -36,6 +36,7 @@ import {
   reconcileActiveTaskInProgressSessionsFacts,
   reconcileActiveTaskLiveState,
   consumePendingTaskSignalsFacts,
+  findActiveTaskCoherenceRepairs,
   renderActiveTaskMarkdownFile,
   syncActiveTaskEntryToFacts,
   mirrorMemoryStoreToActiveTaskLedger,
@@ -204,6 +205,90 @@ describe("task-ledger-facts", () => {
     expect(completed).toHaveLength(1);
     expect(completed[0].label).toBe("done-task");
     expect(completed[0].status).toBe("Done");
+  });
+
+  it("buildTaskEntriesFromGroupedFacts moves incoherent auto-reconciled rows to completed", () => {
+    const m = new Map<string, Map<string, MemoryEntry>>();
+    const row = new Map<string, MemoryEntry>();
+    row.set("status", fact({ id: "s1", entity: "orphan-sub", key: "status", value: "in_progress", createdAt: 1 }));
+    row.set("title", fact({ id: "t1", entity: "orphan-sub", key: "title", value: "Subagent task", createdAt: 1 }));
+    row.set(
+      "next",
+      fact({
+        id: "n1",
+        entity: "orphan-sub",
+        key: "next",
+        value: "Auto-reconciled: session transcript not found for agent:main:subagent:dead (subagent bookkeeping cleanup).",
+        createdAt: 2,
+      }),
+    );
+    m.set("orphan-sub", row);
+    const { active, completed } = buildTaskEntriesFromGroupedFacts(m);
+    expect(active).toHaveLength(0);
+    expect(completed).toHaveLength(1);
+    expect(completed[0].label).toBe("orphan-sub");
+    expect(completed[0].status).toBe("Failed");
+  });
+
+  it("findActiveTaskCoherenceRepairs detects raw status/next mismatch", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-ledger-coherence-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    try {
+      db.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity: "discovery-issues-phase2",
+        key: "status",
+        value: "in_progress",
+        text: "Task [discovery-issues-phase2] status: in_progress",
+      });
+      db.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity: "discovery-issues-phase2",
+        key: "title",
+        value: "Discovery phase 2 — file and report (DONE)",
+        text: "Task title",
+      });
+      db.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity: "discovery-issues-phase2",
+        key: "next",
+        value: "Stage closed.",
+        text: "Task next",
+      });
+      const repairs = findActiveTaskCoherenceRepairs(db);
+      expect(repairs).toHaveLength(1);
+      expect(repairs[0].label).toBe("discovery-issues-phase2");
+      expect(repairs[0].status).toBe("Done");
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("upsertProjectTaskKey refuses to regress terminal status", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-ledger-terminal-guard-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    const { vectorDb, embeddings } = activeTaskStubs();
+    try {
+      await upsertProjectTaskKey(db, vectorDb, embeddings, "guarded-task", "status", "abandoned");
+      const regressed = await upsertProjectTaskKey(db, vectorDb, embeddings, "guarded-task", "status", "in_progress");
+      expect(regressed.changed).toBe(false);
+      const { active, completed } = loadTaskLedgerFromFacts(db);
+      expect(active).toHaveLength(0);
+      expect(completed.some((t) => t.label === "guarded-task")).toBe(true);
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("buildTaskEntriesFromGroupedFacts parses valid handoff JSON and warns on malformed handoff facts", () => {

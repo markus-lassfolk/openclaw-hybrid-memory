@@ -26,7 +26,7 @@ The projection must not invent “when work started” or “last touch” from 
 
 - **Started** uses fact fields in order: `started`, `task_started`, `created_at` (parseable), then the **earliest** SQLite `createdAt` among fact rows for that task entity.
 - **Updated** uses: `task_updated`, `updated`, `updated_at`, then the **latest** `createdAt` in the row.
-- If nothing can be resolved, the markdown shows **Unknown**. Those rows are treated as **stale** for `activeTask.staleThreshold` (no trustworthy “last update” time).
+- If nothing can be resolved, the markdown shows **Unknown**. Injection treats Unknown **Updated** as not stale; hygiene may still flag missing timestamps for cleanup.
 
 ## Prompt injection
 
