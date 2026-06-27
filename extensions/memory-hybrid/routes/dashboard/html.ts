@@ -183,6 +183,25 @@ function renderMemory(m) {
 </div>\`;
 }
 
+function renderInfrastructure(infra) {
+  if (!infra) return '';
+  const pending = Number(infra.pendingErrorReports ?? 0);
+  const pendingBadge = pending > 0 ? badge('warn') : badge('ok');
+  const reporterBadge = infra.errorReporterActive ? badge('ok') : badge('muted');
+  const quarantined = Array.isArray(infra.quarantinedGoalIds) ? infra.quarantinedGoalIds : [];
+  let html = \`<div class="card">
+  <div class="card-title"><span class="icon">🩺</span> Infrastructure</div>
+  <div class="stat-row"><span class="stat-label">Error reporter</span><span class="stat-value">\${reporterBadge}</span></div>
+  <div class="stat-row"><span class="stat-label">Pending telemetry</span><span class="stat-value">\${pendingBadge} \${pending}</span></div>\`;
+  if (quarantined.length > 0) {
+    html += \`<div class="stat-row"><span class="stat-label">Quarantined goals</span><span class="stat-value">\${badge('warn')} \${escHtml(quarantined.slice(0, 5).join(', '))}\${quarantined.length > 5 ? '…' : ''}</span></div>\`;
+  } else {
+    html += '<div class="stat-row"><span class="stat-label">Quarantined goals</span><span class="stat-value">0</span></div>';
+  }
+  html += '</div>';
+  return html;
+}
+
 function renderTaskQueue(tq) {
   let html = '<div class="card"><div class="card-title"><span class="icon">📋</span> Task Queue</div>';
   if (tq.current) {
@@ -593,6 +612,7 @@ async function refresh() {
     const grid = document.getElementById('grid');
     grid.innerHTML = [
       renderMemory(data.memory),
+      renderInfrastructure(data.infrastructure),
       renderRecallFeedback(signals),
       renderTaskQueue(data.taskQueue),
       renderForge(data.forge),

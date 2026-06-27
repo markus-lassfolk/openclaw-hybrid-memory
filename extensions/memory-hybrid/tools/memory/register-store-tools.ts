@@ -29,12 +29,14 @@ import { classifyMemoryOperation } from "../../services/classification.js";
 import { AllEmbeddingProvidersFailed, shouldSuppressEmbeddingError } from "../../services/embeddings.js";
 import { extractEntityMentionsWithLlm } from "../../services/entity-enrichment.js";
 import { addOperationBreadcrumb, capturePluginError } from "../../services/error-reporter.js";
+import { guardAgainstWrapperArgsDropped } from "../../services/tool-args-guard.js";
 import { emitFeatureTelemetry } from "../../services/feature-telemetry.js";
 import { extractStructuredFields } from "../../services/fact-extraction.js";
 import { storeAliases } from "../../services/retrieval-aliases.js";
 import { validateScopedClassificationTarget } from "../../services/classification-scope.js";
 import { shouldAutoVerify } from "../../services/verification-store.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../../services/vector-maintenance.js";
+import { mirrorMemoryStoreToActiveTaskLedger } from "../../services/task-ledger-facts.js";
 import {
   isWalWriteFailure,
   walRemove as walRemoveEntry,
@@ -123,6 +125,34 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
     details: { error: "wal_write_failed" },
   });
 
+  const syncProjectStoreToActiveTaskLedger = async (opts: {
+    category: string;
+    entity?: string | null;
+    key?: string | null;
+    value?: string | null;
+    scope?: string | null;
+  }): Promise<{ synced: boolean; autoTaskUpdated: boolean }> => {
+    try {
+      return await mirrorMemoryStoreToActiveTaskLedger({
+        factsDb,
+        vectorDb,
+        embeddings,
+        activeTaskEnabled: cfg.activeTask?.enabled === true && cfg.activeTask.ledger === "facts",
+        category: opts.category,
+        entity: opts.entity,
+        key: opts.key,
+        value: opts.value,
+        scope: opts.scope,
+        log: api.logger,
+      });
+    } catch (err) {
+      api.logger?.warn?.(
+        `memory-hybrid: active-task ledger mirror failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return { synced: false, autoTaskUpdated: false };
+    }
+  };
+
   api.registerTool(
     {
       name: "memory_store",
@@ -199,6 +229,8 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         try {
+          const dropped = guardAgainstWrapperArgsDropped("memory_store", params, api.logger);
+          if (dropped) return dropped;
           const {
             text,
             why,
@@ -320,7 +352,14 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
 
           if (storeFactsDb.hasDuplicate(textToStore, "conversation", { category, entity, key, value })) {
             return {
-              content: [{ type: "text", text: "Similar memory already exists." }],
+              content: [
+                {
+                  type: "text",
+                  text:
+                    "Similar memory already exists. Do not retry memory_store with the same text. " +
+                    "Use memory_recall to verify what is stored, or memory_forget to remove an incorrect fact before storing a correction.",
+                },
+              ],
               details: { action: "duplicate" },
             };
           }
@@ -688,7 +727,12 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
 
               if (classification.action === "NOOP") {
                 return {
-                  content: [{ type: "text", text: `Already known: ${classification.reason}` }],
+                  content: [
+                    {
+                      type: "text",
+                      text: `Already known: ${classification.reason}. Do not retry memory_store — use memory_recall to verify or memory_forget to supersede an incorrect fact.`,
+                    },
+                  ],
                   details: { action: "noop", reason: classification.reason },
                 };
               }
@@ -900,6 +944,13 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                       api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
                     }
 
+                    await syncProjectStoreToActiveTaskLedger({
+                      category: newEntry.category,
+                      entity,
+                      key,
+                      value,
+                      scope: newEntry.scope,
+                    });
                     await maybeRefreshProjectActiveTaskProjection(newEntry.category, newEntry.id, newEntry.scope);
 
                     // Issue #159: enqueue contextual variant generation (non-blocking)
@@ -1100,6 +1151,13 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               });
             }
 
+            const ledgerMirror = await syncProjectStoreToActiveTaskLedger({
+              category: entry.category,
+              entity,
+              key,
+              value,
+              scope: entry.scope,
+            });
             await maybeRefreshProjectActiveTaskProjection(entry.category, entry.id, entry.scope);
 
             // Issue #150: write event to episodic event log
@@ -1301,6 +1359,9 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 storedMsg += ` [id: ${entry.id}]`;
                 if (entry.scope)
                   storedMsg += ` [scope: ${entry.scope}${entry.scopeTarget ? `/${entry.scopeTarget}` : ""}]`;
+              }
+              if (ledgerMirror.synced) {
+                storedMsg += " (synced to active-task ledger)";
               }
             }
 

@@ -68,6 +68,7 @@ export function buildPluginApiForRegisterHooks(
     lastAutoRecallPromptRef: { value: null },
     lastAutoRecallPromptBySession: new Map(),
     prependBudgetRef: { value: null },
+    beforeAgentStartTurnRef: { value: null },
     registrationGeneration: 0,
     currentRegistrationGenerationRef: { value: 0 },
     sessionStateRef: { value: null },

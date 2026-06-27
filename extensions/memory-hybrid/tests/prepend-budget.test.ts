@@ -4,6 +4,7 @@ import {
   createPrependBudgetRef,
   getRemainingPrependTokens,
   initPrependBudget,
+  initPrependBudgetWithInjectorReserve,
   trimPrependToRemainingBudget,
 } from "../services/prepend-budget.js";
 
@@ -32,6 +33,13 @@ describe("prepend budget", () => {
 
     const third = applyPrependBudget(ref, "c".repeat(40));
     expect(third).toBeUndefined();
+  });
+
+  it("initPrependBudgetWithInjectorReserve holds back slice for injectors", () => {
+    const ref = createPrependBudgetRef();
+    initPrependBudgetWithInjectorReserve(ref, 200, "s1", 0.25);
+    expect(ref.value?.totalTokens).toBe(200);
+    expect(getRemainingPrependTokens(ref)).toBe(150);
   });
 
   it("trimPrependToRemainingBudget passes through when ref is unset", () => {

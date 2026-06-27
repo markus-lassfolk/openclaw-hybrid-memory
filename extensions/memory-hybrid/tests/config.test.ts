@@ -2231,6 +2231,25 @@ describe("hybridConfigSchema.parse", () => {
   });
 });
 
+describe("activeTask config defaults", () => {
+  const validBase = {
+    embedding: { provider: "onnx", model: "bge-m3", dimensions: 1024 },
+  };
+
+  it("defaults ledger to facts when omitted", () => {
+    const cfg = hybridConfigSchema.parse(validBase);
+    expect(cfg.activeTask.ledger).toBe("facts");
+  });
+
+  it("honors explicit markdown ledger", () => {
+    const cfg = hybridConfigSchema.parse({
+      ...validBase,
+      activeTask: { ledger: "markdown" },
+    });
+    expect(cfg.activeTask.ledger).toBe("markdown");
+  });
+});
+
 describe("entityExtraction config", () => {
   it("parses configurable entity stop words", () => {
     const cfg = hybridConfigSchema.parse({

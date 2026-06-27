@@ -123,7 +123,7 @@ describe("memory tools execute boundaries", () => {
     );
 
     const result = await api.getTool("memory_recall").execute("tc", {});
-    expect(result.details.error).toBeUndefined();
+    expect(result.details.error).toBe("missing_query_or_id");
     expect(result.content[0].text).toContain("Provide a search query or an id");
     expect(result.details.count).toBe(0);
   });

@@ -6,6 +6,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 
 import { capturePluginError } from "../services/error-reporter.js";
 import { applyPrependBudget } from "../services/prepend-budget.js";
+import { runOptionalBeforeAgentStartStage } from "../services/before-agent-start-budget.js";
 import { buildChangeRevertContext, revertChangeByOrdinal } from "../services/change-feed-revert.js";
 import { withWorkshopDefaults } from "../services/workshop-service.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
@@ -36,7 +37,8 @@ export function registerChangeRevertHandler(
 
   const { resolveSessionKey } = sessionState;
 
-  api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
+  api.on("before_agent_start", async (event: unknown, hookCtx: unknown) =>
+    runOptionalBeforeAgentStartStage(ctx.beforeAgentStartTurnRef, "change-revert", api.logger, async () => {
     const rApi = withHookResolutionApi(api, hookCtx);
     const sessionKey = resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default";
     const userContent = extractUserContent(event);
@@ -85,5 +87,6 @@ export function registerChangeRevertHandler(
       });
     }
     return undefined;
-  });
+  }),
+  );
 }

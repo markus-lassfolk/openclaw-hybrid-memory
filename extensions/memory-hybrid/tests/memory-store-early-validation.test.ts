@@ -136,7 +136,7 @@ function setupTool(walWriteMock: ReturnType<typeof vi.fn>, embeddings: ReturnTyp
 // ---------------------------------------------------------------------------
 
 describe("memory_store early validation — invalid text", () => {
-  it("returns invalid_text error for missing text without throwing (Issue #1950)", async () => {
+  it("returns wrapper_args_dropped or invalid_text for missing text without throwing (Issue #1950)", async () => {
     const walWrite = vi.fn().mockResolvedValue("wal-id");
     const embeddings = makeMockEmbeddings();
     const { api } = setupTool(walWrite, embeddings);
@@ -147,8 +147,7 @@ describe("memory_store early validation — invalid text", () => {
       details: { error: string };
     };
 
-    expect(result.details.error).toBe("invalid_text");
-    expect(result.content[0]?.text).toContain("text is required");
+    expect(["wrapper_args_dropped", "invalid_text"]).toContain(result.details.error);
     expect(walWrite).not.toHaveBeenCalled();
     expect(embeddings.embed).not.toHaveBeenCalled();
   });

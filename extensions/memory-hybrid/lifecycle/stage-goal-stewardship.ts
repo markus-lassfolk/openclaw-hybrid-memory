@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { HybridMemoryConfig } from "../config.js";
 import { isSubagentSession } from "../services/active-task.js";
+import { buildCompactActiveGoalsPrepend, buildSubagentLinkedGoalsPrepend, resolveGoalsForSubagentContext } from "../services/goal-context-injection.js";
 import { refreshActiveTaskMirrorWithGoals } from "../services/goal-active-task-mirror.js";
 import {
   buildMultiGoalStewardshipPrepend,
@@ -13,12 +14,13 @@ import {
   matchesHeartbeat,
 } from "../services/goal-stewardship-heartbeat.js";
 import { llmTriageNeedsHeavy } from "../services/goal-stewardship-llm-triage.js";
-import { isGlobalRateLimited, listActiveGoals, resolveGoalsDir } from "../services/goal-stewardship.js";
+import { isGlobalRateLimited, isGoalStewardshipInjectionEnabled, listActiveGoals, resolveGoalsDir } from "../services/goal-stewardship.js";
 import { renderActiveTaskMarkdownFile } from "../services/task-ledger-facts.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
 import { applyPrependBudget } from "../services/prepend-budget.js";
+import { runOptionalBeforeAgentStartStage } from "../services/before-agent-start-budget.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
 import { resolveSessionKeyFromHookEvent } from "./session-state.js";
 import type { LifecycleContext } from "./types.js";
@@ -30,10 +32,18 @@ export function registerGoalStewardshipInjection(
   resolvedActiveTaskPath: string | undefined,
 ): void {
   const gs = ctx.cfg.goalStewardship;
-  if (!gs.enabled || !gs.heartbeatStewardship) return;
+  if (!gs.heartbeatStewardship) return;
 
-  api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
+  api.on("before_agent_start", async (event: unknown, hookCtx: unknown) =>
+    runOptionalBeforeAgentStartStage(
+      ctx.beforeAgentStartTurnRef,
+      "goal-stewardship",
+      api.logger,
+      async () => {
     try {
+      const injectionEnabled = await isGoalStewardshipInjectionEnabled(ctx.cfg, goalsDir);
+      if (!injectionEnabled) return undefined;
+
       const userText = extractLastUserMessageText(event);
       if (!userText) {
         api.logger?.debug?.(
@@ -44,9 +54,19 @@ export function registerGoalStewardshipInjection(
       if (!matchesHeartbeat(userText, gs)) return undefined;
       const resolvedApi = withHookResolutionApi(api, hookCtx);
       const sessionKey = resolveSessionKeyFromHookEvent(event, resolvedApi);
-      if (isSubagentSession(sessionKey ?? undefined)) {
-        api.logger?.info?.("memory-hybrid: goal stewardship skipped — subagent session");
-        return undefined;
+      const subagent = isSubagentSession(sessionKey ?? undefined);
+      if (subagent && sessionKey) {
+        const linkedGoals = await resolveGoalsForSubagentContext(sessionKey, goalsDir, ctx.factsDb, ctx.cfg);
+        if (linkedGoals.length === 0) {
+          api.logger?.info?.("memory-hybrid: goal stewardship skipped — subagent session without linked goals");
+          return undefined;
+        }
+        const compact = buildSubagentLinkedGoalsPrepend(linkedGoals, { maxChars: gs.everyTurnGoalMaxChars });
+        if (!compact?.trim()) return undefined;
+        const prepend = applyPrependBudget(ctx.prependBudgetRef, compact);
+        if (!prepend) return undefined;
+        api.logger?.info?.(`memory-hybrid: subagent goal context injected (${linkedGoals.length} linked goal(s))`);
+        return { prependContext: prepend };
       }
 
       const goals = await listActiveGoals(goalsDir);
@@ -84,10 +104,14 @@ export function registerGoalStewardshipInjection(
 
       if (isGlobalRateLimited(gs.globalLimits.maxDispatchesPerHour, goalsDir)) {
         api.logger?.warn?.("memory-hybrid: goal stewardship skipped — global dispatch rate limit");
-        const prepend = applyPrependBudget(
-          ctx.prependBudgetRef,
-          "<goal-stewardship>Global goal dispatch rate limit reached this hour. Assess without spawning if possible.</goal-stewardship>\n\n",
-        );
+        const compact = buildCompactActiveGoalsPrepend(goals, {
+          maxChars: gs.everyTurnGoalMaxChars,
+          maxGoals: gs.everyTurnGoalMaxGoals,
+        });
+        const rateBlock =
+          "<goal-stewardship>Global goal dispatch rate limit reached this hour. Assess without spawning if possible.</goal-stewardship>";
+        const combined = [rateBlock, compact ?? ""].filter(Boolean).join("\n\n");
+        const prepend = applyPrependBudget(ctx.prependBudgetRef, `${combined}\n\n`);
         if (!prepend) return undefined;
         return { prependContext: prepend };
       }
@@ -107,7 +131,15 @@ export function registerGoalStewardshipInjection(
       });
       if (!built) {
         api.logger?.info?.("memory-hybrid: goal stewardship skipped — no candidate goals past cooldown/budget filters");
-        return undefined;
+        const compactFallback = buildCompactActiveGoalsPrepend(goals, {
+          maxChars: gs.everyTurnGoalMaxChars,
+          maxGoals: gs.everyTurnGoalMaxGoals,
+        });
+        if (!compactFallback) return undefined;
+        const prepend = applyPrependBudget(ctx.prependBudgetRef, compactFallback);
+        if (!prepend) return undefined;
+        api.logger?.debug?.("memory-hybrid: heartbeat goal fallback — compact active-goals summary");
+        return { prependContext: prepend };
       }
 
       api.logger?.info?.(
@@ -120,7 +152,10 @@ export function registerGoalStewardshipInjection(
       api.logger?.warn?.(`memory-hybrid: goal stewardship injection error: ${String(err)}`);
       return undefined;
     }
-  });
+  },
+      { timeoutMs: 5000 },
+    ),
+  );
 }
 
 export function resolvedGoalsDirForLifecycle(cfg: HybridMemoryConfig): string {

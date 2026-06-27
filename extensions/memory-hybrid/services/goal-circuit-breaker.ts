@@ -12,7 +12,7 @@ const SHORT_BLOCKER =
 /** Stable fingerprint for sorted, trimmed blocker lines. */
 export function blockerFingerprint(blockers: string[]): string | null {
   const sorted = [...blockers]
-    .map((b) => b.trim().toLowerCase())
+    .map((b) => (typeof b === "string" ? b : String(b ?? "")).trim().toLowerCase())
     .filter(Boolean)
     .sort();
   if (sorted.length === 0) return null;

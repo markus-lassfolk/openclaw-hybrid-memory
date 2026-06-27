@@ -9,6 +9,11 @@ export interface DeprecatedCronToken {
 
 export const DEPRECATED_HYBRID_MEM_CRON_TOKENS: readonly DeprecatedCronToken[] = [
   {
+    token: "hybrid-mem analyze-maintenance-logs",
+    replacement: "maintenance analyze-logs",
+    note: "Flat `analyze-maintenance-logs` subcommand moved under `hybrid-mem maintenance analyze-logs`.",
+  },
+  {
     token: "workshop remind-pending",
     replacement: "digest pending --since 7d",
     note: "Removed `hybrid-mem workshop` CLI subcommand; use `openclaw hybrid-mem digest pending`.",

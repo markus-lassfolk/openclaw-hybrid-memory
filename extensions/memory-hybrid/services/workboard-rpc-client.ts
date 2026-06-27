@@ -22,6 +22,10 @@ export type WorkboardRpcCard = {
   updatedAt?: string;
 };
 
+export type WorkboardRpcClientOptions = {
+  shouldAbort?: () => boolean;
+};
+
 export interface WorkboardRpcClient {
   listCards(opts?: { tag?: string; column?: string }): Promise<WorkboardRpcCard[]>;
   createCard(card: {
@@ -48,6 +52,20 @@ export interface WorkboardRpcClient {
 }
 
 const REQUEST_TIMEOUT_MS = 25_000;
+
+function workboardRpcSkipped(method: string, shouldAbort?: () => boolean): boolean {
+  if (!shouldAbort?.()) return false;
+  pluginLogger.debug(`memory-hybrid: workboard RPC ${method} skipped (shutdown)`);
+  return true;
+}
+
+function logWorkboardRpcFailure(method: string, message: string, shouldAbort?: () => boolean): void {
+  if (shouldAbort?.()) {
+    pluginLogger.debug(`memory-hybrid: workboard RPC ${method} failed during shutdown: ${message}`);
+    return;
+  }
+  pluginLogger.warn(`memory-hybrid: workboard RPC ${method} failed: ${message}`);
+}
 
 type WorkboardApiCard = {
   id?: string;
@@ -171,10 +189,15 @@ function filterCardsByTag(cards: WorkboardRpcCard[], tag?: string): WorkboardRpc
   return cards.filter((c) => c.tags?.includes(tag));
 }
 
-export function createWorkboardHttpRpcClient(gatewayUrl: string, token?: string): WorkboardRpcClient {
+export function createWorkboardHttpRpcClient(
+  gatewayUrl: string,
+  token?: string,
+  options?: WorkboardRpcClientOptions,
+): WorkboardRpcClient {
   const baseUrl = gatewayUrl.replace(/\/+$/, "");
 
   async function rpc(method: string, params: Record<string, unknown> = {}): Promise<unknown | null> {
+    if (workboardRpcSkipped(method, options?.shouldAbort)) return null;
     const url = `${baseUrl}/rpc/${method}`;
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (token) headers.Authorization = `Bearer ${token}`;
@@ -193,25 +216,29 @@ export function createWorkboardHttpRpcClient(gatewayUrl: string, token?: string)
       clearTimeout(timeout);
 
       if (!response.ok) {
-        pluginLogger.warn(
-          `memory-hybrid: workboard RPC ${method} returned ${response.status}: ${await response.text().catch(() => "")}`,
+        logWorkboardRpcFailure(
+          method,
+          `${method} returned ${response.status}: ${await response.text().catch(() => "")}`,
+          options?.shouldAbort,
         );
         return null;
       }
 
       const json = (await response.json()) as { result?: unknown; error?: string };
       if (json.error) {
-        pluginLogger.warn(`memory-hybrid: workboard RPC ${method} error: ${json.error}`);
+        logWorkboardRpcFailure(method, `${method} error: ${json.error}`, options?.shouldAbort);
         return null;
       }
 
       return json.result ?? json;
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
-        pluginLogger.warn(`memory-hybrid: workboard RPC ${method} timed out after ${REQUEST_TIMEOUT_MS}ms`);
+        logWorkboardRpcFailure(method, `${method} timed out after ${REQUEST_TIMEOUT_MS}ms`, options?.shouldAbort);
       } else {
-        pluginLogger.warn(
-          `memory-hybrid: workboard RPC ${method} failed: ${err instanceof Error ? err.message : String(err)}`,
+        logWorkboardRpcFailure(
+          method,
+          err instanceof Error ? err.message : String(err),
+          options?.shouldAbort,
         );
       }
       return null;
@@ -273,7 +300,9 @@ async function runWorkboardGatewayCliCall(
   method: string,
   params: Record<string, unknown>,
   token?: string,
+  shouldAbort?: () => boolean,
 ): Promise<unknown | null> {
+  if (workboardRpcSkipped(method, shouldAbort)) return null;
   const args = [
     "gateway",
     "call",
@@ -295,8 +324,10 @@ async function runWorkboardGatewayCliCall(
       const timer = setTimeout(() => {
         if (!settled) {
           settled = true;
-          pluginLogger.warn(
-            `memory-hybrid: workboard gateway call ${method} timed out after ${REQUEST_TIMEOUT_MS + 5000}ms`,
+          logWorkboardRpcFailure(
+            method,
+            `gateway call ${method} timed out after ${REQUEST_TIMEOUT_MS + 5000}ms`,
+            shouldAbort,
           );
           child.kill("SIGTERM");
           resolve(null);
@@ -312,7 +343,7 @@ async function runWorkboardGatewayCliCall(
         if (!settled) {
           settled = true;
           clearTimeout(timer);
-          pluginLogger.warn(`memory-hybrid: workboard gateway call ${method} failed: ${err.message}`);
+          logWorkboardRpcFailure(method, `gateway call ${method} failed: ${err.message}`, shouldAbort);
           resolve(null);
         }
       });
@@ -322,8 +353,10 @@ async function runWorkboardGatewayCliCall(
           clearTimeout(timer);
           if (code !== 0) {
             const detail = (stderr || stdout).trim();
-            pluginLogger.warn(
-              `memory-hybrid: workboard gateway call ${method} failed${detail ? `: ${detail.slice(0, 200)}` : ""}`,
+            logWorkboardRpcFailure(
+              method,
+              `gateway call ${method} failed${detail ? `: ${detail.slice(0, 200)}` : ""}`,
+              shouldAbort,
             );
             resolve(null);
             return;
@@ -350,17 +383,22 @@ async function runWorkboardGatewayCliCall(
       });
     });
   } catch (err) {
-    pluginLogger.warn(
-      `memory-hybrid: workboard gateway call ${method} failed: ${err instanceof Error ? err.message : String(err)}`,
+    logWorkboardRpcFailure(
+      method,
+      `gateway call ${method} failed: ${err instanceof Error ? err.message : String(err)}`,
+      shouldAbort,
     );
     return null;
   }
 }
 
 /** Gateway RPC via `openclaw gateway call` (OpenClaw 6.8+ when HTTP /rpc/* is unavailable). */
-export function createWorkboardGatewayCliRpcClient(token?: string): WorkboardRpcClient {
+export function createWorkboardGatewayCliRpcClient(
+  token?: string,
+  options?: WorkboardRpcClientOptions,
+): WorkboardRpcClient {
   async function rpc(method: string, params: Record<string, unknown> = {}): Promise<unknown | null> {
-    return runWorkboardGatewayCliCall(method, params, token);
+    return runWorkboardGatewayCliCall(method, params, token, options?.shouldAbort);
   }
 
   return {
@@ -401,9 +439,13 @@ export function createWorkboardGatewayCliRpcClient(token?: string): WorkboardRpc
 /**
  * Workboard RPC client with HTTP probe first, then `openclaw gateway call` fallback (#1925).
  */
-export function createWorkboardRpcClient(gatewayUrl: string, token?: string): WorkboardRpcClient {
-  const httpClient = createWorkboardHttpRpcClient(gatewayUrl, token);
-  const cliClient = createWorkboardGatewayCliRpcClient(token);
+export function createWorkboardRpcClient(
+  gatewayUrl: string,
+  token?: string,
+  options?: WorkboardRpcClientOptions,
+): WorkboardRpcClient {
+  const httpClient = createWorkboardHttpRpcClient(gatewayUrl, token, options);
+  const cliClient = createWorkboardGatewayCliRpcClient(token, options);
   let activeClient: WorkboardRpcClient | null = null;
 
   async function resolveClient(): Promise<WorkboardRpcClient> {

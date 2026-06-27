@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { capturePluginError } from "../services/error-reporter.js";
 import { applyPrependBudget } from "../services/prepend-budget.js";
+import { runOptionalBeforeAgentStartStage } from "../services/before-agent-start-budget.js";
 import { sanitizePromptInjection } from "../services/skill-prompt-injection.js";
 import type { LifecycleContext } from "./types.js";
 
@@ -18,7 +19,8 @@ export function registerCredentialHint(api: ClawdbotPluginApi, ctx: LifecycleCon
 
   const pendingPath = join(dirname(ctx.resolvedSqlitePath), "credentials-pending.json");
 
-  api.on("before_agent_start", async () => {
+  api.on("before_agent_start", async () =>
+    runOptionalBeforeAgentStartStage(ctx.beforeAgentStartTurnRef, "credential-hint", api.logger, async () => {
     try {
       await access(pendingPath);
     } catch {
@@ -72,5 +74,6 @@ export function registerCredentialHint(api: ClawdbotPluginApi, ctx: LifecycleCon
       }
       await unlink(pendingPath).catch(() => {});
     }
-  });
+  }),
+  );
 }

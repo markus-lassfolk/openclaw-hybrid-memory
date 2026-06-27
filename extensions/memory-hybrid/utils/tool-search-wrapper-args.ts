@@ -1,7 +1,7 @@
 /**
  * Detect OpenClaw Tool Search wrapper argument loss (upstream #96115 / #53408).
- * When the wrapper drops nested args, memory_* tools receive wrapper-only
- * flattened keys — indistinguishable from a generic "Provide a query" failure.
+ * When the wrapper drops nested args, tools receive wrapper-only flattened keys —
+ * indistinguishable from a generic "Provide a query" failure.
  * Bare {} is treated as model omission, not wrapper loss.
  */
 
@@ -110,7 +110,7 @@ export function buildToolSearchWrapperDroppedArgsResponse(
   };
 }
 
-/** Expected primary argument keys per memory_* tool (for wrapper-drop detection). */
+/** Expected primary argument keys per tool (for wrapper-drop detection). */
 export const MEMORY_TOOL_EXPECTED_ARG_KEYS: Record<string, readonly string[]> = {
   memory_recall: ["query", "id"],
   memory_keyword_recall: ["query"],
@@ -149,7 +149,36 @@ export const MEMORY_TOOL_EXPECTED_ARG_KEYS: Record<string, readonly string[]> = 
   memory_tool_reject: ["id", "proposalId"],
   memory_verify: ["id", "memoryId"],
   memory_provenance: ["id", "memoryId"],
+  active_task_checkpoint: ["entity"],
+  goal_get: ["id", "label"],
+  goal_register: ["description"],
+  goal_assess: ["id", "label"],
+  goal_update: ["id", "label"],
+  goal_complete: ["id", "label"],
+  goal_abandon: ["id", "label"],
+  active_task_get: ["entity"],
+  active_task_propose_goal: ["entity"],
 };
+
+const WRAPPER_ARG_TOOL_PREFIXES = ["memory_", "goal_", "active_task_"] as const;
+
+function hasWrapperArgToolPrefix(toolName: string): boolean {
+  return WRAPPER_ARG_TOOL_PREFIXES.some((prefix) => toolName.startsWith(prefix));
+}
+
+function resolveWrapperDropMode(
+  toolName: string,
+): { kind: "mapped"; expectedKeys: readonly string[] } | { kind: "sentinel_only" } | null {
+  const expectedKeys = MEMORY_TOOL_EXPECTED_ARG_KEYS[toolName];
+  if (expectedKeys) return { kind: "mapped", expectedKeys };
+  if (hasWrapperArgToolPrefix(toolName)) return { kind: "sentinel_only" };
+  return null;
+}
+
+function isWrapperArgsDropped(params: unknown, mode: NonNullable<ReturnType<typeof resolveWrapperDropMode>>): boolean {
+  if (mode.kind === "mapped") return isToolSearchWrapperDroppedArgs(params, mode.expectedKeys);
+  return isSentinelOnlyWrapperDrop(params);
+}
 
 function isMissingRequiredArgsToolResult(result: unknown): boolean {
   if (!result || typeof result !== "object") return false;
@@ -169,21 +198,7 @@ function isMissingRequiredArgsToolResult(result: unknown): boolean {
   return false;
 }
 
-function resolveWrapperDropMode(
-  toolName: string,
-): { kind: "mapped"; expectedKeys: readonly string[] } | { kind: "sentinel_only" } | null {
-  const expectedKeys = MEMORY_TOOL_EXPECTED_ARG_KEYS[toolName];
-  if (expectedKeys) return { kind: "mapped", expectedKeys };
-  if (toolName.startsWith("memory_")) return { kind: "sentinel_only" };
-  return null;
-}
-
-function isWrapperArgsDropped(params: unknown, mode: NonNullable<ReturnType<typeof resolveWrapperDropMode>>): boolean {
-  if (mode.kind === "mapped") return isToolSearchWrapperDroppedArgs(params, mode.expectedKeys);
-  return isSentinelOnlyWrapperDrop(params);
-}
-
-/** Wrap a memory tool execute handler to detect wrapper argument loss. */
+/** Wrap a tool execute handler to detect wrapper argument loss. */
 export function wrapMemoryToolExecuteForWrapperArgs<T extends readonly unknown[]>(
   toolName: string,
   execute: (...args: T) => Promise<unknown> | unknown,
@@ -209,25 +224,27 @@ export function wrapMemoryToolExecuteForWrapperArgs<T extends readonly unknown[]
   };
 }
 
-/** Patch registerTool so all memory_* tools get wrapper-arg detection. */
+function shouldWrapToolForWrapperArgs(toolName: string): boolean {
+  return resolveWrapperDropMode(toolName) != null;
+}
+
+/** Patch registerTool so memory/goal/active-task tools get wrapper-arg detection. */
 export function patchMemoryToolRegistrationApi(api: ClawdbotPluginApi): ClawdbotPluginApi {
   const registerTool = api.registerTool.bind(api);
   return {
     ...api,
     registerTool(toolDef, options) {
-      if (
-        typeof toolDef.name === "string" &&
-        toolDef.name.startsWith("memory_") &&
-        typeof toolDef.execute === "function"
-      ) {
+      if (typeof toolDef.name === "string" && typeof toolDef.execute === "function") {
         const toolName = toolDef.name;
-        return registerTool(
-          {
-            ...toolDef,
-            execute: wrapMemoryToolExecuteForWrapperArgs(toolName, toolDef.execute.bind(toolDef), api.logger),
-          },
-          options,
-        );
+        if (shouldWrapToolForWrapperArgs(toolName)) {
+          return registerTool(
+            {
+              ...toolDef,
+              execute: wrapMemoryToolExecuteForWrapperArgs(toolName, toolDef.execute.bind(toolDef), api.logger),
+            },
+            options,
+          );
+        }
       }
       return registerTool(toolDef, options);
     },

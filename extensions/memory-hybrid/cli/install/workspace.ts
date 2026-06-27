@@ -14,9 +14,12 @@
  */
 
 import { randomBytes } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve as pathResolve, relative } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve as pathResolve, relative } from "node:path";
+
+import { PLUGIN_ID } from "../../utils/constants.js";
 
 import { atomicWriteFile } from "../../utils/atomic-write.js";
 import { getEnv } from "../../utils/env-manager.js";
@@ -74,6 +77,140 @@ export function assertSafeRequestedVersionArg(version: string): void {
   if (!v) throw new Error("Upgrade version is empty");
   if (!hasNoWhitespace(v)) throw new Error("Upgrade version contains whitespace");
   if (v.startsWith("-")) throw new Error("Upgrade version must not start with '-'");
+}
+
+/** Relative paths that must exist in the plugin package root after a successful upgrade. */
+export const UPGRADE_REQUIRED_BUNDLE_PATHS = [
+  "skills/hybrid-memory/SKILL.md",
+  "workspace-snippets/TOOLS-hybrid-memory-body.md",
+  "dist/index.js",
+  "openclaw.plugin.json",
+] as const;
+
+/**
+ * Parent directory passed to `OPENCLAW_EXTENSIONS_DIR` so the standalone installer
+ * swaps into the same layout as the currently running plugin (extensions or npm-project).
+ */
+export function resolveUpgradeExtensionsParentDir(pluginRootDir: string): string {
+  return dirname(pluginRootDir);
+}
+
+/** Returns an error message when bundled upgrade assets are missing; otherwise undefined. */
+export function verifyUpgradePluginBundle(pluginRootDir: string): string | undefined {
+  for (const rel of UPGRADE_REQUIRED_BUNDLE_PATHS) {
+    const abs = join(pluginRootDir, rel);
+    if (!existsSync(abs)) {
+      return `Post-upgrade verification failed: missing ${rel} under ${pluginRootDir}`;
+    }
+  }
+  return undefined;
+}
+
+/** True when the plugin lives under an npm project `node_modules/` tree (#1985). */
+export function isNpmProjectPluginLayout(pluginRootDir: string): boolean {
+  return resolveNpmProjectRootForPlugin(pluginRootDir) !== undefined;
+}
+
+/** npm project root when plugin is installed as a dependency; otherwise undefined. */
+export function resolveNpmProjectRootForPlugin(pluginRootDir: string): string | undefined {
+  const nodeModulesDir = dirname(pluginRootDir);
+  if (basename(nodeModulesDir) !== "node_modules") return undefined;
+  const projectRoot = dirname(nodeModulesDir);
+  const pkgPath = join(projectRoot, "package.json");
+  if (!existsSync(pkgPath)) return undefined;
+  try {
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { dependencies?: Record<string, string> };
+    if (typeof pkg.dependencies?.[PLUGIN_ID] === "string") return projectRoot;
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+/** Verify npm-project package.json pin matches installed version (#1985). */
+export function verifyNpmProjectDependencyPin(projectRoot: string, version: string): string | undefined {
+  const pkgPath = join(projectRoot, "package.json");
+  try {
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { dependencies?: Record<string, string> };
+    const pin = pkg.dependencies?.[PLUGIN_ID];
+    if (typeof pin !== "string" || pin.trim().length === 0) {
+      return `package.json missing dependencies.${PLUGIN_ID}`;
+    }
+    if (pin !== version) {
+      return `package.json pins ${PLUGIN_ID}@${pin}, expected ${version}`;
+    }
+    return undefined;
+  } catch (err) {
+    return `Could not read ${pkgPath}: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+/** Snapshot npm-project pin files before upgrade mutates them (#1985 rollback). */
+export type NpmProjectPinBackup = {
+  projectRoot: string;
+  packageJson?: string;
+  packageLockJson?: string;
+  previousPinnedVersion?: string;
+};
+
+export function snapshotNpmProjectPinBeforeUpgrade(projectRoot: string): NpmProjectPinBackup {
+  const backup: NpmProjectPinBackup = { projectRoot };
+  const pkgPath = join(projectRoot, "package.json");
+  const lockPath = join(projectRoot, "package-lock.json");
+  if (existsSync(pkgPath)) {
+    backup.packageJson = readFileSync(pkgPath, "utf-8");
+    try {
+      const pkg = JSON.parse(backup.packageJson) as { dependencies?: Record<string, string> };
+      backup.previousPinnedVersion = pkg.dependencies?.[PLUGIN_ID];
+    } catch {
+      /* ignore parse errors — restore raw file on rollback */
+    }
+  }
+  if (existsSync(lockPath)) {
+    backup.packageLockJson = readFileSync(lockPath, "utf-8");
+  }
+  return backup;
+}
+
+/** Restore npm-project pin files after a failed upgrade pin step. */
+export function restoreNpmProjectPinFiles(backup: NpmProjectPinBackup): void {
+  const pkgPath = join(backup.projectRoot, "package.json");
+  const lockPath = join(backup.projectRoot, "package-lock.json");
+  if (backup.packageJson !== undefined) {
+    writeFileSync(pkgPath, backup.packageJson, "utf-8");
+  }
+  if (backup.packageLockJson !== undefined) {
+    writeFileSync(lockPath, backup.packageLockJson, "utf-8");
+  } else if (existsSync(lockPath)) {
+    rmSync(lockPath, { force: true });
+  }
+}
+
+/** Re-run npm install to align node_modules after restoring package files. */
+export function runNpmInstallExactPin(projectRoot: string, version: string): { ok: boolean; error?: string } {
+  const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
+  const r = spawnSync(npmCmd, ["install", `${PLUGIN_ID}@${version}`, "--save-exact"], {
+    cwd: projectRoot,
+    stdio: "pipe",
+    shell: false,
+    encoding: "utf-8",
+  });
+  if (r.status !== 0) {
+    const detail = [r.stderr, r.stdout].filter(Boolean).join("\n").trim();
+    return {
+      ok: false,
+      error: `npm install ${PLUGIN_ID}@${version} failed in ${projectRoot} (exit ${r.status ?? "unknown"})${detail ? `: ${detail}` : ""}`,
+    };
+  }
+  return { ok: true };
+}
+
+/** Restore npm-project dependency pin and node_modules after upgrade failure. */
+export function rollbackNpmProjectPinAfterUpgradeFailure(backup: NpmProjectPinBackup): { ok: boolean; error?: string } {
+  restoreNpmProjectPinFiles(backup);
+  const version = backup.previousPinnedVersion?.trim();
+  if (!version) return { ok: true };
+  return runNpmInstallExactPin(backup.projectRoot, version);
 }
 
 function bundledHybridMemorySkillDir(pluginRootDir: string): string {

@@ -21,7 +21,7 @@ import { type RecallPipelineDeps, runRecallPipelineQuery } from "../../services/
 import { mergeSearchResultsByBestScore } from "../../services/merge-results.js";
 import { createRecallSpan, createRecallTimingLogger } from "../../services/recall-timing.js";
 import { filterCandidatesByInteractiveGrading } from "../../services/interactive-recall-grader.js";
-import { consumePrependBudget, getRemainingPrependTokens, initPrependBudget } from "../../services/prepend-budget.js";
+import { consumePrependBudget, getRemainingPrependTokens, initPrependBudgetWithInjectorReserve } from "../../services/prepend-budget.js";
 import {
   assembleRecallPrependContext,
   edictMaxTokensForBudget,
@@ -344,7 +344,11 @@ export async function runRecall(
     const { degradationQueueDepth, degradationMaxLatencyMs } = interactivePolicy;
     const sessionKeyForBudget = sessionScopeKey;
     if (ctx.prependBudgetRef) {
-      initPrependBudget(ctx.prependBudgetRef, interactivePolicy.contextBudgetTokens, sessionKeyForBudget);
+      initPrependBudgetWithInjectorReserve(
+        ctx.prependBudgetRef,
+        interactivePolicy.contextBudgetTokens,
+        sessionKeyForBudget,
+      );
     }
     const sessionInFlight = recallInFlightBySession.get(sessionScopeKey) ?? 0;
     const forceDegraded = degradationQueueDepth > 0 && sessionInFlight > degradationQueueDepth;

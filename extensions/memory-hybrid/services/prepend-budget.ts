@@ -17,6 +17,9 @@ export function createPrependBudgetRef(): PrependBudgetRef {
   return { value: null };
 }
 
+/** Fraction of prepend budget held back for goal + active-task injectors (recall uses the rest). */
+export const DEFAULT_INJECTOR_PREPEND_RESERVE_FRACTION = 0.25;
+
 export function initPrependBudget(ref: PrependBudgetRef, totalTokens: number, sessionKey: string): void {
   const total = Math.max(0, Math.floor(totalTokens));
   ref.value = {
@@ -24,6 +27,21 @@ export function initPrependBudget(ref: PrependBudgetRef, totalTokens: number, se
     remainingTokens: total,
     sessionKey,
   };
+}
+
+/**
+ * Initialize prepend budget and reserve a slice for downstream injectors (goals, active tasks).
+ * Call once per turn before recall consumes the pool.
+ */
+export function initPrependBudgetWithInjectorReserve(
+  ref: PrependBudgetRef,
+  totalTokens: number,
+  sessionKey: string,
+  reserveFraction: number = DEFAULT_INJECTOR_PREPEND_RESERVE_FRACTION,
+): void {
+  initPrependBudget(ref, totalTokens, sessionKey);
+  const fraction = Math.max(0, Math.min(0.5, reserveFraction));
+  reservePrependBudget(ref, Math.floor(ref.value!.totalTokens * fraction));
 }
 
 export function getRemainingPrependTokens(ref: PrependBudgetRef | undefined): number | undefined {

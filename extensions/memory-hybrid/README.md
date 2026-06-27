@@ -296,9 +296,9 @@ Each `.exit.txt` file contains one line per step:
 Use the analyzer to classify failures, persist regression history, emit an operator digest, and optionally report plugin/orchestration bugs through the existing GlitchTip path:
 
 ```bash
-openclaw hybrid-mem analyze-maintenance-logs --since 24h --digest md
-openclaw hybrid-mem analyze-maintenance-logs --since 7d --format json --out /tmp/maintenance-findings.json
-openclaw hybrid-mem analyze-maintenance-logs --since 24h --auto-fix --glitchtip --strict
+openclaw hybrid-mem maintenance analyze-logs --since 24h --digest md
+openclaw hybrid-mem maintenance analyze-logs --since 7d --format json --out /tmp/maintenance-findings.json
+openclaw hybrid-mem maintenance analyze-logs --since 24h --auto-fix --glitchtip --strict
 ```
 
 Rules are data-driven in [`services/maintenance-rules.json`](services/maintenance-rules.json), so operators can inspect or extend classifications without changing analyzer code. Findings are persisted in `maintenance-findings.db` table `maintenance_finding`, enabling week-over-week trend output for `--since 7d` / `--trend` runs. The digest collapses repeated fingerprints into `New` vs `Still failing`, suppresses stale historical fingerprints outside the current window from the primary findings, and avoids re-reporting already GlitchTip-reported fingerprints on every analyzer run. Known benign compatibility notices (for example missing `registerContextEngine` on older SDKs and Codex project-local config warnings) are collected in `noiseWarnings[]` and excluded from primary failure counts by default (#1833).

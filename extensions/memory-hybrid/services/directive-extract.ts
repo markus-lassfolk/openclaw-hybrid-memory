@@ -8,8 +8,9 @@
 
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
-import { getDirectiveCategoryRegexes } from "../utils/language-keywords.js";
+import { getCorrectionSignalRegex, getDirectiveCategoryRegexes } from "../utils/language-keywords.js";
 import { extractMessageText, timestampFromFilename, truncate } from "../utils/text.js";
+import type { MemoryCategory } from "../types/memory.js";
 import { capturePluginError } from "./error-reporter.js";
 
 /** 10 directive categories (can overlap — a message may have multiple types). */
@@ -321,6 +322,69 @@ function fallbackExtract(trimmed: string): string {
     }
   }
   return trimmed.slice(0, 200);
+}
+
+export type UserStoreDirective = {
+  categories: DirectiveCategory[];
+  storeText: string;
+  memoryCategory: MemoryCategory;
+  importance: number;
+};
+
+function mapDirectiveToMemoryCategory(categories: DirectiveCategory[]): MemoryCategory {
+  if (categories.includes("preference")) return "preference";
+  if (
+    categories.includes("correction") ||
+    categories.includes("implicit_correction") ||
+    categories.includes("absolute_rule") ||
+    categories.includes("future_behavior") ||
+    categories.includes("conditional_rule")
+  ) {
+    return "rule";
+  }
+  if (categories.includes("procedural")) return "pattern";
+  if (categories.includes("explicit_memory")) return "fact";
+  return "other";
+}
+
+/**
+ * Detect a live user message that should be persisted via memory_store.
+ * Used by before_agent_start nudge injection — complements batch directive-extract.
+ */
+export function detectUserStoreDirective(userText: string): UserStoreDirective | null {
+  if (shouldSkipUserMessage(userText)) return null;
+
+  const { categories } = detectDirectiveCategories(userText);
+  const ruleLike = categories.filter((c) => RULE_LIKE_CATEGORIES.has(c));
+  const isCorrectionSignal = getCorrectionSignalRegex().test(userText);
+  if (ruleLike.length === 0 && !isCorrectionSignal) return null;
+
+  const extracted = extractRule(userText);
+  const classified = classifyDirectiveCandidate(extracted, userText, categories);
+
+  let storeText: string;
+  if (classified.accepted) {
+    storeText = classified.sanitizedRule;
+  } else if (isCorrectionSignal && userText.trim().length >= 25) {
+    storeText = sanitizeDirectiveCandidate(userText).slice(0, 500);
+  } else {
+    return null;
+  }
+
+  if (storeText.length < 10) return null;
+
+  const effectiveCategories =
+    ruleLike.length > 0 ? ruleLike : (["correction"] as DirectiveCategory[]);
+  const isCorrection = effectiveCategories.some(
+    (c) => c === "correction" || c === "implicit_correction",
+  );
+
+  return {
+    categories: effectiveCategories,
+    storeText,
+    memoryCategory: mapDirectiveToMemoryCategory(effectiveCategories),
+    importance: isCorrection ? 0.9 : 0.85,
+  };
 }
 
 type RunDirectiveExtractOpts = {

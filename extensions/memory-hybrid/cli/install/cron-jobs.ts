@@ -447,7 +447,7 @@ const MAINTENANCE_CRON_JOBS: Array<
       steps: [
         {
           name: "analyze-maintenance-logs",
-          cmd: "openclaw hybrid-mem analyze-maintenance-logs --since 24h --auto-fix --glitchtip --digest md --strict",
+          cmd: "openclaw hybrid-mem maintenance analyze-logs --since 24h --auto-fix --glitchtip --digest md --strict",
         },
       ],
     }),
@@ -852,6 +852,21 @@ export function ensureMaintenanceCronJobs(
   let jobsChanged = false;
 
   if (normalizeExisting && useConsolidated) {
+    for (const job of jobsArr) {
+      if (typeof job !== "object" || job === null) continue;
+      const rawId = String(job.pluginJobId ?? job.id ?? "");
+      if (!rawId.startsWith(PLUGIN_JOB_ID_PREFIX)) continue;
+      const def = MAINTENANCE_CRON_JOBS.find((d) => d.pluginJobId === rawId || d.name === job.name);
+      if (!def) continue;
+      if (!job.pluginJobId && def.pluginJobId) {
+        job.pluginJobId = def.pluginJobId;
+        jobsChanged = true;
+      }
+      if (!job.id && typeof job.pluginJobId === "string" && job.pluginJobId.length > 0) {
+        job.id = job.pluginJobId;
+        jobsChanged = true;
+      }
+    }
     for (const job of jobsArr) {
       if (typeof job !== "object" || job === null) continue;
       const pluginJobId = String(job.pluginJobId ?? "");

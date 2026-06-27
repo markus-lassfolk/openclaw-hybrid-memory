@@ -65,6 +65,7 @@ export function createSessionState(
   const sessionLastActivity = new Map<string, number>();
   const capabilityHintsSessionsSeen = new Set<string>();
   const recallInFlightBySession = new Map<string, number>();
+  const pendingCheckpointGuardBySession = new Map<string, string>();
 
   function touchSession(sessionKey: string): void {
     sessionLastActivity.set(sessionKey, Date.now());
@@ -86,6 +87,7 @@ export function createSessionState(
       if (key.startsWith(prefix)) authFailureRecallsThisSession.delete(key);
     }
     recallInFlightBySession.delete(sessionKey);
+    pendingCheckpointGuardBySession.delete(sessionKey);
     progressiveIndexBySession?.delete(sessionKey);
     lastAutoRecallPromptBySession?.delete(sessionKey);
     clearIntentSessionCache(sessionKey);
@@ -193,6 +195,7 @@ export function createSessionState(
     sessionLastActivity.clear();
     capabilityHintsSessionsSeen.clear();
     recallInFlightBySession.clear();
+    pendingCheckpointGuardBySession.clear();
     progressiveIndexBySession?.clear();
     lastAutoRecallPromptBySession?.clear();
     injectedFactIdsBySession?.clear();
@@ -210,6 +213,7 @@ export function createSessionState(
     sessionLastActivity,
     capabilityHintsSessionsSeen,
     recallInFlightBySession,
+    pendingCheckpointGuardBySession,
     touchSession,
     clearSessionState,
     clearInjectedFactIdsForSession,

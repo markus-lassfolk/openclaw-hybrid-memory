@@ -6,7 +6,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
 import { resolveInteractiveRecallPolicy } from "../../services/retrieval-mode-policy.js";
 import { trimBlockToBudget } from "../../services/context-block-trim.js";
-import { consumePrependBudget, initPrependBudget } from "../../services/prepend-budget.js";
+import { consumePrependBudget, initPrependBudgetWithInjectorReserve } from "../../services/prepend-budget.js";
 import { assembleRecallPrependContext, edictMaxTokensForBudget } from "../../services/recalled-context-assembler.js";
 import { sanitizePromptInjection } from "../../services/skill-prompt-injection.js";
 import type { ScopeFilter } from "../../types/memory.js";
@@ -224,7 +224,7 @@ export async function buildDegradedFtsHotRecallStage(
   const inner = narrativePart + hotPart + recallPart;
   const marker = degradedMarkerForReason(reason);
   if (ctx.prependBudgetRef && !ctx.prependBudgetRef.value) {
-    initPrependBudget(ctx.prependBudgetRef, totalBudget, sessionKey);
+    initPrependBudgetWithInjectorReserve(ctx.prependBudgetRef, totalBudget, sessionKey);
   }
 
   if (ctx.cfg.autoRecall.recallTiming === "basic" || ctx.cfg.autoRecall.recallTiming === "verbose") {

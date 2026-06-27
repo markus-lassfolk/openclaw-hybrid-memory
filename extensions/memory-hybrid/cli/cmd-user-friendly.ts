@@ -27,6 +27,7 @@ export interface UserFriendlyContext {
   vectorDb: VectorDB;
   wal?: WriteAheadLog | null;
   embeddings: EmbeddingProvider;
+  resolvedSqlitePath?: string;
   runConfigSet?: (
     key: string,
     value: string,
@@ -65,7 +66,7 @@ export function registerUserFriendlyCommands(mem: Chainable, ctx: UserFriendlyCo
   registerIfMissing(mem, "setup", () => registerSetupCommand(mem, ctx.cfg, ctx.runConfigSet));
   registerIfMissing(mem, "providers", () => registerProvidersCommand(mem, ctx.cfg));
   registerIfMissing(mem, "doctor", () =>
-    registerDoctorCommand(mem, ctx.cfg, ctx.factsDb, ctx.vectorDb, ctx.wal ?? null),
+    registerDoctorCommand(mem, ctx.cfg, ctx.factsDb, ctx.vectorDb, ctx.wal ?? null, ctx.resolvedSqlitePath),
   );
   registerIfMissing(mem, "health", () =>
     registerHealthCommand(mem, ctx.cfg, ctx.factsDb, ctx.vectorDb, ctx.wal ?? null),

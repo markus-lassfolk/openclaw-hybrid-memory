@@ -170,7 +170,7 @@ async function verifyPrMergedApi(target: string): Promise<{ ok: boolean; detail:
   }
 }
 
-async function runMechanicalVerification(
+export async function verifyGoalMechanically(
   goal: Goal,
   workspaceRoot: string,
   cfg: GoalStewardshipConfig,
@@ -573,7 +573,7 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
         continue;
       }
       if (g.verification && g.verification.type !== "manual") {
-        const mech = await runMechanicalVerification(g, workspaceRoot, cfg);
+        const mech = await verifyGoalMechanically(g, workspaceRoot, cfg);
         if (mech.detail !== "skip") {
           const checkAt = nowIso();
           if (mech.ok && (g.status === "active" || g.status === "stalled")) {

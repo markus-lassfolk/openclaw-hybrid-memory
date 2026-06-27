@@ -41,6 +41,8 @@ export interface WorkboardAdapterContext {
   gatewayToken?: string;
   /** When true, emit per-card push/pull trace lines (hybrid-memory verbosity=verbose). */
   verbose?: boolean;
+  /** When true, skip outbound RPC and suppress shutdown-race warnings (#1980). */
+  shouldAbort?: () => boolean;
 }
 
 export interface WorkboardAdapter {
@@ -57,12 +59,23 @@ export type WorkboardSyncResult = {
 };
 
 export function createWorkboardAdapter(ctx: WorkboardAdapterContext): WorkboardAdapter {
-  const client = createWorkboardRpcClient(ctx.cfg.gatewayUrl, ctx.gatewayToken);
+  const client = createWorkboardRpcClient(ctx.cfg.gatewayUrl, ctx.gatewayToken, {
+    shouldAbort: ctx.shouldAbort,
+  });
   let syncInFlight = false;
 
   return {
     async sync(): Promise<WorkboardSyncResult> {
       const verbose = ctx.verbose ?? false;
+      if (ctx.shouldAbort?.()) {
+        return {
+          cardsCreated: 0,
+          cardsUpdated: 0,
+          cardsRemoved: 0,
+          pullChanges: 0,
+          errors: [],
+        };
+      }
       if (syncInFlight) {
         traceIntegration(verbose, "workboard sync skipped — already in progress");
         return {
@@ -119,7 +132,7 @@ export function createWorkboardAdapter(ctx: WorkboardAdapterContext): WorkboardA
             const card = taskToCard(task, ctx.cfg.columns, ctx.cfg.cardTag);
             if (!card) continue;
             desiredExternalIds.add(card.externalId);
-            await upsertCard(client, card, cardsByExternalId, result, syncRunId, verbose);
+            await upsertCard(client, card, cardsByExternalId, result, syncRunId, verbose, ctx.shouldAbort);
           }
         }
 
@@ -130,7 +143,7 @@ export function createWorkboardAdapter(ctx: WorkboardAdapterContext): WorkboardA
             const card = goalToCard(goal, ctx.cfg.columns, ctx.cfg.cardTag);
             if (!card) continue;
             desiredExternalIds.add(card.externalId);
-            await upsertCard(client, card, cardsByExternalId, result, syncRunId, verbose);
+            await upsertCard(client, card, cardsByExternalId, result, syncRunId, verbose, ctx.shouldAbort);
           }
         }
 
@@ -185,6 +198,7 @@ async function upsertCard(
   result: WorkboardSyncResult,
   syncRunId: string,
   verbose: boolean,
+  shouldAbort?: () => boolean,
 ): Promise<void> {
   const existingCard = existing.get(payload.externalId);
 
@@ -210,8 +224,12 @@ async function upsertCard(
         );
       } else {
         const msg = `Failed to update card ${existingCard.id} (${payload.externalId})`;
-        result.errors.push(msg);
-        pluginLogger.warn(`memory-hybrid: ${msg}`);
+        if (!shouldAbort?.()) {
+          result.errors.push(msg);
+          pluginLogger.warn(`memory-hybrid: ${msg}`);
+        } else {
+          pluginLogger.debug(`memory-hybrid: ${msg} (shutdown — suppressed)`);
+        }
       }
     } else {
       traceIntegration(verbose, `workboard sync [${syncRunId}] push noop ${payload.externalId} (already in sync)`);

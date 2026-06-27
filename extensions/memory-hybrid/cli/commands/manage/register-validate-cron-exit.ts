@@ -109,6 +109,12 @@ function printValidationResult(result: ExitValidationResult): void {
   if (result.error) {
     console.log(`\nError: ${result.error}`);
   }
+  if (result.failureClass) {
+    console.log(`Failure class: ${result.failureClass}`);
+  }
+  if (result.wrapperExitCode != null) {
+    console.log(`Wrapper exit: ${result.wrapperExitCode}`);
+  }
 
   console.log(`\nGuard file update: ${result.guardUpdated ? "YES" : "NO"}`);
   console.log("==============================\n");

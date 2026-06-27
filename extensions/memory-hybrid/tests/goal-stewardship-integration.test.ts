@@ -451,7 +451,8 @@ describe("goal stewardship integration (mock plugin API)", () => {
       messages: [{ role: "user", content: "Scheduled heartbeat ping" }],
     };
     const result = await api.emitFirstResult("before_agent_start", event);
-    expect(result).toBeUndefined();
+    expect(result?.prependContext).toContain("<active-goals-summary>");
+    expect(result?.prependContext).toContain("cooldown_goal");
   });
 
   it("subagent_ended failure increments consecutiveFailures", async () => {

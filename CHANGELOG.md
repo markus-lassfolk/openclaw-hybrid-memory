@@ -23,6 +23,62 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.6.272] - 2026-06-27
+
+### Fixed
+
+- **Goals / active-tasks reliability:** `goal-context`, `goal-stewardship`, and `active-task-injection` are protected from the 800ms optional hook skip; stages cap wall-clock via budget-aware timeouts.
+- **Active-task coherence:** Persist up to 3 incoherent rows per turn before injection; tightened terminal inference heuristics; reconcile progress telemetry uses correct action/previous status.
+- **Upgrade rollback (#1985):** npm-project `package.json` / lockfile restored when pin verification fails; workspace refresh failure rolls back plugin + npm pin.
+- **Verify:** Pending error-reporter queue counted from on-disk JSONL when reporter is cold; quarantined corrupt goal files surfaced as warnings.
+
+### Added
+
+- **`goals doctor --repair-corrupt`:** Restore quarantined `*.json.corrupt` goal files that parse as valid Goal JSON; rebuilds goal index after repair.
+- **Dashboard infrastructure card:** Pending telemetry queue depth and quarantined goal count on Mission Control overview.
+- **`doctor` CLI:** Error-reporter pending queue and goal quarantine checks with fix hints.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.6.272**.
+
+---
+
+## [2026.6.271] - 2026-06-27
+
+### Fixed
+
+- **Upgrade reliability (#1985):** `hybrid-mem upgrade` passes `OPENCLAW_EXTENSIONS_DIR` to the standalone installer, verifies bundled assets before deleting backup, fails on workspace refresh errors, and **requires** npm-project pin + bundle verification (rollback on failure).
+- **Maintenance CLI deprecation (#1983):** Cron template and `verify --fix` normalize `analyze-maintenance-logs` → `maintenance analyze-logs`.
+- **Validate-exit (#1982):** Empty HM_EXIT with wrapper abort before `hm_step` reports `failureClass: wrapper_aborted_before_steps` instead of misleading missing-step errors.
+- **Goal assess (#1981):** Null-safe params and corrupt goal JSON return structured tool errors instead of throwing on `.trim()`.
+- **Episode contradictions (#1976):** Scoped `memory_record_episode` failure scans no longer build invalid SQL (`AND AND`).
+- **Corrupt goal telemetry (#1977):** Quarantine corrupt goal files to `.json.corrupt` and dedupe error-reporter captures per file.
+- **Error reporter drain (#1978):** Adaptive shutdown flush, multi-attempt startup drain, fingerprint dedupe in pending queue, **`hybrid-mem verify` reports pending count**.
+- **before_agent_start budget (#1979):** 12s gateway hook budget caps setup/recall; **all optional prepend stages** skip under budget pressure with per-stage slow logging.
+- **Workboard shutdown (#1980):** Suppress RPC/update warnings during gateway shutdown; stop timers before error-reporter flush.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.6.271**.
+
+---
+
+## [2026.6.270] - 2026-06-27
+
+### Fixed
+
+- **Active-task tools (facts ledger):** `loadActiveTasksForTools` destructures `{ active }` from `loadTaskLedgerFromFacts` so `active_task_list` / `active_task_get` no longer throw at runtime.
+- **Active-task ledger split-brain:** Default `activeTask.ledger` is now `facts`; `active_task_checkpoint` syncs `ACTIVE-TASKS.md` when `ledger: markdown` so stored tasks appear in injection and file-based tools.
+- **Active-task injection:** Tasks with missing `task_updated` (`Unknown`) are no longer treated as stale; generic-title projection filter no longer hides tasks from injection; checkpoint default title uses humanized entity label instead of `"Project task"`.
+- **Goal stewardship heartbeat:** Fall back to compact `<active-goals-summary>` when stewardship bundle is empty or dispatch rate-limited, so heartbeat turns still recall registered goals.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.6.270**.
+
+---
+
 ## [2026.6.261] - 2026-06-26
 
 ### Fixed

@@ -28,12 +28,16 @@ import { registerCredentialHint } from "./stage-credential-hint.js";
 import { registerFrustrationHandlers } from "./stage-frustration.js";
 import { registerChangeNotifyHandler } from "./stage-change-notify.js";
 import { registerChangeRevertHandler } from "./stage-change-revert.js";
+import { registerCheckpointGuardAdvisoryInjection, queueCheckpointGuardAdvisory } from "./stage-checkpoint-guard-advisory.js";
+import { registerGoalContextInjection } from "./stage-goal-context.js";
 import { registerGoalStewardshipInjection, resolvedGoalsDirForLifecycle } from "./stage-goal-stewardship.js";
 import { registerGoalSubagentHandlers } from "./stage-goal-subagent.js";
 import { registerMemoryNudgeInjection } from "./stage-memory-nudge.js";
+import { registerDirectiveStoreNudge } from "./stage-directive-store-nudge.js";
 import { runInjectionStage } from "./stage-injection.js";
 import { buildDegradedFtsHotRecallStage } from "./stage-recall/degraded-recall.js";
 import { runRecallStage } from "./stage-recall.js";
+import { beforeAgentStartRemainingMs, shouldSkipOptionalBeforeAgentStartStage } from "../services/before-agent-start-budget.js";
 import { runSetupStage } from "./stage-setup.js";
 import { formatPreFinalizationGuardMessage, evaluatePreFinalizationGuard } from "../services/pre-finalization-guard.js";
 import { TASK_LEDGER_CATEGORY } from "../services/task-ledger-facts.js";
@@ -77,6 +81,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         if (capturedFirstRecallBegin) {
           firstRecallCheckpointCaptured = true;
         }
+        if (beforeAgentStartRemainingMs(ctx.beforeAgentStartTurnRef) < 500) {
+          api.logger.warn?.(
+            `memory-hybrid: before_agent_start budget nearly exhausted (${beforeAgentStartRemainingMs(ctx.beforeAgentStartTurnRef)}ms left) — skipping recall`,
+          );
+          return undefined;
+        }
         try {
           const recallStageResult = await runRecallStage(event, rApi, ctx, sessionState);
           if (isStaleLifecycleGeneration(ctx)) {
@@ -86,6 +96,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             return undefined;
           }
           if (!recallStageResult) {
+            if (shouldSkipOptionalBeforeAgentStartStage(ctx.beforeAgentStartTurnRef, "recall-degraded-fallback")) {
+              api.logger.warn?.("memory-hybrid: recall budget exhausted — skipping degraded fallback");
+              return undefined;
+            }
             api.logger.warn?.("memory-hybrid: recall stage returned no result — attempting FTS+HOT degraded fallback");
             const degraded = await buildDegradedFtsHotRecallStage(event, rApi, ctx, sessionState, "timeout");
             if (capturedFirstRecallBegin) {
@@ -212,9 +226,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       resolvedGoalsDir,
       ctx.cfg.activeTask.enabled ? resolvedActiveTaskPath : undefined,
     );
+    registerGoalContextInjection(api, ctx, resolvedGoalsDir);
 
+    registerCheckpointGuardAdvisoryInjection(api, ctx, sessionState);
     registerActiveTaskInjection(api, ctx, resolvedActiveTaskPath, workspaceRoot);
     registerMemoryNudgeInjection(api, ctx);
+    registerDirectiveStoreNudge(api, ctx);
     registerGoalSubagentHandlers(api, ctx, resolvedGoalsDir);
     registerCleanupHandlers(api, ctx, sessionState, resolvedActiveTaskPath, workspaceRoot);
     // Guard experimental/optional features at the registration point — avoids registering
@@ -367,7 +384,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           const requiresProjectFacts =
             guard.reason === "missing_checkpoint_block" || guard.reason === "missing_checkpoint_warn";
           if (requiresProjectFacts) {
-            const projectFacts = ctx.factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
+            const projectFacts = ctx.factsDb.getProjectFacts(8000);
             let goalAliases: Array<{ id: string; label: string }> | undefined;
             if (ctx.cfg.goalStewardship?.enabled) {
               try {
@@ -386,8 +403,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             api.logger.info?.(`memory-hybrid: ${guardMessage}`);
           } else if (guard.action === "warn") {
             api.logger.warn?.(`memory-hybrid: ${guardMessage}`);
+            queueCheckpointGuardAdvisory(sessionState, sessionId, guardMessage);
           } else if (guard.action === "block") {
             api.logger.warn?.(`memory-hybrid: ${guardMessage}`);
+            queueCheckpointGuardAdvisory(sessionState, sessionId, guardMessage);
             try {
               ctx.auditStore?.append({
                 agentId: ctx.currentAgentIdRef.value ?? "unknown",
