@@ -1,6 +1,6 @@
 {
   "name": "openclaw-hybrid-memory",
-  "version": "2026.6.275",
+  "version": "2026.6.276",
   "type": "module",
   "description": "Give your OpenClaw agent lasting memory: structured facts, semantic search, auto-capture & recall, decay, optional credential vault. Part of Hybrid Memory v3.",
   "files": [
@@ -97,7 +97,8 @@
     "lint:arch": "bash scripts/lint-arch.sh",
     "typecheck:gate": "node ../../scripts/run-with-supported-node.mjs tsc --noEmit -p tsconfig.gate.json",
     "test:maintenance-gate": "node ../../scripts/run-with-supported-node.mjs vitest run --maxWorkers 1 tests/cron-guard.test.ts tests/maintenance-orchestrator.integration.test.ts tests/maintenance-step-guard-intervals.test.ts",
-    "verify:gate": "npm run typecheck:gate && npm run test:maintenance-gate",
+    "test:schema-gate": "node ../../scripts/run-with-supported-node.mjs vitest run tests/plugin-graph-schema-parity.test.ts tests/agent-tool-contracts.test.ts",
+    "verify:gate": "npm run typecheck:gate && npm run test:maintenance-gate && npm run test:schema-gate",
     "postinstall": "node scripts/postinstall-rebuild.cjs",
     "prepack": "npm run build && node scripts/manage-shrinkwrap.cjs create",
     "postpack": "node scripts/manage-shrinkwrap.cjs clean",
