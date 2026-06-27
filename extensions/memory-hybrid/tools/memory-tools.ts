@@ -4,7 +4,6 @@
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { BuildToolScopeFilterFn, FindSimilarByEmbeddingFn } from "../api/memory-plugin-api.js";
-import { wrapMemoryToolExecuteForWrapperArgs } from "../utils/tool-search-wrapper-args.js";
 import { buildMemoryToolRuntime } from "./memory/build-runtime.js";
 import { registerCheckpointTools } from "./memory/register-checkpoint-tools.js";
 import { registerDirectoryTools } from "./memory/register-directory-tools.js";
@@ -17,30 +16,6 @@ import { resolveMemoryToolsContext } from "./memory/helpers.js";
 import type { BoundWalRemoveFn, BoundWalWriteFn, MemoryToolsContext } from "./memory/types.js";
 
 export type { BoundWalRemoveFn, BoundWalWriteFn, MemoryToolsContext } from "./memory/types.js";
-
-function patchMemoryToolRegistrationApi(api: ClawdbotPluginApi): ClawdbotPluginApi {
-  const registerTool = api.registerTool.bind(api);
-  return {
-    ...api,
-    registerTool(toolDef, options) {
-      if (
-        typeof toolDef.name === "string" &&
-        toolDef.name.startsWith("memory_") &&
-        typeof toolDef.execute === "function"
-      ) {
-        const toolName = toolDef.name;
-        return registerTool(
-          {
-            ...toolDef,
-            execute: wrapMemoryToolExecuteForWrapperArgs(toolName, toolDef.execute.bind(toolDef), api.logger),
-          },
-          options,
-        );
-      }
-      return registerTool(toolDef, options);
-    },
-  };
-}
 
 export function registerMemoryTools(ctx: MemoryToolsContext, api: ClawdbotPluginApi): void;
 export function registerMemoryTools(
@@ -72,7 +47,7 @@ export function registerMemoryTools(
     legacyWalRemove,
     legacyFindSimilarByEmbedding,
   );
-  const runtime = buildMemoryToolRuntime(resolvedContext, patchMemoryToolRegistrationApi(api));
+  const runtime = buildMemoryToolRuntime(resolvedContext, api);
   registerRecallTools(runtime);
   registerAgentVerbTools(runtime);
   registerStoreTools(runtime);

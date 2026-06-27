@@ -24,6 +24,11 @@ describe("tool-args-guard", () => {
     expect(guardAgainstWrapperArgsDropped("memory_recall", { query: "deploy" })).toBeNull();
   });
 
+  it("guard returns null for bare {} (model omission, not wrapper loss)", () => {
+    expect(guardAgainstWrapperArgsDropped("memory_recall", {})).toBeNull();
+    expect(guardAgainstWrapperArgsDropped("memory_store", {})).toBeNull();
+  });
+
   it("guard detects wrapper-only metadata at entry (not just empty {})", () => {
     const result = guardAgainstWrapperArgsDropped("memory_store", { toolName: "memory_store", input: {} });
     expect(result?.details.error).toBe("wrapper_args_dropped");
