@@ -25,7 +25,7 @@ import {
   abortCredentialVaultWriteOnPointerDedupe,
   rollbackVaultCredentialWrite,
 } from "../../services/credential-vault-pointer.js";
-import { classifyMemoryOperation } from "../../services/classification.js";
+import { autoLinkSemanticallySimilarFacts } from "../../services/graph-autolink.js";
 import { AllEmbeddingProvidersFailed, shouldSuppressEmbeddingError } from "../../services/embeddings.js";
 import { extractEntityMentionsWithLlm } from "../../services/entity-enrichment.js";
 import { addOperationBreadcrumb, capturePluginError } from "../../services/error-reporter.js";
@@ -1271,24 +1271,25 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               }
             }
 
-            // Auto-link to similar facts when enabled
+            // Auto-link to similar facts when enabled (embedding-gated when vector available)
             let autoLinked = 0;
             if (cfg.graph.enabled && cfg.graph.autoLink) {
               const entryScope = entry.scope ?? "global";
               const entryScopeTarget = entryScope === "global" ? null : (entry.scopeTarget ?? null);
-              const similar = storeFactsDb.findSimilarForClassification(
-                textToStore,
-                entity ?? null,
-                key ?? null,
-                cfg.graph.autoLinkLimit,
-                entryScope,
-                entryScopeTarget,
+              autoLinked = await autoLinkSemanticallySimilarFacts(
+                {
+                  factsDb: storeFactsDb,
+                  vectorDb: storeVectorDb,
+                  vector,
+                  text: textToStore,
+                  entity: entity ?? null,
+                  key: key ?? null,
+                  newFactId: entry.id,
+                  scope: entryScope,
+                  scopeTarget: entryScopeTarget,
+                },
+                cfg.graph,
               );
-              for (const s of similar) {
-                if (s.id === entry.id) continue;
-                storeFactsDb.createLink(entry.id, s.id, "RELATED_TO", cfg.graph.autoLinkMinScore);
-                autoLinked++;
-              }
             }
 
             // Entity-based auto-linking (Issue #154): known-entity matching, IP NER,

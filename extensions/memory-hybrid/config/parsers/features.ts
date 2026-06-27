@@ -62,15 +62,24 @@ export function parseEntityExtractionConfig(cfg: Record<string, unknown>): Entit
   return { stopWords };
 }
 
+function parseUnitInterval(value: unknown, fallback: number): number {
+  return typeof value === "number" && value >= 0 && value <= 1 ? value : fallback;
+}
+
 export function parseGraphConfig(cfg: Record<string, unknown>): GraphConfig {
   const graphRaw = cfg.graph as Record<string, unknown> | undefined;
+  const legacyMinScore = graphRaw?.autoLinkMinScore;
+  const autoLinkStrength = parseUnitInterval(graphRaw?.autoLinkStrength ?? legacyMinScore, 0.7);
+  const autoLinkSimilarityThreshold = parseUnitInterval(
+    graphRaw?.autoLinkSimilarityThreshold ?? legacyMinScore,
+    0.7,
+  );
   return {
     enabled: graphRaw?.enabled !== false,
     autoLink: graphRaw?.autoLink === true,
-    autoLinkMinScore:
-      typeof graphRaw?.autoLinkMinScore === "number" && graphRaw.autoLinkMinScore >= 0 && graphRaw.autoLinkMinScore <= 1
-        ? graphRaw.autoLinkMinScore
-        : 0.7,
+    autoLinkStrength,
+    autoLinkSimilarityThreshold,
+    autoLinkMinScore: autoLinkStrength,
     autoLinkLimit:
       typeof graphRaw?.autoLinkLimit === "number" && graphRaw.autoLinkLimit > 0
         ? Math.floor(graphRaw.autoLinkLimit)

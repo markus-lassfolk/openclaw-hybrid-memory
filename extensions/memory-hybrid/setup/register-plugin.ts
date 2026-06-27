@@ -16,6 +16,7 @@ import { ChangeFeed } from "../services/change-feed.js";
 import { runReflection, runReflectionMeta, runReflectionRules } from "../services/reflection.js";
 import { PythonBridge } from "../services/python-bridge.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
+import { warnGraphRecallConfigMisconfiguration } from "../services/graph-recall-config.js";
 import { resetStartupMemoryAttribution } from "../services/startup-memory-attribution.js";
 import { startEventLoopLagMonitor, stopEventLoopLagMonitor } from "../utils/event-loop-health.js";
 import { createVaultRegistry } from "../services/vault-registry.js";
@@ -357,6 +358,7 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
   logApi.logger.info(
     `memory-hybrid: registered (v${versionInfo.pluginVersion}, memory-manager ${versionInfo.memoryManagerVersion}) sqlite: ${resolvedSqlitePath}, lance: ${resolvedLancePath}`,
   );
+  warnGraphRecallConfigMisconfiguration(cfg, (msg) => logApi.logger.warn?.(msg));
   startEventLoopLagMonitor();
 
   // ========================================================================
