@@ -3,7 +3,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 
@@ -23,7 +23,7 @@ import { nowIso } from "../utils/dates.js";
 const INDEX_FILENAME = "_index.json";
 const TERMINAL: GoalStatus[] = ["completed", "failed", "abandoned"];
 const GOAL_HOUSEKEEPING_PREFIX = "_";
-const GOAL_CORRUPT_SUFFIX = ".json.corrupt";
+export const GOAL_CORRUPT_SUFFIX = ".json.corrupt";
 
 /** Per-process dedupe so corrupt goal telemetry is not re-enqueued every sync (#1977). */
 const reportedCorruptGoalFiles = new Set<string>();
@@ -131,6 +131,78 @@ async function ensureDir(dir: string): Promise<void> {
 function isGoalRegistryJsonFilename(filename: string): boolean {
   if (filename.endsWith(GOAL_CORRUPT_SUFFIX)) return false;
   return filename.endsWith(".json") && filename !== INDEX_FILENAME && !filename.startsWith(GOAL_HOUSEKEEPING_PREFIX);
+}
+
+/** Goal ids quarantined as corrupt (`.json.corrupt` files under goals dir). */
+export function listQuarantinedGoalIds(goalsDir: string): string[] {
+  try {
+    if (!existsSync(goalsDir)) return [];
+    const files = readdirSync(goalsDir);
+    return files
+      .filter((name) => name.endsWith(GOAL_CORRUPT_SUFFIX))
+      .map((name) => name.slice(0, -GOAL_CORRUPT_SUFFIX.length))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+export type RepairQuarantinedGoalResult = {
+  goalId: string;
+  ok: boolean;
+  action: "restored" | "skipped" | "failed";
+  error?: string;
+};
+
+/** Restore one quarantined goal file when JSON parses as a valid Goal. */
+export async function repairQuarantinedGoalFile(
+  goalsDir: string,
+  goalId: string,
+  opts: { dryRun?: boolean } = {},
+): Promise<RepairQuarantinedGoalResult> {
+  const corruptPath = join(goalsDir, `${goalId}${GOAL_CORRUPT_SUFFIX}`);
+  const destPath = join(goalsDir, `${goalId}.json`);
+  if (!existsSync(corruptPath)) {
+    return { goalId, ok: false, action: "skipped", error: "not quarantined" };
+  }
+  if (existsSync(destPath)) {
+    return { goalId, ok: false, action: "skipped", error: "active .json already exists" };
+  }
+  try {
+    const raw = await readFile(corruptPath, "utf-8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isGoalLike(parsed)) {
+      return { goalId, ok: false, action: "failed", error: "invalid Goal schema" };
+    }
+    if (opts.dryRun) {
+      return { goalId, ok: true, action: "skipped", error: "dry-run (would restore)" };
+    }
+    await rename(corruptPath, destPath);
+    reportedCorruptGoalFiles.delete(join(goalsDir, `${goalId}.json`));
+    return { goalId, ok: true, action: "restored" };
+  } catch (err) {
+    return {
+      goalId,
+      ok: false,
+      action: "failed",
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/** Restore all quarantined goals that still parse as valid Goal JSON. */
+export async function repairAllQuarantinedGoals(
+  goalsDir: string,
+  opts: { dryRun?: boolean } = {},
+): Promise<RepairQuarantinedGoalResult[]> {
+  const results: RepairQuarantinedGoalResult[] = [];
+  for (const goalId of listQuarantinedGoalIds(goalsDir)) {
+    results.push(await repairQuarantinedGoalFile(goalsDir, goalId, opts));
+  }
+  if (!opts.dryRun && results.some((r) => r.action === "restored")) {
+    await rebuildGoalIndex(goalsDir);
+  }
+  return results;
 }
 
 function corruptGoalQuarantinePath(goalsDir: string, filename: string): string {

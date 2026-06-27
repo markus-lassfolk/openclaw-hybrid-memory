@@ -14,6 +14,7 @@
  */
 
 import { randomBytes } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve as pathResolve, relative } from "node:path";
@@ -142,6 +143,74 @@ export function verifyNpmProjectDependencyPin(projectRoot: string, version: stri
   } catch (err) {
     return `Could not read ${pkgPath}: ${err instanceof Error ? err.message : String(err)}`;
   }
+}
+
+/** Snapshot npm-project pin files before upgrade mutates them (#1985 rollback). */
+export type NpmProjectPinBackup = {
+  projectRoot: string;
+  packageJson?: string;
+  packageLockJson?: string;
+  previousPinnedVersion?: string;
+};
+
+export function snapshotNpmProjectPinBeforeUpgrade(projectRoot: string): NpmProjectPinBackup {
+  const backup: NpmProjectPinBackup = { projectRoot };
+  const pkgPath = join(projectRoot, "package.json");
+  const lockPath = join(projectRoot, "package-lock.json");
+  if (existsSync(pkgPath)) {
+    backup.packageJson = readFileSync(pkgPath, "utf-8");
+    try {
+      const pkg = JSON.parse(backup.packageJson) as { dependencies?: Record<string, string> };
+      backup.previousPinnedVersion = pkg.dependencies?.[PLUGIN_ID];
+    } catch {
+      /* ignore parse errors — restore raw file on rollback */
+    }
+  }
+  if (existsSync(lockPath)) {
+    backup.packageLockJson = readFileSync(lockPath, "utf-8");
+  }
+  return backup;
+}
+
+/** Restore npm-project pin files after a failed upgrade pin step. */
+export function restoreNpmProjectPinFiles(backup: NpmProjectPinBackup): void {
+  const pkgPath = join(backup.projectRoot, "package.json");
+  const lockPath = join(backup.projectRoot, "package-lock.json");
+  if (backup.packageJson !== undefined) {
+    writeFileSync(pkgPath, backup.packageJson, "utf-8");
+  }
+  if (backup.packageLockJson !== undefined) {
+    writeFileSync(lockPath, backup.packageLockJson, "utf-8");
+  } else if (existsSync(lockPath)) {
+    rmSync(lockPath, { force: true });
+  }
+}
+
+/** Re-run npm install to align node_modules after restoring package files. */
+export function runNpmInstallExactPin(projectRoot: string, version: string): { ok: boolean; error?: string } {
+  const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
+  const r = spawnSync(npmCmd, ["install", `${PLUGIN_ID}@${version}`, "--save-exact"], {
+    cwd: projectRoot,
+    stdio: "pipe",
+    shell: false,
+    encoding: "utf-8",
+  });
+  if (r.status !== 0) {
+    const detail = [r.stderr, r.stdout].filter(Boolean).join("\n").trim();
+    return {
+      ok: false,
+      error: `npm install ${PLUGIN_ID}@${version} failed in ${projectRoot} (exit ${r.status ?? "unknown"})${detail ? `: ${detail}` : ""}`,
+    };
+  }
+  return { ok: true };
+}
+
+/** Restore npm-project dependency pin and node_modules after upgrade failure. */
+export function rollbackNpmProjectPinAfterUpgradeFailure(backup: NpmProjectPinBackup): { ok: boolean; error?: string } {
+  restoreNpmProjectPinFiles(backup);
+  const version = backup.previousPinnedVersion?.trim();
+  if (!version) return { ok: true };
+  return runNpmInstallExactPin(backup.projectRoot, version);
 }
 
 function bundledHybridMemorySkillDir(pluginRootDir: string): string {

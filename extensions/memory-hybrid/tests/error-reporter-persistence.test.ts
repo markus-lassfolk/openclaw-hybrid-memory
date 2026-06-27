@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -148,5 +148,15 @@ describe("error reporter persistent pending queue", () => {
       })
       .sort();
     expect(messages).toEqual(["pending-2", "pending-3"]);
+  });
+
+  it("resolvePendingErrorReportCount reads on-disk queue when reporter is cold", async () => {
+    const reporter = (await import("../services/error-reporter.js")) as ErrorReporterModule;
+    writeFileSync(
+      queuePath,
+      `${JSON.stringify({ id: "a", event: {}, enqueuedAt: 1 })}\n${JSON.stringify({ id: "b", event: {}, enqueuedAt: 2 })}\n`,
+    );
+    expect(reporter.countPendingErrorReportsOnDisk(queuePath)).toBe(2);
+    expect(reporter.resolvePendingErrorReportCount(join(tempDir, "memory.db"))).toBe(2);
   });
 });

@@ -1,5 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { getEnv } from "../utils/env-manager.js";
 import { compareVersions } from "../utils/version-check.js";
 import { shouldDropNoisyError } from "./error-reporter/noisy-errors.js";
@@ -726,6 +727,35 @@ export function computeShutdownFlushTimeoutMs(pendingCount: number): number {
 
 export function getPendingErrorReportCount(): number {
   return reporter?.getPendingCount() ?? 0;
+}
+
+/** Default on-disk pending queue path next to the SQLite memory DB. */
+export function resolveErrorReportPendingQueuePath(resolvedSqlitePath: string): string | undefined {
+  if (resolvedSqlitePath === ":memory:") return undefined;
+  return join(dirname(resolvedSqlitePath), ".error_reports.pending.jsonl");
+}
+
+/** Count pending telemetry lines on disk (works when reporter is not initialized). */
+export function countPendingErrorReportsOnDisk(queuePath?: string): number {
+  if (!queuePath) return 0;
+  try {
+    if (!existsSync(queuePath)) return 0;
+    const content = readFileSync(queuePath, "utf-8");
+    return content
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0).length;
+  } catch {
+    return 0;
+  }
+}
+
+/** Reporter in-memory count plus on-disk queue when reporter is cold (e.g. verify CLI). */
+export function resolvePendingErrorReportCount(resolvedSqlitePath?: string): number {
+  const active = getPendingErrorReportCount();
+  if (active > 0) return active;
+  const queuePath = resolvedSqlitePath ? resolveErrorReportPendingQueuePath(resolvedSqlitePath) : undefined;
+  return countPendingErrorReportsOnDisk(queuePath);
 }
 
 function scheduleStartupErrorReporterDrain(): void {

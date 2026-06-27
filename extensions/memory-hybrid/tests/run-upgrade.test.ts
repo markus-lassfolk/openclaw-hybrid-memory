@@ -10,6 +10,8 @@ import {
   UPGRADE_REQUIRED_BUNDLE_PATHS,
   verifyNpmProjectDependencyPin,
   verifyUpgradePluginBundle,
+  snapshotNpmProjectPinBeforeUpgrade,
+  restoreNpmProjectPinFiles,
 } from "../cli/cmd-install.js";
 
 const PLUGIN_ROOT = join(import.meta.dirname, "..");
@@ -88,5 +90,22 @@ describe("runUpgrade helpers", () => {
       JSON.stringify({ dependencies: { "openclaw-hybrid-memory": "2026.6.271" } }),
     );
     expect(verifyNpmProjectDependencyPin(projectRoot, "2026.6.271")).toBeUndefined();
+  });
+
+  it("snapshotNpmProjectPinBeforeUpgrade restores package.json on rollback (#1985)", () => {
+    const projectRoot = join(tmp, "npm-rollback");
+    mkdirSync(projectRoot, { recursive: true });
+    writeFileSync(
+      join(projectRoot, "package.json"),
+      JSON.stringify({ dependencies: { "openclaw-hybrid-memory": "2026.6.260" } }),
+    );
+    writeFileSync(join(projectRoot, "package-lock.json"), '{"lockfileVersion":3}\n');
+    const backup = snapshotNpmProjectPinBeforeUpgrade(projectRoot);
+    writeFileSync(
+      join(projectRoot, "package.json"),
+      JSON.stringify({ dependencies: { "openclaw-hybrid-memory": "2026.6.271" } }),
+    );
+    restoreNpmProjectPinFiles(backup);
+    expect(verifyNpmProjectDependencyPin(projectRoot, "2026.6.260")).toBeUndefined();
   });
 });

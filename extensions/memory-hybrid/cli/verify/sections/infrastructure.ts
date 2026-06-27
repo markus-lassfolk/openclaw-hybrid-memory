@@ -9,8 +9,10 @@
  */
 
 import { writeFileSync } from "node:fs";
-import { capturePluginError, getPendingErrorReportCount, isErrorReporterActive } from "../../../services/error-reporter.js";
+import { capturePluginError, isErrorReporterActive, resolvePendingErrorReportCount } from "../../../services/error-reporter.js";
+import { listQuarantinedGoalIds, resolveGoalsDir } from "../../../services/goal-registry.js";
 import { PLUGIN_ID } from "../../../utils/constants.js";
+import { workspaceRootForCli } from "../../config-feature-summaries.js";
 
 import type { VerifyRunState } from "../verify-run-state.js";
 import { getCachedFactCount } from "../fact-count.js";
@@ -49,8 +51,8 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
   log("\n───── Infrastructure ─────");
 
   if (cfg.errorReporting?.enabled !== false && cfg.errorReporting?.consent !== false) {
-    const pendingReports = getPendingErrorReportCount();
-    if (isErrorReporterActive()) {
+    const pendingReports = resolvePendingErrorReportCount(resolvedSqlitePath);
+    if (isErrorReporterActive() || pendingReports > 0) {
       if (pendingReports > 0) {
         warnings.push(`Error reporter has ${pendingReports} pending telemetry report(s)`);
         log(`${WARN_LINE} Error reporter: ${pendingReports} pending report(s) in queue (retries on startup/shutdown flush)`);
@@ -59,6 +61,19 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
       }
     } else if (cfg.errorReporting?.enabled === true) {
       log(`${WARN_LINE} Error reporter: not active (check consent and DSN)`);
+    }
+  }
+
+  if (cfg.goalStewardship?.enabled) {
+    const goalsDir = resolveGoalsDir(workspaceRootForCli(), cfg.goalStewardship.goalsDir);
+    const quarantined = listQuarantinedGoalIds(goalsDir);
+    if (quarantined.length > 0) {
+      const preview = quarantined.slice(0, 5).join(", ");
+      const suffix = quarantined.length > 5 ? ` (+${quarantined.length - 5} more)` : "";
+      warnings.push(`Goal registry has ${quarantined.length} quarantined corrupt goal file(s)`);
+      log(
+        `${WARN_LINE} Goals: ${quarantined.length} quarantined corrupt file(s) (${preview}${suffix}). Restore from state/goals/*.json.corrupt or delete after backup.`,
+      );
     }
   }
 

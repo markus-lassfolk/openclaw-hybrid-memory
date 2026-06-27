@@ -36,6 +36,9 @@ import {
   verifyUpgradePluginBundle,
   resolveNpmProjectRootForPlugin,
   verifyNpmProjectDependencyPin,
+  snapshotNpmProjectPinBeforeUpgrade,
+  rollbackNpmProjectPinAfterUpgradeFailure,
+  type NpmProjectPinBackup,
 } from "./workspace.js";
 
 export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
@@ -378,9 +381,15 @@ function findNpmProjectRootForPlugin(pluginRootDir: string): string | undefined 
 async function updateNpmProjectDependencyPin(
   pluginRootDir: string,
   version: string,
-): Promise<{ required: boolean; updated: boolean; error?: string }> {
+): Promise<{
+  required: boolean;
+  updated: boolean;
+  error?: string;
+  pinBackup?: NpmProjectPinBackup;
+}> {
   const projectRoot = findNpmProjectRootForPlugin(pluginRootDir);
   if (!projectRoot) return { required: false, updated: false };
+  const pinBackup = snapshotNpmProjectPinBeforeUpgrade(projectRoot);
   const { spawnSync } = await import("node:child_process");
   const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
   const r = spawnSync(npmCmd, ["install", `${PLUGIN_ID}@${version}`, "--save-exact"], {
@@ -389,21 +398,63 @@ async function updateNpmProjectDependencyPin(
     shell: false,
   });
   if (r.status !== 0) {
+    const npmRollback = rollbackNpmProjectPinAfterUpgradeFailure(pinBackup);
     return {
       required: true,
       updated: false,
-      error: `npm project pin update failed in ${projectRoot} (exit ${r.status ?? "unknown"}). Run: npm install ${PLUGIN_ID}@${version} --save-exact`,
+      pinBackup,
+      error: `npm project pin update failed in ${projectRoot} (exit ${r.status ?? "unknown"}). Run: npm install ${PLUGIN_ID}@${version} --save-exact${npmRollback.error ? ` (rollback: ${npmRollback.error})` : ""}`,
     };
   }
   const pinError = verifyNpmProjectDependencyPin(projectRoot, version);
   if (pinError) {
-    return { required: true, updated: false, error: pinError };
+    const npmRollback = rollbackNpmProjectPinAfterUpgradeFailure(pinBackup);
+    return {
+      required: true,
+      updated: false,
+      pinBackup,
+      error: `${pinError}${npmRollback.error ? ` (rollback: ${npmRollback.error})` : ""}`,
+    };
   }
   const bundleError = verifyUpgradePluginBundle(pluginRootDir);
   if (bundleError) {
-    return { required: true, updated: false, error: bundleError };
+    const npmRollback = rollbackNpmProjectPinAfterUpgradeFailure(pinBackup);
+    return {
+      required: true,
+      updated: false,
+      pinBackup,
+      error: `${bundleError}${npmRollback.error ? ` (rollback: ${npmRollback.error})` : ""}`,
+    };
   }
-  return { required: true, updated: true };
+  return { required: true, updated: true, pinBackup };
+}
+
+function rollbackUpgradeAfterFailure(opts: {
+  extDir: string;
+  backupDir: string;
+  npmPin?: { pinBackup?: NpmProjectPinBackup; updated?: boolean };
+  logger?: HandlerContext["logger"];
+}): { pluginRestored: boolean; npmRestored: boolean; error?: string } {
+  let pluginRestored = false;
+  let npmRestored = false;
+  let error: string | undefined;
+  try {
+    rollbackUpgradePluginDir(opts.extDir, opts.backupDir);
+    pluginRestored = true;
+  } catch (e) {
+    error = `plugin rollback failed: ${e instanceof Error ? e.message : String(e)}`;
+    capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:rollback" });
+  }
+  if (opts.npmPin?.pinBackup && opts.npmPin.updated) {
+    const npmRollback = rollbackNpmProjectPinAfterUpgradeFailure(opts.npmPin.pinBackup);
+    npmRestored = npmRollback.ok;
+    if (!npmRollback.ok) {
+      const npmMsg = npmRollback.error ?? "npm pin rollback failed";
+      error = error ? `${error}; ${npmMsg}` : npmMsg;
+      opts.logger?.warn?.(`memory-hybrid: upgrade — ${npmMsg}`);
+    }
+  }
+  return { pluginRestored, npmRestored, error };
 }
 
 export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: string): Promise<UpgradeCliResult> {
@@ -488,13 +539,16 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
 
   const npmPin = await updateNpmProjectDependencyPin(extDir, installedVersion);
   if (npmPin.required && !npmPin.updated) {
-    try {
-      rollbackUpgradePluginDir(extDir, backupDir);
-    } catch (e) {
-      capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:rollback-npm-pin" });
+    const rollback = rollbackUpgradeAfterFailure({
+      extDir,
+      backupDir,
+      npmPin: { pinBackup: npmPin.pinBackup, updated: false },
+      logger,
+    });
+    if (!rollback.pluginRestored) {
       return {
         ok: false,
-        error: `${npmPin.error ?? "npm project pin update failed"}. Rollback also failed: ${e}. Run manually: npm install ${PLUGIN_ID}@${installedVersion} --save-exact`,
+        error: `${npmPin.error ?? "npm project pin update failed"}. Rollback also failed: ${rollback.error ?? "unknown"}. Run manually: npm install ${PLUGIN_ID}@${installedVersion} --save-exact`,
       };
     }
     return {
@@ -568,9 +622,20 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
     (msg): msg is string => typeof msg === "string" && msg.length > 0,
   );
   if (workspaceErrors.length > 0) {
+    const rollback = rollbackUpgradeAfterFailure({
+      extDir,
+      backupDir,
+      npmPin: { pinBackup: npmPin.pinBackup, updated: npmPin.updated },
+      logger,
+    });
+    const rollbackNote = rollback.pluginRestored
+      ? " Previous plugin version restored from backup."
+      : rollback.error
+        ? ` Rollback failed: ${rollback.error}.`
+        : "";
     return {
       ok: false,
-      error: `Upgrade installed plugin ${installedVersion} at ${extDir}, but workspace refresh failed: ${workspaceErrors.join("; ")}`,
+      error: `Upgrade workspace refresh failed: ${workspaceErrors.join("; ")}.${rollbackNote}`,
     };
   }
 

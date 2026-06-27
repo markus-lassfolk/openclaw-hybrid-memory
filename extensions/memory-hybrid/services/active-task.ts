@@ -116,12 +116,19 @@ export function inferTerminalStatusFromTaskContent(
   if (isAutoReconciledTaskNext(next)) {
     return next.toLowerCase().includes("session transcript not found") ? "Failed" : "Done";
   }
-  const combined = `${entry.description} ${next}`.toLowerCase();
+  const nextLower = next.toLowerCase();
   if (
-    /\(done\)|\bstage closed\b|\bcompleted:\s|\bmark complete\b|\bmerged\/marked complete\b|\bmonitor pr #[0-9]+ ci.*merge\/mark complete/i.test(
-      combined,
-    )
+    /\bstage closed\.?\s*$/.test(nextLower) ||
+    /\(done\)\s*$/.test(nextLower) ||
+    /^completed:\s/.test(nextLower) ||
+    /\bmark complete\b/.test(nextLower) ||
+    /\bmerged\/marked complete\b/.test(nextLower) ||
+    /\bmonitor pr #[0-9]+ ci.*merge\/mark complete/i.test(nextLower)
   ) {
+    return "Done";
+  }
+  const descLower = (entry.description ?? "").trim().toLowerCase();
+  if (/\bstage closed\.?\s*$/.test(descLower) || /\(done\)\s*$/.test(descLower)) {
     return "Done";
   }
   return null;

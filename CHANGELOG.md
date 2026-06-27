@@ -23,6 +23,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.6.272] - 2026-06-27
+
+### Fixed
+
+- **Goals / active-tasks reliability:** `goal-context`, `goal-stewardship`, and `active-task-injection` are protected from the 800ms optional hook skip; stages cap wall-clock via budget-aware timeouts.
+- **Active-task coherence:** Persist up to 3 incoherent rows per turn before injection; tightened terminal inference heuristics; reconcile progress telemetry uses correct action/previous status.
+- **Upgrade rollback (#1985):** npm-project `package.json` / lockfile restored when pin verification fails; workspace refresh failure rolls back plugin + npm pin.
+- **Verify:** Pending error-reporter queue counted from on-disk JSONL when reporter is cold; quarantined corrupt goal files surfaced as warnings.
+
+### Added
+
+- **`goals doctor --repair-corrupt`:** Restore quarantined `*.json.corrupt` goal files that parse as valid Goal JSON; rebuilds goal index after repair.
+- **Dashboard infrastructure card:** Pending telemetry queue depth and quarantined goal count on Mission Control overview.
+- **`doctor` CLI:** Error-reporter pending queue and goal quarantine checks with fix hints.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.6.272**.
+
+---
+
 ## [2026.6.271] - 2026-06-27
 
 ### Fixed

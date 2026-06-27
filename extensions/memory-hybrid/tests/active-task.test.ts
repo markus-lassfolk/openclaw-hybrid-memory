@@ -400,6 +400,26 @@ describe("inferTerminalStatusFromTaskContent", () => {
       }),
     ).toBe("Done");
   });
+
+  it("does not infer terminal from completed: in description alone", () => {
+    expect(
+      inferTerminalStatusFromTaskContent({
+        status: "In progress",
+        description: "Track completed: phase 1 wiring before phase 2",
+        next: "Continue phase 2 implementation.",
+      }),
+    ).toBeNull();
+  });
+
+  it("does not infer terminal from (done) mid-description", () => {
+    expect(
+      inferTerminalStatusFromTaskContent({
+        status: "In progress",
+        description: "Finish when CI is (done) and merged",
+        next: "Monitor CI.",
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("isNonActionableSubagentPlaceholderTask", () => {

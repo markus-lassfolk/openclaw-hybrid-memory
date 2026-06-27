@@ -30,7 +30,11 @@ export function registerGoalContextInjection(
   if (!gs.injectActiveGoalsEveryTurn || ctx.cfg.verbosity === "silent") return;
 
   api.on("before_agent_start", async (event: unknown, hookCtx: unknown) =>
-    runOptionalBeforeAgentStartStage(ctx.beforeAgentStartTurnRef, "goal-context", api.logger, async () => {
+    runOptionalBeforeAgentStartStage(
+      ctx.beforeAgentStartTurnRef,
+      "goal-context",
+      api.logger,
+      async () => {
     try {
       const injectionEnabled = await isGoalStewardshipInjectionEnabled(ctx.cfg, goalsDir);
       if (!injectionEnabled) return undefined;
@@ -77,6 +81,8 @@ export function registerGoalContextInjection(
       api.logger?.warn?.(`memory-hybrid: goal context injection failed: ${String(err)}`);
       return undefined;
     }
-  }),
+  },
+      { timeoutMs: 4000 },
+    ),
   );
 }

@@ -18,6 +18,9 @@ import { getRecallStatsSnapshot } from "../services/recall-timing-stats.js";
 import { getRecallSignalsSnapshot } from "../services/recall-signals.js";
 import { getStaleMaintenanceJobs } from "../services/maintenance-audit-journal.js";
 import { countPinnedFacts } from "../services/fact-lifecycle-verbs.js";
+import { resolvePendingErrorReportCount, isErrorReporterActive } from "../services/error-reporter.js";
+import { listQuarantinedGoalIds, resolveGoalsDir } from "../services/goal-registry.js";
+import { workspaceRootForCli } from "./config-feature-summaries.js";
 
 interface DiagnosticCheck {
   name: string;
@@ -32,6 +35,7 @@ export function registerDoctorCommand(
   factsDb: FactsDB,
   vectorDb: VectorDB,
   wal: WriteAheadLog | null = null,
+  resolvedSqlitePath?: string,
 ): void {
   program
     .command("doctor")
@@ -446,6 +450,43 @@ export function registerDoctorCommand(
           status: "warn",
           message: `Audit journal unavailable: ${String(err)}`,
         });
+      }
+
+      if (cfg.errorReporting?.enabled !== false && cfg.errorReporting?.consent !== false) {
+        const pending = resolvePendingErrorReportCount(resolvedSqlitePath);
+        if (pending > 0) {
+          checks.push({
+            name: "Error reporter queue",
+            status: "warn",
+            message: `${pending} pending telemetry report(s) on disk`,
+            fix: "Restart gateway to drain queue, or run hybrid-mem verify",
+          });
+        } else {
+          checks.push({
+            name: "Error reporter queue",
+            status: isErrorReporterActive() ? "pass" : "warn",
+            message: isErrorReporterActive() ? "Pending queue empty" : "Reporter not active in this CLI process",
+          });
+        }
+      }
+
+      if (cfg.goalStewardship?.enabled) {
+        const goalsDir = resolveGoalsDir(workspaceRootForCli(), cfg.goalStewardship.goalsDir);
+        const quarantined = listQuarantinedGoalIds(goalsDir);
+        if (quarantined.length > 0) {
+          checks.push({
+            name: "Goal registry quarantine",
+            status: "warn",
+            message: `${quarantined.length} quarantined corrupt goal file(s): ${quarantined.slice(0, 5).join(", ")}${quarantined.length > 5 ? "…" : ""}`,
+            fix: "Run: openclaw hybrid-mem goals doctor --repair-corrupt",
+          });
+        } else {
+          checks.push({
+            name: "Goal registry quarantine",
+            status: "pass",
+            message: "No quarantined corrupt goal files",
+          });
+        }
       }
 
       // Display results

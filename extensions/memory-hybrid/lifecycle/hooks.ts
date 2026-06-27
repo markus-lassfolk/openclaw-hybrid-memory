@@ -96,7 +96,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             return undefined;
           }
           if (!recallStageResult) {
-            if (shouldSkipOptionalBeforeAgentStartStage(ctx.beforeAgentStartTurnRef)) {
+            if (shouldSkipOptionalBeforeAgentStartStage(ctx.beforeAgentStartTurnRef, "recall-degraded-fallback")) {
               api.logger.warn?.("memory-hybrid: recall budget exhausted — skipping degraded fallback");
               return undefined;
             }

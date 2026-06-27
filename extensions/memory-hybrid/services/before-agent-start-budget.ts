@@ -3,11 +3,23 @@
  * OpenClaw gateway kills the whole hook chain at ~15s; stay under with margin.
  */
 
+import { withTimeout } from "../utils/timeout.js";
+
 /** Total wall-clock budget for all before_agent_start stages in one turn. */
 export const GATEWAY_BEFORE_AGENT_START_BUDGET_MS = 12_000;
 
 /** Skip optional prepend stages when less than this budget remains. */
 export const BEFORE_AGENT_START_OPTIONAL_STAGE_MIN_MS = 800;
+
+/** Goals / active-tasks must run unless the gateway budget is truly exhausted. */
+export const BEFORE_AGENT_START_PROTECTED_STAGE_MIN_MS = 200;
+
+/** Stages that inject goals or active tasks — never skip at the 800ms optional threshold. */
+export const PROTECTED_BEFORE_AGENT_START_STAGES = new Set([
+  "goal-context",
+  "goal-stewardship",
+  "active-task-injection",
+]);
 
 export type BeforeAgentStartTurnRef = { value: number | null };
 
@@ -36,8 +48,19 @@ export function resolveBeforeAgentStartStageTimeoutMs(
   return Math.min(defaultTimeoutMs, remaining - reserveMs);
 }
 
-export function shouldSkipOptionalBeforeAgentStartStage(ref?: BeforeAgentStartTurnRef): boolean {
-  return beforeAgentStartRemainingMs(ref) < BEFORE_AGENT_START_OPTIONAL_STAGE_MIN_MS;
+export function isProtectedBeforeAgentStartStage(stage: string): boolean {
+  return PROTECTED_BEFORE_AGENT_START_STAGES.has(stage);
+}
+
+export function shouldSkipOptionalBeforeAgentStartStage(
+  ref?: BeforeAgentStartTurnRef,
+  stage?: string,
+): boolean {
+  const minMs =
+    stage && isProtectedBeforeAgentStartStage(stage)
+      ? BEFORE_AGENT_START_PROTECTED_STAGE_MIN_MS
+      : BEFORE_AGENT_START_OPTIONAL_STAGE_MIN_MS;
+  return beforeAgentStartRemainingMs(ref) < minMs;
 }
 
 /** Log when a single optional stage exceeds this wall clock (ms). */
@@ -45,25 +68,44 @@ export const BEFORE_AGENT_START_STAGE_SLOW_MS = 2000;
 
 type BeforeAgentStartLogger = { debug?: (msg: string) => void; warn?: (msg: string) => void } | undefined;
 
+export type RunOptionalBeforeAgentStartStageOpts = {
+  /** Default stage timeout; capped to remaining gateway budget when set. */
+  timeoutMs?: number;
+};
+
 /**
  * Run an optional prepend stage under the shared gateway hook budget (#1979).
  * Skips when budget is exhausted; logs per-stage and cumulative slow-path timing.
+ * Protected stages (goals, active-tasks) use a lower skip threshold.
  */
 export async function runOptionalBeforeAgentStartStage<T>(
   ref: BeforeAgentStartTurnRef | undefined,
   stage: string,
   logger: BeforeAgentStartLogger,
   fn: () => Promise<T | undefined>,
+  opts?: RunOptionalBeforeAgentStartStageOpts,
 ): Promise<T | undefined> {
-  if (shouldSkipOptionalBeforeAgentStartStage(ref)) {
+  if (shouldSkipOptionalBeforeAgentStartStage(ref, stage)) {
     logger?.debug?.(
       `memory-hybrid: ${stage} skipped — before_agent_start budget exhausted (${beforeAgentStartRemainingMs(ref)}ms left)`,
     );
     return undefined;
   }
   const stageStart = Date.now();
+  const runFn = async (): Promise<T | undefined> => fn();
   try {
-    return await fn();
+    if (opts?.timeoutMs && opts.timeoutMs > 0) {
+      const cappedMs = resolveBeforeAgentStartStageTimeoutMs(ref, opts.timeoutMs, 100);
+      const result = await withTimeout(cappedMs, runFn, undefined);
+      if (result == null && Date.now() - stageStart >= cappedMs - 50) {
+        logger?.warn?.(
+          `memory-hybrid: before_agent_start stage ${stage} timed out after ${cappedMs}ms (${beforeAgentStartRemainingMs(ref)}ms budget remaining)`,
+        );
+        return undefined;
+      }
+      return result ?? undefined;
+    }
+    return await runFn();
   } finally {
     const stageMs = Date.now() - stageStart;
     const remaining = beforeAgentStartRemainingMs(ref);

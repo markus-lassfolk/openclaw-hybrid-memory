@@ -349,6 +349,36 @@ export function findActiveTaskCoherenceRepairs(
   return repairs;
 }
 
+/** Persist incoherent rows detected at read/injection time (small batch, best-effort). */
+export async function flushActiveTaskCoherenceRepairs(
+  factsDb: FactsDB,
+  vectorDb: VectorDB,
+  embeddings: EmbeddingProvider,
+  opts: {
+    maxRepairs?: number;
+    log?: { warn?: (m: string) => void; info?: (m: string) => void };
+  } = {},
+): Promise<{ repaired: number; failed: number }> {
+  const repairs = findActiveTaskCoherenceRepairs(factsDb).slice(0, opts.maxRepairs ?? 5);
+  let repaired = 0;
+  let failed = 0;
+  for (const entry of repairs) {
+    clearActiveTaskHandoff(entry);
+    try {
+      await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, entry, opts.log, {
+        statusOverride: factStatusOverrideForInferredTerminal(entry.status),
+      });
+      repaired += 1;
+    } catch (err) {
+      failed += 1;
+      opts.log?.warn?.(
+        `memory-hybrid: coherence repair failed for [${entry.label}]: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  return { repaired, failed };
+}
+
 export function loadTaskLedgerFromFacts(
   factsDb: FactsDB,
   factLimit = 8000,
@@ -2074,17 +2104,21 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
 
   for (const task of findActiveTaskCoherenceRepairs(factsDb)) {
     if (reconciledLabels.includes(task.label)) continue;
+    const previousStatusFact = findLatestActiveTaskKeyFact(factsDb, task.label, "status");
+    const previousStatus = previousStatusFact?.value
+      ? factStatusToDisplay(String(previousStatusFact.value))
+      : task.status;
     clearActiveTaskHandoff(task);
     reconciledLabels.push(task.label);
     toFlush.push(task);
-    toAudit.push({ ...task, status: task.status === "Done" ? "Done" : "Failed" });
+    toAudit.push({ ...task, status: previousStatus });
     progress?.onScanItem({
       index: scanned,
       total: scanTotal,
       entity: task.label,
-      action: "mark_abandoned",
+      action: task.status === "Done" ? "mark_done" : "mark_abandoned",
       reason: "coherence_repair",
-      previousStatus: "In progress",
+      previousStatus,
       elapsedMs: Date.now() - startedAt,
     });
   }

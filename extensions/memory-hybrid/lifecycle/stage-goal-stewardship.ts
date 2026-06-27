@@ -35,7 +35,11 @@ export function registerGoalStewardshipInjection(
   if (!gs.heartbeatStewardship) return;
 
   api.on("before_agent_start", async (event: unknown, hookCtx: unknown) =>
-    runOptionalBeforeAgentStartStage(ctx.beforeAgentStartTurnRef, "goal-stewardship", api.logger, async () => {
+    runOptionalBeforeAgentStartStage(
+      ctx.beforeAgentStartTurnRef,
+      "goal-stewardship",
+      api.logger,
+      async () => {
     try {
       const injectionEnabled = await isGoalStewardshipInjectionEnabled(ctx.cfg, goalsDir);
       if (!injectionEnabled) return undefined;
@@ -148,7 +152,9 @@ export function registerGoalStewardshipInjection(
       api.logger?.warn?.(`memory-hybrid: goal stewardship injection error: ${String(err)}`);
       return undefined;
     }
-  }),
+  },
+      { timeoutMs: 5000 },
+    ),
   );
 }
 
