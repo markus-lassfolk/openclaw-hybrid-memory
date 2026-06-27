@@ -16,6 +16,7 @@ import {
   resolveCurrentToolExecutor,
   setCurrentToolExecutor,
 } from "./hybrid-memory-generation-state.js";
+import { patchMemoryToolRegistrationApi } from "../utils/tool-search-wrapper-args.js";
 import { type ToolsContext, toolInstallers } from "./tool-installers.js";
 
 export interface ToolRegistrationHandle {
@@ -161,8 +162,9 @@ export function createGenerationGuardedToolsApi(
  */
 export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): ToolRegistrationHandle {
   const { api: guardedApi, handle } = createGenerationGuardedToolsApi(ctx, api);
+  const toolsApi = patchMemoryToolRegistrationApi(guardedApi);
   for (const installer of toolInstallers) {
-    installer.install(installer.selectContext(ctx, guardedApi), guardedApi);
+    installer.install(installer.selectContext(ctx, toolsApi), toolsApi);
   }
   return handle;
 }

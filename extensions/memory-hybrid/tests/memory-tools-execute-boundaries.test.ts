@@ -87,7 +87,7 @@ describe("memory tools execute boundaries", () => {
     expect(result.details.count).toBe(0);
   });
 
-  it("memory_recall returns wrapper-dropped-args error when params are completely empty (#1973)", async () => {
+  it("memory_recall returns guidance when params are empty (not wrapper-dropped without sentinels)", async () => {
     const api = makeMockApi();
     const cfg = hybridConfigSchema.parse({
       embedding: { apiKey: "sk-test-key-long-enough", model: "text-embedding-3-small" },
@@ -123,8 +123,9 @@ describe("memory tools execute boundaries", () => {
     );
 
     const result = await api.getTool("memory_recall").execute("tc", {});
-    expect(result.details.error).toBe("wrapper_args_dropped");
-    expect(result.content[0].text).toContain("#96115");
+    expect(result.details.error).toBeUndefined();
+    expect(result.content[0].text).toContain("Provide a search query or an id");
+    expect(result.details.count).toBe(0);
   });
 
   it("memory_recall by id redacts injection markers in tool output", async () => {
