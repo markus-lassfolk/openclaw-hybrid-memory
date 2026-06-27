@@ -5,7 +5,7 @@ import type { SQLInputValue } from "node:sqlite";
 import type { DatabaseSync } from "node:sqlite";
 
 import type { MemoryEntry } from "../../types/memory.js";
-import { updateConfidence } from "./contradictions.js";
+import { updateConfidence, recordContradiction } from "./contradictions.js";
 import { filterEntityStopWords } from "../../utils/entity-stopwords.js";
 import { rowToMemoryEntry } from "./row-mapper.js";
 import type { MemoryLinkType } from "./types.js";
@@ -142,6 +142,7 @@ export function autoLinkEntities(
   scope: string | null | undefined,
   scopeTarget: string | null | undefined,
   createLink: (a: string, b: string, t: MemoryLinkType, s?: number) => string,
+  strengthenRelatedLink: (a: string, b: string, strength: number) => void,
   supersede: (oldId: string, newId: string | null) => boolean,
 ): { linkedCount: number; supersededIds: string[] } {
   let linkedCount = 0;
@@ -156,11 +157,12 @@ export function autoLinkEntities(
     const existing = db
       .prepare(
         `SELECT id FROM memory_links
-           WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'RELATED_TO'`,
+           WHERE ((source_fact_id = ? AND target_fact_id = ?) OR (source_fact_id = ? AND target_fact_id = ?))
+             AND link_type = 'RELATED_TO'`,
       )
-      .get(newFactId, anchor.id);
+      .get(newFactId, anchor.id, anchor.id, newFactId);
     if (!existing) {
-      createLink(newFactId, anchor.id, "RELATED_TO", weight);
+      strengthenRelatedLink(newFactId, anchor.id, weight);
       linkedCount++;
     }
   }
@@ -186,11 +188,12 @@ export function autoLinkEntities(
       const existing = db
         .prepare(
           `SELECT id FROM memory_links
-             WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'RELATED_TO'`,
+             WHERE ((source_fact_id = ? AND target_fact_id = ?) OR (source_fact_id = ? AND target_fact_id = ?))
+               AND link_type = 'RELATED_TO'`,
         )
-        .get(newFactId, coEntry.id);
+        .get(newFactId, coEntry.id, coEntry.id, newFactId);
       if (!existing) {
-        createLink(newFactId, coEntry.id, "RELATED_TO", cfg.coOccurrenceWeight);
+        strengthenRelatedLink(newFactId, coEntry.id, cfg.coOccurrenceWeight);
         linkedCount++;
       }
     }
@@ -245,7 +248,12 @@ export function autoLinkEntities(
                    WHERE fact_id_new = ? AND fact_id_old = ?`,
               )
               .get(newFactId, oldFact.id);
-            if (!existingContradiction) {
+            if (!existingContradiction && oldFact.value != null && newVal.toLowerCase() !== oldFact.value.toLowerCase()) {
+              recordContradiction(db, newFactId, oldFact.id, createLink, {
+                score: 1.0,
+                heuristicSignals: ["auto_supersede"],
+              });
+            } else if (!existingContradiction) {
               updateConfidence(db, oldFact.id, -0.2);
             }
             supersededIds.push(oldFact.id);

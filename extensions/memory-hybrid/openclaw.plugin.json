@@ -490,8 +490,16 @@
       "help": "Auto-create RELATED_TO links to similar facts when storing (default false)"
     },
     "graph.autoLinkMinScore": {
-      "label": "Auto-link min score",
-      "help": "Min similarity score for auto-linking (default 0.7)"
+      "label": "Auto-link min score (deprecated)",
+      "help": "Deprecated alias for autoLinkStrength and autoLinkSimilarityThreshold. Prefer graph.autoLinkStrength (link weight) and graph.autoLinkSimilarityThreshold (embedding gate)."
+    },
+    "graph.autoLinkStrength": {
+      "label": "Auto-link strength",
+      "help": "Strength (0–1) stored on auto-created RELATED_TO links (default 0.7)"
+    },
+    "graph.autoLinkSimilarityThreshold": {
+      "label": "Auto-link similarity threshold",
+      "help": "Minimum embedding cosine similarity required for semantic auto-linking (default 0.7)"
     },
     "graph.autoLinkLimit": {
       "label": "Auto-link limit",
@@ -1601,7 +1609,19 @@
             "type": "number",
             "minimum": 0,
             "maximum": 1,
-            "description": "Min similarity score for auto-linking (default: 0.7)"
+            "description": "Deprecated alias for autoLinkStrength and autoLinkSimilarityThreshold"
+          },
+          "autoLinkStrength": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Strength stored on auto-created RELATED_TO links (default: 0.7)"
+          },
+          "autoLinkSimilarityThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Minimum embedding cosine similarity for semantic auto-linking (default: 0.7)"
           },
           "autoLinkLimit": {
             "type": "number",

@@ -91,10 +91,22 @@ Add the `graph` section to your plugin config:
           "graph": {
             "enabled": true,
             "autoLink": true,
-            "autoLinkMinScore": 0.7,
-            "autoLinkLimit": 3,
+            "autoLinkStrength": 0.7,
+            "autoLinkSimilarityThreshold": 0.7,
+            "autoLinkLimit": 2,
             "maxTraversalDepth": 2,
-            "useInRecall": true
+            "useInRecall": false,
+            "coOccurrenceWeight": 0.2
+          },
+          "graphRetrieval": {
+            "enabled": true,
+            "defaultExpand": true,
+            "maxExpandDepth": 2,
+            "maxExpandedResults": 12
+          },
+          "retrieval": {
+            "strategies": ["semantic", "fts5", "graph"],
+            "graphWalkDepth": 2
           }
         }
       }
@@ -109,10 +121,12 @@ Add the `graph` section to your plugin config:
 |--------|------|---------|-------------|
 | `enabled` | boolean | `true` | Enable graph features |
 | `autoLink` | boolean | `false` | Auto-create RELATED_TO links when storing facts |
-| `autoLinkMinScore` | number | `0.7` | Min similarity score for auto-linking (0.0-1.0) |
+| `autoLinkStrength` | number | `0.7` | Strength (0.0–1.0) stored on auto-created RELATED_TO links |
+| `autoLinkSimilarityThreshold` | number | `0.7` | Minimum embedding cosine similarity for semantic auto-linking |
+| `autoLinkMinScore` | number | — | **Deprecated.** Alias for both strength and threshold when the new keys are unset |
 | `autoLinkLimit` | number | `3` | Max similar facts to auto-link per storage |
-| `maxTraversalDepth` | number | `2` | Max hops for graph traversal in recall |
-| `useInRecall` | boolean | `true` | Enable graph traversal in memory_recall |
+| `maxTraversalDepth` | number | `2` | Max hops for legacy graph traversal in recall |
+| `useInRecall` | boolean | `true` | Legacy flat graph add-on in `memory_recall` when GraphRAG expand is off |
 | `coOccurrenceWeight` | number | `0.3` | Link strength for temporal co-occurrence RELATED_TO edges (facts recalled together) |
 | `autoSupersede` | boolean | `true` | Auto-create a SUPERSEDES edge and supersede the old fact when an entity+key conflict is detected on store |
 

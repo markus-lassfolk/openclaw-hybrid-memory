@@ -451,6 +451,7 @@ export class FactsDB extends FactsDBLayer2 {
       scope,
       scopeTarget,
       (a, b, t, s) => this.createLink(a, b, t, s ?? 1.0),
+      (a, b, strength) => this.createOrStrengthenRelatedLink(a, b, strength),
       (o, n) => this.supersede(o, n),
     );
   }
