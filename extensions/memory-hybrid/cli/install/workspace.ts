@@ -99,6 +99,58 @@ export function resolveUpgradeExtensionsParentDir(pluginRootDir: string): string
   return dirname(pluginRootDir);
 }
 
+/** Canonical plugin directory after standalone install into `extensionsParentDir` (#1989). */
+export function resolveInstalledPluginDir(extensionsParentDir: string, pluginPackageName: string = PLUGIN_ID): string {
+  return join(extensionsParentDir, pluginPackageName);
+}
+
+/** Maeve/npm-project layout under ~/.openclaw/npm/projects when present. */
+export function resolveKnownNpmProjectPluginDir(): string | undefined {
+  const projectRoot = join(homedir(), ".openclaw", "npm", "projects", PLUGIN_ID);
+  const pluginDir = join(projectRoot, "node_modules", PLUGIN_ID);
+  if (!existsSync(join(pluginDir, "openclaw.plugin.json"))) return undefined;
+  return pluginDir;
+}
+
+export function resolveNpmProjectPluginDirFromLayout(pluginRootDir: string): string | undefined {
+  const projectRoot = resolveNpmProjectRootForPlugin(pluginRootDir);
+  if (!projectRoot) return undefined;
+  const pluginDir = join(projectRoot, "node_modules", PLUGIN_ID);
+  return existsSync(join(pluginDir, "openclaw.plugin.json")) ? pluginDir : undefined;
+}
+
+export function readPluginPackageVersion(pluginRootDir: string): string | undefined {
+  try {
+    const pkgPath = join(pluginRootDir, "package.json");
+    if (!existsSync(pkgPath)) return undefined;
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version?: string };
+    return typeof pkg.version === "string" && pkg.version.trim().length > 0 ? pkg.version.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Warn when npm-project and extensions copies both exist with different versions (#1989). */
+export function detectDualPluginInstallVersionMismatch(
+  npmProjectPluginDir: string,
+  extensionsPluginDir: string,
+): string | undefined {
+  if (!existsSync(join(npmProjectPluginDir, "openclaw.plugin.json"))) return undefined;
+  if (!existsSync(join(extensionsPluginDir, "openclaw.plugin.json"))) return undefined;
+  try {
+    if (realpathSync(npmProjectPluginDir) === realpathSync(extensionsPluginDir)) return undefined;
+  } catch {
+    /* compare paths below */
+  }
+  const npmVer = readPluginPackageVersion(npmProjectPluginDir);
+  const extVer = readPluginPackageVersion(extensionsPluginDir);
+  if (!npmVer || !extVer) return undefined;
+  if (npmVer !== extVer) {
+    return `Dual plugin install version mismatch: npm-project ${npmVer} at ${npmProjectPluginDir} vs extensions ${extVer} at ${extensionsPluginDir}`;
+  }
+  return `Dual plugin install: npm-project and extensions both present at ${npmVer}; gateway should load extensions copy at ${extensionsPluginDir}`;
+}
+
 /** Returns an error message when bundled upgrade assets are missing; otherwise undefined. */
 export function verifyUpgradePluginBundle(pluginRootDir: string): string | undefined {
   for (const rel of UPGRADE_REQUIRED_BUNDLE_PATHS) {

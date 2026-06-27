@@ -23,6 +23,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.6.274] - 2026-06-27
+
+### Fixed
+
+- **Upgrade dual install paths (#1989):** After install, upgrade uses `resolveInstalledPluginDir` for bundle verify, workspace skill/TOOLS refresh, npm pin bundle check, and returned `pluginDir` instead of the stale pre-move npm path.
+- **Upgrade rollback:** Removes extensions-target install copy on failure when it differs from the pre-upgrade path.
+
+### Added
+
+- **Verify:** Warns when npm-project and `~/.openclaw/extensions` plugin copies both exist (version mismatch or duplicate at same version).
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.6.274**.
+
+---
+
 ## [2026.6.273] - 2026-06-27
 
 ### Fixed
