@@ -366,11 +366,11 @@ describe("detectStaleTasks", () => {
     expect(result[0].stale).toBe(true);
   });
 
-  it("treats UNKNOWN_ACTIVE_TASK_TIME as stale", async () => {
+  it("treats UNKNOWN_ACTIVE_TASK_TIME as not stale (missing task_updated)", async () => {
     const { UNKNOWN_ACTIVE_TASK_TIME } = await import("../services/active-task.js");
     const tasks = [makeEntry({ updated: UNKNOWN_ACTIVE_TASK_TIME })];
     const result = detectStaleTasks(tasks, 1440);
-    expect(result[0].stale).toBe(true);
+    expect(result[0].stale).toBe(false);
   });
 
   it("returns empty array for empty input", () => {

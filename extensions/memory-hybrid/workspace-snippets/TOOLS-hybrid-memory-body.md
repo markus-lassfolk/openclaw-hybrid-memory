@@ -10,13 +10,17 @@
 
 | Tool | When to call |
 |------|-------------|
-| `goal_register` | User assigns a multi-session, outcome-oriented goal |
+| `goal_list` / `goal_get` | Discover goals — **not** via `memory_recall` |
+| `goal_register` | Multi-session outcome (measurable criteria; retry with `confirmed: true` after clarity prompts) |
 | `goal_assess` | Every heartbeat stewardship turn — record observations and next action |
 | `goal_update` | Goal description, criteria, or priority needs updating |
 | `goal_complete` | ALL acceptance criteria are verifiably met |
 | `goal_abandon` | Goal is no longer relevant (user decision) |
-| `active_task_checkpoint` | Atomically checkpoint active work (facts + episode + optional wake schedule/projection refresh) |
-| `active_task_propose_goal` | Draft a `goal_register` payload from an `ACTIVE-TASKS.md` row |
+| `active_task_checkpoint` | Before ending turns with pending work; set `relatedGoal`, checkpoint facts + optional wake; auto-refreshes projection when ledger=facts |
+| `active_task_list` / `active_task_get` | List or fetch tasks from facts ledger or ACTIVE-TASKS.md |
+| `active_task_propose_goal` | Draft a `goal_register` payload from a task row (facts-aware) |
+
+Every turn shows `<active-goals-summary>` when enabled. On heartbeat pulses, run `goal_assess` before `HEARTBEAT_OK`. If tools return `wrapper_args_dropped`, retry top-level or restart session.
 
 **Subagent naming:** Use the goal label as a prefix for subagents that work toward it. Example: goal `deploy-api` -> subagents `deploy-api-run-tests`, `deploy-api-create-pr`. CLI: `openclaw hybrid-mem goals list|status|cancel|budget|reset-budget|stewardship-run|audit`. See [Goal stewardship design](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/GOAL-STEWARDSHIP-DESIGN.md), [Operator guide](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/GOAL-STEWARDSHIP-OPERATOR.md), and [Task hygiene](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/TASK-HYGIENE.md).
 - **More detail:** Workspace skill `skills/hybrid-memory/` (`SKILL.md` + `references/memory-optimization.md` — copied on first gateway start if missing; refreshed via **`openclaw hybrid-mem install`**) and repo docs: [Memory Protocol](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/MEMORY-PROTOCOL.md), [Maintenance matrix](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/MAINTENANCE-TASKS-MATRIX.md).

@@ -45,6 +45,7 @@ import { isStaleLifecycleGeneration } from "../../utils/lifecycle-generation.js"
 import { isRecallContextSuperseded, shouldSuppressStaleLifecycleError } from "../../utils/registration-superseded.js";
 import { extractTags } from "../../utils/tags.js";
 import { isSubstantiveMemoryText, prepareMemoryTextForStorage } from "../../services/recalled-context-assembler.js";
+import { isHighPriorityCapture } from "../../services/capture-utils.js";
 import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
 import type { LifecycleContext, SessionState } from "../types.js";
 
@@ -332,7 +333,13 @@ export async function runCapture(
         }
       }
       const toCapture = captureProvenance.shouldAutoCapture
-        ? candidates.filter((candidate) => candidate.text && ctx.shouldCapture(candidate.text))
+        ? candidates
+            .filter((candidate) => candidate.text && ctx.shouldCapture(candidate.text))
+            .sort((a, b) => {
+              const aPri = isHighPriorityCapture(a.text) ? 1 : 0;
+              const bPri = isHighPriorityCapture(b.text) ? 1 : 0;
+              return bPri - aPri;
+            })
         : [];
       if (toCapture.length > 0) {
         let stored = 0;

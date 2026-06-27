@@ -495,6 +495,8 @@ function selectGoalToolsContext(ctx: ToolsContext): GoalToolsContext {
     workspaceRoot,
     resolvedActiveTaskPath,
     factsDb: ctx.factsDb,
+    vectorDb: ctx.vectorDb,
+    embeddings: ctx.embeddings,
     eventLog: ctx.eventLog,
     memoryDir: pathJoin(workspaceRoot, "memory"),
   };
@@ -507,6 +509,7 @@ function installGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi): void {
       cfg: ctx.cfg,
       resolvedActiveTaskPath: ctx.resolvedActiveTaskPath,
       workspaceRoot: ctx.workspaceRoot,
+      factsDb: ctx.factsDb,
     },
     api,
   );

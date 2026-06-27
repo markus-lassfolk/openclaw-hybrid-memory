@@ -22,6 +22,7 @@ import {
 import { applyRetrievalV2, DEFAULT_RETRIEVAL_V2_CONFIG } from "../../services/retrieval-v2.js";
 import { applyFragmentRecallPostProcess, resolveRecallInjectionText } from "../../services/fragment-recall.js";
 import { buildToolScopeFilter, scopeFieldsFromFilter } from "../../utils/scope-filter.js";
+import { guardAgainstWrapperArgsDropped } from "../../services/tool-args-guard.js";
 import type { MemoryToolRuntime } from "./runtime.js";
 import { resolveToolVaultBackends, listToolVaultHandles } from "./vault-resolve.js";
 
@@ -81,6 +82,8 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
         ),
       }),
       async execute(_toolCallId: string, args: { query?: string; full?: boolean; limit?: number; vault?: string }) {
+        const dropped = guardAgainstWrapperArgsDropped("memory_retrieve", args, api.logger);
+        if (dropped) return dropped;
         const query = String(args.query ?? "").trim();
         if (!query) return { content: [{ type: "text", text: "Query is required." }] };
         const limit = typeof args.limit === "number" ? Math.min(20, args.limit) : 5;

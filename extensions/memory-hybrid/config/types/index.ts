@@ -435,6 +435,12 @@ export type GoalStewardshipConfirmationPolicy = {
 
 export type GoalStewardshipConfig = {
   enabled: boolean;
+  /**
+   * When true (default), goal context injection and heartbeat stewardship activate automatically
+   * when active goals exist on disk, even if `enabled` was not set explicitly.
+   * Goal tools (`goal_register`, etc.) still require `enabled: true`.
+   */
+  autoEnableWhenGoalsPresent: boolean;
   goalsDir: string;
   model: string | null;
   heartbeatStewardship: boolean;
@@ -452,6 +458,15 @@ export type GoalStewardshipConfig = {
   multiGoalMaxGoals: number;
   /** On heartbeat, rewrite ACTIVE-TASKS.md with a Goals mirror section (requires activeTask.enabled). */
   heartbeatRefreshActiveTask: boolean;
+  /**
+   * Prepend a compact active-goals summary on every turn (default: true when stewardship enabled).
+   * Skipped on heartbeat-pattern turns (full stewardship bundle) and subagent sessions.
+   */
+  injectActiveGoalsEveryTurn: boolean;
+  /** Character cap for every-turn active-goals summary (default: 2500). */
+  everyTurnGoalMaxChars: number;
+  /** Max goals listed in every-turn summary (default: 5). */
+  everyTurnGoalMaxGoals: number;
   confirmationPolicy: GoalStewardshipConfirmationPolicy;
   /**
    * When true, call a nano-tier LLM once per heartbeat to refine triage. When false, heuristics only.

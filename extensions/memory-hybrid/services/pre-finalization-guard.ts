@@ -585,7 +585,9 @@ export function evaluatePreFinalizationGuard(
     };
   }
 
-  const allProjectFacts = (options.projectFacts ?? []).filter((f) => f.category === TASK_LEDGER_CATEGORY);
+  const allProjectFacts = (options.projectFacts ?? []).filter(
+    (f) => f.category === TASK_LEDGER_CATEGORY && f.source === "active-task",
+  );
   const projectCheckpoint = evaluateProjectCheckpoint(
     allProjectFacts,
     nowMs,

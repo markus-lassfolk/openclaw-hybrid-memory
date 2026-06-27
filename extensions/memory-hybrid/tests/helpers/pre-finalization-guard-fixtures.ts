@@ -18,7 +18,7 @@ export function projectFact(params: {
     entity: params.entity,
     key: params.key,
     value: params.value,
-    source: "test",
+    source: "active-task",
     createdAt: params.createdAt ?? Math.floor(NOW_MS / 1000),
     decayClass: "permanent",
     expiresAt: null,

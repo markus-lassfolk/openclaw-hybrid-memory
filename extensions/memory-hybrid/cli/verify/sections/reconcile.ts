@@ -21,7 +21,7 @@ import { PLUGIN_ID } from "../../../utils/constants.js";
 import { nowIso, formatTimestampUtcFromMs } from "../../../utils/dates.js";
 import { describeCronStoreLocation } from "../../../services/openclaw-cron-store.js";
 import { ensureGoalStewardshipHeartbeatCronJob, ensureMaintenanceCronJobs } from "../../cmd-install.js";
-import { readConsolidatedCronJobsFlag } from "../../install/cron-jobs.js";
+import { buildMaintenanceCronFeatureGates, readConsolidatedCronJobsFlag } from "../../install/cron-jobs.js";
 
 import type { VerifyRunState } from "../verify-run-state.js";
 
@@ -344,11 +344,7 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
             reEnableDisabled: false,
             consolidatedCronJobs: readConsolidatedCronJobsFlag(cfg),
             scheduleOverrides: Object.keys(scheduleOverrides).length > 0 ? scheduleOverrides : undefined,
-            featureGates: {
-              "sensorSweep.enabled": cfg.sensorSweep?.enabled === true,
-              "nightlyCycle.enabled": cfg.nightlyCycle?.enabled === true,
-              "crystallization.enabled": cfg.crystallization?.enabled === true,
-            },
+            featureGates: buildMaintenanceCronFeatureGates(cfg),
             digestWeeklyDelivery: cfg.digest.weekly.delivery,
           });
           added.forEach((name) => {

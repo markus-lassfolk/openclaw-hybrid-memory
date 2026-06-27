@@ -69,6 +69,81 @@ export {
 } from "./task-ledger/canonical.js";
 export const TASK_LEDGER_CATEGORY = "project" as MemoryCategory;
 
+/** Structured keys that belong on the active-task ledger (not arbitrary project notes). */
+export const ACTIVE_TASK_LEDGER_KEYS = new Set([
+  "status",
+  "next",
+  "related_session",
+  "task_updated",
+  "related_goal",
+  "goal_id",
+  "title",
+  "started",
+  "task_started",
+  "branch",
+  "stash_commit",
+  "handoff",
+  "owner",
+  "wake_link",
+  "resume_at",
+  "wake_at",
+  "updated",
+  "updated_at",
+]);
+
+export function isActiveTaskLedgerKey(key: string | null | undefined): boolean {
+  const normalized = (key ?? "").trim().toLowerCase();
+  return normalized.length > 0 && ACTIVE_TASK_LEDGER_KEYS.has(normalized);
+}
+
+export type MirrorMemoryStoreToActiveTaskLedgerOpts = {
+  factsDb: FactsDB;
+  vectorDb: VectorDB;
+  embeddings: EmbeddingProvider;
+  activeTaskEnabled: boolean;
+  category: string;
+  entity?: string | null;
+  key?: string | null;
+  value?: string | null;
+  scope?: string | null;
+  log?: { warn?: (m: string) => void; debug?: (m: string) => void };
+};
+
+export type MirrorMemoryStoreToActiveTaskLedgerResult = {
+  synced: boolean;
+  autoTaskUpdated: boolean;
+};
+
+/**
+ * When memory_store writes task-shaped category:project facts, mirror to source=active-task
+ * so injection, projection, and pre-finalization guard stay aligned (#1556 follow-up).
+ */
+export async function mirrorMemoryStoreToActiveTaskLedger(
+  opts: MirrorMemoryStoreToActiveTaskLedgerOpts,
+): Promise<MirrorMemoryStoreToActiveTaskLedgerResult> {
+  if (!opts.activeTaskEnabled) return { synced: false, autoTaskUpdated: false };
+  if (opts.category !== TASK_LEDGER_CATEGORY) return { synced: false, autoTaskUpdated: false };
+  if ((opts.scope ?? "global") !== "global") return { synced: false, autoTaskUpdated: false };
+  const entity = opts.entity?.trim();
+  const key = opts.key?.trim();
+  const value = opts.value?.trim();
+  if (!entity || !key || !value || !isActiveTaskLedgerKey(key)) {
+    return { synced: false, autoTaskUpdated: false };
+  }
+
+  await upsertProjectTaskKey(opts.factsDb, opts.vectorDb, opts.embeddings, entity, key, value, opts.log);
+
+  let autoTaskUpdated = false;
+  if (key.toLowerCase() === "status") {
+    const ts = nowIso();
+    await upsertProjectTaskKey(opts.factsDb, opts.vectorDb, opts.embeddings, entity, "task_updated", ts, opts.log);
+    autoTaskUpdated = true;
+  }
+
+  opts.log?.debug?.(`memory-hybrid: mirrored memory_store project fact to active-task ledger (${entity}/${key})`);
+  return { synced: true, autoTaskUpdated };
+}
+
 const GENERIC_TASK_TITLE_NORMALIZED = new Set(["project task", "task", "active task"]);
 const PROJECTION_STALE_MARKER_SUFFIX = ".stale.json";
 const ACTIVE_TASK_PROJECTION_GLOBAL_SCOPE_FILTER: ScopeFilter = { agentId: "__active_task_projection_global__" };

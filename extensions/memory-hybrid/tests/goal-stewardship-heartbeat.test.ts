@@ -35,6 +35,9 @@ function gs(partial: Partial<GoalStewardshipConfig>): GoalStewardshipConfig {
     multiGoalMaxChars: 12_000,
     multiGoalMaxGoals: 8,
     heartbeatRefreshActiveTask: true,
+    injectActiveGoalsEveryTurn: true,
+    everyTurnGoalMaxChars: 2500,
+    everyTurnGoalMaxGoals: 5,
     confirmationPolicy: { requireRegisterAckForPriorities: ["critical", "high"] },
     llmTriageOnHeartbeat: false,
     triageSuggestHeavyDirective: true,
@@ -254,6 +257,28 @@ describe("buildMultiGoalStewardshipPrepend", () => {
     const blocks = result?.prepend.match(/<goal-stewardship>[\s\S]*?<\/goal-stewardship>/g) ?? [];
     const totalBlockChars = blocks.reduce((sum, block) => sum + block.length, 0);
     expect(totalBlockChars).toBeLessThanOrEqual(cap);
+  });
+
+  it("includes blocked goals even when inside assessment cooldown", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "hb-blocked-"));
+    const recent = new Date().toISOString();
+    const blocked = await createGoal(
+      goalsDir,
+      { label: "blocked-goal", description: "blocked test", acceptanceCriteria: ["CI green on main"] },
+      defaults,
+    );
+    await updateGoal(
+      goalsDir,
+      blocked.id,
+      { status: "blocked", lastAssessedAt: recent, currentBlockers: ["CI failing"] },
+      { timestamp: recent, action: "blocked", detail: "test", actor: "watchdog" },
+    );
+    const goals = await listActiveGoals(goalsDir);
+    const result = await buildMultiGoalStewardshipPrepend(goalsDir, gs({ multiGoalMaxGoals: 3 }), goals, {
+      suggestHeavyDirective: false,
+      triageHeavy: true,
+    });
+    expect(result?.goalsIncluded.some((g) => g.label === "blocked-goal")).toBe(true);
   });
 
   it("serializes round-robin cursor updates under concurrent prepend builds", async () => {

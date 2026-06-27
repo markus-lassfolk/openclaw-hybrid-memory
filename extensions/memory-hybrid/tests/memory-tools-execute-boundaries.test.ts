@@ -82,9 +82,49 @@ describe("memory tools execute boundaries", () => {
       async () => [],
     );
 
-    const result = await api.getTool("memory_recall").execute("tc", {});
+    const result = await api.getTool("memory_recall").execute("tc", { query: "" });
     expect(result.content[0].text).toContain("Provide a search query or an id");
     expect(result.details.count).toBe(0);
+  });
+
+  it("memory_recall returns wrapper-dropped-args error when params are completely empty (#1973)", async () => {
+    const api = makeMockApi();
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-long-enough", model: "text-embedding-3-small" },
+      store: { classifyBeforeWrite: false },
+    });
+    const embeddings = {
+      modelName: "text-embedding-3-small",
+      dimensions: 4,
+      embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3, 0.4]),
+      embedBatch: vi.fn(),
+    };
+    registerMemoryTools(
+      {
+        factsDb,
+        vectorDb: { search: vi.fn().mockResolvedValue([]), store: vi.fn(), hasDuplicate: vi.fn() },
+        cfg,
+        embeddings,
+        embeddingRegistry: buildEmbeddingRegistry(embeddings, embeddings.modelName, []),
+        openai: {},
+        wal: null,
+        credentialsDb: null,
+        eventLog: null,
+        lastProgressiveIndexIds: [],
+        progressiveIndexBySession: new Map(),
+        currentAgentIdRef: { value: null },
+        pendingLLMWarnings: createPendingLLMWarnings(),
+      },
+      api,
+      () => undefined,
+      async () => "wal",
+      async () => {},
+      async () => [],
+    );
+
+    const result = await api.getTool("memory_recall").execute("tc", {});
+    expect(result.details.error).toBe("wrapper_args_dropped");
+    expect(result.content[0].text).toContain("#96115");
   });
 
   it("memory_recall by id redacts injection markers in tool output", async () => {

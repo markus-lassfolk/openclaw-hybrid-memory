@@ -77,7 +77,7 @@ describe("lifecycle agent_end pre-finalization guard", () => {
       entity,
       key: "status",
       value: "in_progress",
-      source: "test",
+      source: "active-task",
       decayClass: "permanent",
     });
     factsDb.store({
@@ -87,7 +87,7 @@ describe("lifecycle agent_end pre-finalization guard", () => {
       entity,
       key: "related_session",
       value: MAIN_TELEGRAM_SESSION,
-      source: "test",
+      source: "active-task",
       decayClass: "permanent",
     });
     const ctx = buildGuardTestLifecycleContext(tmpDir, factsDb);
@@ -126,7 +126,7 @@ describe("lifecycle agent_end pre-finalization guard", () => {
       entity,
       key: "status",
       value: "waiting",
-      source: "test",
+      source: "active-task",
       decayClass: "permanent",
     });
     factsDb.store({
@@ -136,7 +136,7 @@ describe("lifecycle agent_end pre-finalization guard", () => {
       entity,
       key: "related_session",
       value: MAIN_CANONICAL_SESSION,
-      source: "test",
+      source: "active-task",
       decayClass: "permanent",
     });
     const ctx = buildGuardTestLifecycleContext(tmpDir, factsDb);

@@ -443,9 +443,11 @@ export function detectStaleTasks(tasks: ActiveTaskEntry[], staleMinutes: number)
   const now = Date.now();
   const staleMs = staleMinutes * 60 * 1000;
   return tasks.map((t) => {
+    if (t.updated === UNKNOWN_ACTIVE_TASK_TIME) {
+      return { ...t, stale: false };
+    }
     const updatedMs = new Date(t.updated).getTime();
-    const hasValidUpdated =
-      t.updated !== UNKNOWN_ACTIVE_TASK_TIME && Number.isFinite(updatedMs) && !Number.isNaN(updatedMs);
+    const hasValidUpdated = Number.isFinite(updatedMs) && !Number.isNaN(updatedMs);
     const isStale = !hasValidUpdated || now - updatedMs > staleMs;
     return { ...t, stale: isStale };
   });

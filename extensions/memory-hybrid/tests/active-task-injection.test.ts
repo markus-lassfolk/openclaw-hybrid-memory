@@ -25,7 +25,7 @@ const defaultProjection = {
 };
 
 describe("prepareActiveTasksForInjection", () => {
-  it("drops generic titles and stale tasks in readable mode", () => {
+  it("drops stale tasks in readable mode but keeps generic titles for injection recall", () => {
     const tasks = [
       entry({ label: "stale-a", stale: true, updated: "2020-01-01T00:00:00.000Z", description: "Real work A" }),
       entry({ label: "fresh-b", stale: false, description: "Real work B" }),
@@ -35,8 +35,8 @@ describe("prepareActiveTasksForInjection", () => {
       projection: defaultProjection,
     });
     expect(ledgerActiveCount).toBe(3);
-    expect(filteredActiveCount).toBe(1);
-    expect(prepared.map((t) => t.label)).toEqual(["fresh-b"]);
+    expect(filteredActiveCount).toBe(2);
+    expect(prepared.map((t) => t.label).sort()).toEqual(["fresh-b", "generic"]);
   });
 
   it("boosts tasks matching user text", () => {

@@ -51,7 +51,7 @@ Empty sections are **omitted** (no blank headings), except the all-empty case wh
 
 ## Operator playbook
 
-1. **Close or update work** via `memory_store` / facts (set status to `done`, `failed`, etc., or update `task_updated` and narrative keys).
+1. **Close or update work** via `active_task_checkpoint` (preferred) or `memory_store` with structured project keys (`status`, `next`, `related_session`, `task_updated`, `title`). Task-shaped `memory_store` writes are mirrored into the active-task ledger automatically when `activeTask.ledger: facts`.
 2. Run **`hybrid-mem active-tasks reconcile`** when subagent **Session:** references point at missing transcripts—rows can be completed automatically.
 3. Run **`hybrid-mem active-tasks hygiene --dry-run`** to detect stale failed rows and duplicate normalized entities; use `--apply` to mark stale/superseded rows without deleting history.
 4. Run **`hybrid-mem active-tasks render`** to refresh the markdown.

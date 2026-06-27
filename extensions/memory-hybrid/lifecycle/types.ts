@@ -122,6 +122,8 @@ export interface SessionState {
   capabilityHintsSessionsSeen: Set<string>;
   /** Per-session in-flight recall count for queue degradation (avoids cross-session bleed). */
   recallInFlightBySession: Map<string, number>;
+  /** Prepend advisory when pre-finalization guard detected missing checkpoint on prior turn. */
+  pendingCheckpointGuardBySession: Map<string, string>;
   touchSession: (sessionKey: string) => void;
   clearSessionState: (sessionKey: string) => void;
   clearInjectedFactIdsForSession: (

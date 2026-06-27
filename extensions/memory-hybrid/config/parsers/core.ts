@@ -343,7 +343,7 @@ export function parseActiveTaskConfig(cfg: Record<string, unknown>): ActiveTaskC
       ? longRunningModeRaw
       : "suggest";
   const ledgerRaw = activeTaskRaw?.ledger;
-  const ledger = ledgerRaw === "facts" ? "facts" : "markdown";
+  const ledger = ledgerRaw === "markdown" ? "markdown" : "facts";
   const projRaw = activeTaskRaw?.projection as Record<string, unknown> | undefined;
   const projection: ActiveTaskProjectionConfig = {
     mode: projRaw?.mode === "full" ? "full" : "readable",
@@ -428,6 +428,16 @@ export function parseGoalStewardshipConfig(cfg: Record<string, unknown>): GoalSt
       : 12_000;
   const multiGoalMaxGoals =
     typeof raw?.multiGoalMaxGoals === "number" && raw.multiGoalMaxGoals >= 1 ? Math.floor(raw.multiGoalMaxGoals) : 8;
+  const everyTurnGoalMaxChars =
+    typeof raw?.everyTurnGoalMaxChars === "number" && raw.everyTurnGoalMaxChars >= 400
+      ? Math.floor(raw.everyTurnGoalMaxChars)
+      : 2500;
+  const everyTurnGoalMaxGoals =
+    typeof raw?.everyTurnGoalMaxGoals === "number" && raw.everyTurnGoalMaxGoals >= 1
+      ? Math.floor(raw.everyTurnGoalMaxGoals)
+      : 5;
+  const injectActiveGoalsEveryTurn = raw?.enabled === true && raw?.injectActiveGoalsEveryTurn !== false;
+  const autoEnableWhenGoalsPresent = raw?.autoEnableWhenGoalsPresent !== false;
 
   const confRaw = raw?.confirmationPolicy as Record<string, unknown> | undefined;
   const reqAck = confRaw?.requireRegisterAckForPriorities;
@@ -456,6 +466,7 @@ export function parseGoalStewardshipConfig(cfg: Record<string, unknown>): GoalSt
 
   return {
     enabled: raw?.enabled === true,
+    autoEnableWhenGoalsPresent,
     goalsDir,
     model: typeof raw?.model === "string" && raw.model.trim().length > 0 ? raw.model.trim() : null,
     heartbeatStewardship: raw?.heartbeatStewardship !== false,
@@ -494,6 +505,9 @@ export function parseGoalStewardshipConfig(cfg: Record<string, unknown>): GoalSt
     multiGoalMaxChars,
     multiGoalMaxGoals,
     heartbeatRefreshActiveTask: raw?.heartbeatRefreshActiveTask !== false,
+    injectActiveGoalsEveryTurn,
+    everyTurnGoalMaxChars,
+    everyTurnGoalMaxGoals,
     confirmationPolicy: {
       requireRegisterAckForPriorities,
     },

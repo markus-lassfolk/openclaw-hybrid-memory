@@ -1,10 +1,12 @@
 {
   "id": "openclaw-hybrid-memory",
   "kind": "memory",
-  "version": "2026.6.261",
+  "version": "2026.6.270",
   "contracts": {
     "tools": [
       "active_task_checkpoint",
+      "active_task_get",
+      "active_task_list",
       "active_task_propose_goal",
       "apitap_capture",
       "apitap_list",
@@ -19,6 +21,8 @@
       "goal_abandon",
       "goal_assess",
       "goal_complete",
+      "goal_get",
+      "goal_list",
       "goal_register",
       "goal_update",
       "memory_add_edict",
@@ -653,7 +657,7 @@
     },
     "goalStewardship.enabled": {
       "label": "Goal stewardship",
-      "help": "Enable long-running goal registry, agent tools (goal_register, …), heartbeat injection, and optional watchdog health checks. Default: false. See docs/GOAL-STEWARDSHIP-DESIGN.md."
+      "help": "Enable long-running goal registry, agent tools (goal_list, goal_get, goal_register, …), every-turn goal summary, heartbeat injection, and optional watchdog health checks. Default: false. See docs/GOAL-STEWARDSHIP-DESIGN.md."
     },
     "goalStewardship.goalsDir": {
       "label": "Goals directory",
@@ -667,6 +671,14 @@
     "goalStewardship.watchdogHealthCheck": {
       "label": "Watchdog health check",
       "help": "Run deterministic goal health checks on the plugin 5-minute timer. CLI `hybrid-mem goals stewardship-run` still runs checks when stewardship is enabled. Default: true."
+    },
+    "goalStewardship.injectActiveGoalsEveryTurn": {
+      "label": "Inject goals every turn",
+      "help": "Prepend compact active-goals summary on normal turns (default: true when stewardship enabled). Skipped on heartbeat-pattern turns. Subagent sessions receive linked-goal context when related_goal or label-prefix matches."
+    },
+    "goalStewardship.autoEnableWhenGoalsPresent": {
+      "label": "Auto-enable goal injection",
+      "help": "When true (default), goal context injection activates automatically when active goals exist on disk, even if goalStewardship.enabled was not set. Goal tools still require explicit enabled: true."
     },
     "goalStewardship.circuitBreaker.enabled": {
       "label": "Goal circuit breaker",
@@ -2258,7 +2270,7 @@
           "ledger": {
             "type": "string",
             "enum": ["markdown", "facts"],
-            "description": "Task ledger backend. \"markdown\" = legacy ACTIVE-TASKS.md file ledger (default). \"facts\" = canonical facts DB with optional ACTIVE-TASKS.md projection via hybrid-mem active-tasks render."
+            "description": "Task ledger backend. \"facts\" = canonical facts DB with optional ACTIVE-TASKS.md projection (default). \"markdown\" = legacy ACTIVE-TASKS.md file ledger."
           },
           "filePath": {
             "type": "string",
@@ -2388,7 +2400,11 @@
         "properties": {
           "enabled": {
             "type": "boolean",
-            "description": "Enable goal stewardship (default: false)"
+            "description": "Enable goal stewardship tools and full automation (default: false). Injection may still auto-enable when goals exist — see autoEnableWhenGoalsPresent."
+          },
+          "autoEnableWhenGoalsPresent": {
+            "type": "boolean",
+            "description": "Auto-enable goal context injection when active goals exist on disk (default: true). Goal tools still require enabled: true."
           },
           "goalsDir": {
             "type": "string",
@@ -2477,6 +2493,18 @@
           "heartbeatRefreshActiveTask": {
             "type": "boolean",
             "description": "On heartbeat, refresh ACTIVE-TASKS.md Goals mirror"
+          },
+          "injectActiveGoalsEveryTurn": {
+            "type": "boolean",
+            "description": "Prepend compact active-goals summary on every turn when stewardship injection is active (default: true). Skipped on heartbeat turns. Subagents get linked-goal context when related_goal or label-prefix matches."
+          },
+          "everyTurnGoalMaxChars": {
+            "type": "number",
+            "description": "Character cap for every-turn active-goals summary (default: 2500)"
+          },
+          "everyTurnGoalMaxGoals": {
+            "type": "number",
+            "description": "Max goals listed in every-turn summary (default: 5)"
           },
           "confirmationPolicy": {
             "type": "object",

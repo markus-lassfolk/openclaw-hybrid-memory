@@ -120,6 +120,29 @@ describe("active-task-checkpoint", () => {
     factsDb.close();
   });
 
+  it("writes related_goal and defaults refreshProjection when ledger=facts", async () => {
+    const { cfg, factsDb, vectorDb, embeddings, openclawDir, root } = setup();
+    const projectionPath = join(root, "ACTIVE-TASKS.md");
+    const refreshSpy = vi.spyOn(taskLedgerFacts, "renderActiveTaskMarkdownFile").mockResolvedValue(undefined);
+
+    const result = await runActiveTaskCheckpoint(
+      { cfg, factsDb, vectorDb, embeddings, openclawDir, workspaceRoot: root },
+      {
+        entity: "goal-backed-task",
+        status: "in_progress",
+        next: "Run tests",
+        relatedGoal: "goal-abc-123",
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(latestProjectValue(factsDb, "goal-backed-task", "related_goal")).toBe("goal-abc-123");
+    expect(result.steps.projection.attempted).toBe(true);
+    expect(refreshSpy).toHaveBeenCalled();
+    refreshSpy.mockRestore();
+    factsDb.close();
+  });
+
   it("returns validation errors for invalid payload", async () => {
     const { cfg, factsDb, vectorDb, embeddings, openclawDir } = setup();
 
@@ -675,6 +698,35 @@ describe("active-task-checkpoint", () => {
     expect(result.ok).toBe(true);
     expect(result.steps.schedule.scheduled).toBe(true);
     expect(existsSync(lockPath)).toBe(false);
+    factsDb.close();
+  });
+
+  it("syncs ACTIVE-TASKS.md when ledger=markdown after checkpoint", async () => {
+    const { cfg, factsDb, vectorDb, embeddings, openclawDir } = setup();
+    const workspaceRoot = join(openclawDir, "workspace");
+    mkdirSync(workspaceRoot, { recursive: true });
+    const markdownCfg = {
+      ...cfg,
+      activeTask: { ...cfg.activeTask, ledger: "markdown" as const, filePath: "ACTIVE-TASKS.md" },
+    };
+    const activeTaskPath = join(workspaceRoot, "ACTIVE-TASKS.md");
+
+    const result = await runActiveTaskCheckpoint(
+      { cfg: markdownCfg, factsDb, vectorDb, embeddings, openclawDir, workspaceRoot },
+      {
+        entity: "forge-deploy",
+        status: "in_progress",
+        next: "Run smoke tests",
+        title: "Forge deploy pipeline",
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.steps.projection.refreshed).toBe(true);
+    expect(existsSync(activeTaskPath)).toBe(true);
+    const md = readFileSync(activeTaskPath, "utf-8");
+    expect(md).toContain("forge-deploy");
+    expect(md).toContain("Run smoke tests");
     factsDb.close();
   });
 
