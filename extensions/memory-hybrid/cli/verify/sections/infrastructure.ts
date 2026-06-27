@@ -13,6 +13,12 @@ import { capturePluginError, isErrorReporterActive, resolvePendingErrorReportCou
 import { listQuarantinedGoalIds, resolveGoalsDir, auditGoalIndexDrift, rebuildGoalIndex } from "../../../services/goal-registry.js";
 import { PLUGIN_ID } from "../../../utils/constants.js";
 import { workspaceRootForCli } from "../../config-feature-summaries.js";
+import {
+  getEventLoopLagSnapshot,
+  resolveEventLoopDegradedThresholdMs,
+  sampleSchedulerDelayMs,
+  startEventLoopLagMonitor,
+} from "../../../utils/event-loop-health.js";
 
 import type { VerifyRunState } from "../verify-run-state.js";
 import { getCachedFactCount } from "../fact-count.js";
@@ -64,6 +70,8 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
     }
   }
 
+  startEventLoopLagMonitor();
+  const lagBeforeGoals = getEventLoopLagSnapshot();
   if (cfg.goalStewardship?.enabled) {
     const goalsDir = resolveGoalsDir(workspaceRootForCli(), cfg.goalStewardship.goalsDir);
     const quarantined = listQuarantinedGoalIds(goalsDir);
@@ -97,6 +105,27 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
         warnings.pop();
       }
     }
+  }
+
+  const lagAfterGoals = getEventLoopLagSnapshot();
+  const schedulerDelayMs = await sampleSchedulerDelayMs();
+  const thresholdMs = resolveEventLoopDegradedThresholdMs();
+  const lagMaxMs = lagAfterGoals.maxMs ?? lagBeforeGoals.maxMs;
+  if (lagAfterGoals.health === "degraded" || (lagMaxMs !== null && lagMaxMs > thresholdMs)) {
+    const detail =
+      lagMaxMs !== null
+        ? `max lag ${lagMaxMs.toFixed(1)}ms (threshold ${thresholdMs}ms, scheduler sample ${schedulerDelayMs.toFixed(1)}ms)`
+        : `scheduler delay ${schedulerDelayMs.toFixed(1)}ms`;
+    warnings.push(`Event loop lag elevated: ${detail}`);
+    log(
+      `${WARN_LINE} Event loop: degraded — ${detail}. Yield points in goal registry and recall reduce gateway health RPC starvation (#931).`,
+    );
+  } else {
+    const healthyDetail =
+      lagMaxMs !== null
+        ? `max lag ${lagMaxMs.toFixed(1)}ms (threshold ${thresholdMs}ms)`
+        : `scheduler sample ${schedulerDelayMs.toFixed(1)}ms`;
+    log(`${OK} Event loop: healthy (${healthyDetail})`);
   }
 
   if (

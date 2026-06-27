@@ -17,6 +17,7 @@ import { runReflection, runReflectionMeta, runReflectionRules } from "../service
 import { PythonBridge } from "../services/python-bridge.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
 import { resetStartupMemoryAttribution } from "../services/startup-memory-attribution.js";
+import { startEventLoopLagMonitor, stopEventLoopLagMonitor } from "../utils/event-loop-health.js";
 import { createVaultRegistry } from "../services/vault-registry.js";
 import { walRemove, walWrite } from "../services/wal-helpers.js";
 import { registerHybridMemCliMetadataOnly } from "./cli-context/metadata.js";
@@ -169,6 +170,7 @@ async function performHybridMemCliTeardown(): Promise<void> {
       operation: "hybrid-mem-teardown:python-bridge",
     });
   }
+  stopEventLoopLagMonitor();
 }
 
 export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
@@ -355,6 +357,7 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
   logApi.logger.info(
     `memory-hybrid: registered (v${versionInfo.pluginVersion}, memory-manager ${versionInfo.memoryManagerVersion}) sqlite: ${resolvedSqlitePath}, lance: ${resolvedLancePath}`,
   );
+  startEventLoopLagMonitor();
 
   // ========================================================================
   // Event Bus for Sensor Sweep (Issue #236)

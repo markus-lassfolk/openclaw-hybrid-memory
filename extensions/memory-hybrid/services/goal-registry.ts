@@ -20,6 +20,7 @@ import type {
 } from "./goal-stewardship-types.js";
 import { nowIso } from "../utils/dates.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
+import { yieldEventLoop } from "../utils/event-loop-yield.js";
 
 const INDEX_FILENAME = "_index.json";
 const TERMINAL: GoalStatus[] = ["completed", "failed", "abandoned"];
@@ -333,6 +334,7 @@ export async function rebuildGoalIndex(goalsDir: string): Promise<void> {
     } catch (err) {
       await handleCorruptGoalRegistryEntry(goalsDir, f, err);
     }
+    await yieldEventLoop();
   }
   const index: GoalIndex = { updatedAt: nowIso(), goals };
   atomicWriteGoalText(join(goalsDir, INDEX_FILENAME), JSON.stringify(index, null, 2));
@@ -367,6 +369,7 @@ export async function auditGoalIndexDrift(goalsDir: string): Promise<GoalIndexDr
     } catch {
       /* corrupt files handled elsewhere */
     }
+    await yieldEventLoop();
   }
 
   let indexGoals: GoalIndex["goals"] = [];
@@ -469,6 +472,7 @@ export async function listGoals(goalsDir: string): Promise<Goal[]> {
       // Keep registry scans isolated: one corrupt goal file must not abort all goal processing.
       await handleCorruptGoalRegistryEntry(goalsDir, f, err);
     }
+    await yieldEventLoop();
   }
   return out;
 }
