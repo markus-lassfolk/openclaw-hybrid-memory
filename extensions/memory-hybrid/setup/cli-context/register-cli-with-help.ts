@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { attachHybridMemCliFatalExit, ensureVerboseFlagOnHybridMemTree } from "../../cli/hybrid-mem-commander-utils.js";
+import { registerHybridMemVersionFlag } from "../../cli/register-hybrid-mem-version-flag.js";
 import { type HybridMemCliContext, registerHybridMemCli } from "../../cli/register.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { HYBRID_MEM_HELP_ACTIVE_TASKS, HYBRID_MEM_HELP_GROUPED } from "./help-text.js";
@@ -17,6 +18,7 @@ export function registerCliWithHelp(
     "Verbose output for subcommands that support it (same effect as per-command --verbose where available)",
     false,
   );
+  registerHybridMemVersionFlag(mem);
   const onComplete = options?.onHybridMemCliComplete;
   // Before subcommands are registered — children inherit this exit handler (Issue #1224).
   attachHybridMemCliFatalExit(mem, onComplete);

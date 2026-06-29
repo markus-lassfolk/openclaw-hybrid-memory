@@ -688,6 +688,10 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     runtime,
     logger: logApi.logger,
     pluginVersion: versionInfo.pluginVersion,
+    registerContextEngine:
+      typeof api.registerContextEngine === "function"
+        ? api.registerContextEngine.bind(api)
+        : undefined,
   });
 
   // Lifecycle Hooks (issueStore may be null; issue-related behavior is gated inside hooks)

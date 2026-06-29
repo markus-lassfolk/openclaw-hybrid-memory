@@ -1,4 +1,5 @@
 import type { PluginRuntime } from "../api/plugin-runtime.js";
+import type { ContextEngineRegistrar } from "../services/context-engine.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
 type ContextEngineRegistrationRuntime = Pick<
@@ -25,9 +26,10 @@ export function registerContextEngineBestEffort(args: {
   runtime: ContextEngineRegistrationRuntime;
   logger: { warn?: (message: string) => void };
   pluginVersion: string;
+  registerContextEngine?: ContextEngineRegistrar;
   loadContextEngine?: ContextEngineLoader;
 }): void {
-  const { runtime, logger, pluginVersion } = args;
+  const { runtime, logger, pluginVersion, registerContextEngine } = args;
   const loadContextEngine = args.loadContextEngine ?? (() => import("../services/context-engine.js"));
 
   void loadContextEngine()
@@ -41,6 +43,7 @@ export function registerContextEngineBestEffort(args: {
         injectedFactIdsBySession: runtime.injectedFactIdsBySession,
         logger,
         pluginVersion,
+        registerContextEngine,
       }),
     )
     .catch((err: unknown) => {
