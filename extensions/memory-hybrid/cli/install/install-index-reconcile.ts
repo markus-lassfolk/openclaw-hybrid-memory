@@ -285,17 +285,18 @@ export function detectStaleLegacyInstallIndexEntry(
     detection.verdict = "matches-live";
     return detection;
   }
-  if (pathsMatch && !versionsMatch) {
-    // Path matches live; only version differs. Safe to update version.
-    detection.verdict = "safe-reconcile";
-    detection.detail = `Live path matches legacy; only version differs (stale=${detection.staleVersion}, live=${liveVersion})`;
-    return detection;
-  }
 
   const cmp = compareVersions(liveVersion, detection.staleVersion);
   if (cmp < 0) {
     detection.verdict = "unsafe-downgrade";
     detection.detail = `Live version ${liveVersion} is older than stale version ${detection.staleVersion}`;
+    return detection;
+  }
+
+  if (pathsMatch && !versionsMatch) {
+    // Path matches live; only version differs and live is >= stale. Safe to drop/update.
+    detection.verdict = "safe-reconcile";
+    detection.detail = `Live path matches legacy; only version differs (stale=${detection.staleVersion}, live=${liveVersion})`;
     return detection;
   }
 

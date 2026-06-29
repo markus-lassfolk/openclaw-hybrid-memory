@@ -219,6 +219,19 @@ describe("install-index reconciliation (#2008)", () => {
     expect(detection.liveVersion).toBe("2026.6.291");
   });
 
+  it("returns unsafe-downgrade when legacy path matches live but stale version is newer", () => {
+    const liveDir = makeLivePluginDir(stateDir, "2026.6.290");
+    const legacyPath = writeLegacySidecar(stateDir, {
+      "openclaw-hybrid-memory": {
+        source: "extensions",
+        installPath: liveDir,
+        version: "2026.6.300",
+      },
+    });
+    const detection = detectStaleLegacyInstallIndexEntry({ legacyPath, livePath: liveDir });
+    expect(detection.verdict).toBe("unsafe-downgrade");
+  });
+
   it("returns unsafe-downgrade when live version is older than stale version", () => {
     const staleDir = join(stateDir, "stale");
     mkdirSync(staleDir, { recursive: true });

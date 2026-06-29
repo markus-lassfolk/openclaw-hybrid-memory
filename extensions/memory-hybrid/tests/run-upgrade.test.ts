@@ -127,12 +127,38 @@ describe("runUpgrade helpers", () => {
     expect(res.updated).toBe(false);
   });
 
-  it("verifyUpgradePluginBundle passes for the live plugin root", () => {
-    if (!existsSync(join(PLUGIN_ROOT, "dist/index.js"))) return;
-    expect(verifyUpgradePluginBundle(PLUGIN_ROOT)).toBeUndefined();
+  it("syncKnownNpmProjectPinWhenExtensionsCanonical honors explicit npmProjectPluginDir (#2008)", () => {
+    const projectRoot = join(tmp, "custom-npm-project");
+    const npmPluginDir = join(projectRoot, "node_modules", "openclaw-hybrid-memory");
+    const extDir = join(tmp, "extensions-copy");
+    for (const dir of [npmPluginDir, extDir]) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "openclaw.plugin.json"), "{}");
+    }
+    writeFileSync(join(projectRoot, "package.json"), JSON.stringify({ dependencies: { "openclaw-hybrid-memory": "2026.6.291" } }));
+    writeFileSync(join(npmPluginDir, "package.json"), JSON.stringify({ version: "2026.6.291" }));
+    writeFileSync(join(extDir, "package.json"), JSON.stringify({ version: "2026.6.291" }));
+
+    expect(resolveNpmProjectRootForPlugin(npmPluginDir)).toBe(projectRoot);
+
+    const synced = syncKnownNpmProjectPinWhenExtensionsCanonical({
+      extensionsPluginDir: extDir,
+      version: "2026.6.291",
+      npmProjectPluginDir: npmPluginDir,
+    });
+    expect(synced.attempted).toBe(false);
+    expect(synced.updated).toBe(false);
+
+    writeFileSync(join(projectRoot, "package.json"), JSON.stringify({ dependencies: { "openclaw-hybrid-memory": "2026.6.261" } }));
+    writeFileSync(join(npmPluginDir, "package.json"), JSON.stringify({ version: "2026.6.261" }));
+    const withoutDetected = syncKnownNpmProjectPinWhenExtensionsCanonical({
+      extensionsPluginDir: extDir,
+      version: "2026.6.291",
+    });
+    expect(withoutDetected.attempted).toBe(false);
   });
 
-  it("verifyUpgradePluginBundle fails when bundled skill is missing", () => {
+  it("verifyUpgradePluginBundle passes for the live plugin root", () => {
     const partial = join(tmp, "partial-plugin");
     mkdirSync(join(partial, "dist"), { recursive: true });
     writeFileSync(join(partial, "dist", "index.js"), "// stub\n");

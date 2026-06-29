@@ -189,12 +189,14 @@ export function buildDualInstallReconciliationGuidance(
 export function syncKnownNpmProjectPinWhenExtensionsCanonical(opts: {
   extensionsPluginDir: string;
   version: string;
+  /** npm-project plugin dir detected by verify/upgrade (defaults to Maeve layout). */
+  npmProjectPluginDir?: string;
 }): { attempted: boolean; updated: boolean; error?: string; guidance?: string } {
   if (isNpmProjectPluginLayout(opts.extensionsPluginDir)) {
     return { attempted: false, updated: false };
   }
-  const npmPluginDir = resolveKnownNpmProjectPluginDir();
-  const projectRoot = resolveKnownNpmProjectRoot();
+  const npmPluginDir = opts.npmProjectPluginDir ?? resolveKnownNpmProjectPluginDir();
+  const projectRoot = npmPluginDir ? resolveNpmProjectRootForPlugin(npmPluginDir) : resolveKnownNpmProjectRoot();
   if (!npmPluginDir || !projectRoot) {
     return { attempted: false, updated: false };
   }

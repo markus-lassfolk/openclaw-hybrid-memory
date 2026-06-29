@@ -87,6 +87,7 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
           const sync = syncKnownNpmProjectPinWhenExtensionsCanonical({
             extensionsPluginDir,
             version: extVer,
+            npmProjectPluginDir,
           });
           if (sync.updated) {
             log(
