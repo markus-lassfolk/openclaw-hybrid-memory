@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.6.290] - 2026-06-29
+
+### Added
+
+- **Persona rule router (#2002):** Destination classifier for durable-rule persona proposals — authority-bucket routing, cross-surface semantic dedup, contradiction detection against reflection rules, and advisory retarget suggestions (e.g. GitHub issue workflow rules → `AGENTS.md`).
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.6.290**.
+
+---
+
 ## [2026.6.276] - 2026-06-27
 
 ### Fixed
