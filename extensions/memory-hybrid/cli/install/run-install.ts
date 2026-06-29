@@ -275,7 +275,7 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
     // place because shared SQLite state has conflicting plugin install
     // metadata" on the next startup. Non-fatal; unsafe states log guidance.
     try {
-      const reconcile = runInstallIndexReconcileForPlugin({ pluginId: PLUGIN_ID, livePath: pluginRootDir });
+      const reconcile = runInstallIndexReconcileForPlugin({ pluginId: PLUGIN_ID });
       if (reconcile.result.ok && reconcile.message) {
         completed.push(reconcile.message);
       } else if (!reconcile.result.ok && reconcile.message) {

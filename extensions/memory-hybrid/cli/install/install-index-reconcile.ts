@@ -117,6 +117,19 @@ function defaultOpenclawStateDir(): string {
 }
 
 /**
+ * Live plugin root for install-index comparison. Prefer the extensions copy under
+ * OpenClaw home when present — Gateway loads from there even when the CLI runs
+ * from an npm-project layout (#2008).
+ */
+export function resolveCanonicalLivePluginPathForInstallIndex(pluginId: string = PLUGIN_ID): string {
+  const extensionsDir = join(resolveOpenclawHomeDir(), "extensions", pluginId);
+  if (existsSync(join(extensionsDir, "openclaw.plugin.json"))) {
+    return extensionsDir;
+  }
+  return findPluginRoot(import.meta.url);
+}
+
+/**
  * Resolve the absolute path of the legacy install-index file. Tests can override
  * the state directory by passing `stateDir`.
  */
@@ -210,7 +223,7 @@ export function detectStaleLegacyInstallIndexEntry(
 ): StaleLegacyInstallIndexDetection {
   const pluginId = opts.pluginId ?? PLUGIN_ID;
   const legacyPath = opts.legacyPath ?? resolveLegacyInstallIndexPath();
-  const livePath = opts.livePath ?? findPluginRoot(import.meta.url);
+  const livePath = opts.livePath ?? resolveCanonicalLivePluginPathForInstallIndex(pluginId);
   const liveVersion = opts.liveVersion ?? readPluginPackageVersion(livePath);
 
   const detection: StaleLegacyInstallIndexDetection = {

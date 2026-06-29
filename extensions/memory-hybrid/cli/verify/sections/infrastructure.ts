@@ -8,7 +8,7 @@
  * Extracted from cli/handlers.ts to keep that file manageable.
  */
 
-import { existsSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   detectDualPluginInstallVersionMismatch,
@@ -22,6 +22,7 @@ import {
   detectStaleLegacyInstallIndexEntry,
   formatStaleInstallIndexWarning,
   reconcileLegacyInstallIndex,
+  resolveCanonicalLivePluginPathForInstallIndex,
 } from "../../install/install-index-reconcile.js";
 import { capturePluginError, isErrorReporterActive, resolvePendingErrorReportCount } from "../../../services/error-reporter.js";
 import { listQuarantinedGoalIds, resolveGoalsDir, auditGoalIndexDrift, rebuildGoalIndex } from "../../../services/goal-registry.js";
@@ -104,11 +105,7 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
   // because shared SQLite state has conflicting plugin install metadata".
   // We compare the legacy `${stateDir}/plugins/installs.json` record against
   // the live plugin path/version we are actually running from.
-  // Prefer the extensions copy as the live reference when present — Gateway loads
-  // from ~/.openclaw/extensions/ even when the CLI runs from an npm-project layout.
-  const livePluginPath = existsSync(join(extensionsPluginDir, "openclaw.plugin.json"))
-    ? extensionsPluginDir
-    : extDir;
+  const livePluginPath = resolveCanonicalLivePluginPathForInstallIndex(PLUGIN_ID);
   const installIndexDetection = detectStaleLegacyInstallIndexEntry({
     pluginId: PLUGIN_ID,
     livePath: livePluginPath,

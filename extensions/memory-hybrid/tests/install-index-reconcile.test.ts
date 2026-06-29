@@ -33,9 +33,11 @@ import {
   detectStaleLegacyInstallIndexEntry,
   formatStaleInstallIndexWarning,
   reconcileLegacyInstallIndex,
+  resolveCanonicalLivePluginPathForInstallIndex,
   resolveLegacyInstallIndexPath,
   runInstallIndexReconcileForPlugin,
 } from "../cli/install/install-index-reconcile.js";
+import { PLUGIN_ID } from "../utils/constants.js";
 
 function makeLivePluginDir(stateDir: string, version: string): string {
   const liveDir = join(stateDir, "live", "openclaw-hybrid-memory");
@@ -108,6 +110,34 @@ describe("install-index reconciliation (#2008)", () => {
     process.env.OPENCLAW_HOME = openclawHome;
     try {
       expect(resolveLegacyInstallIndexPath()).toBe(join(openclawHome, "plugins", "installs.json"));
+    } finally {
+      if (prevHome !== undefined) process.env.OPENCLAW_HOME = prevHome;
+      else delete process.env.OPENCLAW_HOME;
+      if (prevState !== undefined) process.env.OPENCLAW_STATE_DIR = prevState;
+      else delete process.env.OPENCLAW_STATE_DIR;
+      if (prevConfig !== undefined) process.env.OPENCLAW_CONFIG = prevConfig;
+      else delete process.env.OPENCLAW_CONFIG;
+      if (prevConfigPath !== undefined) process.env.OPENCLAW_CONFIG_PATH = prevConfigPath;
+      else delete process.env.OPENCLAW_CONFIG_PATH;
+    }
+  });
+
+  it("resolveCanonicalLivePluginPath prefers extensions under OpenClaw home (#2008)", () => {
+    const prevHome = process.env.OPENCLAW_HOME;
+    const prevState = process.env.OPENCLAW_STATE_DIR;
+    const prevConfig = process.env.OPENCLAW_CONFIG;
+    const prevConfigPath = process.env.OPENCLAW_CONFIG_PATH;
+    delete process.env.OPENCLAW_STATE_DIR;
+    delete process.env.OPENCLAW_CONFIG;
+    delete process.env.OPENCLAW_CONFIG_PATH;
+    const openclawHome = join(stateDir, "openclaw-home");
+    process.env.OPENCLAW_HOME = openclawHome;
+    const extensionsDir = join(openclawHome, "extensions", PLUGIN_ID);
+    mkdirSync(extensionsDir, { recursive: true });
+    writeFileSync(join(extensionsDir, "openclaw.plugin.json"), "{}");
+    writeFileSync(join(extensionsDir, "package.json"), JSON.stringify({ version: "2026.6.291" }));
+    try {
+      expect(resolveCanonicalLivePluginPathForInstallIndex()).toBe(extensionsDir);
     } finally {
       if (prevHome !== undefined) process.env.OPENCLAW_HOME = prevHome;
       else delete process.env.OPENCLAW_HOME;
