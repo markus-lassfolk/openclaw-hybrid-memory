@@ -21,6 +21,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **Auto-classify MiniMax-M2.7-highspeed thinking-only output (#2006):** `services/auto-classifier.ts` now passes `thinkingMode: "disabled"` for any MiniMax model (parity with `services/classification.ts` batch classify), raises the per-batch output budget from `facts.length * 20` to `Math.min(800, 80 * facts.length)` to match `classifyMemoryOperationsBatch`, and retries once on parse failure with a higher budget. `utils/llm-json-array.ts` `stripThinkingWrapperBlocks` now also strips unclosed `<think>` / `<thinking>` / `<reasoning>` / `<redacted_thinking>` suffixes when responses are truncated, so any JSON tail survives. After a failed retry, classifyBatch still surfaces `success=false` → `batchFailures` (no silent success). New tests: `tests/auto-classifier-thinking-retry.test.ts` (9 cases) and 13 cases in `tests/llm-json-array.test.ts` covering unclosed thinking-tag stripping. Documented M2.7-highspeed as unsuitable for batch JSON auto-classify in `autoClassify.model` help text.
+
 ---
 
 ## [2026.6.290] - 2026-06-29

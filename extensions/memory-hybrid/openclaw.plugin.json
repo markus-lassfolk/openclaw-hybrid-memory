@@ -329,7 +329,7 @@
     "autoClassify.model": {
       "label": "Classify Model",
       "placeholder": "e.g. flash, sonnet",
-      "help": "Cheap/fast model for classification (when unset, resolved at runtime)"
+      "help": "Cheap/fast model for classification (when unset, resolved at runtime). Note: MiniMax-M2.7-highspeed is unsuitable for batch JSON auto-classify via gateway even with thinking=disabled — prefer a maintenance-tier model (e.g. minimax/MiniMax-M3) when unset (#2006)."
     },
     "autoClassify.suggestCategories": {
       "label": "Suggest categories",
