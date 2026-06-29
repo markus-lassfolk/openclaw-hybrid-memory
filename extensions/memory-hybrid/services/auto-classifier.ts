@@ -10,9 +10,13 @@ import { dirname } from "node:path";
 import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
 import { getMemoryCategories, isValidCategory } from "../config.js";
-import { tryParseFirstJsonArray } from "../utils/llm-json-array.js";
+import { stripThinkingWrapperBlocks, tryParseFirstJsonArray } from "../utils/llm-json-array.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
-import { capTimeoutByMaintenanceRunDeadline, getMaintenanceRunAbortSignal, maintenanceRunDeadlineReached } from "../utils/maintenance-run-deadline.js";
+import {
+  capTimeoutByMaintenanceRunDeadline,
+  getMaintenanceRunAbortSignal,
+  maintenanceRunDeadlineReached,
+} from "../utils/maintenance-run-deadline.js";
 import {
   chatCompleteWithRetry,
   is404Like,
@@ -22,6 +26,7 @@ import {
   resolveMaintenanceChatTimeoutMs,
 } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
+import { isMiniMaxModel } from "./model-capabilities.js";
 
 function resolveAutoClassifyLlmTimeoutMs(model: string): number {
   return capTimeoutByMaintenanceRunDeadline(resolveMaintenanceChatTimeoutMs(model));
@@ -151,20 +156,14 @@ async function discoverCategoriesFromOther(
     }
 
     try {
-      const raw = await chatCompleteWithRetry({
-        model: config.model,
-        content: prompt,
-        temperature: 0,
-        maxTokens: batch.length * 24,
+      const labels = await completeClassifyJsonArray(
         openai,
-        label: "memory-hybrid: category-discovery",
-        feature: "auto-classify",
+        config.model,
+        prompt,
+        batch.length,
         timeoutMs,
-        signal: getMaintenanceRunAbortSignal(),
-      });
-      // chatComplete strips literal "[]" as a placeholder; empty array is valid discovery output.
-      const content = raw.trim().length > 0 ? raw : "[]";
-      const labels = tryParseFirstJsonArray(content);
+        "memory-hybrid: category-discovery",
+      );
       if (!labels) continue;
       anyBatchSucceeded = true;
       for (let j = 0; j < Math.min(labels.length, batch.length); j++) {
@@ -233,6 +232,61 @@ async function discoverCategoriesFromOther(
   return proposedCategoryNames;
 }
 
+function parseLlmJsonArrayResponse(raw: string): unknown[] | null {
+  const content = stripThinkingWrapperBlocks(raw.trim().length > 0 ? raw : "[]");
+  return tryParseFirstJsonArray(content);
+}
+
+/**
+ * LLM call + thinking-strip + parse + single retry on parse failure (#2006).
+ * Shared by classifyBatch and discoverCategoriesFromOther.
+ */
+async function completeClassifyJsonArray(
+  openai: OpenAI,
+  model: string,
+  prompt: string,
+  itemCount: number,
+  timeoutMs: number,
+  label: string,
+  expectedLength?: number,
+): Promise<unknown[] | null> {
+  const thinkingMode = isMiniMaxModel(model) ? ("disabled" as const) : undefined;
+  const maxTokens = Math.min(800, 80 * itemCount);
+  const baseOpts = {
+    model,
+    content: prompt,
+    temperature: 0 as const,
+    openai,
+    feature: "auto-classify" as const,
+    timeoutMs,
+    signal: getMaintenanceRunAbortSignal(),
+    ...(thinkingMode ? { thinkingMode } : {}),
+  };
+
+  const needsRetry = (parsed: unknown[] | null): boolean =>
+    parsed === null ||
+    (expectedLength !== undefined && (parsed.length !== expectedLength));
+
+  let raw = await chatCompleteWithRetry({ ...baseOpts, maxTokens, label });
+  let parsed = parseLlmJsonArrayResponse(raw);
+  if (needsRetry(parsed) && raw.trim().length > 0) {
+    try {
+      raw = await chatCompleteWithRetry({
+        ...baseOpts,
+        maxTokens: Math.min(1600, maxTokens * 4),
+        label: `${label}-retry`,
+      });
+      parsed = parseLlmJsonArrayResponse(raw);
+    } catch {
+      parsed = null;
+    }
+  }
+  if (expectedLength !== undefined && parsed !== null && parsed.length !== expectedLength) {
+    return null;
+  }
+  return parsed;
+}
+
 /**
  * Classify a batch of "other" facts into proper categories using a cheap LLM.
  *
@@ -269,21 +323,18 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
   }
 
   try {
-    const raw = await chatCompleteWithRetry({
-      model,
-      content: prompt,
-      temperature: 0,
-      maxTokens: facts.length * 20,
+    const parsed = await completeClassifyJsonArray(
       openai,
-      label: "memory-hybrid: classify-batch",
-      feature: "auto-classify",
+      model,
+      prompt,
+      facts.length,
       timeoutMs,
-      signal: getMaintenanceRunAbortSignal(),
-    });
-    // chatComplete strips literal "[]" as a placeholder; empty array is valid classify output.
-    const content = raw.trim().length > 0 ? raw : "[]";
-    const parsed = tryParseFirstJsonArray(content);
-    if (!parsed) return { results: new Map(), suggestions: new Map(), success: false };
+      "memory-hybrid: classify-batch",
+      facts.length,
+    );
+    if (!parsed) {
+      return { results: new Map(), suggestions: new Map(), success: false };
+    }
 
     const results: string[] = parsed as string[];
     const map = new Map<string, string>();

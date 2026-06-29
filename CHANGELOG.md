@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.6.291] - 2026-06-29
+
+### Fixed
+
+- **Auto-classify MiniMax-M2.7-highspeed thinking-only output (#2006):** `services/auto-classifier.ts` `completeClassifyJsonArray` helper applies MiniMax `thinkingMode: "disabled"`, `Math.min(800, 80 * n)` output budget, `stripThinkingWrapperBlocks` + parse, and a single retry on parse failure for both `classifyBatch` and `discoverCategoriesFromOther`. `classifyBatch` now fails the batch when the JSON array length does not match the fact count (no silent partial success). `utils/llm-json-array.ts` `stripThinkingWrapperBlocks` strips unclosed <redacted_thinking> / `<thinking>` / `<reasoning>` suffixes and preserves JSON array tails after truncated reasoning. Tests: `tests/auto-classifier-thinking-retry.test.ts` (12 cases) and 14 cases in `tests/llm-json-array.test.ts`. Documented M2.7-highspeed as unsuitable for batch JSON auto-classify in `autoClassify.model` help text.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.6.291**.
+
+---
+
 ## [2026.6.290] - 2026-06-29
 
 ### Added

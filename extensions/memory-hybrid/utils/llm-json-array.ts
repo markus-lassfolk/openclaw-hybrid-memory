@@ -16,14 +16,50 @@ export function stripMarkdownCodeFence(raw: string): string {
  * Remove common model "thinking" wrappers that appear before JSON (#1718).
  * Handles <thinking>, <redacted_thinking>, and <reasoning> blocks emitted by
  * models such as MiniMax M2.7-highspeed before the actual JSON payload.
+ *
+ * Also strips **unclosed** thinking-block suffixes when the response is truncated
+ * before the closing tag (#2006). Without this, a truncated `<think>...` block
+ * consumes the entire response and the JSON payload (if any) gets discarded along
+ * with the half-finished reasoning text.
  */
 export function stripThinkingWrapperBlocks(s: string): string {
-  return s
+  let out = s
     .replace(/<redacted_thinking>[\s\S]*?<\/redacted_thinking>/gi, "")
     .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "")
     .replace(/<think>[\s\S]*?<\/think>/gi, "")
-    .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, "")
-    .trim();
+    .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, "");
+
+  // Unclosed thinking tags: when the response is truncated mid-reasoning, the
+  // closing tag never arrives. Treat any prose after an open `<think>` / `<thinking>`
+  // that hasn't been closed as reasoning noise and drop it, so any JSON tail
+  // (or another wrapper block) survives. We also catch `<redacted_thinking>` /
+  // `<reasoning>` for the same reason — MiniMax M2.7-highspeed emits these too
+  // and can truncate before closing.
+  const openTags = ["<redacted_thinking>", "<thinking>", "<reasoning>"];
+  for (const tag of openTags) {
+    const lastOpen = out.lastIndexOf(tag);
+    if (lastOpen < 0) continue;
+    // Only treat it as an unclosed block if there is no matching closing tag
+    // AFTER the opening one. A genuine well-formed block would have been stripped
+    // by the regex pass above already.
+    const tagName = tag.slice(1, -1); // strip leading '<' and trailing '>'
+    const closingTag = `</${tagName}>`;
+    const closeAfter = out.indexOf(closingTag, lastOpen + tag.length);
+    if (closeAfter < 0) {
+      // No closing tag follows → reasoning block is truncated. Drop the prose
+      // prefix but preserve a JSON array tail if the model emitted one before
+      // truncation (#2006 retry path can still return thinking-first + JSON).
+      const afterOpen = out.slice(lastOpen + tag.length);
+      const jsonStart = afterOpen.indexOf("[");
+      if (jsonStart >= 0) {
+        out = out.slice(0, lastOpen) + afterOpen.slice(jsonStart);
+      } else {
+        out = out.slice(0, lastOpen);
+      }
+    }
+  }
+
+  return out.trim();
 }
 
 /**

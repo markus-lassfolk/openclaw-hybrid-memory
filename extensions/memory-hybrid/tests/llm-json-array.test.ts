@@ -6,6 +6,7 @@ import {
   parseStructuredItemsAcceptingEmpty,
   stripBracketContextPreamble,
   stripMarkdownCodeFence,
+  stripThinkingWrapperBlocks,
   tryParseFirstJsonArray,
   tryParseFirstJsonObject,
 } from "../utils/llm-json-array.js";
@@ -17,6 +18,99 @@ describe("stripMarkdownCodeFence", () => {
 
   it("returns trimmed raw when no fence", () => {
     expect(stripMarkdownCodeFence('  ["x"]  ')).toBe('["x"]');
+  });
+});
+
+// Issue #2006: MiniMax M2.7-highspeed emits a `<redacted_thinking>` reasoning block before
+// the JSON payload and frequently truncates before the closing tag, so the
+// JSON disappears along with the half-finished reasoning. `stripThinkingWrapperBlocks`
+// must handle both well-formed AND unclosed/truncated thinking blocks.
+describe("stripThinkingWrapperBlocks (#2006)", () => {
+  it("strips well-formed <redacted_thinking>...</redacted_thinking> blocks before JSON", () => {
+    const raw = '<redacted_thinking>let me think</redacted_thinking>\n["fact","entity"]';
+    expect(stripThinkingWrapperBlocks(raw)).toBe('["fact","entity"]');
+  });
+
+  it("strips well-formed <thinking>...</thinking> blocks before JSON", () => {
+    const raw = '<thinking>analysis</thinking>\n["fact"]';
+    expect(stripThinkingWrapperBlocks(raw)).toBe('["fact"]');
+  });
+
+  it("strips <redacted_thinking> blocks", () => {
+    const raw = '<redacted_thinking>redacted</redacted_thinking>\n["fact"]';
+    expect(stripThinkingWrapperBlocks(raw)).toBe('["fact"]');
+  });
+
+  it("strips <reasoning> blocks", () => {
+    const raw = '<reasoning>r</reasoning>\n["fact"]';
+    expect(stripThinkingWrapperBlocks(raw)).toBe('["fact"]');
+  });
+
+  // --- Unclosed / truncated tags (the #2006 regression) ---
+
+  it("strips unclosed <redacted_thinking>... suffix when response is truncated", () => {
+    const raw = '<redacted_thinking>Let me analyze each fact and determine the appropriate category:\n\n1. "Need to revert" ...';
+    expect(stripThinkingWrapperBlocks(raw)).toBe("");
+  });
+
+  it("preserves JSON that appears before an unclosed <redacted_thinking> block", () => {
+    const raw =
+      '<redacted_thinking>should not appear</redacted_thinking>["fact", "entity"]\n<redacted_thinking>truncated mid-reasoning with no closing tag at all';
+    // The first <redacted_thinking> is closed → dropped. The second is unclosed → dropped too,
+    // and its trailing prose disappears with it. We only expect the JSON that
+    // appears BEFORE the second (unclosed) opening tag to survive — in this case
+    // there is none, so the empty trimmed result is correct.
+    expect(stripThinkingWrapperBlocks(raw)).toBe('["fact", "entity"]');
+  });
+
+  it("preserves JSON that appears before an unclosed <thinking> block", () => {
+    const raw = '["fact", "entity"]\n<thinking>now reasoning that never finishes';
+    expect(stripThinkingWrapperBlocks(raw)).toBe('["fact", "entity"]');
+  });
+
+  it("preserves JSON that appears before an unclosed <reasoning> block", () => {
+    const raw = '["fact"]\n<reasoning>partial reasoning, no close';
+    expect(stripThinkingWrapperBlocks(raw)).toBe('["fact"]');
+  });
+
+  it("preserves JSON array that appears after an unclosed <redacted_thinking> block", () => {
+    const raw = '<redacted_thinking>truncated reasoning\n["fact", "entity"]';
+    expect(stripThinkingWrapperBlocks(raw)).toBe('["fact", "entity"]');
+    expect(tryParseFirstJsonArray(stripThinkingWrapperBlocks(raw))).toEqual(["fact", "entity"]);
+  });
+
+  it("strips unclosed <redacted_thinking> suffix", () => {
+    const raw = "<redacted_thinking>truncated redaction never closes";
+    expect(stripThinkingWrapperBlocks(raw)).toBe("");
+  });
+
+  it("handles real-world MiniMax truncated output (think + no JSON)", () => {
+    // ~2KB of thinking prose, no JSON, truncated mid-reasoning.
+    // Regression capture from Maeve #2006: `classifyBatch` returned success=false
+    // because tryParseFirstJsonArray(stripThinkingWrapperBlocks(raw)) returned null.
+    const raw =
+      "<redacted_thinking>Let me analyze each fact and determine the appropriate category:\n" +
+      "\n" +
+      '1. "Need to revert the auto-formatted routeTree.gen.ts"' +
+      "\nCategory: fact\n\n" +
+      '2. "Some other fact about config"\nCategory: preference\n\n';
+    expect(stripThinkingWrapperBlocks(raw)).toBe("");
+    expect(tryParseFirstJsonArray(stripThinkingWrapperBlocks(raw))).toBeNull();
+  });
+
+  it("does not mis-strip a well-formed block when an unclosed tag follows", () => {
+    const raw = '<redacted_thinking>reasoning</redacted_thinking>["fact"]<redacted_thinking>unfinished';
+    // First block closed → stripped. JSON survives. Unclosed block is at the
+    // end → dropped along with its prose.
+    expect(stripThinkingWrapperBlocks(raw)).toBe('["fact"]');
+  });
+
+  it("returns input unchanged when there are no thinking tags", () => {
+    expect(stripThinkingWrapperBlocks('["fact","entity"]')).toBe('["fact","entity"]');
+  });
+
+  it("returns empty string when response is purely an unclosed <redacted_thinking> block", () => {
+    expect(stripThinkingWrapperBlocks("<redacted_thinking>just reasoning, no payload")).toBe("");
   });
 });
 
