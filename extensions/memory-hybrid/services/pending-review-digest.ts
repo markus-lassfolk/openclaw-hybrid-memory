@@ -9,6 +9,7 @@ import type { HybridMemoryConfig } from "../config.js";
 import { pluginLogger } from "../utils/logger.js";
 import { formatTimestampUtc } from "../utils/dates.js";
 import { summarizeSkillProposalValidation } from "./generated-skill-validation.js";
+import { personaRuleRoutingMetrics } from "./persona-rule-router.js";
 
 type FactsDbForPendingDigest = {
   proceduresCount(): number;
@@ -79,6 +80,13 @@ export type PendingReviewDigestReport = {
        */
       evidence: { topFactIds: string[]; facts: number };
     }>;
+    /** #2002: durable-rule router counters since process start. */
+    metrics?: {
+      routingSuggestions: number;
+      dedupHits: number;
+      contradictionHits: number;
+      contradictionDegraded: number;
+    };
   };
   toolProposals: {
     proposed: number;
@@ -315,6 +323,7 @@ export function buildPendingReviewDigestReport(opts: {
         deferCommand: "openclaw hybrid-mem proposals list --status pending",
         evidence: evidenceForProposal(p.evidenceSessions ?? []),
       })),
+      metrics: { ...personaRuleRoutingMetrics },
     },
     toolProposals: {
       proposed: toolProposed.length,
