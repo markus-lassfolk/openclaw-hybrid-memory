@@ -35,7 +35,7 @@ export function stripThinkingWrapperBlocks(s: string): string {
   // (or another wrapper block) survives. We also catch `<redacted_thinking>` /
   // `<reasoning>` for the same reason — MiniMax M2.7-highspeed emits these too
   // and can truncate before closing.
-  const openTags = ["<think>", "<thinking>", "<redacted_thinking>", "<reasoning>"];
+  const openTags = ["<redacted_thinking>", "<thinking>", "<reasoning>"];
   for (const tag of openTags) {
     const lastOpen = out.lastIndexOf(tag);
     if (lastOpen < 0) continue;
@@ -46,10 +46,16 @@ export function stripThinkingWrapperBlocks(s: string): string {
     const closingTag = `</${tagName}>`;
     const closeAfter = out.indexOf(closingTag, lastOpen + tag.length);
     if (closeAfter < 0) {
-      // No closing tag follows → reasoning block is truncated; drop from the
-      // opening tag to the end of the response. Any JSON the model emitted
-      // before the opening tag is preserved.
-      out = out.slice(0, lastOpen);
+      // No closing tag follows → reasoning block is truncated. Drop the prose
+      // prefix but preserve a JSON array tail if the model emitted one before
+      // truncation (#2006 retry path can still return thinking-first + JSON).
+      const afterOpen = out.slice(lastOpen + tag.length);
+      const jsonStart = afterOpen.indexOf("[");
+      if (jsonStart >= 0) {
+        out = out.slice(0, lastOpen) + afterOpen.slice(jsonStart);
+      } else {
+        out = out.slice(0, lastOpen);
+      }
     }
   }
 

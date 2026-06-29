@@ -21,13 +21,13 @@ describe("stripMarkdownCodeFence", () => {
   });
 });
 
-// Issue #2006: MiniMax M2.7-highspeed emits a `<think>` reasoning block before
+// Issue #2006: MiniMax M2.7-highspeed emits a `<redacted_thinking>` reasoning block before
 // the JSON payload and frequently truncates before the closing tag, so the
 // JSON disappears along with the half-finished reasoning. `stripThinkingWrapperBlocks`
 // must handle both well-formed AND unclosed/truncated thinking blocks.
 describe("stripThinkingWrapperBlocks (#2006)", () => {
-  it("strips well-formed <think>...</think> blocks before JSON", () => {
-    const raw = '<think>let me think</think>\n["fact","entity"]';
+  it("strips well-formed <redacted_thinking>...</redacted_thinking> blocks before JSON", () => {
+    const raw = '<redacted_thinking>let me think</redacted_thinking>\n["fact","entity"]';
     expect(stripThinkingWrapperBlocks(raw)).toBe('["fact","entity"]');
   });
 
@@ -48,15 +48,15 @@ describe("stripThinkingWrapperBlocks (#2006)", () => {
 
   // --- Unclosed / truncated tags (the #2006 regression) ---
 
-  it("strips unclosed <think>... suffix when response is truncated", () => {
-    const raw = '<think>Let me analyze each fact and determine the appropriate category:\n\n1. "Need to revert" ...';
+  it("strips unclosed <redacted_thinking>... suffix when response is truncated", () => {
+    const raw = '<redacted_thinking>Let me analyze each fact and determine the appropriate category:\n\n1. "Need to revert" ...';
     expect(stripThinkingWrapperBlocks(raw)).toBe("");
   });
 
-  it("preserves JSON that appears before an unclosed <think> block", () => {
+  it("preserves JSON that appears before an unclosed <redacted_thinking> block", () => {
     const raw =
-      '<think>should not appear</think>["fact", "entity"]\n<think>truncated mid-reasoning with no closing tag at all';
-    // The first <think> is closed → dropped. The second is unclosed → dropped too,
+      '<redacted_thinking>should not appear</redacted_thinking>["fact", "entity"]\n<redacted_thinking>truncated mid-reasoning with no closing tag at all';
+    // The first <redacted_thinking> is closed → dropped. The second is unclosed → dropped too,
     // and its trailing prose disappears with it. We only expect the JSON that
     // appears BEFORE the second (unclosed) opening tag to survive — in this case
     // there is none, so the empty trimmed result is correct.
@@ -73,6 +73,12 @@ describe("stripThinkingWrapperBlocks (#2006)", () => {
     expect(stripThinkingWrapperBlocks(raw)).toBe('["fact"]');
   });
 
+  it("preserves JSON array that appears after an unclosed <redacted_thinking> block", () => {
+    const raw = '<redacted_thinking>truncated reasoning\n["fact", "entity"]';
+    expect(stripThinkingWrapperBlocks(raw)).toBe('["fact", "entity"]');
+    expect(tryParseFirstJsonArray(stripThinkingWrapperBlocks(raw))).toEqual(["fact", "entity"]);
+  });
+
   it("strips unclosed <redacted_thinking> suffix", () => {
     const raw = "<redacted_thinking>truncated redaction never closes";
     expect(stripThinkingWrapperBlocks(raw)).toBe("");
@@ -83,7 +89,7 @@ describe("stripThinkingWrapperBlocks (#2006)", () => {
     // Regression capture from Maeve #2006: `classifyBatch` returned success=false
     // because tryParseFirstJsonArray(stripThinkingWrapperBlocks(raw)) returned null.
     const raw =
-      "<think>Let me analyze each fact and determine the appropriate category:\n" +
+      "<redacted_thinking>Let me analyze each fact and determine the appropriate category:\n" +
       "\n" +
       '1. "Need to revert the auto-formatted routeTree.gen.ts"' +
       "\nCategory: fact\n\n" +
@@ -93,7 +99,7 @@ describe("stripThinkingWrapperBlocks (#2006)", () => {
   });
 
   it("does not mis-strip a well-formed block when an unclosed tag follows", () => {
-    const raw = '<think>reasoning</think>["fact"]<think>unfinished';
+    const raw = '<redacted_thinking>reasoning</redacted_thinking>["fact"]<redacted_thinking>unfinished';
     // First block closed → stripped. JSON survives. Unclosed block is at the
     // end → dropped along with its prose.
     expect(stripThinkingWrapperBlocks(raw)).toBe('["fact"]');
@@ -103,8 +109,8 @@ describe("stripThinkingWrapperBlocks (#2006)", () => {
     expect(stripThinkingWrapperBlocks('["fact","entity"]')).toBe('["fact","entity"]');
   });
 
-  it("returns empty string when response is purely an unclosed <think> block", () => {
-    expect(stripThinkingWrapperBlocks("<think>just reasoning, no payload")).toBe("");
+  it("returns empty string when response is purely an unclosed <redacted_thinking> block", () => {
+    expect(stripThinkingWrapperBlocks("<redacted_thinking>just reasoning, no payload")).toBe("");
   });
 });
 

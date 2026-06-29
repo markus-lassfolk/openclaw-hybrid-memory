@@ -3,7 +3,7 @@
  *
  * Symptoms observed in production:
  *   1. classifyBatch returns success=false because the response is truncated
- *      thinking prose (`<think>…` with no closing tag) and no JSON payload.
+ *      thinking prose (`<redacted_thinking>…` with no closing tag) and no JSON payload.
  *   2. The error surfaces as `batchFailures=1, reclassified=0/20, semantic=partial`.
  *   3. Even after adding `thinkingMode: "disabled"`, MiniMax M2.7-highspeed still
  *      emits ~2KB of thinking prose before truncation.
@@ -14,7 +14,7 @@
  *   3. classifyBatch must retry once on parse failure with a higher budget.
  *   4. After retry, if the model STILL emits only thinking prose, the batch must
  *      surface as failure (success=false), not silently succeed.
- *   5. Stripping of unclosed `<think>` / `<thinking>` / `<reasoning>` /
+ *   5. Stripping of unclosed `<redacted_thinking>` / `<thinking>` / `<reasoning>` /
  *      `<redacted_thinking>` suffixes must work even when there is no closing tag.
  */
 
@@ -111,7 +111,7 @@ describe("auto-classify MiniMax thinking-only retry (#2006)", () => {
     const requestLog: Array<{ maxTokens?: number; thinking?: { type?: string }; model?: string }> = [];
 
     const openai = mockThinkingThenJson({
-      firstResponse: "<think>truncated mid-reasoning with no closing tag and definitely no JSON",
+      firstResponse: "<redacted_thinking>truncated mid-reasoning with no closing tag and definitely no JSON",
       secondResponse: '["fact", "entity", "preference"]',
       requestLog,
     });
@@ -159,7 +159,7 @@ describe("auto-classify MiniMax thinking-only retry (#2006)", () => {
 
     const openai = mockThinkingThenJson({
       firstResponse:
-        '<think>truncated no JSON</think>["fact", "entity", "preference", "fact", "entity", "preference", "fact", "entity", "preference", "fact"]',
+        '<redacted_thinking>truncated no JSON</redacted_thinking>["fact", "entity", "preference", "fact", "entity", "preference", "fact", "entity", "preference", "fact"]',
       secondResponse:
         '["fact", "entity", "preference", "fact", "entity", "preference", "fact", "entity", "preference", "fact"]',
       requestLog,
@@ -182,7 +182,7 @@ describe("auto-classify MiniMax thinking-only retry (#2006)", () => {
     const requestLog: Array<{ maxTokens?: number; thinking?: { type?: string }; model?: string }> = [];
 
     const openai = mockThinkingThenJson({
-      firstResponse: "<think>truncated mid-reasoning no JSON here at all",
+      firstResponse: "<redacted_thinking>truncated mid-reasoning no JSON here at all",
       secondResponse: '["fact","entity","preference","fact","entity","preference","fact","entity","preference","fact"]',
       requestLog,
     });
@@ -214,12 +214,12 @@ describe("auto-classify MiniMax thinking-only retry (#2006)", () => {
     // classifyBatch must surface this as success=false → batchFailures=1, NOT silently count.
     const openai = mockThinkingThenJson({
       firstResponse:
-        "<think>Let me analyze each fact and determine the appropriate category:\n" +
+        "<redacted_thinking>Let me analyze each fact and determine the appropriate category:\n" +
         '1. "Some fact" → fact\n' +
         '2. "Another" → entity\n' +
         "...no JSON array ever emitted, just prose that gets truncated",
       secondResponse:
-        "<think>retry also produced nothing but reasoning:\n1. fact\n2. entity\n3. preference\n" +
+        "<redacted_thinking>retry also produced nothing but reasoning:\n1. fact\n2. entity\n3. preference\n" +
         "(still truncated mid-reasoning, no closing tag, no JSON)",
       requestLog,
     });
@@ -241,12 +241,33 @@ describe("auto-classify MiniMax thinking-only retry (#2006)", () => {
     expect(others.length).toBe(5);
   });
 
+  it("does NOT retry when the first response has JSON after truncated thinking", async () => {
+    factsDb = makeFactsDb(tmpDir, 3);
+    const requestLog: Array<{ maxTokens?: number; thinking?: { type?: string }; model?: string }> = [];
+
+    const openai = mockThinkingThenJson({
+      firstResponse: '<redacted_thinking>truncated reasoning\n["fact", "entity", "preference"]',
+      secondResponse: '["would-be","retry","never-used"]',
+      requestLog,
+    });
+
+    await runAutoClassify(
+      factsDb,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      openai as any,
+      { model: "minimax/MiniMax-M2.7-highspeed", batchSize: 20 },
+      noop,
+    );
+
+    expect(requestLog.length).toBe(1);
+  });
+
   it("does NOT retry when the first response parses successfully", async () => {
     factsDb = makeFactsDb(tmpDir, 3);
     const requestLog: Array<{ maxTokens?: number; thinking?: { type?: string }; model?: string }> = [];
 
     const openai = mockThinkingThenJson({
-      firstResponse: '<think>thinking</think>["fact", "entity", "preference"]',
+      firstResponse: '<redacted_thinking>thinking</redacted_thinking>["fact", "entity", "preference"]',
       secondResponse: '["would-be","retry","never-used"]',
       requestLog,
     });
@@ -264,14 +285,14 @@ describe("auto-classify MiniMax thinking-only retry (#2006)", () => {
   });
 
   it("retry succeeds when thinking wrapper is closed and a valid JSON array follows", async () => {
-    // First call: unclosed <think> block (truncated mid-reasoning). Parser sees
+    // First call: unclosed <redacted_thinking> block (truncated mid-reasoning). Parser sees
     // empty string → fail. Retry: closed block + valid JSON → success.
     factsDb = makeFactsDb(tmpDir, 4);
     const requestLog: Array<{ maxTokens?: number; thinking?: { type?: string }; model?: string }> = [];
 
     const openai = mockThinkingThenJson({
-      firstResponse: "<think>truncated mid-reasoning",
-      secondResponse: '<think>reasoning</think>["fact","entity","preference","fact"]',
+      firstResponse: "<redacted_thinking>truncated mid-reasoning",
+      secondResponse: '<redacted_thinking>reasoning</redacted_thinking>["fact","entity","preference","fact"]',
       requestLog,
     });
 
@@ -292,7 +313,7 @@ describe("auto-classify MiniMax thinking-only retry (#2006)", () => {
     const requestLog: Array<{ maxTokens?: number; thinking?: { type?: string }; model?: string }> = [];
 
     const openai = mockThinkingThenJson({
-      firstResponse: "<think>truncated, no JSON</think>nothing useful",
+      firstResponse: "<redacted_thinking>truncated, no JSON</redacted_thinking>nothing useful",
       secondResponse: '["fact", "entity", "preference"]',
       requestLog,
     });
