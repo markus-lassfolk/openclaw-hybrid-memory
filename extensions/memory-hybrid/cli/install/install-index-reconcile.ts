@@ -112,7 +112,7 @@ export type ReconcileLegacyInstallIndexResult = {
 function defaultOpenclawStateDir(): string {
   const fromEnv = getEnv("OPENCLAW_STATE_DIR");
   if (typeof fromEnv === "string" && fromEnv.trim().length > 0) return fromEnv;
-  return join(homedir(), ".openclaw", "state");
+  return join(homedir(), ".openclaw");
 }
 
 /**
@@ -337,45 +337,49 @@ export function reconcileLegacyInstallIndex(
 
   const root = parsed as Record<string, unknown>;
   const originalSerialized = JSON.stringify(parsed);
-  let nextRecords: Record<string, unknown> | undefined;
   let action: "removed" | "updated" = "updated";
+  let mutated = false;
 
   if (root.installRecords && typeof root.installRecords === "object" && !Array.isArray(root.installRecords)) {
-    nextRecords = { ...(root.installRecords as Record<string, unknown>) };
+    const nextRecords = { ...(root.installRecords as Record<string, unknown>) };
     if (nextRecords[pluginId]) {
       // Drop the stale entry — core will re-derive it from the live plugin
       // discovery scan on the next startup. This is the safest outcome: the
       // legacy file no longer conflicts with SQLite.
       delete nextRecords[pluginId];
       action = "removed";
-    } else if (root.records && typeof root.records === "object" && !Array.isArray(root.records)) {
-      const records = { ...(root.records as Record<string, unknown>) };
-      if (records[pluginId]) {
-        delete records[pluginId];
-        action = "removed";
-      }
+      mutated = true;
     }
     root.installRecords = nextRecords;
-  } else if (root.records && typeof root.records === "object" && !Array.isArray(root.records)) {
+  }
+
+  if (root.records && typeof root.records === "object" && !Array.isArray(root.records)) {
     const records = { ...(root.records as Record<string, unknown>) };
     if (records[pluginId]) {
       delete records[pluginId];
       action = "removed";
+      mutated = true;
     }
     root.records = records;
-  } else {
+  }
+
+  if (Array.isArray(root.plugins)) {
+    const plugins = root.plugins as Array<Record<string, unknown>>;
+    const nextPlugins = plugins.filter((p) => !p || typeof p !== "object" || p.pluginId !== pluginId);
+    if (nextPlugins.length < plugins.length) {
+      root.plugins = nextPlugins;
+      action = "removed";
+      mutated = true;
+    }
+  }
+
+  if (!mutated) {
     return {
       ok: false,
       verdict: detection.verdict,
       action: "skipped",
-      error: `Legacy install-index file ${detection.legacyPath} has no installRecords or records container to reconcile`,
+      error: `Legacy install-index file ${detection.legacyPath} has no ${pluginId} entry to reconcile`,
     };
-  }
-
-  if (Array.isArray(root.plugins)) {
-    root.plugins = (root.plugins as Array<Record<string, unknown>>).filter(
-      (p) => !p || typeof p !== "object" || p.pluginId !== pluginId,
-    );
   }
 
   const nextSerialized = JSON.stringify(parsed);

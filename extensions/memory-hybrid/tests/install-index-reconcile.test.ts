@@ -20,7 +20,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -70,6 +70,17 @@ describe("install-index reconciliation (#2008)", () => {
       rmSync(stateDir, { recursive: true, force: true });
     } catch {
       /* ignore */
+    }
+  });
+
+  it("default legacy sidecar path uses OpenClaw state root (#2008)", () => {
+    const prev = process.env.OPENCLAW_STATE_DIR;
+    delete process.env.OPENCLAW_STATE_DIR;
+    try {
+      expect(resolveLegacyInstallIndexPath()).toBe(join(homedir(), ".openclaw", "plugins", "installs.json"));
+    } finally {
+      if (prev !== undefined) process.env.OPENCLAW_STATE_DIR = prev;
+      else delete process.env.OPENCLAW_STATE_DIR;
     }
   });
 
@@ -354,6 +365,43 @@ describe("install-index reconciliation (#2008)", () => {
     const rec = _extractLegacyInstallRecordForTest(parsed, "openclaw-hybrid-memory");
     expect(rec?.installPath).toBe("/x");
     expect(rec?.version).toBe("2026.6.270");
+  });
+
+  it("reconciles embedded plugins[] shape when installRecords is absent", () => {
+    const staleDir = join(stateDir, "stale");
+    mkdirSync(staleDir, { recursive: true });
+    writeFileSync(join(staleDir, "package.json"), JSON.stringify({ version: "2026.6.261" }));
+    const liveDir = makeLivePluginDir(stateDir, "2026.6.291");
+    const legacyPath = join(stateDir, "plugins", "installs.json");
+    mkdirSync(join(stateDir, "plugins"), { recursive: true });
+    writeFileSync(
+      legacyPath,
+      JSON.stringify({
+        plugins: [
+          {
+            pluginId: "openclaw-hybrid-memory",
+            installRecord: {
+              source: "npm",
+              installPath: staleDir,
+              version: "2026.6.261",
+            },
+          },
+          { pluginId: "codex", installRecord: { source: "npm", installPath: "/y", version: "1.0" } },
+        ],
+      }),
+    );
+    const detection = detectStaleLegacyInstallIndexEntry({ legacyPath, livePath: liveDir });
+    expect(detection.verdict).toBe("safe-reconcile");
+
+    const result = reconcileLegacyInstallIndex({ detection });
+    expect(result.ok).toBe(true);
+    expect(result.action).toBe("removed");
+
+    const next = JSON.parse(readFileSync(legacyPath, "utf-8")) as {
+      plugins: Array<{ pluginId: string }>;
+    };
+    expect(next.plugins.some((p) => p.pluginId === "openclaw-hybrid-memory")).toBe(false);
+    expect(next.plugins.some((p) => p.pluginId === "codex")).toBe(true);
   });
 
   it("compares date-based plugin versions numerically", () => {

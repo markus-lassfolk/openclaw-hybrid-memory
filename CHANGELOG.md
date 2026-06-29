@@ -21,18 +21,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-### Fixed
-
-- **Enrich-entities incremental catch-up (#2009):** `isEntityEnrichmentHardFailure` / `entityEnrichmentSemanticStatus` shared helpers so bounded runs with `stopReason=exhausted`, `processed>0`, and `llmFailures=0` no longer fail maintenance, CLI exit code 2, or cron guard validation (including legacy logs that still emit `semantic=partial`). Hard failure remains for `llmFailures>0` or budget stops with zero facts processed.
-- **Dual plugin install metadata drift (#2008):** Upgrade and `verify --fix` reconcile stale npm-project pins when extensions is canonical; dual-install warnings now include targeted repair commands (`openclaw plugins install`, `hybrid-mem upgrade`, `verify --fix`).
-
 ---
 
 ## [2026.6.292] - 2026-06-29
 
 ### Fixed
 
-- **Install-index drift after upgrade (#2008):** New helper `cli/install/install-index-reconcile.ts` detects stale entries in the legacy `${stateDir}/plugins/installs.json` sidecar (e.g. an old npm-project install at `/home/markus/.openclaw/npm/projects/openclaw-hybrid-memory/...` from a previous version) and atomically drops them after backing the sidecar up. This stops OpenClaw core state migrations from emitting the persistent warning "Left plugin install index in place because shared SQLite state has conflicting plugin install metadata for: codex, openclaw-hybrid-memory" on every Gateway restart after an extension upgrade. Wired into `runUpgradeForCli`, `runInstallForCli`, and the `verify` infrastructure section; new CLI subcommand `openclaw hybrid-mem install-index reconcile [--dry-run] [--plugin-id <id>]` for manual repair. Tests: `tests/install-index-reconcile.test.ts` (18 cases covering no-conflict, matches-live, safe-reconcile, unsafe-downgrade, unsafe-no-live-path, unsafe-malformed-legacy, dry-run, and embedded `plugins[]` legacy shapes).
+- **Install-index drift after upgrade (#2008):** New helper `cli/install/install-index-reconcile.ts` detects stale entries in the legacy `${stateDir}/plugins/installs.json` sidecar (e.g. an old npm-project install at `~/.openclaw/npm/projects/openclaw-hybrid-memory/...`) and atomically drops them after backing the sidecar up. This stops OpenClaw core state migrations from emitting the persistent warning "Left plugin install index in place because shared SQLite state has conflicting plugin install metadata for: codex, openclaw-hybrid-memory" on every Gateway restart after an extension upgrade. Wired into `runUpgradeForCli`, `runInstallForCli`, and the `verify` infrastructure section; new CLI subcommand `openclaw hybrid-mem install-index reconcile [--dry-run] [--plugin-id <id>]` for manual repair. Default sidecar path uses the OpenClaw state root (`~/.openclaw`, not `~/.openclaw/state`); embedded `plugins[].installRecord` legacy shapes reconcile correctly.
+- **Dual plugin install metadata drift (#2008):** Upgrade and `verify --fix` also reconcile stale npm-project pins when extensions is canonical; dual-install warnings include targeted repair commands (`openclaw plugins install`, `hybrid-mem upgrade`, `verify --fix`, `install-index reconcile`).
+- **Enrich-entities incremental catch-up (#2009):** `isEntityEnrichmentHardFailure` / `entityEnrichmentSemanticStatus` shared helpers so bounded runs with `stopReason=exhausted`, `processed>0`, and `llmFailures=0` no longer fail maintenance, CLI exit code 2, or cron guard validation (including legacy logs that still emit `semantic=partial`). Hard failure remains for `llmFailures>0` or budget stops with zero facts processed.
 
 ### Changed
 
