@@ -42,6 +42,10 @@ import {
   rollbackNpmProjectPinAfterUpgradeFailure,
   type NpmProjectPinBackup,
 } from "./workspace.js";
+import {
+  formatManualUpgradeFallback,
+  preflightUpgradePluginConfig,
+} from "./upgrade-config-preflight.js";
 
 export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
   const openclawDir = join(homedir(), ".openclaw");
@@ -514,8 +518,23 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
   if (!existsSync(manifestPath) || !existsSync(pkgPath)) {
     return {
       ok: false,
-      error: `Refusing to upgrade: plugin directory does not look valid: ${preUpgradePluginDir}`,
+      error: `Refusing to upgrade: plugin directory does not look valid: ${preUpgradePluginDir}. ${formatManualUpgradeFallback(version)}`,
     };
+  }
+
+  const preflight = preflightUpgradePluginConfig({
+    installedPluginDir: preUpgradePluginDir,
+    targetVersion: version,
+  });
+  if (preflight.message) {
+    if (preflight.canProceedWithUpgrade) {
+      logger?.warn?.(`memory-hybrid: upgrade preflight — ${preflight.message}`);
+    } else {
+      return {
+        ok: false,
+        error: `${preflight.message} ${formatManualUpgradeFallback(version)}`,
+      };
+    }
   }
 
   const backupDir = join(dirname(preUpgradePluginDir), `${basename(preUpgradePluginDir)}.bak-${Date.now()}`);
