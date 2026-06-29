@@ -145,4 +145,10 @@ describe("isEntityEnrichmentHardFailure (#2009)", () => {
       true,
     );
   });
+
+  it("does not fail time_budget stop when some facts were processed", () => {
+    expect(isEntityEnrichmentHardFailure({ processed: 25, llmFailures: 0, stopReason: "time_budget" })).toBe(
+      false,
+    );
+  });
 });

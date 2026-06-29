@@ -23,7 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
-- **Enrich-entities incremental catch-up (#2009):** `isEntityEnrichmentHardFailure` / `entityEnrichmentSemanticStatus` shared helpers so bounded runs with `stopReason=exhausted`, `processed>0`, and `llmFailures=0` no longer fail maintenance, CLI exit code 2, or cron guard validation. Hard failure remains for `llmFailures>0` or budget stops with zero facts processed.
+- **Enrich-entities incremental catch-up (#2009):** `isEntityEnrichmentHardFailure` / `entityEnrichmentSemanticStatus` shared helpers so bounded runs with `stopReason=exhausted`, `processed>0`, and `llmFailures=0` no longer fail maintenance, CLI exit code 2, or cron guard validation (including legacy logs that still emit `semantic=partial`). Hard failure remains for `llmFailures>0` or budget stops with zero facts processed.
 - **Dual plugin install metadata drift (#2008):** Upgrade and `verify --fix` reconcile stale npm-project pins when extensions is canonical; dual-install warnings now include targeted repair commands (`openclaw plugins install`, `hybrid-mem upgrade`, `verify --fix`).
 
 ---

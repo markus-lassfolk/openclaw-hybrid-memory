@@ -39,6 +39,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { extractAuditHealthJsonFromLog } from "./audit-health-json.js";
+import { isEntityEnrichmentHardFailure } from "./entity-enrichment-adaptive.js";
 import { MAINTENANCE_STEPS } from "./maintenance-orchestrator.js";
 import type { JobRunSemanticOutcome, OrchestratorRunSummary } from "./maintenance-job-run/types.js";
 import {
@@ -1034,14 +1035,14 @@ function collectMaintenanceTelemetryIssues(params: {
   const enrichLog = enrichEntitiesDetected ? extractStepLog(logContent, enrichStepName) : "";
   const enrichLlmFailures = parsePositiveMetric(enrichLog, "llmFailures");
   const enrichProcessed = parsePositiveMetric(enrichLog, "processed");
-  const enrichSemanticPartial = /\bsemantic=partial\b/i.test(enrichLog);
+  const enrichStopReason = enrichLog.match(/\bstopReason=([a-z_]+)\b/i)?.[1];
   if (
     enrichEntitiesDetected &&
-    ((typeof enrichLlmFailures === "number" && enrichLlmFailures > 0) ||
-      enrichSemanticPartial ||
-      (typeof enrichProcessed === "number" &&
-        enrichProcessed === 0 &&
-        /\bstopReason=(exhausted|time_budget|provider_budget)\b/i.test(enrichLog)))
+    isEntityEnrichmentHardFailure({
+      llmFailures: enrichLlmFailures,
+      processed: enrichProcessed,
+      stopReason: enrichStopReason,
+    })
   ) {
     addMaintenanceIssue(
       issues,

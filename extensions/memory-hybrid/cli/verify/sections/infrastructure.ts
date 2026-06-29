@@ -83,9 +83,9 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
             version: extVer,
           });
           if (sync.updated) {
-            log(`  → Synced npm-project dependency pin to ${extVer}`);
-            const idx = warnings.findIndex((w) => w === dualInstall);
-            if (idx >= 0) warnings.splice(idx, 1);
+            log(
+              `  → Synced npm-project dependency pin to ${extVer} (OpenClaw install-index may still need \`openclaw plugins install openclaw-hybrid-memory@${extVer}\`)`,
+            );
           } else if (sync.error) {
             log(`  → Could not sync npm-project pin: ${sync.error}`);
           }
