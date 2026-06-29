@@ -38,6 +38,7 @@ import { PLUGIN_ID } from "../../utils/constants.js";
 import { getEnv } from "../../utils/env-manager.js";
 import { findPluginRoot } from "../../utils/plugin-root.js";
 import { readPluginPackageVersion } from "./workspace.js";
+import { resolveOpenclawHomeDir } from "../../utils/openclaw-workspace.js";
 
 /** Relative path of the legacy install-index sidecar under the OpenClaw state dir. */
 const LEGACY_INSTALL_INDEX_REL_PATH = join("plugins", "installs.json");
@@ -111,8 +112,8 @@ export type ReconcileLegacyInstallIndexResult = {
 /** Default OpenClaw state directory used to locate the legacy install-index. */
 function defaultOpenclawStateDir(): string {
   const fromEnv = getEnv("OPENCLAW_STATE_DIR");
-  if (typeof fromEnv === "string" && fromEnv.trim().length > 0) return fromEnv;
-  return join(homedir(), ".openclaw");
+  if (typeof fromEnv === "string" && fromEnv.trim().length > 0) return fromEnv.trim();
+  return resolveOpenclawHomeDir();
 }
 
 /**

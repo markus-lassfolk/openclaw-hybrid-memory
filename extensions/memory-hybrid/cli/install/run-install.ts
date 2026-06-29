@@ -269,20 +269,24 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
       );
     }
     for (const note of embeddingPatch.notes) completed.push(note);
+    const remaining: string[] = [];
     // Best-effort install-index reconciliation (#2008): clear any stale legacy
     // install record so the gateway does not emit "Left plugin install index in
     // place because shared SQLite state has conflicting plugin install
     // metadata" on the next startup. Non-fatal; unsafe states log guidance.
     try {
       const reconcile = runInstallIndexReconcileForPlugin({ pluginId: PLUGIN_ID, livePath: pluginRootDir });
-      if (reconcile.message) completed.push(reconcile.message);
+      if (reconcile.result.ok && reconcile.message) {
+        completed.push(reconcile.message);
+      } else if (!reconcile.result.ok && reconcile.message) {
+        remaining.push(reconcile.message);
+      }
     } catch (e) {
       capturePluginError(e as Error, { subsystem: "cli", operation: "runInstallForCli:install-index-reconcile" });
-      completed.push(
+      remaining.push(
         `Install-index reconciliation skipped: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
-    const remaining: string[] = [];
     if (detectedEmbedding.provider === "openai" && !existingEmbedding.hasUsableApiKey && !detectedEmbedding.envKey) {
       remaining.push('Set plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey to a real key.');
     }

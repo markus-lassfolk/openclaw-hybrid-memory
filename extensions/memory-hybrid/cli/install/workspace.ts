@@ -20,6 +20,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve as pathResolve, relative } from "node:path";
 
 import { PLUGIN_ID } from "../../utils/constants.js";
+import { resolveOpenclawHomeDir } from "../../utils/openclaw-workspace.js";
 
 import { atomicWriteFile } from "../../utils/atomic-write.js";
 import { getEnv } from "../../utils/env-manager.js";
@@ -104,9 +105,9 @@ export function resolveInstalledPluginDir(extensionsParentDir: string, pluginPac
   return join(extensionsParentDir, pluginPackageName);
 }
 
-/** Maeve/npm-project layout under ~/.openclaw/npm/projects when present. */
+/** Maeve/npm-project layout under $OPENCLAW_HOME/npm/projects when present. */
 export function resolveKnownNpmProjectPluginDir(): string | undefined {
-  const projectRoot = join(homedir(), ".openclaw", "npm", "projects", PLUGIN_ID);
+  const projectRoot = join(resolveOpenclawHomeDir(), "npm", "projects", PLUGIN_ID);
   const pluginDir = join(projectRoot, "node_modules", PLUGIN_ID);
   if (!existsSync(join(pluginDir, "openclaw.plugin.json"))) return undefined;
   return pluginDir;
@@ -153,7 +154,7 @@ export function detectDualPluginInstallVersionMismatch(
 
 /** npm-project root for the canonical Maeve layout (#2008). */
 export function resolveKnownNpmProjectRoot(): string | undefined {
-  const projectRoot = join(homedir(), ".openclaw", "npm", "projects", PLUGIN_ID);
+  const projectRoot = join(resolveOpenclawHomeDir(), "npm", "projects", PLUGIN_ID);
   return existsSync(join(projectRoot, "package.json")) ? projectRoot : undefined;
 }
 
@@ -176,9 +177,9 @@ export function buildDualInstallReconciliationGuidance(
     `Reconcile stale npm-project metadata (${npmVer ?? "unknown"} at ${npmProjectPluginDir}) with ` +
     `\`openclaw plugins install openclaw-hybrid-memory${versionHint}\`, ` +
     `\`${upgradeCmd}\`, or ` +
-    `\`openclaw hybrid-mem verify --fix\` to sync the npm-project pin. ` +
+    `\`openclaw hybrid-mem verify --fix\` to sync the npm-project pin and reconcile the legacy install-index sidecar. ` +
     `When extensions is canonical, removing the unused npm-project tree is safe: ` +
-    `rm -rf ~/.openclaw/npm/projects/openclaw-hybrid-memory`
+    `rm -rf ${join(resolveOpenclawHomeDir(), "npm", "projects", PLUGIN_ID)}`
   );
 }
 

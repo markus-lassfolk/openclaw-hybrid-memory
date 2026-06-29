@@ -74,13 +74,49 @@ describe("install-index reconciliation (#2008)", () => {
   });
 
   it("default legacy sidecar path uses OpenClaw state root (#2008)", () => {
-    const prev = process.env.OPENCLAW_STATE_DIR;
+    const prevHome = process.env.OPENCLAW_HOME;
+    const prevState = process.env.OPENCLAW_STATE_DIR;
+    const prevConfig = process.env.OPENCLAW_CONFIG;
+    const prevConfigPath = process.env.OPENCLAW_CONFIG_PATH;
     delete process.env.OPENCLAW_STATE_DIR;
+    delete process.env.OPENCLAW_CONFIG;
+    delete process.env.OPENCLAW_CONFIG_PATH;
+    delete process.env.OPENCLAW_HOME;
     try {
       expect(resolveLegacyInstallIndexPath()).toBe(join(homedir(), ".openclaw", "plugins", "installs.json"));
     } finally {
-      if (prev !== undefined) process.env.OPENCLAW_STATE_DIR = prev;
+      if (prevHome !== undefined) process.env.OPENCLAW_HOME = prevHome;
+      else delete process.env.OPENCLAW_HOME;
+      if (prevState !== undefined) process.env.OPENCLAW_STATE_DIR = prevState;
       else delete process.env.OPENCLAW_STATE_DIR;
+      if (prevConfig !== undefined) process.env.OPENCLAW_CONFIG = prevConfig;
+      else delete process.env.OPENCLAW_CONFIG;
+      if (prevConfigPath !== undefined) process.env.OPENCLAW_CONFIG_PATH = prevConfigPath;
+      else delete process.env.OPENCLAW_CONFIG_PATH;
+    }
+  });
+
+  it("default legacy sidecar path honors OPENCLAW_HOME (#2008)", () => {
+    const prevHome = process.env.OPENCLAW_HOME;
+    const prevState = process.env.OPENCLAW_STATE_DIR;
+    const prevConfig = process.env.OPENCLAW_CONFIG;
+    const prevConfigPath = process.env.OPENCLAW_CONFIG_PATH;
+    delete process.env.OPENCLAW_STATE_DIR;
+    delete process.env.OPENCLAW_CONFIG;
+    delete process.env.OPENCLAW_CONFIG_PATH;
+    const openclawHome = join(tmpdir(), `mh-openclaw-home-${Date.now()}`);
+    process.env.OPENCLAW_HOME = openclawHome;
+    try {
+      expect(resolveLegacyInstallIndexPath()).toBe(join(openclawHome, "plugins", "installs.json"));
+    } finally {
+      if (prevHome !== undefined) process.env.OPENCLAW_HOME = prevHome;
+      else delete process.env.OPENCLAW_HOME;
+      if (prevState !== undefined) process.env.OPENCLAW_STATE_DIR = prevState;
+      else delete process.env.OPENCLAW_STATE_DIR;
+      if (prevConfig !== undefined) process.env.OPENCLAW_CONFIG = prevConfig;
+      else delete process.env.OPENCLAW_CONFIG;
+      if (prevConfigPath !== undefined) process.env.OPENCLAW_CONFIG_PATH = prevConfigPath;
+      else delete process.env.OPENCLAW_CONFIG_PATH;
     }
   });
 
