@@ -17,6 +17,7 @@ import { PLUGIN_ID } from "../utils/constants.js";
 import { type ActiveTaskContext, registerActiveTaskCommands } from "./active-tasks.js";
 import { registerBenchmarkCommands } from "./benchmark.js";
 import { registerHelpCommand } from "./cmd-help.js";
+import { registerInstallIndexCommand } from "./cmd-install-index.js";
 import { executeMineCommand } from "./cmd-mine.js";
 import { registerStatusCommands } from "./cmd-status.js";
 import { registerUserFriendlyCommands, type UserFriendlyContext } from "./cmd-user-friendly.js";
@@ -701,5 +702,15 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       operation: "register-cli:user-friendly",
     });
     throw err;
+  }
+
+  // Register the install-index reconciliation commands (issue #2008).
+  try {
+    registerInstallIndexCommand(mem);
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "register-cli:install-index",
+    });
   }
 }

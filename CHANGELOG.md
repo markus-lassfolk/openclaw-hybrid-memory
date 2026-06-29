@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.6.292] - 2026-06-29
+
+### Fixed
+
+- **Install-index drift after upgrade (#2008):** New helper `cli/install/install-index-reconcile.ts` detects stale entries in the legacy `${stateDir}/plugins/installs.json` sidecar (e.g. an old npm-project install at `/home/markus/.openclaw/npm/projects/openclaw-hybrid-memory/...` from a previous version) and atomically drops them after backing the sidecar up. This stops OpenClaw core state migrations from emitting the persistent warning "Left plugin install index in place because shared SQLite state has conflicting plugin install metadata for: codex, openclaw-hybrid-memory" on every Gateway restart after an extension upgrade. Wired into `runUpgradeForCli`, `runInstallForCli`, and the `verify` infrastructure section; new CLI subcommand `openclaw hybrid-mem install-index reconcile [--dry-run] [--plugin-id <id>]` for manual repair. Tests: `tests/install-index-reconcile.test.ts` (18 cases covering no-conflict, matches-live, safe-reconcile, unsafe-downgrade, unsafe-no-live-path, unsafe-malformed-legacy, dry-run, and embedded `plugins[]` legacy shapes).
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.6.292**.
+
+---
+
 ## [2026.6.291] - 2026-06-29
 
 ### Fixed

@@ -17,4 +17,5 @@ export * from "./install/workspace.js";
 export * from "./install/cron-jobs.js";
 export * from "./install/config-merge.js";
 export * from "./install/embedding-detect.js";
+export * from "./install/install-index-reconcile.js";
 export * from "./install/run-install.js";
