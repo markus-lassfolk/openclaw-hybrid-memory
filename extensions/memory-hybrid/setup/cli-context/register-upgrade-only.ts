@@ -76,7 +76,7 @@ export function registerHybridMemCliUpgradeOnlyWithApi(api: ClawdbotPluginApi): 
         .description("Upgrade hybrid-mem to a specific version (or latest). Downloads and installs plugin from npm.")
         .action(
           withExit(async (version?: string) => {
-            const res = await runUpgradeForCli(handlerCtx, version);
+            const res = await runUpgradeForCli(handlerCtx, version, { skipPostUpgradeCron: true });
             if (res.ok) {
               console.log(`Upgraded to version ${res.version}. Plugin installed at: ${res.pluginDir}`);
               if (res.workspaceSkillPath) {

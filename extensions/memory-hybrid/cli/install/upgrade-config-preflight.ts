@@ -9,6 +9,11 @@ import { npxExecutable } from "./workspace.js";
 export const MANUAL_UPGRADE_DOC_URL =
   "https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/UPGRADE-PLUGIN.md#manual-upgrade-copy-from-repo";
 
+/** Standalone upgrade when OpenClaw cannot load hybrid-mem (schema drift / invalid config). */
+export const STANDALONE_UPGRADE_CMD = "npx -y openclaw-hybrid-mem-upgrade";
+
+export const NPM_PACK_PREFLIGHT_TIMEOUT_MS = 120_000;
+
 export type PluginConfigSchemaValidation = {
   ok: boolean;
   errors: string[];
@@ -17,6 +22,7 @@ export type PluginConfigSchemaValidation = {
 type JsonSchemaNode = {
   type?: string | string[];
   properties?: Record<string, JsonSchemaNode>;
+  required?: string[];
   additionalProperties?: boolean | JsonSchemaNode;
   items?: JsonSchemaNode;
 };
@@ -26,7 +32,10 @@ function schemaAllowsAdditionalProperties(schema: JsonSchemaNode | undefined): b
   return schema.additionalProperties !== false;
 }
 
-/** Lightweight JSON-schema check for unknown keys (matches OpenClaw gateway rejection). */
+/**
+ * Lightweight JSON-schema check focused on OpenClaw gateway rejection patterns:
+ * unknown keys (additionalProperties) and missing required properties.
+ */
 export function validatePluginConfigAgainstSchema(
   config: unknown,
   rootSchema: JsonSchemaNode | undefined,
@@ -44,6 +53,13 @@ export function validatePluginConfigAgainstSchema(
     const record = config as Record<string, unknown>;
     const props = rootSchema.properties ?? {};
     const allowExtra = schemaAllowsAdditionalProperties(rootSchema);
+    const required = rootSchema.required ?? [];
+    for (const key of required) {
+      if (!(key in record)) {
+        const childPath = pathPrefix ? `${pathPrefix}.${key}` : key;
+        errors.push(`${childPath}: missing required property "${key}"`);
+      }
+    }
     for (const key of Object.keys(record)) {
       const childPath = pathPrefix ? `${pathPrefix}.${key}` : key;
       if (!(key in props)) {
@@ -93,11 +109,42 @@ export function readHybridMemPluginConfigFromOpenclawJson(
 export type UpgradeConfigPreflightResult = {
   currentValid: boolean;
   targetValid: boolean;
+  targetSchemaVerified: boolean;
   currentErrors: string[];
   targetErrors: string[];
   canProceedWithUpgrade: boolean;
   message?: string;
 };
+
+/** Pure decision logic for upgrade preflight (testable without npm pack). */
+export function evaluateUpgradeConfigPreflight(opts: {
+  current: PluginConfigSchemaValidation;
+  target: PluginConfigSchemaValidation;
+  targetSchemaVerified: boolean;
+  targetVersion: string;
+}): Pick<UpgradeConfigPreflightResult, "canProceedWithUpgrade" | "message"> {
+  const { current, target, targetSchemaVerified, targetVersion } = opts;
+
+  if (!targetSchemaVerified) {
+    return {
+      canProceedWithUpgrade: current.ok,
+      message: current.ok
+        ? undefined
+        : `Config fails current plugin schema. Could not verify target schema; use manual upgrade: ${STANDALONE_UPGRADE_CMD} ${targetVersion}. See ${MANUAL_UPGRADE_DOC_URL}`,
+    };
+  }
+
+  const canProceed = target.ok;
+  let message: string | undefined;
+  if (current.ok && !target.ok) {
+    message = `Config accepted by installed plugin but rejected by target (${targetVersion}); refusing upgrade to avoid gateway crash after install. See ${MANUAL_UPGRADE_DOC_URL}`;
+  } else if (!current.ok && target.ok) {
+    message = `Config rejected by installed plugin schema but accepted by ${targetVersion}; proceeding with upgrade.`;
+  } else if (!current.ok && !target.ok) {
+    message = `Config fails both installed and target (${targetVersion}) plugin schemas. Fix config or use manual upgrade: ${STANDALONE_UPGRADE_CMD} ${targetVersion}. See ${MANUAL_UPGRADE_DOC_URL}`;
+  }
+  return { canProceedWithUpgrade: canProceed, message };
+}
 
 function extractManifestFromNpmPack(version: string): { manifestPath: string; cleanup: () => void } | undefined {
   const tmpDir = mkdtempSync(join(tmpdir(), "mh-upgrade-preflight-"));
@@ -105,6 +152,7 @@ function extractManifestFromNpmPack(version: string): { manifestPath: string; cl
     cwd: tmpDir,
     encoding: "utf-8",
     shell: false,
+    timeout: NPM_PACK_PREFLIGHT_TIMEOUT_MS,
   });
   if (pack.status !== 0) return undefined;
   const tgz = readdirSync(tmpDir).find((f) => f.endsWith(".tgz"));
@@ -113,6 +161,7 @@ function extractManifestFromNpmPack(version: string): { manifestPath: string; cl
   mkdirSync(extractDir, { recursive: true });
   const tar = spawnSync("tar", ["-xzf", join(tmpDir, tgz), "-C", extractDir, "--strip-components=1"], {
     shell: false,
+    timeout: NPM_PACK_PREFLIGHT_TIMEOUT_MS,
   });
   if (tar.status !== 0) {
     rmSync(tmpDir, { recursive: true, force: true });
@@ -147,34 +196,39 @@ export function preflightUpgradePluginConfig(opts: {
 
   const packed = extractManifestFromNpmPack(opts.targetVersion);
   if (!packed) {
+    const decision = evaluateUpgradeConfigPreflight({
+      current,
+      target: { ok: false, errors: ["Could not fetch target plugin manifest for preflight"] },
+      targetSchemaVerified: false,
+      targetVersion: opts.targetVersion,
+    });
     return {
       currentValid: current.ok,
       targetValid: false,
+      targetSchemaVerified: false,
       currentErrors: current.errors,
       targetErrors: ["Could not fetch target plugin manifest for preflight"],
-      canProceedWithUpgrade: current.ok,
-      message: current.ok
-        ? undefined
-        : `Config fails current plugin schema. Could not verify target schema; use manual upgrade: npx -y openclaw-hybrid-memory-install ${opts.targetVersion}. See ${MANUAL_UPGRADE_DOC_URL}`,
+      canProceedWithUpgrade: decision.canProceedWithUpgrade,
+      message: decision.message,
     };
   }
   try {
     const targetSchema = loadPluginManifestSchema(packed.manifestPath);
     const target = validatePluginConfigAgainstSchema(pluginConfig, targetSchema);
-    const canProceed = current.ok || target.ok;
-    let message: string | undefined;
-    if (!current.ok && target.ok) {
-      message = `Config rejected by installed plugin schema but accepted by ${opts.targetVersion}; proceeding with upgrade.`;
-    } else if (!current.ok && !target.ok) {
-      message = `Config fails both installed and target (${opts.targetVersion}) plugin schemas. Manual upgrade may still be required after fixing config. See ${MANUAL_UPGRADE_DOC_URL}`;
-    }
+    const decision = evaluateUpgradeConfigPreflight({
+      current,
+      target,
+      targetSchemaVerified: true,
+      targetVersion: opts.targetVersion,
+    });
     return {
       currentValid: current.ok,
       targetValid: target.ok,
+      targetSchemaVerified: true,
       currentErrors: current.errors,
       targetErrors: target.errors,
-      canProceedWithUpgrade: canProceed,
-      message,
+      canProceedWithUpgrade: decision.canProceedWithUpgrade,
+      message: decision.message,
     };
   } finally {
     packed.cleanup();
@@ -182,11 +236,11 @@ export function preflightUpgradePluginConfig(opts: {
 }
 
 export function formatManualUpgradeFallback(version: string): string {
-  return `When openclaw hybrid-mem is unavailable (invalid plugin config), run: npx -y openclaw-hybrid-memory-install ${version}. See ${MANUAL_UPGRADE_DOC_URL}`;
+  return `When openclaw hybrid-mem is unavailable (invalid plugin config), run: ${STANDALONE_UPGRADE_CMD} ${version}. See ${MANUAL_UPGRADE_DOC_URL}`;
 }
 
 export function runStandaloneUpgradeInstall(version: string, extensionsParentDir: string): { ok: boolean; error?: string } {
-  const r = spawnSync(npxExecutable(), ["-y", "openclaw-hybrid-memory-install", version], {
+  const r = spawnSync(npxExecutable(), ["-y", "openclaw-hybrid-mem-upgrade", version], {
     stdio: "inherit",
     cwd: homedir(),
     shell: false,
