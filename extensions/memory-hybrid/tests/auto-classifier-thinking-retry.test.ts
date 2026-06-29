@@ -331,6 +331,29 @@ describe("auto-classify MiniMax thinking-only retry (#2006)", () => {
     expect(requestLog[1].thinking).toEqual({ type: "disabled" });
   });
 
+
+  it("returns batchFailures when JSON array length mismatches fact count", async () => {
+    factsDb = makeFactsDb(tmpDir, 5);
+    const requestLog: Array<{ maxTokens?: number; thinking?: { type?: string }; model?: string }> = [];
+
+    const openai = mockThinkingThenJson({
+      firstResponse: '["fact", "entity"]',
+      secondResponse: '["fact", "entity", "preference", "fact", "entity"]',
+      requestLog,
+    });
+
+    const result = await runAutoClassify(
+      factsDb,
+      openai as any,
+      { model: "minimax/MiniMax-M2.7-highspeed", batchSize: 20 },
+      noop,
+    );
+
+    expect(requestLog.length).toBe(1);
+    expect(result.batchFailures).toBe(1);
+    expect(result.reclassified).toBe(0);
+  });
+
   it("transport failure is NOT silently counted as success", async () => {
     // Simulate a transport error (model unreachable) — classifyBatch must
     // return success=false so the orchestrator reports batchFailures=1.
@@ -357,4 +380,26 @@ describe("auto-classify MiniMax thinking-only retry (#2006)", () => {
     expect(result.batchFailures).toBe(1);
     expect(result.reclassified).toBe(0);
   });
+  it("returns batchFailures when JSON array length mismatches fact count", async () => {
+    factsDb = makeFactsDb(tmpDir, 5);
+    const requestLog: Array<{ maxTokens?: number; thinking?: { type?: string }; model?: string }> = [];
+
+    const openai = mockThinkingThenJson({
+      firstResponse: '["fact", "entity"]',
+      secondResponse: '["fact", "entity", "preference", "fact", "entity"]',
+      requestLog,
+    });
+
+    const result = await runAutoClassify(
+      factsDb,
+      openai as any,
+      { model: "minimax/MiniMax-M2.7-highspeed", batchSize: 20 },
+      noop,
+    );
+
+    expect(requestLog.length).toBe(1);
+    expect(result.batchFailures).toBe(1);
+    expect(result.reclassified).toBe(0);
+  });
+
 });

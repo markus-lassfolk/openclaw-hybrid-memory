@@ -156,20 +156,14 @@ async function discoverCategoriesFromOther(
     }
 
     try {
-      const raw = await chatCompleteWithRetry({
-        model: config.model,
-        content: prompt,
-        temperature: 0,
-        maxTokens: batch.length * 24,
+      const labels = await completeClassifyJsonArray(
         openai,
-        label: "memory-hybrid: category-discovery",
-        feature: "auto-classify",
+        config.model,
+        prompt,
+        batch.length,
         timeoutMs,
-        signal: getMaintenanceRunAbortSignal(),
-      });
-      // chatComplete strips literal "[]" as a placeholder; empty array is valid discovery output.
-      const content = raw.trim().length > 0 ? raw : "[]";
-      const labels = tryParseFirstJsonArray(content);
+        "memory-hybrid: category-discovery",
+      );
       if (!labels) continue;
       anyBatchSucceeded = true;
       for (let j = 0; j < Math.min(labels.length, batch.length); j++) {
@@ -238,6 +232,53 @@ async function discoverCategoriesFromOther(
   return proposedCategoryNames;
 }
 
+function parseLlmJsonArrayResponse(raw: string): unknown[] | null {
+  const content = stripThinkingWrapperBlocks(raw.trim().length > 0 ? raw : "[]");
+  return tryParseFirstJsonArray(content);
+}
+
+/**
+ * LLM call + thinking-strip + parse + single retry on parse failure (#2006).
+ * Shared by classifyBatch and discoverCategoriesFromOther.
+ */
+async function completeClassifyJsonArray(
+  openai: OpenAI,
+  model: string,
+  prompt: string,
+  itemCount: number,
+  timeoutMs: number,
+  label: string,
+): Promise<unknown[] | null> {
+  const thinkingMode = isMiniMaxModel(model) ? ("disabled" as const) : undefined;
+  const maxTokens = Math.min(800, 80 * itemCount);
+  const baseOpts = {
+    model,
+    content: prompt,
+    temperature: 0 as const,
+    openai,
+    feature: "auto-classify" as const,
+    timeoutMs,
+    signal: getMaintenanceRunAbortSignal(),
+    ...(thinkingMode ? { thinkingMode } : {}),
+  };
+
+  let raw = await chatCompleteWithRetry({ ...baseOpts, maxTokens, label });
+  let parsed = parseLlmJsonArrayResponse(raw);
+  if (parsed === null && raw.trim().length > 0) {
+    try {
+      raw = await chatCompleteWithRetry({
+        ...baseOpts,
+        maxTokens: Math.min(1600, maxTokens * 4),
+        label: `${label}-retry`,
+      });
+      parsed = parseLlmJsonArrayResponse(raw);
+    } catch {
+      parsed = null;
+    }
+  }
+  return parsed;
+}
+
 /**
  * Classify a batch of "other" facts into proper categories using a cheap LLM.
  *
@@ -273,70 +314,18 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
     return { results: new Map(), suggestions: new Map(), success: false };
   }
 
-  // Output budget: parity with classifyMemoryOperationsBatch in classification.ts.
-  // `facts.length * 20` was too tight — thinking models (MiniMax M2.7-highspeed)
-  // consume most of the budget on prose and emit no JSON before truncation (#2006).
-  const maxTokens = Math.min(800, 80 * facts.length);
-
-  // MiniMax models emit `<think>` reasoning before the JSON payload. We always
-  // disable deep thinking for batch auto-classify (parity with classification.ts)
-  // so the budget is spent on the JSON array, not prose — even when `thinkingMode`
-  // is unset in config (#2006).
-  const thinkingMode = isMiniMaxModel(model) ? ("disabled" as const) : undefined;
-
   try {
-    let raw = await chatCompleteWithRetry({
-      model,
-      content: prompt,
-      temperature: 0,
-      maxTokens,
+    const parsed = await completeClassifyJsonArray(
       openai,
-      label: "memory-hybrid: classify-batch",
-      feature: "auto-classify",
+      model,
+      prompt,
+      facts.length,
       timeoutMs,
-      signal: getMaintenanceRunAbortSignal(),
-      ...(thinkingMode ? { thinkingMode } : {}),
-    });
-    // chatComplete strips literal "[]" as a placeholder; empty array is valid classify output.
-    let content = raw.trim().length > 0 ? raw : "[]";
-    // Defensive strip: stripThinkingWrapperBlocks handles both closed and unclosed
-    // (truncated) thinking blocks. Cheap call when there is no thinking prefix.
-    content = stripThinkingWrapperBlocks(content);
-    let parsed = tryParseFirstJsonArray(content);
-
-    // Parse-failure retry (#2006): when the response is thinking-only/no-JSON,
-    // the model likely exhausted the output budget reasoning instead of producing
-    // JSON. Retry once with a larger budget. We deliberately do NOT retry on
-    // transport failures (handled by chatCompleteWithRetry) — only on successful
-    // responses that contain no parseable JSON.
-    if (parsed === null && raw.trim().length > 0) {
-      // 4× the original budget, capped at 1600 — still bounded, but enough for
-      // thinking models to finish the reasoning preamble and emit the array.
-      const retryMaxTokens = Math.min(1600, maxTokens * 4);
-      try {
-        raw = await chatCompleteWithRetry({
-          model,
-          content: prompt,
-          temperature: 0,
-          maxTokens: retryMaxTokens,
-          openai,
-          label: "memory-hybrid: classify-batch-retry",
-          feature: "auto-classify",
-          timeoutMs,
-          signal: getMaintenanceRunAbortSignal(),
-          ...(thinkingMode ? { thinkingMode } : {}),
-        });
-        content = raw.trim().length > 0 ? raw : "[]";
-        content = stripThinkingWrapperBlocks(content);
-        parsed = tryParseFirstJsonArray(content);
-      } catch {
-        // Retry failed at the transport level — fall through to the failure path
-        // below. The outer try/catch around this block still owns the success flag.
-        parsed = null;
-      }
+      "memory-hybrid: classify-batch",
+    );
+    if (!parsed || parsed.length !== facts.length) {
+      return { results: new Map(), suggestions: new Map(), success: false };
     }
-
-    if (!parsed) return { results: new Map(), suggestions: new Map(), success: false };
 
     const results: string[] = parsed as string[];
     const map = new Map<string, string>();
