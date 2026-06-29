@@ -248,6 +248,7 @@ async function completeClassifyJsonArray(
   itemCount: number,
   timeoutMs: number,
   label: string,
+  expectedLength?: number,
 ): Promise<unknown[] | null> {
   const thinkingMode = isMiniMaxModel(model) ? ("disabled" as const) : undefined;
   const maxTokens = Math.min(800, 80 * itemCount);
@@ -262,9 +263,13 @@ async function completeClassifyJsonArray(
     ...(thinkingMode ? { thinkingMode } : {}),
   };
 
+  const needsRetry = (parsed: unknown[] | null): boolean =>
+    parsed === null ||
+    (expectedLength !== undefined && (parsed.length !== expectedLength));
+
   let raw = await chatCompleteWithRetry({ ...baseOpts, maxTokens, label });
   let parsed = parseLlmJsonArrayResponse(raw);
-  if (parsed === null && raw.trim().length > 0) {
+  if (needsRetry(parsed) && raw.trim().length > 0) {
     try {
       raw = await chatCompleteWithRetry({
         ...baseOpts,
@@ -275,6 +280,9 @@ async function completeClassifyJsonArray(
     } catch {
       parsed = null;
     }
+  }
+  if (expectedLength !== undefined && parsed !== null && parsed.length !== expectedLength) {
+    return null;
   }
   return parsed;
 }
@@ -322,8 +330,9 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
       facts.length,
       timeoutMs,
       "memory-hybrid: classify-batch",
+      facts.length,
     );
-    if (!parsed || parsed.length !== facts.length) {
+    if (!parsed) {
       return { results: new Map(), suggestions: new Map(), success: false };
     }
 

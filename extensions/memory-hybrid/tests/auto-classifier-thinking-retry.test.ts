@@ -344,12 +344,36 @@ describe("auto-classify MiniMax thinking-only retry (#2006)", () => {
 
     const result = await runAutoClassify(
       factsDb,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       openai as any,
       { model: "minimax/MiniMax-M2.7-highspeed", batchSize: 20 },
       noop,
     );
 
-    expect(requestLog.length).toBe(1);
+    expect(requestLog.length).toBe(2);
+    expect(result.batchFailures).toBeUndefined();
+    expect(result.reclassified).toBe(5);
+  });
+
+  it("returns batchFailures when retry still has wrong JSON array length", async () => {
+    factsDb = makeFactsDb(tmpDir, 5);
+    const requestLog: Array<{ maxTokens?: number; thinking?: { type?: string }; model?: string }> = [];
+
+    const openai = mockThinkingThenJson({
+      firstResponse: '["fact", "entity"]',
+      secondResponse: '["fact", "entity", "preference"]',
+      requestLog,
+    });
+
+    const result = await runAutoClassify(
+      factsDb,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      openai as any,
+      { model: "minimax/MiniMax-M2.7-highspeed", batchSize: 20 },
+      noop,
+    );
+
+    expect(requestLog.length).toBe(2);
     expect(result.batchFailures).toBe(1);
     expect(result.reclassified).toBe(0);
   });
@@ -380,26 +404,4 @@ describe("auto-classify MiniMax thinking-only retry (#2006)", () => {
     expect(result.batchFailures).toBe(1);
     expect(result.reclassified).toBe(0);
   });
-  it("returns batchFailures when JSON array length mismatches fact count", async () => {
-    factsDb = makeFactsDb(tmpDir, 5);
-    const requestLog: Array<{ maxTokens?: number; thinking?: { type?: string }; model?: string }> = [];
-
-    const openai = mockThinkingThenJson({
-      firstResponse: '["fact", "entity"]',
-      secondResponse: '["fact", "entity", "preference", "fact", "entity"]',
-      requestLog,
-    });
-
-    const result = await runAutoClassify(
-      factsDb,
-      openai as any,
-      { model: "minimax/MiniMax-M2.7-highspeed", batchSize: 20 },
-      noop,
-    );
-
-    expect(requestLog.length).toBe(1);
-    expect(result.batchFailures).toBe(1);
-    expect(result.reclassified).toBe(0);
-  });
-
 });
