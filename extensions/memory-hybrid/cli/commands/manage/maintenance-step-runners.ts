@@ -25,6 +25,10 @@ import { buildPendingReviewDigestReport } from "../../../services/pending-review
 import { reconcileOrphanVectors } from "../../../services/vector-maintenance.js";
 import { sweepAll } from "../../../services/sensor-sweep.js";
 import { runAutoClassify } from "../../../services/auto-classifier.js";
+import {
+  entityEnrichmentSemanticStatus,
+  isEntityEnrichmentHardFailure,
+} from "../../../services/entity-enrichment-adaptive.js";
 import { runPassiveObserver } from "../../../services/passive-observer.js";
 import { deleteVectorsForFactIds } from "../../../services/vector-maintenance.js";
 import type { MaintenanceStepRunner } from "../../../services/maintenance-orchestrator.js";
@@ -209,24 +213,23 @@ function formatEntityEnrichmentSummary(r: {
 }): string {
   const llmFailures = r.llmFailures ?? 0;
   const stopReason = r.stopReason ?? "completed";
-  const incompleteCatchUp =
-    stopReason === "exhausted" || stopReason === "time_budget" || stopReason === "provider_budget";
-  const partial = llmFailures > 0 || incompleteCatchUp;
-  return `processed=${r.processed} enriched=${r.factsEnriched} llmFailures=${llmFailures} stopReason=${stopReason} remaining=${r.remainingTotal ?? 0} semantic=${partial ? "partial" : "success"}`;
+  const semantic = entityEnrichmentSemanticStatus({
+    llmFailures,
+    stopReason,
+    processed: r.processed,
+  });
+  return `processed=${r.processed} enriched=${r.factsEnriched} llmFailures=${llmFailures} stopReason=${stopReason} remaining=${r.remainingTotal ?? 0} semantic=${semantic}`;
 }
 
 function assertEntityEnrichmentNotPartial(
   r: {
     llmFailures?: number;
     stopReason?: string;
+    processed?: number;
   },
   summary: string,
 ): void {
-  const llmFailures = r.llmFailures ?? 0;
-  const stopReason = r.stopReason ?? "completed";
-  const incompleteCatchUp =
-    stopReason === "exhausted" || stopReason === "time_budget" || stopReason === "provider_budget";
-  if (llmFailures > 0 || incompleteCatchUp) {
+  if (isEntityEnrichmentHardFailure(r)) {
     throw new Error(`entity enrichment partial failure (${summary})`);
   }
 }

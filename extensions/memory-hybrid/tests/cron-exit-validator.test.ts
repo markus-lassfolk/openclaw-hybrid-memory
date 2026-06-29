@@ -897,6 +897,84 @@ error: unknown command 'bar'
       );
     });
 
+    it("allows healthy enrich-entities incremental catch-up on exit=0 (#2009)", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "enrich-entities.exit.txt");
+      const logPath = join(tmpDir, "enrich-entities.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z enrich-entities exit=0\n");
+      writeFileSync(
+        logPath,
+        "enrich-entities processed=200 enriched=41 llmFailures=0 stopReason=exhausted remaining=19789 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["enrich-entities"]);
+
+      expect(result.maintenanceStatus).not.toBe("failed");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          stepName: "enrich-entities",
+          failureClass: "enrich_entities_incomplete_catchup",
+        }),
+      );
+    });
+
+    it("allows legacy semantic=partial logs when metrics show healthy catch-up (#2009)", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "enrich-entities.exit.txt");
+      const logPath = join(tmpDir, "enrich-entities.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z enrich-entities exit=0\n");
+      writeFileSync(
+        logPath,
+        "enrich-entities processed=200 enriched=41 llmFailures=0 stopReason=exhausted remaining=19789 semantic=partial\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["enrich-entities"]);
+
+      expect(result.maintenanceStatus).not.toBe("failed");
+    });
+
+    it("allows enrich logs missing processed metric when stopReason is exhausted (#2009)", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-enrich-missing-processed-"));
+      const exitPath = join(tmpDir, "enrich-entities.exit.txt");
+      const logPath = join(tmpDir, "enrich-entities.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z enrich-entities exit=0\n");
+      writeFileSync(
+        logPath,
+        "enrich-entities enriched=41 llmFailures=0 stopReason=exhausted remaining=19789 semantic=partial\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["enrich-entities"]);
+
+      expect(result.maintenanceStatus).not.toBe("failed");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          stepName: "enrich-entities",
+          failureClass: "enrich_entities_incomplete_catchup",
+        }),
+      );
+    });
+
+    it("blocks enrich-entities budget stop with zero processed facts (#2009)", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "enrich-entities.exit.txt");
+      const logPath = join(tmpDir, "enrich-entities.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z enrich-entities exit=0\n");
+      writeFileSync(
+        logPath,
+        "enrich-entities processed=0 enriched=0 llmFailures=0 stopReason=time_budget remaining=19789 semantic=partial\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["enrich-entities"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "enrich-entities",
+          failureClass: "enrich_entities_incomplete_catchup",
+        }),
+      );
+    });
+
     it("detects enrich-entities llmFailures on exit=0 and blocks guard", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "enrich-entities.exit.txt");

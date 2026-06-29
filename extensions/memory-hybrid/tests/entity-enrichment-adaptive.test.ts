@@ -4,7 +4,9 @@ import {
   buildEntityEnrichmentAdaptiveSummary,
   buildIssue1791AdaptiveTelemetry,
   buildVectorlessSloRepairRecommendation,
+  entityEnrichmentSemanticStatus,
   errorIndicatesLlmTimeout,
+  isEntityEnrichmentHardFailure,
   VECTORLESS_SLO_TARGET_RATIO,
 } from "../services/entity-enrichment-adaptive.js";
 
@@ -111,5 +113,51 @@ describe("buildVectorlessSloRepairRecommendation", () => {
     expect(slo.vectorlessRatioAfter).toBe(0.05);
     expect(slo.sloMetAfterRun).toBe(false);
     expect(slo.scopedSource).toBe("session:abc");
+  });
+});
+
+describe("isEntityEnrichmentHardFailure (#2009)", () => {
+  it("does not fail healthy bounded catch-up with backlog remaining", () => {
+    expect(
+      isEntityEnrichmentHardFailure({
+        processed: 200,
+        llmFailures: 0,
+        stopReason: "exhausted",
+      }),
+    ).toBe(false);
+    expect(
+      entityEnrichmentSemanticStatus({
+        processed: 200,
+        llmFailures: 0,
+        stopReason: "exhausted",
+      }),
+    ).toBe("success");
+  });
+
+  it("fails on llmFailures even when stopReason is completed", () => {
+    expect(isEntityEnrichmentHardFailure({ processed: 20, llmFailures: 2, stopReason: "completed" })).toBe(
+      true,
+    );
+  });
+
+  it("fails on budget stop with zero processed facts", () => {
+    expect(isEntityEnrichmentHardFailure({ processed: 0, llmFailures: 0, stopReason: "time_budget" })).toBe(
+      true,
+    );
+  });
+
+  it("does not fail time_budget stop when some facts were processed", () => {
+    expect(isEntityEnrichmentHardFailure({ processed: 25, llmFailures: 0, stopReason: "time_budget" })).toBe(
+      false,
+    );
+  });
+
+  it("does not fail budget stop when processed metric is absent from log", () => {
+    expect(
+      isEntityEnrichmentHardFailure({ llmFailures: 0, stopReason: "exhausted" }),
+    ).toBe(false);
+    expect(
+      isEntityEnrichmentHardFailure({ llmFailures: 0, stopReason: "time_budget" }),
+    ).toBe(false);
   });
 });

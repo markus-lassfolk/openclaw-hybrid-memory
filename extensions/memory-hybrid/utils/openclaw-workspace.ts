@@ -5,7 +5,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { getEnv } from "./env-manager.js";
 
 function expandTildeLocal(p: string): string {
@@ -27,6 +27,11 @@ export function resolveOpenclawJsonPathForWorkspace(): string {
   const owHome = getEnv("OPENCLAW_HOME")?.trim();
   if (owHome) return join(expandTildeLocal(owHome), "openclaw.json");
   return join(homedir(), ".openclaw", "openclaw.json");
+}
+
+/** OpenClaw home directory (parent of openclaw.json). Honors OPENCLAW_HOME and config path env vars. */
+export function resolveOpenclawHomeDir(): string {
+  return dirname(resolveOpenclawJsonPathForWorkspace());
 }
 
 /** Load openclaw.json for workspace resolution; returns `{}` when missing/unreadable. */

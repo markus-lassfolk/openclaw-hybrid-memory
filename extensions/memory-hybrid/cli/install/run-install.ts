@@ -40,6 +40,7 @@ import {
   verifyNpmProjectDependencyPin,
   snapshotNpmProjectPinBeforeUpgrade,
   rollbackNpmProjectPinAfterUpgradeFailure,
+  syncKnownNpmProjectPinWhenExtensionsCanonical,
   type NpmProjectPinBackup,
 } from "./workspace.js";
 import {
@@ -47,6 +48,7 @@ import {
   preflightUpgradePluginConfig,
   runStandaloneUpgradeInstall,
 } from "./upgrade-config-preflight.js";
+import { runInstallIndexReconcileForPlugin } from "./install-index-reconcile.js";
 
 export type RunUpgradeForCliOptions = {
   /** Skip cron normalization when config was not fully parsed (upgrade-only fast path). */
@@ -268,6 +270,23 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
     }
     for (const note of embeddingPatch.notes) completed.push(note);
     const remaining: string[] = [];
+    // Best-effort install-index reconciliation (#2008): clear any stale legacy
+    // install record so the gateway does not emit "Left plugin install index in
+    // place because shared SQLite state has conflicting plugin install
+    // metadata" on the next startup. Non-fatal; unsafe states log guidance.
+    try {
+      const reconcile = runInstallIndexReconcileForPlugin({ pluginId: PLUGIN_ID });
+      if (reconcile.result.ok && reconcile.message) {
+        completed.push(reconcile.message);
+      } else if (!reconcile.result.ok && reconcile.message) {
+        remaining.push(reconcile.message);
+      }
+    } catch (e) {
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runInstallForCli:install-index-reconcile" });
+      remaining.push(
+        `Install-index reconciliation skipped: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
     if (detectedEmbedding.provider === "openai" && !existingEmbedding.hasUsableApiKey && !detectedEmbedding.envKey) {
       remaining.push('Set plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey to a real key.');
     }
@@ -638,6 +657,20 @@ export async function runUpgradeForCli(
   }
   if (npmPin.updated) {
     logger?.info?.(`memory-hybrid: upgrade — npm project dependency pinned to ${installedVersion}`);
+  } else {
+    const staleSync = syncKnownNpmProjectPinWhenExtensionsCanonical({
+      extensionsPluginDir: installedPluginDir,
+      version: installedVersion,
+    });
+    if (staleSync.updated) {
+      logger?.info?.(
+        `memory-hybrid: upgrade — reconciled stale npm-project pin to ${installedVersion} (#2008)`,
+      );
+    } else if (staleSync.attempted && staleSync.error) {
+      logger?.warn?.(
+        `memory-hybrid: upgrade — could not reconcile npm-project pin: ${staleSync.error}${staleSync.guidance ? ` (${staleSync.guidance})` : ""}`,
+      );
+    }
   }
 
   if (options.skipPostUpgradeCron) {
@@ -730,6 +763,29 @@ export async function runUpgradeForCli(
     rmSync(backupDir, { recursive: true, force: true });
   } catch (e) {
     capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:cleanup-backup" });
+  }
+
+  // Best-effort: reconcile any stale legacy plugin install-index metadata for
+  // this plugin (#2008). The next Gateway startup will then no longer emit
+  // "Left plugin install index in place because shared SQLite state has
+  // conflicting plugin install metadata". This is non-fatal: if reconciliation
+  // is unsafe (live version older than stale, missing manifest, malformed
+  // legacy file) we log guidance but still report a successful upgrade.
+  try {
+    const reconcile = runInstallIndexReconcileForPlugin({
+      pluginId: PLUGIN_ID,
+      livePath: installedPluginDir,
+    });
+    if (reconcile.message) {
+      logger?.info?.(`memory-hybrid: upgrade — ${reconcile.message}`);
+    } else if (reconcile.result.ok && reconcile.result.action === "noop") {
+      logger?.debug?.("memory-hybrid: upgrade — install-index reconciliation: nothing to do");
+    }
+  } catch (e) {
+    capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:install-index-reconcile" });
+    logger?.warn?.(
+      `memory-hybrid: upgrade — install-index reconciliation failed: ${e instanceof Error ? e.message : String(e)}`,
+    );
   }
 
   return {

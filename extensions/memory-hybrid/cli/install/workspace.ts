@@ -20,6 +20,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve as pathResolve, relative } from "node:path";
 
 import { PLUGIN_ID } from "../../utils/constants.js";
+import { resolveOpenclawHomeDir } from "../../utils/openclaw-workspace.js";
 
 import { atomicWriteFile } from "../../utils/atomic-write.js";
 import { getEnv } from "../../utils/env-manager.js";
@@ -104,9 +105,9 @@ export function resolveInstalledPluginDir(extensionsParentDir: string, pluginPac
   return join(extensionsParentDir, pluginPackageName);
 }
 
-/** Maeve/npm-project layout under ~/.openclaw/npm/projects when present. */
+/** Maeve/npm-project layout under $OPENCLAW_HOME/npm/projects when present. */
 export function resolveKnownNpmProjectPluginDir(): string | undefined {
-  const projectRoot = join(homedir(), ".openclaw", "npm", "projects", PLUGIN_ID);
+  const projectRoot = join(resolveOpenclawHomeDir(), "npm", "projects", PLUGIN_ID);
   const pluginDir = join(projectRoot, "node_modules", PLUGIN_ID);
   if (!existsSync(join(pluginDir, "openclaw.plugin.json"))) return undefined;
   return pluginDir;
@@ -149,6 +150,75 @@ export function detectDualPluginInstallVersionMismatch(
     return `Dual plugin install version mismatch: npm-project ${npmVer} at ${npmProjectPluginDir} vs extensions ${extVer} at ${extensionsPluginDir}`;
   }
   return `Dual plugin install: npm-project and extensions both present at ${npmVer}; gateway should load extensions copy at ${extensionsPluginDir}`;
+}
+
+/** npm-project root for the canonical Maeve layout (#2008). */
+export function resolveKnownNpmProjectRoot(): string | undefined {
+  const projectRoot = join(resolveOpenclawHomeDir(), "npm", "projects", PLUGIN_ID);
+  return existsSync(join(projectRoot, "package.json")) ? projectRoot : undefined;
+}
+
+/**
+ * Operator guidance when npm-project and extensions copies diverge (#2008).
+ * OpenClaw's shared SQLite install index can retain stale npm-project metadata until reconciled.
+ */
+export function buildDualInstallReconciliationGuidance(
+  npmProjectPluginDir: string,
+  extensionsPluginDir: string,
+): string | undefined {
+  const base = detectDualPluginInstallVersionMismatch(npmProjectPluginDir, extensionsPluginDir);
+  if (!base) return undefined;
+  const extVer = readPluginPackageVersion(extensionsPluginDir);
+  const npmVer = readPluginPackageVersion(npmProjectPluginDir);
+  const versionHint = extVer ? `@${extVer}` : "@latest";
+  const upgradeCmd = extVer ? `openclaw hybrid-mem upgrade ${extVer}` : "openclaw hybrid-mem upgrade";
+  return (
+    `${base} Gateway loads the extensions copy${extVer ? ` (${extVer})` : ""}. ` +
+    `Reconcile stale npm-project metadata (${npmVer ?? "unknown"} at ${npmProjectPluginDir}) with ` +
+    `\`openclaw plugins install openclaw-hybrid-memory${versionHint}\`, ` +
+    `\`${upgradeCmd}\`, or ` +
+    `\`openclaw hybrid-mem verify --fix\` to sync the npm-project pin and reconcile the legacy install-index sidecar. ` +
+    `When extensions is canonical, removing the unused npm-project tree is safe: ` +
+    `rm -rf ${join(resolveOpenclawHomeDir(), "npm", "projects", PLUGIN_ID)}`
+  );
+}
+
+/**
+ * When upgrade targets extensions but a stale npm-project copy exists, align its pin (#2008).
+ */
+export function syncKnownNpmProjectPinWhenExtensionsCanonical(opts: {
+  extensionsPluginDir: string;
+  version: string;
+  /** npm-project plugin dir detected by verify/upgrade (defaults to Maeve layout). */
+  npmProjectPluginDir?: string;
+}): { attempted: boolean; updated: boolean; error?: string; guidance?: string } {
+  if (isNpmProjectPluginLayout(opts.extensionsPluginDir)) {
+    return { attempted: false, updated: false };
+  }
+  const npmPluginDir = opts.npmProjectPluginDir ?? resolveKnownNpmProjectPluginDir();
+  const projectRoot = npmPluginDir ? resolveNpmProjectRootForPlugin(npmPluginDir) : resolveKnownNpmProjectRoot();
+  if (!npmPluginDir || !projectRoot) {
+    return { attempted: false, updated: false };
+  }
+  const extVer = readPluginPackageVersion(opts.extensionsPluginDir);
+  if (!extVer || extVer !== opts.version) {
+    return { attempted: false, updated: false };
+  }
+  const npmVer = readPluginPackageVersion(npmPluginDir);
+  const pinError = verifyNpmProjectDependencyPin(projectRoot, extVer);
+  if (!pinError && npmVer === extVer) {
+    return { attempted: false, updated: false };
+  }
+  const guidance = buildDualInstallReconciliationGuidance(npmPluginDir, opts.extensionsPluginDir);
+  const install = runNpmInstallExactPin(projectRoot, extVer);
+  if (!install.ok) {
+    return { attempted: true, updated: false, error: install.error, guidance };
+  }
+  const verifyError = verifyNpmProjectDependencyPin(projectRoot, extVer);
+  if (verifyError) {
+    return { attempted: true, updated: false, error: verifyError, guidance };
+  }
+  return { attempted: true, updated: true, guidance };
 }
 
 /** Returns an error message when bundled upgrade assets are missing; otherwise undefined. */
