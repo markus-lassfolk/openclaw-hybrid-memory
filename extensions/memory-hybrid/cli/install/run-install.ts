@@ -274,7 +274,7 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
     // place because shared SQLite state has conflicting plugin install
     // metadata" on the next startup. Non-fatal; unsafe states log guidance.
     try {
-      const reconcile = runInstallIndexReconcileForPlugin({ pluginId: PLUGIN_ID });
+      const reconcile = runInstallIndexReconcileForPlugin({ pluginId: PLUGIN_ID, livePath: pluginRootDir });
       if (reconcile.message) completed.push(reconcile.message);
     } catch (e) {
       capturePluginError(e as Error, { subsystem: "cli", operation: "runInstallForCli:install-index-reconcile" });
@@ -768,7 +768,10 @@ export async function runUpgradeForCli(
   // is unsafe (live version older than stale, missing manifest, malformed
   // legacy file) we log guidance but still report a successful upgrade.
   try {
-    const reconcile = runInstallIndexReconcileForPlugin({ pluginId: PLUGIN_ID });
+    const reconcile = runInstallIndexReconcileForPlugin({
+      pluginId: PLUGIN_ID,
+      livePath: installedPluginDir,
+    });
     if (reconcile.message) {
       logger?.info?.(`memory-hybrid: upgrade — ${reconcile.message}`);
     } else if (reconcile.result.ok && reconcile.result.action === "noop") {

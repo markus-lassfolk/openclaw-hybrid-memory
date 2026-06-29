@@ -260,7 +260,7 @@ export type EntityEnrichmentOutcomeInput = {
  */
 export function isEntityEnrichmentHardFailure(input: EntityEnrichmentOutcomeInput): boolean {
   const llmFailures = input.llmFailures ?? 0;
-  const processed = input.processed ?? 0;
+  const processed = input.processed;
   const stopReason = input.stopReason ?? "completed";
   if (llmFailures > 0) return true;
   if (

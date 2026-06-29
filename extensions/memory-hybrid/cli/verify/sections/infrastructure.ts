@@ -8,7 +8,7 @@
  * Extracted from cli/handlers.ts to keep that file manageable.
  */
 
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   detectDualPluginInstallVersionMismatch,
@@ -89,7 +89,7 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
           });
           if (sync.updated) {
             log(
-              `  → Synced npm-project dependency pin to ${extVer} (OpenClaw install-index may still need \`openclaw plugins install openclaw-hybrid-memory@${extVer}\`)`,
+              `  → Synced npm-project dependency pin to ${extVer} (legacy install-index sidecar is checked separately below)`,
             );
           } else if (sync.error) {
             log(`  → Could not sync npm-project pin: ${sync.error}`);
@@ -104,9 +104,14 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
   // because shared SQLite state has conflicting plugin install metadata".
   // We compare the legacy `${stateDir}/plugins/installs.json` record against
   // the live plugin path/version we are actually running from.
+  // Prefer the extensions copy as the live reference when present — Gateway loads
+  // from ~/.openclaw/extensions/ even when the CLI runs from an npm-project layout.
+  const livePluginPath = existsSync(join(extensionsPluginDir, "openclaw.plugin.json"))
+    ? extensionsPluginDir
+    : extDir;
   const installIndexDetection = detectStaleLegacyInstallIndexEntry({
     pluginId: PLUGIN_ID,
-    livePath: extDir,
+    livePath: livePluginPath,
   });
   if (
     installIndexDetection.present &&
@@ -116,9 +121,6 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
     if (installIndexDetection.verdict === "safe-reconcile" && opts.fix) {
       const result = reconcileLegacyInstallIndex({ detection: installIndexDetection });
       if (result.ok && result.action !== "noop") {
-        warnings.push(
-          `Reconciled stale install-index entry for ${PLUGIN_ID} (${result.action}; backup at ${result.backupPath ?? "<unknown>"}).`,
-        );
         log(
           `${OK} Install index: dropped stale ${PLUGIN_ID} entry pointing at ${installIndexDetection.staleInstallPath ?? "<unknown>"} (${installIndexDetection.staleVersion ?? "<unknown>"}) — live is ${installIndexDetection.livePath} (${installIndexDetection.liveVersion ?? "<unknown>"}). Backup: ${result.backupPath ?? "<unknown>"}.`,
         );

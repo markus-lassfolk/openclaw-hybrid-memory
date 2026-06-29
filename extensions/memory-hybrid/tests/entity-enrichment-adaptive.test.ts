@@ -151,4 +151,13 @@ describe("isEntityEnrichmentHardFailure (#2009)", () => {
       false,
     );
   });
+
+  it("does not fail budget stop when processed metric is absent from log", () => {
+    expect(
+      isEntityEnrichmentHardFailure({ llmFailures: 0, stopReason: "exhausted" }),
+    ).toBe(false);
+    expect(
+      isEntityEnrichmentHardFailure({ llmFailures: 0, stopReason: "time_budget" }),
+    ).toBe(false);
+  });
 });
