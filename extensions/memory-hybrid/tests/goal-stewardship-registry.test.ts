@@ -66,6 +66,42 @@ describe("goal registry", () => {
     expect(await readGoal(dir, "nonexistent")).toBeNull();
   });
 
+  it("readGoal and readGoalByLabel resolve legacy label-based filenames (#1999)", async () => {
+    dir = await makeTempDir();
+    const goalId = "legacy-label-0001";
+    const label = "legacy-label";
+    await writeFile(
+      join(dir, `${label}.json`),
+      JSON.stringify({
+        id: goalId,
+        label,
+        description: "legacy layout",
+        acceptanceCriteria: ["a"],
+        status: "active",
+        priority: "normal",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        lastAssessedAt: null,
+        lastDispatchedAt: null,
+        assessmentCount: 0,
+        dispatchCount: 0,
+        currentBlockers: [],
+        lastOutcome: null,
+        maxDispatches: 5,
+        maxAssessments: 10,
+        cooldownMinutes: 5,
+        escalateAfterFailures: 3,
+        consecutiveFailures: 0,
+        linkedTasks: [],
+        history: [],
+      }),
+      "utf-8",
+    );
+    const byId = await readGoal(dir, goalId);
+    expect(byId?.description).toBe("legacy layout");
+    const byLabel = await readGoalByLabel(dir, label);
+    expect(byLabel?.id).toBe(goalId);
+  });
+
   it("readGoal normalizes legacy JSON without circuit-breaker fields", async () => {
     dir = await makeTempDir();
     const raw = {

@@ -301,6 +301,69 @@ function isGoalLike(value: unknown): value is Goal {
   );
 }
 
+function normalizeGoalJson(g: Goal): Goal {
+  return {
+    ...g,
+    linkedTasks: Array.isArray(g.linkedTasks) ? g.linkedTasks : [],
+    currentBlockers: Array.isArray(g.currentBlockers)
+      ? g.currentBlockers
+          .filter((b): b is string => typeof b === "string")
+          .map((b) => b.trim())
+          .filter(Boolean)
+      : [],
+    assessmentCount: typeof g.assessmentCount === "number" && Number.isFinite(g.assessmentCount) ? g.assessmentCount : 0,
+    dispatchCount: typeof g.dispatchCount === "number" && Number.isFinite(g.dispatchCount) ? g.dispatchCount : 0,
+    maxAssessments:
+      typeof g.maxAssessments === "number" && Number.isFinite(g.maxAssessments) ? g.maxAssessments : 10,
+    maxDispatches: typeof g.maxDispatches === "number" && Number.isFinite(g.maxDispatches) ? g.maxDispatches : 5,
+    lastOutcome: typeof g.lastOutcome === "string" ? g.lastOutcome : null,
+    lastAssessedAt: typeof g.lastAssessedAt === "string" ? g.lastAssessedAt : null,
+    lastDispatchedAt: typeof g.lastDispatchedAt === "string" ? g.lastDispatchedAt : null,
+    lastBlockerFingerprint: g.lastBlockerFingerprint ?? null,
+    sameBlockerStreak: g.sameBlockerStreak ?? 0,
+    circuitBreakerLastProgressAssessmentCount: g.circuitBreakerLastProgressAssessmentCount ?? 0,
+    humanEscalationSummary: g.humanEscalationSummary ?? null,
+    escalationKind: g.escalationKind ?? null,
+    lastMechanicalCheck: g.lastMechanicalCheck ?? null,
+  };
+}
+
+async function readGoalJsonFile(goalsDir: string, filename: string): Promise<Goal | null> {
+  try {
+    const raw = await readFile(join(goalsDir, filename), "utf-8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isGoalLike(parsed)) {
+      throw new Error(`Goal file has invalid schema (${join(goalsDir, filename)})`);
+    }
+    return normalizeGoalJson(parsed);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+/** Resolve a goal file path when canonical `${id}.json` is missing (legacy label-based filenames, #1999). */
+async function findGoalFilenameById(goalsDir: string, id: string): Promise<string | null> {
+  let files: string[];
+  try {
+    files = await readdir(goalsDir);
+  } catch {
+    return null;
+  }
+  for (const f of files) {
+    if (!isGoalRegistryJsonFilename(f)) continue;
+    try {
+      const raw = await readFile(join(goalsDir, f), "utf-8");
+      const parsed = JSON.parse(raw) as unknown;
+      if (isGoalLike(parsed) && parsed.id === id) return f;
+    } catch {
+      /* skip unreadable */
+    }
+    await yieldEventLoop();
+  }
+  return null;
+}
+
 function captureInvalidGoalRegistryEntry(filename: string, err?: unknown): void {
   const reason = err instanceof Error ? err.message : err === undefined ? "invalid persisted Goal shape" : String(err);
   capturePluginError(new Error(`invalid_goal_registry_entry: ${filename}`), {
@@ -383,7 +446,12 @@ export async function auditGoalIndexDrift(goalsDir: string): Promise<GoalIndexDr
   }
   for (const f of files) {
     if (!isGoalRegistryJsonFilename(f)) continue;
-    fileIds.add(f.replace(/\.json$/i, ""));
+    try {
+      const g = await readGoalJsonFile(goalsDir, f);
+      if (g) fileIds.add(g.id);
+    } catch {
+      /* skip unreadable; drift audit treats corrupt files as missing from index */
+    }
     await yieldEventLoop();
   }
 
@@ -431,46 +499,23 @@ export async function auditGoalIndexDrift(goalsDir: string): Promise<GoalIndexDr
   return report;
 }
 
-function normalizeGoalJson(g: Goal): Goal {
-  return {
-    ...g,
-    linkedTasks: Array.isArray(g.linkedTasks) ? g.linkedTasks : [],
-    currentBlockers: Array.isArray(g.currentBlockers)
-      ? g.currentBlockers
-          .filter((b): b is string => typeof b === "string")
-          .map((b) => b.trim())
-          .filter(Boolean)
-      : [],
-    assessmentCount: typeof g.assessmentCount === "number" && Number.isFinite(g.assessmentCount) ? g.assessmentCount : 0,
-    dispatchCount: typeof g.dispatchCount === "number" && Number.isFinite(g.dispatchCount) ? g.dispatchCount : 0,
-    maxAssessments:
-      typeof g.maxAssessments === "number" && Number.isFinite(g.maxAssessments) ? g.maxAssessments : 10,
-    maxDispatches: typeof g.maxDispatches === "number" && Number.isFinite(g.maxDispatches) ? g.maxDispatches : 5,
-    lastOutcome: typeof g.lastOutcome === "string" ? g.lastOutcome : null,
-    lastAssessedAt: typeof g.lastAssessedAt === "string" ? g.lastAssessedAt : null,
-    lastDispatchedAt: typeof g.lastDispatchedAt === "string" ? g.lastDispatchedAt : null,
-    lastBlockerFingerprint: g.lastBlockerFingerprint ?? null,
-    sameBlockerStreak: g.sameBlockerStreak ?? 0,
-    circuitBreakerLastProgressAssessmentCount: g.circuitBreakerLastProgressAssessmentCount ?? 0,
-    humanEscalationSummary: g.humanEscalationSummary ?? null,
-    escalationKind: g.escalationKind ?? null,
-    lastMechanicalCheck: g.lastMechanicalCheck ?? null,
-  };
-}
-
 export async function readGoal(goalsDir: string, id: string): Promise<Goal | null> {
-  const path = join(goalsDir, `${id}.json`);
-  if (!existsSync(path)) return null;
-  try {
-    const raw = await readFile(path, "utf-8");
-    const parsed = JSON.parse(raw) as unknown;
-    if (!isGoalLike(parsed)) {
-      throw new Error(`Goal file has invalid schema (${path})`);
+  const canonicalPath = join(goalsDir, `${id}.json`);
+  if (existsSync(canonicalPath)) {
+    try {
+      return await readGoalJsonFile(goalsDir, `${id}.json`);
+    } catch (err) {
+      throw new Error(`Goal file is corrupt or unreadable (${canonicalPath}): ${String(err)}`);
     }
-    return normalizeGoalJson(parsed);
+  }
+  const legacyFilename = await findGoalFilenameById(goalsDir, id);
+  if (!legacyFilename) return null;
+  try {
+    return await readGoalJsonFile(goalsDir, legacyFilename);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw new Error(`Goal file is corrupt or unreadable (${path}): ${String(err)}`);
+    throw new Error(
+      `Goal file is corrupt or unreadable (${join(goalsDir, legacyFilename)}): ${String(err)}`,
+    );
   }
 }
 
@@ -481,7 +526,7 @@ export async function listGoals(goalsDir: string): Promise<Goal[]> {
   for (const f of files) {
     if (!isGoalRegistryJsonFilename(f)) continue;
     try {
-      const g = await readGoal(goalsDir, f.replace(/\.json$/, ""));
+      const g = await readGoalJsonFile(goalsDir, f);
       if (g) out.push(g);
     } catch (err) {
       // Keep registry scans isolated: one corrupt goal file must not abort all goal processing.
