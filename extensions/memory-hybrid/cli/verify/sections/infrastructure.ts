@@ -18,6 +18,11 @@ import {
   readPluginPackageVersion,
   resolveNpmProjectPluginDirFromLayout,
 } from "../../install/workspace.js";
+import {
+  detectStaleLegacyInstallIndexEntry,
+  formatStaleInstallIndexWarning,
+  reconcileLegacyInstallIndex,
+} from "../../install/install-index-reconcile.js";
 import { capturePluginError, isErrorReporterActive, resolvePendingErrorReportCount } from "../../../services/error-reporter.js";
 import { listQuarantinedGoalIds, resolveGoalsDir, auditGoalIndexDrift, rebuildGoalIndex } from "../../../services/goal-registry.js";
 import { PLUGIN_ID } from "../../../utils/constants.js";
@@ -90,6 +95,47 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
             log(`  → Could not sync npm-project pin: ${sync.error}`);
           }
         }
+      }
+    }
+  }
+
+  // Issue #2008: detect stale legacy install-index entries that cause
+  // OpenClaw core to keep emitting "Left plugin install index in place
+  // because shared SQLite state has conflicting plugin install metadata".
+  // We compare the legacy `${stateDir}/plugins/installs.json` record against
+  // the live plugin path/version we are actually running from.
+  const installIndexDetection = detectStaleLegacyInstallIndexEntry({
+    pluginId: PLUGIN_ID,
+    livePath: extDir,
+  });
+  if (
+    installIndexDetection.present &&
+    installIndexDetection.verdict !== "no-conflict" &&
+    installIndexDetection.verdict !== "matches-live"
+  ) {
+    if (installIndexDetection.verdict === "safe-reconcile" && opts.fix) {
+      const result = reconcileLegacyInstallIndex({ detection: installIndexDetection });
+      if (result.ok && result.action !== "noop") {
+        warnings.push(
+          `Reconciled stale install-index entry for ${PLUGIN_ID} (${result.action}; backup at ${result.backupPath ?? "<unknown>"}).`,
+        );
+        log(
+          `${OK} Install index: dropped stale ${PLUGIN_ID} entry pointing at ${installIndexDetection.staleInstallPath ?? "<unknown>"} (${installIndexDetection.staleVersion ?? "<unknown>"}) — live is ${installIndexDetection.livePath} (${installIndexDetection.liveVersion ?? "<unknown>"}). Backup: ${result.backupPath ?? "<unknown>"}.`,
+        );
+      } else {
+        const detail = result.error ?? formatStaleInstallIndexWarning(installIndexDetection);
+        warnings.push(detail);
+        log(`${WARN_LINE} Install index: ${detail}`);
+      }
+    } else {
+      const detail = formatStaleInstallIndexWarning(installIndexDetection);
+      warnings.push(detail);
+      log(`${WARN_LINE} Install index: ${detail}`);
+      if (installIndexDetection.verdict === "safe-reconcile") {
+        log(`  → Run \`openclaw hybrid-mem verify --fix\` to drop the stale entry.`);
+        fixes.push(
+          `Run \`openclaw hybrid-mem verify --fix\` (or \`openclaw hybrid-mem install-index reconcile\`) to reconcile the stale ${PLUGIN_ID} entry in ${installIndexDetection.legacyPath}.`,
+        );
       }
     }
   }
