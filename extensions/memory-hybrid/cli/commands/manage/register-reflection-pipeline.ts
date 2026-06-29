@@ -9,6 +9,7 @@ import type {
 import { PROJECT_STATE_LWW_KEYS } from "../../../backends/facts-db/contradictions.js";
 import { getCronModelConfig, getDefaultCronModel } from "../../../config.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
+import { isEntityEnrichmentHardFailure } from "../../../services/entity-enrichment-adaptive.js";
 import { getEffectivenessReport, runClosedLoopAnalysis } from "../../../services/feedback-effectiveness.js";
 import {
   cleanupImplicitFeedbackDuplicates,
@@ -1815,11 +1816,11 @@ export function registerManageReflectionPipeline(
             const estimatedRunsRemaining =
               res.estimatedRunsRemaining ?? (mode === "all" ? 0 : Math.ceil(remainingTotal / Math.max(1, limit)));
             const limitLabel = mode === "all" ? "all" : String(res.effectiveLimit ?? limit);
-            const incompleteCatchUp =
-              res.stopReason === "exhausted" ||
-              res.stopReason === "time_budget" ||
-              res.stopReason === "provider_budget";
-            const hasPartialFailure = (res.llmFailures ?? 0) > 0 || incompleteCatchUp;
+            const hasPartialFailure = isEntityEnrichmentHardFailure({
+              llmFailures: res.llmFailures,
+              stopReason: res.stopReason,
+              processed: res.processed,
+            });
             const exitCode = hasPartialFailure ? 2 : 0;
             const exitReason = hasPartialFailure
               ? (res.llmFailures ?? 0) > 0

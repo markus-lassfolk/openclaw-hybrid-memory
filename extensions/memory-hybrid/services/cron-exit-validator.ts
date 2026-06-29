@@ -1033,14 +1033,15 @@ function collectMaintenanceTelemetryIssues(params: {
     : "enrich-entities";
   const enrichLog = enrichEntitiesDetected ? extractStepLog(logContent, enrichStepName) : "";
   const enrichLlmFailures = parsePositiveMetric(enrichLog, "llmFailures");
-  const enrichRemaining = parsePositiveMetric(enrichLog, "remaining");
-  const enrichStopReasonIncomplete = /\bstopReason=(exhausted|time_budget|provider_budget)\b/i.test(enrichLog);
+  const enrichProcessed = parsePositiveMetric(enrichLog, "processed");
   const enrichSemanticPartial = /\bsemantic=partial\b/i.test(enrichLog);
   if (
     enrichEntitiesDetected &&
     ((typeof enrichLlmFailures === "number" && enrichLlmFailures > 0) ||
       enrichSemanticPartial ||
-      (enrichStopReasonIncomplete && (enrichRemaining ?? 0) > 0))
+      (typeof enrichProcessed === "number" &&
+        enrichProcessed === 0 &&
+        /\bstopReason=(exhausted|time_budget|provider_budget)\b/i.test(enrichLog)))
   ) {
     addMaintenanceIssue(
       issues,

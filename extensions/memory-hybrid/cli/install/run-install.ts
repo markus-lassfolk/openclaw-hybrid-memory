@@ -40,6 +40,7 @@ import {
   verifyNpmProjectDependencyPin,
   snapshotNpmProjectPinBeforeUpgrade,
   rollbackNpmProjectPinAfterUpgradeFailure,
+  syncKnownNpmProjectPinWhenExtensionsCanonical,
   type NpmProjectPinBackup,
 } from "./workspace.js";
 import {
@@ -638,6 +639,20 @@ export async function runUpgradeForCli(
   }
   if (npmPin.updated) {
     logger?.info?.(`memory-hybrid: upgrade — npm project dependency pinned to ${installedVersion}`);
+  } else {
+    const staleSync = syncKnownNpmProjectPinWhenExtensionsCanonical({
+      extensionsPluginDir: installedPluginDir,
+      version: installedVersion,
+    });
+    if (staleSync.updated) {
+      logger?.info?.(
+        `memory-hybrid: upgrade — reconciled stale npm-project pin to ${installedVersion} (#2008)`,
+      );
+    } else if (staleSync.attempted && staleSync.error) {
+      logger?.warn?.(
+        `memory-hybrid: upgrade — could not reconcile npm-project pin: ${staleSync.error}${staleSync.guidance ? ` (${staleSync.guidance})` : ""}`,
+      );
+    }
   }
 
   if (options.skipPostUpgradeCron) {

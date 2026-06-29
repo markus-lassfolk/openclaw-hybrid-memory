@@ -10,6 +10,8 @@ import {
   resolveInstalledPluginDir,
   readPluginPackageVersion,
   detectDualPluginInstallVersionMismatch,
+  buildDualInstallReconciliationGuidance,
+  syncKnownNpmProjectPinWhenExtensionsCanonical,
   UPGRADE_REQUIRED_BUNDLE_PATHS,
   verifyNpmProjectDependencyPin,
   verifyUpgradePluginBundle,
@@ -94,6 +96,35 @@ describe("runUpgrade helpers", () => {
     }
     const msg = detectDualPluginInstallVersionMismatch(npmDir, extDir);
     expect(msg).toMatch(/Dual plugin install/i);
+  });
+
+  it("buildDualInstallReconciliationGuidance includes repair commands (#2008)", () => {
+    const npmDir = join(tmp, "npm-copy");
+    const extDir = join(tmp, "ext-copy");
+    for (const dir of [npmDir, extDir]) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "openclaw.plugin.json"), "{}");
+    }
+    writeFileSync(join(npmDir, "package.json"), JSON.stringify({ version: "2026.6.261" }));
+    writeFileSync(join(extDir, "package.json"), JSON.stringify({ version: "2026.6.291" }));
+    const guidance = buildDualInstallReconciliationGuidance(npmDir, extDir);
+    expect(guidance).toMatch(/openclaw plugins install openclaw-hybrid-memory@2026\.6\.291/);
+    expect(guidance).toMatch(/verify --fix/);
+  });
+
+  it("syncKnownNpmProjectPinWhenExtensionsCanonical skips npm-project layout (#2008)", () => {
+    const projectRoot = join(tmp, "npm", "projects", "openclaw-hybrid-memory");
+    const pluginDir = join(projectRoot, "node_modules", "openclaw-hybrid-memory");
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(join(projectRoot, "package.json"), JSON.stringify({ dependencies: { "openclaw-hybrid-memory": "2026.6.291" } }));
+    writeFileSync(join(pluginDir, "openclaw.plugin.json"), "{}");
+    writeFileSync(join(pluginDir, "package.json"), JSON.stringify({ version: "2026.6.291" }));
+    const res = syncKnownNpmProjectPinWhenExtensionsCanonical({
+      extensionsPluginDir: pluginDir,
+      version: "2026.6.291",
+    });
+    expect(res.attempted).toBe(false);
+    expect(res.updated).toBe(false);
   });
 
   it("verifyUpgradePluginBundle passes for the live plugin root", () => {

@@ -897,6 +897,27 @@ error: unknown command 'bar'
       );
     });
 
+    it("allows healthy enrich-entities incremental catch-up on exit=0 (#2009)", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "enrich-entities.exit.txt");
+      const logPath = join(tmpDir, "enrich-entities.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z enrich-entities exit=0\n");
+      writeFileSync(
+        logPath,
+        "enrich-entities processed=200 enriched=41 llmFailures=0 stopReason=exhausted remaining=19789 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["enrich-entities"]);
+
+      expect(result.maintenanceStatus).not.toBe("failed");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          stepName: "enrich-entities",
+          failureClass: "enrich_entities_incomplete_catchup",
+        }),
+      );
+    });
+
     it("detects enrich-entities llmFailures on exit=0 and blocks guard", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "enrich-entities.exit.txt");

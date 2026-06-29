@@ -245,3 +245,34 @@ export function sanitizeProviderPressureBudget(n: number | undefined): number | 
   if (!Number.isFinite(x) || x < 1) return undefined;
   return Math.min(10_000, x);
 }
+
+/** Inputs shared by maintenance orchestrator, CLI, and cron validators (#2009). */
+export type EntityEnrichmentOutcomeInput = {
+  llmFailures?: number;
+  stopReason?: EntityEnrichmentStopReason | string;
+  processed?: number;
+};
+
+/**
+ * True when enrichment should fail maintenance/CLI guards (#2009).
+ * Healthy bounded catch-up (`stopReason=exhausted`, `processed>0`, `llmFailures=0`)
+ * is not a hard failure — only LLM errors or zero-progress budget stops are.
+ */
+export function isEntityEnrichmentHardFailure(input: EntityEnrichmentOutcomeInput): boolean {
+  const llmFailures = input.llmFailures ?? 0;
+  const processed = input.processed ?? 0;
+  const stopReason = input.stopReason ?? "completed";
+  if (llmFailures > 0) return true;
+  if (
+    processed === 0 &&
+    (stopReason === "exhausted" || stopReason === "time_budget" || stopReason === "provider_budget")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** Summary semantic token for enrich-entities logs (#2009). */
+export function entityEnrichmentSemanticStatus(input: EntityEnrichmentOutcomeInput): "partial" | "success" {
+  return isEntityEnrichmentHardFailure(input) ? "partial" : "success";
+}

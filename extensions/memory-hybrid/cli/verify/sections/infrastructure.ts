@@ -12,7 +12,10 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   detectDualPluginInstallVersionMismatch,
+  buildDualInstallReconciliationGuidance,
   resolveKnownNpmProjectPluginDir,
+  syncKnownNpmProjectPinWhenExtensionsCanonical,
+  readPluginPackageVersion,
   resolveNpmProjectPluginDirFromLayout,
 } from "../../install/workspace.js";
 import { capturePluginError, isErrorReporterActive, resolvePendingErrorReportCount } from "../../../services/error-reporter.js";
@@ -66,10 +69,28 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
   const npmProjectPluginDir =
     resolveNpmProjectPluginDirFromLayout(extDir) ?? resolveKnownNpmProjectPluginDir();
   if (npmProjectPluginDir) {
-    const dualInstall = detectDualPluginInstallVersionMismatch(npmProjectPluginDir, extensionsPluginDir);
+    const dualInstall =
+      buildDualInstallReconciliationGuidance(npmProjectPluginDir, extensionsPluginDir) ??
+      detectDualPluginInstallVersionMismatch(npmProjectPluginDir, extensionsPluginDir);
     if (dualInstall) {
       warnings.push(dualInstall);
       log(`${WARN_LINE} Plugin install layout: ${dualInstall}`);
+      if (opts.fix) {
+        const extVer = readPluginPackageVersion(extensionsPluginDir);
+        if (extVer) {
+          const sync = syncKnownNpmProjectPinWhenExtensionsCanonical({
+            extensionsPluginDir,
+            version: extVer,
+          });
+          if (sync.updated) {
+            log(`  → Synced npm-project dependency pin to ${extVer}`);
+            const idx = warnings.findIndex((w) => w === dualInstall);
+            if (idx >= 0) warnings.splice(idx, 1);
+          } else if (sync.error) {
+            log(`  → Could not sync npm-project pin: ${sync.error}`);
+          }
+        }
+      }
     }
   }
 
