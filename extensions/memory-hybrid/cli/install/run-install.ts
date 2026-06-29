@@ -45,7 +45,13 @@ import {
 import {
   formatManualUpgradeFallback,
   preflightUpgradePluginConfig,
+  runStandaloneUpgradeInstall,
 } from "./upgrade-config-preflight.js";
+
+export type RunUpgradeForCliOptions = {
+  /** Skip cron normalization when config was not fully parsed (upgrade-only fast path). */
+  skipPostUpgradeCron?: boolean;
+};
 
 export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
   const openclawDir = join(homedir(), ".openclaw");
@@ -500,7 +506,11 @@ function rollbackUpgradeAfterFailure(opts: {
   return { pluginRestored, npmRestored, error };
 }
 
-export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: string): Promise<UpgradeCliResult> {
+export async function runUpgradeForCli(
+  ctx: HandlerContext,
+  requestedVersion?: string,
+  options: RunUpgradeForCliOptions = {},
+): Promise<UpgradeCliResult> {
   const { cfg, logger } = ctx;
   const preUpgradePluginDir = findPluginRoot(import.meta.url);
   const pluginPackageName = basename(preUpgradePluginDir);
@@ -526,15 +536,14 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
     installedPluginDir: preUpgradePluginDir,
     targetVersion: version,
   });
+  if (!preflight.canProceedWithUpgrade) {
+    return {
+      ok: false,
+      error: `${preflight.message ?? "Upgrade preflight blocked."} ${formatManualUpgradeFallback(version)}`,
+    };
+  }
   if (preflight.message) {
-    if (preflight.canProceedWithUpgrade) {
-      logger?.warn?.(`memory-hybrid: upgrade preflight — ${preflight.message}`);
-    } else {
-      return {
-        ok: false,
-        error: `${preflight.message} ${formatManualUpgradeFallback(version)}`,
-      };
-    }
+    logger?.warn?.(`memory-hybrid: upgrade preflight — ${preflight.message}`);
   }
 
   const backupDir = join(dirname(preUpgradePluginDir), `${basename(preUpgradePluginDir)}.bak-${Date.now()}`);
@@ -549,26 +558,20 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
     };
   }
   // Standalone installer works even when config is invalid; target the same parent dir as the running plugin.
-  const npxArgs = ["-y", "openclaw-hybrid-memory-install", version];
-  const r = spawnSync(npxExecutable(), npxArgs, {
-    stdio: "inherit",
-    cwd: homedir(),
-    shell: false,
-    env: { ...process.env, OPENCLAW_EXTENSIONS_DIR: extensionsParentDir },
-  });
-  if (r.status !== 0) {
+  const installResult = runStandaloneUpgradeInstall(version, extensionsParentDir);
+  if (!installResult.ok) {
     try {
       rollbackUpgradeToPreInstallState(preUpgradePluginDir, installedPluginDir, backupDir);
     } catch (e) {
       capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:rollback" });
       return {
         ok: false,
-        error: `Install failed (exit ${r.status}). Rollback also failed: ${e}. Run manually: npx -y openclaw-hybrid-memory-install ${version}`,
+        error: `${installResult.error ?? "Install failed"}. Rollback also failed: ${e}. ${formatManualUpgradeFallback(version)}`,
       };
     }
     return {
       ok: false,
-      error: `Install failed (exit ${r.status}). Run manually: npx -y openclaw-hybrid-memory-install ${version}`,
+      error: installResult.error ?? `Install failed. ${formatManualUpgradeFallback(version)}`,
     };
   }
 
@@ -637,33 +640,39 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
     logger?.info?.(`memory-hybrid: upgrade — npm project dependency pinned to ${installedVersion}`);
   }
 
-  // Ensure maintenance cron jobs exist (add missing, normalize existing; never re-enable disabled)
-  try {
-    const openclawDir = join(homedir(), ".openclaw");
-    const pluginConfig = getCronModelConfig(cfg);
-    const scheduleOverrides: Record<string, string> = {};
-    if (typeof cfg.nightlyCycle?.schedule === "string" && cfg.nightlyCycle.schedule.trim().length > 0) {
-      scheduleOverrides[`${PLUGIN_JOB_ID_PREFIX}nightly-dream-cycle`] = cfg.nightlyCycle.schedule;
+  if (options.skipPostUpgradeCron) {
+    logger?.info?.(
+      "memory-hybrid: upgrade — skipped post-upgrade cron normalization (upgrade-only mode). Run openclaw hybrid-mem verify --fix after upgrade.",
+    );
+  } else {
+    // Ensure maintenance cron jobs exist (add missing, normalize existing; never re-enable disabled)
+    try {
+      const openclawDir = join(homedir(), ".openclaw");
+      const pluginConfig = getCronModelConfig(cfg);
+      const scheduleOverrides: Record<string, string> = {};
+      if (typeof cfg.nightlyCycle?.schedule === "string" && cfg.nightlyCycle.schedule.trim().length > 0) {
+        scheduleOverrides[`${PLUGIN_JOB_ID_PREFIX}nightly-dream-cycle`] = cfg.nightlyCycle.schedule;
+      }
+      if (typeof cfg.sensorSweep?.schedule === "string" && cfg.sensorSweep.schedule.trim().length > 0) {
+        scheduleOverrides[`${PLUGIN_JOB_ID_PREFIX}sensor-sweep`] = cfg.sensorSweep.schedule;
+      }
+      const { added, normalized } = ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
+        normalizeExisting: true,
+        reEnableDisabled: false,
+        consolidatedCronJobs: readConsolidatedCronJobsFlag(cfg),
+        scheduleOverrides: Object.keys(scheduleOverrides).length > 0 ? scheduleOverrides : undefined,
+        featureGates: buildMaintenanceCronFeatureGates(cfg),
+        digestWeeklyDelivery: cfg.digest.weekly.delivery,
+      });
+      if (added.length > 0 || normalized.length > 0) {
+        logger?.info?.(
+          `memory-hybrid: upgrade — cron jobs: ${added.length} added, ${normalized.length} normalized (disabled jobs left as-is). Run openclaw hybrid-mem verify to confirm.`,
+        );
+      }
+    } catch (err) {
+      capturePluginError(err as Error, { subsystem: "cli", operation: "runUpgradeForCli:ensure-cron-jobs" });
+      // non-fatal: user can run verify --fix later
     }
-    if (typeof cfg.sensorSweep?.schedule === "string" && cfg.sensorSweep.schedule.trim().length > 0) {
-      scheduleOverrides[`${PLUGIN_JOB_ID_PREFIX}sensor-sweep`] = cfg.sensorSweep.schedule;
-    }
-    const { added, normalized } = ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
-      normalizeExisting: true,
-      reEnableDisabled: false,
-      consolidatedCronJobs: readConsolidatedCronJobsFlag(cfg),
-      scheduleOverrides: Object.keys(scheduleOverrides).length > 0 ? scheduleOverrides : undefined,
-      featureGates: buildMaintenanceCronFeatureGates(cfg),
-      digestWeeklyDelivery: cfg.digest.weekly.delivery,
-    });
-    if (added.length > 0 || normalized.length > 0) {
-      logger?.info?.(
-        `memory-hybrid: upgrade — cron jobs: ${added.length} added, ${normalized.length} normalized (disabled jobs left as-is). Run openclaw hybrid-mem verify to confirm.`,
-      );
-    }
-  } catch (err) {
-    capturePluginError(err as Error, { subsystem: "cli", operation: "runUpgradeForCli:ensure-cron-jobs" });
-    // non-fatal: user can run verify --fix later
   }
   let mergedConfig: Record<string, unknown> = {};
   try {
