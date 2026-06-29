@@ -422,12 +422,7 @@ export async function routePersonaProposal(input: RoutePersonaProposalInput): Pr
     recommendedTargetFile !== "memory_fact" &&
     !input.allowedFiles.includes(recommendedTargetFile)
   ) {
-    const fallback = input.allowedFiles.includes("USER.md") ? "USER.md" : input.allowedFiles[0];
-    if (fallback) {
-      recommendedTargetFile = fallback as AuthorityTarget;
-      routingScore *= 0.8;
-      routingRationale += ` Recommended file not in allowedFiles; softened to ${fallback}.`;
-    }
+    routingRationale += ` Note: ${recommendedTargetFile} is not in personaProposals.allowedFiles; retarget suggestion remains advisory.`;
   }
 
   const evidence: RuleRoutingEvidence[] = [];
@@ -702,6 +697,31 @@ export function resolvePersonaRuleRoutingConfig(
   cfg: { personaRuleRouting?: PersonaRuleRoutingConfig },
 ): PersonaRuleRoutingConfig {
   return { ...DEFAULT_PERSONA_RULE_ROUTING, ...cfg.personaRuleRouting };
+}
+
+/** No-op assessment when persona rule routing is disabled. */
+export function createDisabledRoutingPassthroughAssessment(input: {
+  targetFile: string;
+  confidence: number;
+  suggestedChange: string;
+}): PersonaProposalAssessment {
+  return {
+    supportScore: input.confidence,
+    routingScore: 0,
+    dedupScore: 0,
+    contradictionRisk: 0,
+    mutationRisk: computeMutationRisk(input.targetFile, input.suggestedChange),
+    llmConfidenceHint: input.confidence,
+    overallDisposition: "propose",
+    recommendedTargetFile: input.targetFile as AuthorityTarget,
+    routingRationale: "Persona rule routing disabled.",
+    dedupCandidates: [],
+    contradictionCandidates: [],
+    evidence: [],
+    humanReviewRequired: false,
+    applyAllowed: true,
+    contradiction: false,
+  };
 }
 
 export function shouldBlockProposalCreation(

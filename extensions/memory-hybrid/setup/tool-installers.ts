@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { dirname, join as pathJoin } from "node:path";
+import { join as pathJoin } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import type { BootstrapPhaseConfig } from "../config.js";
@@ -260,7 +260,7 @@ function installPersonaTools(ctx: PersonaInstallerContext, api: ClawdbotPluginAp
       crystallizationStore,
       toolProposalStore,
       embeddings,
-      workspaceRoot: dirname(api.resolvePath(".")),
+      workspaceRoot: api.resolvePath("."),
     },
     api,
   );

@@ -13,6 +13,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { ProposalEntry, ProposalsDB } from "../backends/proposals-db.js";
 import { buildAppliedContent, buildUnifiedDiff, parseSuggestedChange, assessPersonaProposalRoutingSync } from "../cli/proposals.js";
+import { resolvePersonaRuleRoutingConfig } from "./persona-rule-router.js";
 import type { HybridMemoryConfig } from "../config.js";
 import {
   emitPersonaApplied,
@@ -624,50 +625,56 @@ function analyzePersonaProposal(
       1,
     );
   }
-  const routingAssessment = assessPersonaProposalRoutingSync({
-    targetFile: p.targetFile,
-    title: p.title,
-    observation: p.observation,
-    suggestedChange: p.suggestedChange,
-    confidence: p.confidence,
-    evidenceSessions: p.evidenceSessions ?? [],
-    workspaceRoot: item.workspace,
-    allowedFiles: cfg.personaProposals.allowedFiles,
-    personaRuleRouting: cfg.personaProposals.personaRuleRouting,
-  });
-  if (routingAssessment.blockReason === "already-in-file" && routingAssessment.blockCandidate) {
-    return rejectOrDefer(
-      policy,
-      "low",
-      "already-in-file",
-      `Proposed text already present in ${routingAssessment.blockCandidate.location}.`,
-      [...evidence, ...routingAssessment.evidence],
-      1,
-    );
-  }
-  if (routingAssessment.contradiction || routingAssessment.contradictionCandidates.length > 0) {
-    return {
-      risk: "medium",
-      action: "deferred",
-      reasonCode: "policy-requires-human",
-      actionClass: "observe",
-      capabilityClass: "read-only",
+  const routingCfg = resolvePersonaRuleRoutingConfig({ personaRuleRouting: cfg.personaProposals.personaRuleRouting });
+  let routingHumanReviewRequired = false;
+  if (routingCfg.enabled) {
+    const routingAssessment = assessPersonaProposalRoutingSync({
+      targetFile: p.targetFile,
+      title: p.title,
+      observation: p.observation,
+      suggestedChange: p.suggestedChange,
       confidence: p.confidence,
-      humanReviewRequired: true,
-      diffSummary: summarizeDiff(p, item),
-      evidence: [...evidence, ...routingAssessment.evidence],
-      applyAllowed: false,
-    };
-  }
-  if (routingAssessment.routingSuggestion && routingAssessment.routingScore >= 0.7) {
-    evidence.push({
-      type: "rule",
-      id: routingAssessment.routingSuggestion.recommendedTargetFile,
-      summary: `Routing suggestion: ${routingAssessment.routingSuggestion.recommendedTargetFile} — ${routingAssessment.routingSuggestion.rationale}`,
+      evidenceSessions: p.evidenceSessions ?? [],
+      workspaceRoot: item.workspace,
+      allowedFiles: cfg.personaProposals.allowedFiles,
+      personaRuleRouting: cfg.personaProposals.personaRuleRouting,
     });
-  }
-  for (const entry of routingAssessment.evidence) {
-    evidence.push({ type: entry.type, id: entry.id, summary: entry.summary });
+    if (routingAssessment.blockReason === "already-in-file" && routingAssessment.blockCandidate) {
+      return rejectOrDefer(
+        policy,
+        "low",
+        "already-in-file",
+        `Proposed text already present in ${routingAssessment.blockCandidate.location}.`,
+        [...evidence, ...routingAssessment.evidence],
+        1,
+      );
+    }
+    if (routingAssessment.contradiction || routingAssessment.contradictionCandidates.length > 0) {
+      return {
+        risk: "medium",
+        action: "deferred",
+        reasonCode: "policy-requires-human",
+        actionClass: "observe",
+        capabilityClass: "read-only",
+        confidence: p.confidence,
+        humanReviewRequired: true,
+        diffSummary: summarizeDiff(p, item),
+        evidence: [...evidence, ...routingAssessment.evidence],
+        applyAllowed: false,
+      };
+    }
+    if (routingAssessment.routingSuggestion && routingAssessment.routingScore >= 0.7) {
+      evidence.push({
+        type: "rule",
+        id: routingAssessment.routingSuggestion.recommendedTargetFile,
+        summary: `Routing suggestion: ${routingAssessment.routingSuggestion.recommendedTargetFile} — ${routingAssessment.routingSuggestion.rationale}`,
+      });
+    }
+    for (const entry of routingAssessment.evidence) {
+      evidence.push({ type: entry.type, id: entry.id, summary: entry.summary });
+    }
+    routingHumanReviewRequired =
+      routingAssessment.humanReviewRequired && routingAssessment.routingScore >= 0.7;
   }
   if (isStaleTarget(item)) {
     return rejectOrDefer(
@@ -690,7 +697,7 @@ function analyzePersonaProposal(
   }
   if (!hasEvidence(p)) return defer("low", "missing-evidence", diffSummary, evidence, p.confidence);
   if (policy !== "apply-safe") return defer("low", "policy-requires-human", diffSummary, evidence, p.confidence);
-  if (routingAssessment.humanReviewRequired && routingAssessment.routingScore >= 0.7) {
+  if (routingHumanReviewRequired) {
     return defer("low", "policy-requires-human", diffSummary, evidence, p.confidence);
   }
   if (!hasReliableTargetSnapshot(p)) {

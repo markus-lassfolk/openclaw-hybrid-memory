@@ -18,6 +18,7 @@ import {
   type PersonaProposalAssessment,
   classifyAuthorityBucket,
   findCrossFileContentMatch,
+  createDisabledRoutingPassthroughAssessment,
   resolvePersonaRuleRoutingConfig,
   routePersonaProposal,
   shouldBlockProposalCreation,
@@ -385,7 +386,11 @@ export async function assessPersonaProposalRouting(
 ): Promise<PersonaProposalAssessment> {
   const routing = resolvePersonaRuleRoutingConfig({ personaRuleRouting: input.personaRuleRouting });
   if (!routing.enabled) {
-    return assessPersonaProposalRoutingSync(input);
+    return createDisabledRoutingPassthroughAssessment({
+      targetFile: input.targetFile,
+      confidence: input.confidence,
+      suggestedChange: input.suggestedChange,
+    });
   }
   return routePersonaProposal({
     targetFile: input.targetFile,

@@ -306,7 +306,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
           };
         }
 
-        const wsRoot = workspaceRoot ?? dirname(api.resolvePath("."));
+        const wsRoot = workspaceRoot ?? api.resolvePath(".");
         const routingAssessment = await assessPersonaProposalRouting({
           targetFile,
           title,

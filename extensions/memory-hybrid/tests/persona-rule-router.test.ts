@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
-import { assessPersonaProposalRoutingSync } from "../cli/proposals.js";
+import { assessPersonaProposalRouting, assessPersonaProposalRoutingSync } from "../cli/proposals.js";
 import {
   classifyAuthorityBucket,
   findCrossFileContentMatch,
@@ -80,6 +80,24 @@ describe("routePersonaProposal", () => {
     expect(assessment.routingRationale).toMatch(/operational|GitHub|issue|workflow/i);
     expect(assessment.routingSuggestion?.recommendedTargetFile).toBe("AGENTS.md");
     expect(assessment.routingSuggestion?.callerTargetFile).toBe("SOUL.md");
+  });
+
+  it("preserves AGENTS.md routing suggestion when AGENTS.md is not in allowedFiles", async () => {
+    const assessment = await routePersonaProposal({
+      targetFile: "SOUL.md",
+      title: REGRESSION_PROPOSAL.title,
+      observation: REGRESSION_PROPOSAL.observation,
+      suggestedChange: REGRESSION_PROPOSAL.suggestedChange,
+      confidence: REGRESSION_PROPOSAL.confidence,
+      evidenceSessions: ["session-1"],
+      workspaceRoot: tmpDir,
+      allowedFiles: ["SOUL.md", "IDENTITY.md", "USER.md"],
+      routing: DEFAULT_PERSONA_RULE_ROUTING,
+    });
+
+    expect(assessment.recommendedTargetFile).toBe("AGENTS.md");
+    expect(assessment.routingSuggestion?.recommendedTargetFile).toBe("AGENTS.md");
+    expect(assessment.routingRationale).toMatch(/allowedFiles/i);
   });
 
   it("rejects semantic duplicate rule facts at or above dedupe threshold", async () => {
@@ -277,6 +295,23 @@ describe("routePersonaProposal", () => {
       routing: DEFAULT_PERSONA_RULE_ROUTING,
     });
     expect(personaRuleRoutingMetrics.routingSuggestions).toBeGreaterThan(0);
+  });
+
+  it("does not block proposal creation when routing is disabled", async () => {
+    writeFileSync(join(tmpDir, "AGENTS.md"), `# AGENTS\n${LIVE_GITHUB_RULE}\n`, "utf-8");
+    const assessment = await assessPersonaProposalRouting({
+      targetFile: "USER.md",
+      title: "Dup",
+      observation: "Observed",
+      suggestedChange: LIVE_GITHUB_RULE,
+      confidence: 0.9,
+      evidenceSessions: ["s1"],
+      workspaceRoot: tmpDir,
+      allowedFiles: ["USER.md"],
+      personaRuleRouting: { enabled: false },
+    });
+    expect(assessment.blockReason).toBeUndefined();
+    expect(shouldBlockProposalCreation(assessment, "advisory")).toBe(false);
   });
 });
 
