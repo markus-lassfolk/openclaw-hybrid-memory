@@ -22,6 +22,25 @@ export type MultiAgentConfig = {
   trustToolScopeParams?: boolean;
 };
 
+/** Durable-rule routing / dedup / contradiction gates for persona proposals (#2002). */
+export type PersonaRuleRoutingConfig = {
+  enabled: boolean;
+  routingMode: "advisory" | "enforce";
+  semanticDedup: { enabled: boolean };
+  dedupeThreshold: number;
+  nearDedupeThreshold: number;
+  contradictionThreshold: number;
+  routingCacheTtlSeconds: number;
+  topK: number;
+};
+
+export type PersonaProposalMetricsSnapshot = {
+  routingSuggestions: number;
+  dedupHits: number;
+  contradictionHits: number;
+  contradictionDegraded: number;
+};
+
 /** Opt-in persona proposals: agent self-evolution with human approval gate */
 export type PersonaProposalsConfig = {
   enabled: boolean;
@@ -52,6 +71,10 @@ export type PersonaProposalsConfig = {
   separateSelfCorrectionQuota: boolean;
   /** Unified workshop queue cap across persona, crystallization, tool, and procedure-skill backlogs (default: 50). */
   workshopMaxPending?: number;
+  /** Destination classifier + semantic dedup + contradiction detection (#2002). */
+  personaRuleRouting?: Partial<PersonaRuleRoutingConfig>;
+  /** Runtime counters surfaced in workshop digest (populated by persona-rule-router). */
+  metrics?: PersonaProposalMetricsSnapshot;
 };
 
 /** Unified memory workshop (proposal review queue). */

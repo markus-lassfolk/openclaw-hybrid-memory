@@ -13,6 +13,7 @@ import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import {
   applyApprovedProposal,
+  assessPersonaProposalRouting,
   capProposalConfidence,
   findDuplicateProposal,
   validateProposalContent,
@@ -21,6 +22,8 @@ import { type HybridMemoryConfig, PROPOSAL_STATUSES, isCompactVerbosity } from "
 import { capturePluginError } from "../services/error-reporter.js";
 import { emitPersonaApplied, emitPersonaProposed } from "../services/change-feed-emit.js";
 import type { ChangeFeed } from "../services/change-feed.js";
+import type { EmbeddingProvider } from "../services/embeddings/types.js";
+import { shouldBlockProposalCreation } from "../services/persona-rule-router.js";
 import { enforceMaxPendingCap, resolveWorkshopMaxPending } from "../services/unified-proposals.js";
 import { resolveWorkshopAppliedSessionKey, resolveWorkshopProposedSessionKey } from "../services/workshop-config.js";
 import { SECONDS_PER_DAY } from "../utils/constants.js";
@@ -36,6 +39,8 @@ export interface PluginContext {
   factsDb?: FactsDB;
   crystallizationStore?: CrystallizationStore | null;
   toolProposalStore?: ToolProposalStore | null;
+  embeddings?: EmbeddingProvider | null;
+  workspaceRoot?: string;
 }
 
 /**
@@ -43,7 +48,17 @@ export interface PluginContext {
  * Only registers if cfg.personaProposals.enabled && proposalsDb is available
  */
 export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi) {
-  const { proposalsDb, cfg, resolvedSqlitePath, changeFeed, factsDb, crystallizationStore, toolProposalStore } = ctx;
+  const {
+    proposalsDb,
+    cfg,
+    resolvedSqlitePath,
+    changeFeed,
+    factsDb,
+    crystallizationStore,
+    toolProposalStore,
+    embeddings,
+    workspaceRoot,
+  } = ctx;
 
   // Only register if persona proposals are enabled and database is available
   if (!cfg.personaProposals.enabled || !proposalsDb) {
@@ -291,6 +306,42 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
           };
         }
 
+        const wsRoot = workspaceRoot ?? dirname(api.resolvePath("."));
+        const routingAssessment = await assessPersonaProposalRouting({
+          targetFile,
+          title,
+          observation,
+          suggestedChange,
+          confidence: cappedConfidence,
+          evidenceSessions,
+          workspaceRoot: wsRoot,
+          allowedFiles: cfg.personaProposals.allowedFiles,
+          factsDb,
+          embeddings,
+          personaRuleRouting: cfg.personaProposals.personaRuleRouting,
+        });
+        const routingMode = cfg.personaProposals.personaRuleRouting?.routingMode ?? "advisory";
+        if (shouldBlockProposalCreation(routingAssessment, routingMode)) {
+          const block = routingAssessment.blockReason ?? "blocked";
+          const candidate = routingAssessment.blockCandidate;
+          return {
+            content: [
+              {
+                type: "text",
+                text: candidate
+                  ? `Proposal blocked (${block}): similar content exists in ${candidate.location}.`
+                  : `Proposal blocked (${block}).`,
+              },
+            ],
+            details: {
+              error: block,
+              candidate,
+              routingSuggestion: routingAssessment.routingSuggestion,
+              assessment: routingAssessment,
+            },
+          };
+        }
+
         // Calculate expiry
         const expiresAt =
           cfg.personaProposals.proposalTTLDays > 0
@@ -465,10 +516,19 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
           content: [
             {
               type: "text",
-              text: `Proposal created: ${proposal.id}\nTitle: ${title}\nTarget: ${targetFile}\nStatus: pending\n\nAwaiting human review. Use persona_proposals_list to view all pending proposals.`,
+              text: routingAssessment.routingSuggestion
+                ? `Proposal created: ${proposal.id}\nTitle: ${title}\nTarget: ${targetFile}\nSuggested target: ${routingAssessment.routingSuggestion.recommendedTargetFile} (${routingAssessment.routingSuggestion.rationale})\nStatus: pending`
+                : `Proposal created: ${proposal.id}\nTitle: ${title}\nTarget: ${targetFile}\nStatus: pending\n\nAwaiting human review. Use persona_proposals_list to view all pending proposals.`,
             },
           ],
-          details: { proposalId: proposal.id, status: "pending", expiresAt: proposal.expiresAt },
+          details: {
+            proposalId: proposal.id,
+            status: "pending",
+            expiresAt: proposal.expiresAt,
+            routingSuggestion: routingAssessment.routingSuggestion,
+            humanReviewRequired: routingAssessment.humanReviewRequired,
+            assessment: routingAssessment,
+          },
         };
       },
     },

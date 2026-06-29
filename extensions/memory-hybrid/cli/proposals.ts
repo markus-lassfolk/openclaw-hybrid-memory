@@ -8,11 +8,21 @@ import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
+import type { FactsDB } from "../backends/facts-db.js";
 import type { ProposalEntry, ProposalsDB } from "../backends/proposals-db.js";
 import type { IdentityFileType, HybridMemoryConfig } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { emitPersonaApplied, supersedeActiveProposedEvent } from "../services/change-feed-emit.js";
 import type { ChangeFeed } from "../services/change-feed.js";
+import {
+  type PersonaProposalAssessment,
+  classifyAuthorityBucket,
+  findCrossFileContentMatch,
+  resolvePersonaRuleRoutingConfig,
+  routePersonaProposal,
+  shouldBlockProposalCreation,
+} from "../services/persona-rule-router.js";
+import type { EmbeddingProvider } from "../services/embeddings/types.js";
 import { writeProposalRollback, deleteProposalRollback } from "../services/proposal-rollback.js";
 import {
   enforceMaxPendingCap,
@@ -195,6 +205,8 @@ export function getProposalExpiryError(
 /** Snapshot + validation helpers for pipeline-created proposals (self-correction, reinforcement, generate-proposals). */
 export function resolvePipelineProposalTarget(input: {
   targetFile: string;
+  title?: string;
+  observation?: string;
   suggestedChange: string;
   allowedFiles: readonly string[];
   workspaceRoot: string;
@@ -203,9 +215,15 @@ export function resolvePipelineProposalTarget(input: {
   minConfidence?: number;
   nowSec?: number;
   proposalsDb?: ProposalsDB;
+  factsDb?: FactsDB | null;
+  embeddings?: EmbeddingProvider | null;
+  personaRuleRouting?: HybridMemoryConfig["personaProposals"]["personaRuleRouting"];
+  evidenceSessions?: string[];
   /** When set, block pipeline proposal creation when the unified workshop queue is full. */
   workshopStores?: UnifiedProposalStores;
   maxPending?: number;
+  /** Populated when routing assessment runs (for callers/logging). */
+  routingAssessment?: PersonaProposalAssessment;
 }): {
   targetFile: string;
   confidence: number;
@@ -217,6 +235,22 @@ export function resolvePipelineProposalTarget(input: {
   if (!targetFile || !input.allowedFiles.includes(targetFile as IdentityFileType)) return null;
   const contentCheck = validateProposalContent(input.suggestedChange);
   if (!contentCheck.ok) return null;
+  const routing = resolvePersonaRuleRoutingConfig({ personaRuleRouting: input.personaRuleRouting });
+  if (routing.enabled) {
+    const syncAssessment = assessPersonaProposalRoutingSync({
+      targetFile,
+      title: input.title ?? "Pipeline proposal",
+      observation: input.observation ?? "",
+      suggestedChange: input.suggestedChange,
+      confidence: input.confidence,
+      evidenceSessions: input.evidenceSessions ?? [],
+      workspaceRoot: input.workspaceRoot,
+      allowedFiles: input.allowedFiles,
+      personaRuleRouting: input.personaRuleRouting,
+    });
+    input.routingAssessment = syncAssessment;
+    if (shouldBlockProposalCreation(syncAssessment, routing.routingMode)) return null;
+  }
   if (input.proposalsDb) {
     const duplicate = input.proposalsDb.findPendingOrAppliedDuplicate(targetFile, input.suggestedChange);
     if (duplicate) return null;
@@ -239,6 +273,152 @@ export function resolvePipelineProposalTarget(input: {
     targetHash: snapshot?.hash ?? null,
     expiresAt: input.proposalTTLDays > 0 ? nowSec + input.proposalTTLDays * 24 * 3600 : null,
   };
+}
+
+export type AssessPersonaProposalRoutingInput = {
+  targetFile: string;
+  title: string;
+  observation: string;
+  suggestedChange: string;
+  confidence: number;
+  evidenceSessions: string[];
+  workspaceRoot: string;
+  allowedFiles: readonly string[];
+  factsDb?: FactsDB | null;
+  embeddings?: EmbeddingProvider | null;
+  personaRuleRouting?: HybridMemoryConfig["personaProposals"]["personaRuleRouting"];
+  adjudicateContradiction?: RoutePersonaProposalInput["adjudicateContradiction"];
+};
+
+type RoutePersonaProposalInput = Parameters<typeof routePersonaProposal>[0];
+
+/** Sync keyword routing + cross-file content checks (no embeddings). */
+export function assessPersonaProposalRoutingSync(
+  input: Omit<AssessPersonaProposalRoutingInput, "factsDb" | "embeddings" | "adjudicateContradiction">,
+): PersonaProposalAssessment {
+  const routing = resolvePersonaRuleRoutingConfig({ personaRuleRouting: input.personaRuleRouting });
+  const crossFileMatch = findCrossFileContentMatch({
+    suggestedChange: input.suggestedChange,
+    workspaceRoot: input.workspaceRoot,
+    excludeFile: input.targetFile,
+  });
+  const body = `${input.title}\n${input.observation}\n${input.suggestedChange}`;
+  const classification = classifyAuthorityBucket(body);
+  const supportScore = computeSupportScoreForRouting(input);
+  const mutationRisk = computeMutationRiskForRouting(input.targetFile, input.suggestedChange);
+
+  let blockReason: PersonaProposalAssessment["blockReason"];
+  let blockCandidate: PersonaProposalAssessment["blockCandidate"];
+  const evidence: PersonaProposalAssessment["evidence"] = [];
+  if (crossFileMatch) {
+    blockReason = "already-in-file";
+    blockCandidate = {
+      source: "file-section",
+      location: crossFileMatch.file,
+      snippet: crossFileMatch.snippet,
+      similarity: 1,
+    };
+    evidence.push({
+      type: "file-section",
+      location: crossFileMatch.file,
+      snippet: crossFileMatch.snippet,
+      summary: `Content already present in ${crossFileMatch.file}.`,
+    });
+  }
+
+  const recommendedTargetFile = classification.bucket;
+  const routingDisagrees =
+    recommendedTargetFile !== "skill_workshop" &&
+    recommendedTargetFile !== "memory_fact" &&
+    recommendedTargetFile !== input.targetFile;
+
+  let routingSuggestion: PersonaProposalAssessment["routingSuggestion"];
+  const routingConfident = classification.routingScore >= 0.7;
+  if (routingDisagrees && routingConfident) {
+    routingSuggestion = {
+      recommendedTargetFile: String(recommendedTargetFile),
+      rationale: classification.rationale,
+      callerTargetFile: input.targetFile,
+    };
+  } else if (routingDisagrees) {
+    routingSuggestion = {
+      recommendedTargetFile: String(recommendedTargetFile),
+      rationale: `${classification.rationale} (low routing confidence ${classification.routingScore.toFixed(2)}; advisory only)`,
+      callerTargetFile: input.targetFile,
+    };
+  }
+
+  let overallDisposition: PersonaProposalAssessment["overallDisposition"] = blockReason ? "reject" : "propose";
+  if (routingDisagrees && routingConfident && !blockReason) overallDisposition = "retarget";
+  if (supportScore < 0.55) {
+    overallDisposition = "reject";
+    blockReason = blockReason ?? "low-support";
+  }
+  if (routing.routingMode === "enforce" && routingDisagrees && routingConfident && !blockReason) {
+    blockReason = "enforce-routing";
+  }
+
+  return {
+    supportScore,
+    routingScore: classification.routingScore,
+    dedupScore: crossFileMatch ? 1 : 0,
+    contradictionRisk: 0,
+    mutationRisk,
+    llmConfidenceHint: input.confidence,
+    overallDisposition,
+    recommendedTargetFile,
+    routingRationale: classification.rationale,
+    routingSuggestion,
+    dedupCandidates: [],
+    contradictionCandidates: [],
+    evidence,
+    humanReviewRequired: Boolean((routingDisagrees && routingConfident) || blockReason),
+    applyAllowed: !blockReason,
+    contradiction: false,
+    blockReason,
+    blockCandidate,
+  };
+}
+
+export async function assessPersonaProposalRouting(
+  input: AssessPersonaProposalRoutingInput,
+): Promise<PersonaProposalAssessment> {
+  const routing = resolvePersonaRuleRoutingConfig({ personaRuleRouting: input.personaRuleRouting });
+  if (!routing.enabled) {
+    return assessPersonaProposalRoutingSync(input);
+  }
+  return routePersonaProposal({
+    targetFile: input.targetFile,
+    title: input.title,
+    observation: input.observation,
+    suggestedChange: input.suggestedChange,
+    confidence: input.confidence,
+    evidenceSessions: input.evidenceSessions,
+    workspaceRoot: input.workspaceRoot,
+    allowedFiles: input.allowedFiles,
+    routing,
+    factsDb: input.factsDb,
+    embedText: input.embeddings ? (text) => input.embeddings!.embed(text) : undefined,
+    adjudicateContradiction: input.adjudicateContradiction,
+  });
+}
+
+function computeSupportScoreForRouting(input: {
+  confidence: number;
+  evidenceSessions: string[];
+  observation: string;
+}): number {
+  const evidenceBoost = Math.min(0.25, Math.max(0, input.evidenceSessions.length - 1) * 0.05);
+  const base = Math.max(0, Math.min(1, input.confidence));
+  return Math.min(1, base * 0.85 + evidenceBoost + (input.observation.trim().length > 40 ? 0.05 : 0));
+}
+
+function computeMutationRiskForRouting(targetFile: string, suggestedChange: string): number {
+  if (targetFile === "SOUL.md" || targetFile === "IDENTITY.md") return 0.85;
+  if (targetFile === "USER.md") return 0.7;
+  if (/^\s*replace\b/i.test(suggestedChange)) return 0.8;
+  if (targetFile === "AGENTS.md" || targetFile === "TOOLS.md") return 0.45;
+  return 0.55;
 }
 
 function buildAppendBlock(proposalId: string, observation: string, suggestedChange: string, timestamp: string): string {

@@ -12,7 +12,7 @@ import { existsSync, lstatSync, readFileSync, realpathSync, renameSync, rmSync, 
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { ProposalEntry, ProposalsDB } from "../backends/proposals-db.js";
-import { buildAppliedContent, buildUnifiedDiff, parseSuggestedChange } from "../cli/proposals.js";
+import { buildAppliedContent, buildUnifiedDiff, parseSuggestedChange, assessPersonaProposalRoutingSync } from "../cli/proposals.js";
 import type { HybridMemoryConfig } from "../config.js";
 import {
   emitPersonaApplied,
@@ -371,7 +371,7 @@ export function decidePersonaProposal(
   },
 ): PendingDecision {
   const all = input.allProposals ?? input.proposalsDb.list();
-  const analysis = analyzePersonaProposal(item, context.policy as PersonaProposalTriagePolicy, all);
+  const analysis = analyzePersonaProposal(item, context.policy as PersonaProposalTriagePolicy, all, input.cfg);
   const reportOnly = context.policy === "report-only";
   const readOnlyCapability = context.mode === "dry-run" ? "dry-run" : "read-only";
   const action = reportOnly ? "reported" : analysis.action;
@@ -545,6 +545,7 @@ function analyzePersonaProposal(
   item: PersonaProposalPendingItem,
   policy: PersonaProposalTriagePolicy,
   allProposals: ProposalEntry[],
+  cfg: Pick<HybridMemoryConfig, "personaProposals">,
 ): Analysis {
   const p = item.proposal;
   const text = `${p.title}\n${p.observation}\n${p.suggestedChange}`;
@@ -623,6 +624,51 @@ function analyzePersonaProposal(
       1,
     );
   }
+  const routingAssessment = assessPersonaProposalRoutingSync({
+    targetFile: p.targetFile,
+    title: p.title,
+    observation: p.observation,
+    suggestedChange: p.suggestedChange,
+    confidence: p.confidence,
+    evidenceSessions: p.evidenceSessions ?? [],
+    workspaceRoot: item.workspace,
+    allowedFiles: cfg.personaProposals.allowedFiles,
+    personaRuleRouting: cfg.personaProposals.personaRuleRouting,
+  });
+  if (routingAssessment.blockReason === "already-in-file" && routingAssessment.blockCandidate) {
+    return rejectOrDefer(
+      policy,
+      "low",
+      "already-in-file",
+      `Proposed text already present in ${routingAssessment.blockCandidate.location}.`,
+      [...evidence, ...routingAssessment.evidence],
+      1,
+    );
+  }
+  if (routingAssessment.contradiction || routingAssessment.contradictionCandidates.length > 0) {
+    return {
+      risk: "medium",
+      action: "deferred",
+      reasonCode: "policy-requires-human",
+      actionClass: "observe",
+      capabilityClass: "read-only",
+      confidence: p.confidence,
+      humanReviewRequired: true,
+      diffSummary: summarizeDiff(p, item),
+      evidence: [...evidence, ...routingAssessment.evidence],
+      applyAllowed: false,
+    };
+  }
+  if (routingAssessment.routingSuggestion && routingAssessment.routingScore >= 0.7) {
+    evidence.push({
+      type: "rule",
+      id: routingAssessment.routingSuggestion.recommendedTargetFile,
+      summary: `Routing suggestion: ${routingAssessment.routingSuggestion.recommendedTargetFile} — ${routingAssessment.routingSuggestion.rationale}`,
+    });
+  }
+  for (const entry of routingAssessment.evidence) {
+    evidence.push({ type: entry.type, id: entry.id, summary: entry.summary });
+  }
   if (isStaleTarget(item)) {
     return rejectOrDefer(
       policy,
@@ -644,6 +690,9 @@ function analyzePersonaProposal(
   }
   if (!hasEvidence(p)) return defer("low", "missing-evidence", diffSummary, evidence, p.confidence);
   if (policy !== "apply-safe") return defer("low", "policy-requires-human", diffSummary, evidence, p.confidence);
+  if (routingAssessment.humanReviewRequired && routingAssessment.routingScore >= 0.7) {
+    return defer("low", "policy-requires-human", diffSummary, evidence, p.confidence);
+  }
   if (!hasReliableTargetSnapshot(p)) {
     return defer(
       "low",

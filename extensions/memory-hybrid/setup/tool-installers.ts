@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { join as pathJoin } from "node:path";
+import { dirname, join as pathJoin } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import type { BootstrapPhaseConfig } from "../config.js";
@@ -220,6 +220,7 @@ function selectPersonaToolsContext({
   factsDb,
   crystallizationStore,
   toolProposalStore,
+  embeddings,
   timers,
 }: ToolsContext): PersonaInstallerContext {
   return {
@@ -230,17 +231,37 @@ function selectPersonaToolsContext({
     factsDb,
     crystallizationStore,
     toolProposalStore,
+    embeddings,
     timers,
   };
 }
 
 function installPersonaTools(ctx: PersonaInstallerContext, api: ClawdbotPluginApi): void {
-  const { proposalsDb, cfg, resolvedSqlitePath, changeFeed, factsDb, crystallizationStore, toolProposalStore, timers } =
-    ctx;
+  const {
+    proposalsDb,
+    cfg,
+    resolvedSqlitePath,
+    changeFeed,
+    factsDb,
+    crystallizationStore,
+    toolProposalStore,
+    embeddings,
+    timers,
+  } = ctx;
   if (!(cfg.personaProposals.enabled && proposalsDb)) return;
 
   registerPersonaTools(
-    { proposalsDb, cfg, resolvedSqlitePath, changeFeed, factsDb, crystallizationStore, toolProposalStore },
+    {
+      proposalsDb,
+      cfg,
+      resolvedSqlitePath,
+      changeFeed,
+      factsDb,
+      crystallizationStore,
+      toolProposalStore,
+      embeddings,
+      workspaceRoot: dirname(api.resolvePath(".")),
+    },
     api,
   );
   timers.proposalsPruneTimer.value = null; // proposals-prune handled by maintenance orchestrator cycle tick

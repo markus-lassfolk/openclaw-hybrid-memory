@@ -453,7 +453,38 @@ export function parsePersonaProposalsConfig(cfg: Record<string, unknown>): Perso
       typeof proposalsRaw?.workshopMaxPending === "number" && proposalsRaw.workshopMaxPending >= 0
         ? Math.floor(proposalsRaw.workshopMaxPending)
         : undefined,
+    personaRuleRouting: parsePersonaRuleRoutingConfig(proposalsRaw),
   };
+}
+
+function parsePersonaRuleRoutingConfig(
+  proposalsRaw: Record<string, unknown> | undefined,
+): PersonaProposalsConfig["personaRuleRouting"] {
+  const raw = proposalsRaw?.personaRuleRouting as Record<string, unknown> | undefined;
+  if (!raw) return undefined;
+  const semanticRaw = raw.semanticDedup as Record<string, unknown> | undefined;
+  const out: NonNullable<PersonaProposalsConfig["personaRuleRouting"]> = {};
+  if (raw.enabled === false) out.enabled = false;
+  if (raw.enabled === true) out.enabled = true;
+  if (raw.routingMode === "advisory" || raw.routingMode === "enforce") out.routingMode = raw.routingMode;
+  if (semanticRaw?.enabled === true) out.semanticDedup = { enabled: true };
+  if (semanticRaw?.enabled === false) out.semanticDedup = { enabled: false };
+  if (typeof raw.dedupeThreshold === "number" && raw.dedupeThreshold > 0 && raw.dedupeThreshold <= 1) {
+    out.dedupeThreshold = raw.dedupeThreshold;
+  }
+  if (typeof raw.nearDedupeThreshold === "number" && raw.nearDedupeThreshold > 0 && raw.nearDedupeThreshold <= 1) {
+    out.nearDedupeThreshold = raw.nearDedupeThreshold;
+  }
+  if (typeof raw.contradictionThreshold === "number" && raw.contradictionThreshold > 0 && raw.contradictionThreshold <= 1) {
+    out.contradictionThreshold = raw.contradictionThreshold;
+  }
+  if (typeof raw.routingCacheTtlSeconds === "number" && raw.routingCacheTtlSeconds >= 0) {
+    out.routingCacheTtlSeconds = Math.floor(raw.routingCacheTtlSeconds);
+  }
+  if (typeof raw.topK === "number" && raw.topK > 0) {
+    out.topK = Math.floor(raw.topK);
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 export function parseWorkshopConfig(cfg: Record<string, unknown>): WorkshopConfig | undefined {
