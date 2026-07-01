@@ -918,23 +918,9 @@ export async function withLLMRetry<T>(
  * Tries primary model with retries, then falls back to each fallback model in order.
  * All calls go through the gateway (openai client).
  */
-export async function chatCompleteWithRetry(opts: {
-  model: string;
-  content: string;
-  temperature?: number;
-  maxTokens?: number;
-  openai: OpenAI;
-  fallbackModels?: string[];
-  label?: string;
-  /** Timeout per model attempt (passed to chatComplete). Default 45s. */
-  timeoutMs?: number;
-  /** When aborted (e.g. parent step timeout), the request is cancelled and no fallback models are tried. */
-  signal?: AbortSignal;
-  /** Optional per-instance warning queue for missing provider keys. */
-  pendingWarnings?: PendingLLMWarnings;
-  /** Feature label for cost tracking. Passed to chatComplete which wraps the call in withCostFeature(). */
-  feature?: string;
-}): Promise<string> {
+export async function chatCompleteWithRetry(
+  opts: Parameters<typeof chatCompleteWithRetryDetailed>[0],
+): Promise<string> {
   return (await chatCompleteWithRetryDetailed(opts)).content;
 }
 

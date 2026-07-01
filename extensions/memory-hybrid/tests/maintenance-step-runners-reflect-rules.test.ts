@@ -8,7 +8,7 @@ function minimalBindings(runReflectionRules: ManageBindings["runReflectionRules"
     cfg: { maintenance: { orchestrator: { llmCooldownBetweenStepsMs: 0 } } } as HybridMemoryConfig,
     factsDb: {} as ManageBindings["factsDb"],
     vectorDb: {} as ManageBindings["vectorDb"],
-    embeddings: { embed: vi.fn() } as ManageBindings["embeddings"],
+    embeddings: { embed: vi.fn() } as unknown as ManageBindings["embeddings"],
     reflectionConfig: { defaultWindow: 7, model: "test-model" },
     runReflectionRules,
   } as unknown as ManageBindings;

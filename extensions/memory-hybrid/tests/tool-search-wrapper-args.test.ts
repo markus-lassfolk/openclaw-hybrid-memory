@@ -46,12 +46,14 @@ describe("tool-search-wrapper-args (#1973)", () => {
 
   it("wrapMemoryToolExecuteForWrapperArgs short-circuits before execute when wrapper sentinels present", async () => {
     const logger = { warn: vi.fn() };
-    const execute = vi.fn(async () => ({
+    const execute = vi.fn(async (_toolCallId: string, _params: unknown) => ({
       content: [{ type: "text", text: "Provide a query." }],
       details: { count: 0 },
     }));
     const wrapped = wrapMemoryToolExecuteForWrapperArgs("memory_keyword_recall", execute, logger);
-    const result = await wrapped("tc", { command: "memory_keyword_recall", id: "toolu_123" });
+    const result = (await wrapped("tc", { command: "memory_keyword_recall", id: "toolu_123" })) as {
+      details: { error: string };
+    };
     expect(result.details.error).toBe("wrapper_args_dropped");
     expect(execute).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith(
@@ -61,32 +63,40 @@ describe("tool-search-wrapper-args (#1973)", () => {
   });
 
   it("wrapMemoryToolExecuteForWrapperArgs preserves missing-arg message for bare {}", async () => {
-    const execute = vi.fn(async () => ({
+    const execute = vi.fn(async (_toolCallId: string, _params: unknown) => ({
       content: [{ type: "text", text: "Provide a query." }],
       details: { count: 0 },
     }));
     const wrapped = wrapMemoryToolExecuteForWrapperArgs("memory_keyword_recall", execute);
-    const result = await wrapped("tc", {});
+    const result = (await wrapped("tc", {})) as { details: { count: number }; content: Array<{ text: string }> };
     expect(execute).toHaveBeenCalled();
     expect(result.details.count).toBe(0);
     expect(result.content[0].text).toBe("Provide a query.");
   });
 
   it("wrapMemoryToolExecuteForWrapperArgs preserves intentional empty query message", async () => {
-    const execute = vi.fn(async () => ({
+    const execute = vi.fn(async (_toolCallId: string, _params: unknown) => ({
       content: [{ type: "text", text: "Provide a query." }],
       details: { count: 0 },
     }));
     const wrapped = wrapMemoryToolExecuteForWrapperArgs("memory_keyword_recall", execute);
-    const result = await wrapped("tc", { query: "" });
+    const result = (await wrapped("tc", { query: "" })) as {
+      details: { count: number };
+      content: Array<{ text: string }>;
+    };
     expect(result.details.count).toBe(0);
     expect(result.content[0].text).toBe("Provide a query.");
   });
 
   it("wrapMemoryToolExecuteForWrapperArgs applies sentinel-only mode to unmapped memory_* tools", async () => {
-    const execute = vi.fn(async () => ({ content: [{ type: "text", text: "ok" }], details: {} }));
+    const execute = vi.fn(async (_toolCallId: string, _params: unknown) => ({
+      content: [{ type: "text", text: "ok" }],
+      details: {},
+    }));
     const wrapped = wrapMemoryToolExecuteForWrapperArgs("memory_health", execute);
-    const result = await wrapped("tc", { toolName: "memory_health", arguments: "{}" });
+    const result = (await wrapped("tc", { toolName: "memory_health", arguments: "{}" })) as {
+      details: { error: string };
+    };
     expect(result.details.error).toBe("wrapper_args_dropped");
     expect(execute).not.toHaveBeenCalled();
   });

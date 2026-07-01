@@ -199,13 +199,17 @@ function isMissingRequiredArgsToolResult(result: unknown): boolean {
 }
 
 /** Wrap a tool execute handler to detect wrapper argument loss. */
-export function wrapMemoryToolExecuteForWrapperArgs<T extends readonly unknown[]>(
+export function wrapMemoryToolExecuteForWrapperArgs<T extends readonly unknown[], R>(
   toolName: string,
-  execute: (...args: T) => Promise<unknown> | unknown,
+  execute: (...args: T) => Promise<R> | R,
   logger?: { warn?: (message: string, meta?: Record<string, unknown>) => void },
-): (...args: T) => Promise<unknown> | unknown {
+): (
+  ...args: T
+) => Promise<
+  R | { content: Array<{ type: "text"; text: string }>; details: ToolSearchWrapperDroppedArgsDetails }
+> {
   const mode = resolveWrapperDropMode(toolName);
-  if (!mode) return execute;
+  if (!mode) return async (...args: T) => execute(...args);
 
   return async (...args: T) => {
     const params = args[1] as unknown;
@@ -233,7 +237,10 @@ export function patchMemoryToolRegistrationApi(api: ClawdbotPluginApi): Clawdbot
   const registerTool = api.registerTool.bind(api);
   return {
     ...api,
-    registerTool(toolDef, options) {
+    registerTool(
+      toolDef: Parameters<typeof registerTool>[0],
+      options: Parameters<typeof registerTool>[1],
+    ) {
       if (typeof toolDef.name === "string" && typeof toolDef.execute === "function") {
         const toolName = toolDef.name;
         if (shouldWrapToolForWrapperArgs(toolName)) {

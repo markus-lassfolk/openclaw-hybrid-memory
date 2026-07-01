@@ -18,6 +18,7 @@ import { goalDefaults } from "./helpers/goal-helpers.js";
 function gs(partial: Partial<GoalStewardshipConfig>): GoalStewardshipConfig {
   return {
     enabled: true,
+    autoEnableWhenGoalsPresent: true,
     goalsDir: "state/goals",
     model: null,
     heartbeatStewardship: true,

@@ -17,6 +17,7 @@ const defaults = {
 function baseCfg(over: Partial<GoalStewardshipConfig> = {}): GoalStewardshipConfig {
   return {
     enabled: true,
+    autoEnableWhenGoalsPresent: true,
     goalsDir: "state/goals",
     model: null,
     heartbeatStewardship: true,
@@ -34,6 +35,9 @@ function baseCfg(over: Partial<GoalStewardshipConfig> = {}): GoalStewardshipConf
     multiGoalMaxChars: 12_000,
     multiGoalMaxGoals: 8,
     heartbeatRefreshActiveTask: true,
+    injectActiveGoalsEveryTurn: true,
+    everyTurnGoalMaxChars: 2500,
+    everyTurnGoalMaxGoals: 5,
     confirmationPolicy: { requireRegisterAckForPriorities: ["critical", "high"] },
     llmTriageOnHeartbeat: false,
     triageSuggestHeavyDirective: true,

@@ -779,7 +779,7 @@ export async function runUpgradeForCli(
     if (reconcile.message) {
       logger?.info?.(`memory-hybrid: upgrade — ${reconcile.message}`);
     } else if (reconcile.result.ok && reconcile.result.action === "noop") {
-      logger?.debug?.("memory-hybrid: upgrade — install-index reconciliation: nothing to do");
+      logger?.info?.("memory-hybrid: upgrade — install-index reconciliation: nothing to do");
     }
   } catch (e) {
     capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:install-index-reconcile" });

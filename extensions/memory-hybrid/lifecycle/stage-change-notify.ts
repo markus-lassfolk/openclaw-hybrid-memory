@@ -184,7 +184,9 @@ export function registerChangeNotifyHandler(
       }
 
       const revertMap = new Map<number, string>();
-      trimmed.forEach((ev, index) => revertMap.set(index + 1, ev.id));
+      trimmed.forEach((ev, index) => {
+        revertMap.set(index + 1, ev.id);
+      });
       sessionState.displayRevertMap.set(sessionKey, revertMap);
 
       const block = buildChangeNoticeBlock(trimmed);

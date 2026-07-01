@@ -652,7 +652,7 @@ function analyzePersonaProposal(
     if (routingAssessment.contradiction || routingAssessment.contradictionCandidates.length > 0) {
       return {
         risk: "medium",
-        action: "deferred",
+        action: "deferred-for-human",
         reasonCode: "policy-requires-human",
         actionClass: "observe",
         capabilityClass: "read-only",

@@ -118,6 +118,7 @@ function makeSessionState(): SessionState {
     ambientLastEmbeddingMap: new Map(),
     frustrationStateMap: new Map(),
     frustrationThresholdBandMap: new Map(),
+    pendingCheckpointGuardBySession: new Map(),
     changeNotifyStateMap: new Map(),
     displayRevertMap: new Map(),
     recallInFlightBySession: new Map(),

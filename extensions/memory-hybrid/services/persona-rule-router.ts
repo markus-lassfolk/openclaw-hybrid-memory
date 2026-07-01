@@ -694,7 +694,7 @@ export async function routePersonaProposal(input: RoutePersonaProposalInput): Pr
 }
 
 export function resolvePersonaRuleRoutingConfig(
-  cfg: { personaRuleRouting?: PersonaRuleRoutingConfig },
+  cfg: { personaRuleRouting?: Partial<PersonaRuleRoutingConfig> },
 ): PersonaRuleRoutingConfig {
   return { ...DEFAULT_PERSONA_RULE_ROUTING, ...cfg.personaRuleRouting };
 }

@@ -79,7 +79,14 @@
   },
   "overrides": [
     {
-      "includes": ["**/cli/**", "**/tests/**", "**/utils/logger.ts", "**/utils/hybrid-mem-json-cli.ts"],
+      "includes": [
+        "**/cli/**",
+        "**/tests/**",
+        "**/utils/logger.ts",
+        "**/utils/hybrid-mem-json-cli.ts",
+        "**/setup/cli-context/**",
+        "**/benchmark/**"
+      ],
       "linter": {
         "rules": {
           "suspicious": {

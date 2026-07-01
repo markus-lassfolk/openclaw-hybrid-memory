@@ -33,6 +33,7 @@ import { guardAgainstWrapperArgsDropped } from "../../services/tool-args-guard.j
 import { emitFeatureTelemetry } from "../../services/feature-telemetry.js";
 import { extractStructuredFields } from "../../services/fact-extraction.js";
 import { storeAliases } from "../../services/retrieval-aliases.js";
+import { classifyMemoryOperation } from "../../services/classification.js";
 import { validateScopedClassificationTarget } from "../../services/classification-scope.js";
 import { shouldAutoVerify } from "../../services/verification-store.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../../services/vector-maintenance.js";

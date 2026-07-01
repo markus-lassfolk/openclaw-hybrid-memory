@@ -30,6 +30,7 @@ const defaultCB: GoalStewardshipCircuitBreakerConfig = {
 export function baseGoalStewardshipConfig(over: Partial<GoalStewardshipConfig> = {}): GoalStewardshipConfig {
   return {
     enabled: true,
+    autoEnableWhenGoalsPresent: true,
     goalsDir: "state/goals",
     model: null,
     heartbeatStewardship: true,
