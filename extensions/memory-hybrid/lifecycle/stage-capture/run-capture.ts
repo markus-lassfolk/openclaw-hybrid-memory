@@ -29,6 +29,7 @@ import {
   type MemoryClassification,
 } from "../../services/classification.js";
 import { validateScopedClassificationTarget } from "../../services/classification-scope.js";
+import { resolveDefaultStoreScope } from "../../services/default-store-scope.js";
 import { extractCredentialsFromToolCalls } from "../../services/credential-scanner.js";
 import { isOllamaCircuitBreakerOpen } from "../../services/embeddings.js";
 import { capturePluginError } from "../../services/error-reporter.js";
@@ -345,6 +346,14 @@ export async function runCapture(
         let stored = 0;
         const classifyModel = ctx.cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "nano");
         const classifyMicroBatch = Math.max(1, Math.min(10, ctx.cfg.autoClassify?.batchSize ?? 10));
+        // Resolve scope for conversational auto-capture per multiAgent.defaultStoreScope, same as
+        // the explicit memory_store tool (Issue #1574 / FR-006) — otherwise every ADD from this
+        // path lands in "global" regardless of config, leaking agent-scoped conversations.
+        const { scope: autoCaptureScope, scopeTarget: autoCaptureScopeTarget } = resolveDefaultStoreScope(
+          ctx.cfg,
+          ctx.currentAgentIdRef.value,
+          (message) => api.logger.warn?.(message),
+        );
 
         type CapturePrepared = {
           candidate: (typeof toCapture)[number];
@@ -403,8 +412,8 @@ export async function runCapture(
           if (ctx.cfg.store.classifyBeforeWrite) {
             similarFacts = vector
               ? await ctx.findSimilarByEmbedding(ctx.vectorDb, ctx.factsDb, vector, 3, 0.3, {
-                  scope: "global",
-                  scopeTarget: null,
+                  scope: autoCaptureScope,
+                  scopeTarget: autoCaptureScopeTarget,
                 })
               : [];
             if (similarFacts.length === 0) {
@@ -413,8 +422,8 @@ export async function runCapture(
                 extracted.entity,
                 extracted.key,
                 3,
-                "global",
-                null,
+                autoCaptureScope,
+                autoCaptureScopeTarget,
               );
             }
           }
@@ -481,8 +490,8 @@ export async function runCapture(
                     targetId: classification.targetId,
                     candidates: similarFacts,
                     getById: (id) => ctx.factsDb.getById(id),
-                    scope: "global",
-                    scopeTarget: null,
+                    scope: autoCaptureScope,
+                    scopeTarget: autoCaptureScopeTarget,
                     warn: (message) => api.logger.warn?.(message),
                     warnMessage: `memory-hybrid: blocked cross-scope or unknown auto-capture DELETE target ${classification.targetId}`,
                   });
@@ -511,8 +520,8 @@ export async function runCapture(
                     targetId: classification.targetId,
                     candidates: similarFacts,
                     getById: (id) => ctx.factsDb.getById(id),
-                    scope: "global",
-                    scopeTarget: null,
+                    scope: autoCaptureScope,
+                    scopeTarget: autoCaptureScopeTarget,
                     warn: (message) => api.logger.warn?.(message),
                     warnMessage: `memory-hybrid: blocked cross-scope auto-capture UPDATE target ${classification.targetId}`,
                   });
@@ -718,8 +727,8 @@ export async function runCapture(
             text: textToStore,
             entity: extracted.entity,
             key: extracted.key,
-            scope: "global",
-            scopeTarget: null,
+            scope: autoCaptureScope,
+            scopeTarget: autoCaptureScopeTarget,
           };
           const rawDbForDedup =
             typeof ctx.factsDb.getRawDb === "function" ? ctx.factsDb.getRawDb() : null;
@@ -756,6 +765,8 @@ export async function runCapture(
               extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
               vector,
               embeddingModelName: vector ? ctx.embeddings.modelName : undefined,
+              scope: autoCaptureScope,
+              scopeTarget: autoCaptureScopeTarget,
             },
             api.logger,
           );
@@ -783,6 +794,8 @@ export async function runCapture(
                 sourceTurn: candidate.sourceTurn,
                 extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
                 extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
+                scope: autoCaptureScope,
+                scopeTarget: autoCaptureScopeTarget,
               }),
           );
           if (txResult.skipped) {
@@ -955,6 +968,7 @@ export async function runCapture(
             query: eventText,
             since: Math.floor(Date.now() / 1000) - 300, // within last 5 min
             limit: 1,
+            scopeFilter: { sessionId },
           });
           if (existing.length === 0) {
             try {
@@ -993,6 +1007,7 @@ export async function runCapture(
             query: eventText,
             since: Math.floor(Date.now() / 1000) - 300,
             limit: 1,
+            scopeFilter: { sessionId },
           });
           if (existing.length === 0) {
             try {

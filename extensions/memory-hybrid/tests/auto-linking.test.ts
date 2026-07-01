@@ -30,6 +30,23 @@ afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
+/**
+ * RELATED_TO links are stored undirected: createOrStrengthenRelatedLink() canonicalizes
+ * source/target by lexical id order, so a given RELATED_TO edge may land as either
+ * `getLinksFrom(factId)` or `getLinksTo(factId)` depending on random UUID ordering.
+ * Production call sites always combine both (see graph-retrieval.ts, knowledge-gaps.ts,
+ * shortest-path.ts) — mirror that here instead of asserting on getLinksFrom() alone.
+ */
+function relatedLinksFrom(
+  factId: string,
+): Array<{ id: string; targetFactId: string; linkType: string; strength: number }> {
+  const outgoing = db.getLinksFrom(factId);
+  const incoming = db
+    .getLinksTo(factId)
+    .map((l) => ({ id: l.id, targetFactId: l.sourceFactId, linkType: l.linkType, strength: l.strength }));
+  return [...outgoing, ...incoming];
+}
+
 // ---------------------------------------------------------------------------
 // getKnownEntities
 // ---------------------------------------------------------------------------
@@ -335,7 +352,7 @@ describe("FactsDB.autoLinkEntities — entity-based RELATED_TO links", () => {
     const result = db.autoLinkEntities(newFact.id, newFact.text, null, null, null, cfg);
     expect(result.linkedCount).toBeGreaterThan(0);
 
-    const links = db.getLinksFrom(newFact.id);
+    const links = relatedLinksFrom(newFact.id);
     const toAnchor = links.find((l) => l.targetFactId === anchor.id && l.linkType === "RELATED_TO");
     expect(toAnchor).toBeDefined();
     expect(toAnchor?.strength).toBe(1.0); // exact word-boundary match
@@ -364,7 +381,7 @@ describe("FactsDB.autoLinkEntities — entity-based RELATED_TO links", () => {
     const result = db.autoLinkEntities(newFact.id, newFact.text, null, null, null, cfg);
     expect(result.linkedCount).toBeGreaterThan(0);
 
-    const links = db.getLinksFrom(newFact.id);
+    const links = relatedLinksFrom(newFact.id);
     const toAnchor = links.find((l) => l.targetFactId === anchor.id && l.linkType === "RELATED_TO");
     expect(toAnchor).toBeDefined();
     // The IP "10.0.0.5" is a known entity and gets exact word-boundary match (weight 1.0);
@@ -422,9 +439,9 @@ describe("FactsDB.autoLinkEntities — entity-based RELATED_TO links", () => {
     db.autoLinkEntities(newFact.id, newFact.text, null, null, null, cfg);
     db.autoLinkEntities(newFact.id, newFact.text, null, null, null, cfg);
 
-    const links = db
-      .getLinksFrom(newFact.id)
-      .filter((l) => l.targetFactId === anchor.id && l.linkType === "RELATED_TO");
+    const links = relatedLinksFrom(newFact.id).filter(
+      (l) => l.targetFactId === anchor.id && l.linkType === "RELATED_TO",
+    );
     expect(links).toHaveLength(1);
   });
 
@@ -486,7 +503,7 @@ describe("FactsDB.autoLinkEntities — temporal co-occurrence", () => {
     });
     db.autoLinkEntities(factB.id, factB.text, null, null, sessionId, cfg);
 
-    const links = db.getLinksFrom(factB.id);
+    const links = relatedLinksFrom(factB.id);
     const coLink = links.find((l) => l.targetFactId === factA.id && l.linkType === "RELATED_TO");
     expect(coLink).toBeDefined();
     expect(coLink?.strength).toBeCloseTo(0.3);
@@ -520,7 +537,7 @@ describe("FactsDB.autoLinkEntities — temporal co-occurrence", () => {
 
     // Same session + same entity → co-occurrence query picks up factA
     db.autoLinkEntities(factB.id, factB.text, entity, null, sessionId, cfg);
-    const links = db.getLinksFrom(factB.id);
+    const links = relatedLinksFrom(factB.id);
     const coLink = links.find((l) => l.targetFactId === factA.id);
     expect(coLink).toBeDefined();
   });
@@ -801,7 +818,7 @@ describe("autoLinkEntities — config variants", () => {
 
     db.autoLinkEntities(factB.id, factB.text, null, null, sessionId, { coOccurrenceWeight: 0, autoSupersede: false });
     // With weight 0 the link is still created (createLink inserts the row with strength=0)
-    const links = db.getLinksFrom(factB.id);
+    const links = relatedLinksFrom(factB.id);
     const coLink = links.find((l) => l.targetFactId === factA.id);
     expect(coLink).toBeDefined();
     expect(coLink?.strength).toBe(0);

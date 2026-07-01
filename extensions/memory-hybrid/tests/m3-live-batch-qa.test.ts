@@ -33,6 +33,10 @@ function makeIncidents(n: number) {
 }
 
 live("live MiniMax M3 batch QA", () => {
+  // `describe.skip` still invokes this callback to discover (skipped) nested tests, so guard
+  // the OpenAI client construction — it throws synchronously without an apiKey, which would
+  // otherwise crash the whole file when MINIMAX_API_KEY is unset (the common case in CI).
+  if (!apiKey) return;
   const openai = new OpenAI({ apiKey, baseURL: "https://api.minimax.io/v1" });
 
   const deps = {

@@ -2002,7 +2002,10 @@ export class VectorDB {
             );
             // The Lance query is not cancellable. Keep the reader slot until it settles so
             // optimize/read-drain accounting remains correct even after returning partial results.
-            queryPromise.finally(() => this.releaseReader(acquired)).catch(() => this.releaseReader(acquired));
+            // `.finally()` alone runs exactly once regardless of outcome — do not also chain
+            // `.catch()` calling releaseReader, which would double-release this slot when the
+            // query later rejects.
+            queryPromise.finally(() => this.releaseReader(acquired)).catch(() => {});
             break;
           }
 
