@@ -673,8 +673,13 @@ function analyzePersonaProposal(
     for (const entry of routingAssessment.evidence) {
       evidence.push({ type: entry.type, id: entry.id, summary: entry.summary });
     }
-    routingHumanReviewRequired =
-      routingAssessment.humanReviewRequired && routingAssessment.routingScore >= 0.7;
+    // Don't re-gate this on routingScore: humanReviewRequired is already true either because
+    // routing disagreed with high confidence (routingScore >= 0.7 baked in), or because a
+    // blockReason (low-support, duplicate-rule, near-duplicate-rule, enforce-routing) fired —
+    // none of which are about file-bucket classification confidence. Gating on routingScore
+    // here let low-routing-confidence proposals with a real block reason slip through to
+    // auto-apply.
+    routingHumanReviewRequired = routingAssessment.humanReviewRequired;
   }
   if (isStaleTarget(item)) {
     return rejectOrDefer(
