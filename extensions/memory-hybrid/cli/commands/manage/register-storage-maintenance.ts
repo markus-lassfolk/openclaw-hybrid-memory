@@ -1158,7 +1158,7 @@ function registerManageStorageMaintenanceOnParent(
                   ? "failed_embedding_provider_5xx"
                   : "failed_embedding_provider";
               process.exitCode = 1;
-            } else if (opts?.apply && storeFailures > 0) {
+            } else if (opts?.apply && (storeFailures > 0 || embedFailures > 0)) {
               process.exitCode = 2;
             }
             if (opts?.json) {
@@ -1198,9 +1198,9 @@ function registerManageStorageMaintenanceOnParent(
                   `Provider circuit-break: ${maxEmbedFailures} consecutive embed failure(s) exceeded --max-embed-failures ${maxEmbedFailures}; processed ${processed}/${candidates.length} fact(s) before aborting; partial embeddings stored: ${embedded}. Re-run after provider recovery (exit=1).`,
                 );
               }
-            } else if (opts?.apply && storeFailures > 0) {
+            } else if (opts?.apply && (storeFailures > 0 || embedFailures > 0)) {
               console.warn(
-                `Partial success: ${storeFailures} write failure(s) occurred during vector re-embedding; retryable LanceDB conflicts were retried where applicable (exit=2).`,
+                `Partial success: ${storeFailures} write failure(s) and ${embedFailures} embed failure(s) occurred during vector re-embedding; retryable LanceDB conflicts were retried where applicable (exit=2).`,
               );
             }
           },
@@ -1349,6 +1349,7 @@ function registerManageStorageMaintenanceOnParent(
                 shadowTableName = await vectorDb.createShadowTable();
               } catch (err) {
                 console.error(`Re-index failed: unable to create shadow table: ${err}`);
+                finishReindexJobRun("failed", false);
                 process.exit(1);
               }
               if (ctx.resolvedSqlitePath) {
@@ -1466,6 +1467,7 @@ function registerManageStorageMaintenanceOnParent(
                 console.error(`\nRe-index failed: shadow table swap failed: ${err}`);
                 console.error("Live vector store was NOT modified.");
                 console.error(`Shadow table preserved for inspection: ${shadowTableName}`);
+                finishReindexJobRun("failed", false);
                 process.exit(1);
               }
 
@@ -1714,18 +1716,25 @@ function registerManageStorageMaintenanceOnParent(
                 supersededIds.push(fact.id);
                 continue;
               }
-              try {
-                await vectorDb.delete(fact.id);
-                vectorDeleteCount++;
-              } catch (err) {
-                vectorDeleteErrors.push(`vector delete ${fact.id}: ${String(err)}`);
-              }
+              // Supersede before deleting the vector: if supersede fails, the fact stays active
+              // with its vector intact (safe to retry). Deleting the vector first would risk
+              // leaving an active fact with no vector if the subsequent supersede call failed.
+              let factSuperseded = false;
               try {
                 factsDb.supersede(fact.id, null);
                 supersededIds.push(fact.id);
                 supersededCount++;
+                factSuperseded = true;
               } catch (err) {
                 vectorDeleteErrors.push(`supersede ${fact.id}: ${String(err)}`);
+              }
+              if (factSuperseded) {
+                try {
+                  await vectorDb.delete(fact.id);
+                  vectorDeleteCount++;
+                } catch (err) {
+                  vectorDeleteErrors.push(`vector delete ${fact.id}: ${String(err)}`);
+                }
               }
             }
             return supersededCount;
