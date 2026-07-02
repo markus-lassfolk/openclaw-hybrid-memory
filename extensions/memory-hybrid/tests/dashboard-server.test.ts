@@ -620,6 +620,41 @@ describeCreateDashboardServer("createDashboardServer", () => {
     expect(ctx.factsDb.getById(victimFact.id)).not.toBeNull();
   });
 
+  it("POST /graphql entityFacts/links/graph respect pagination limits (#66)", async () => {
+    if (!server) return;
+    for (let i = 0; i < 5; i++) {
+      ctx.factsDb.store({ text: `entity fact ${i}`, category: "fact", source: "test", entity: "widget" });
+    }
+    const entityResult = await httpPost(
+      port,
+      "/graphql",
+      JSON.stringify({ query: 'query { entityFacts(entity: "widget", limit: 2) { id } }' }),
+    );
+    expect(JSON.parse(entityResult.body).data.entityFacts).toHaveLength(2);
+
+    const a = ctx.factsDb.store({ text: "link a", category: "fact", source: "test" });
+    const b = ctx.factsDb.store({ text: "link b", category: "fact", source: "test" });
+    const c = ctx.factsDb.store({ text: "link c", category: "fact", source: "test" });
+    ctx.factsDb.createLink(a.id, b.id, "RELATED_TO", 1);
+    ctx.factsDb.createLink(a.id, c.id, "RELATED_TO", 1);
+    const linksResult = await httpPost(
+      port,
+      "/graphql",
+      JSON.stringify({ query: `query { links(sourceId: "${a.id}", limit: 1) { id } }` }),
+    );
+    expect(JSON.parse(linksResult.body).data.links).toHaveLength(1);
+
+    for (let i = 0; i < 25; i++) {
+      ctx.factsDb.store({ text: `graph fact ${i}`, category: "fact", source: "test" });
+    }
+    const graphResult = await httpPost(
+      port,
+      "/graphql",
+      JSON.stringify({ query: "query { graph(filter: { maxNodes: 20 }) { nodes { id } } }" }),
+    );
+    expect(JSON.parse(graphResult.body).data.graph.nodes.length).toBeLessThanOrEqual(20);
+  });
+
   it("exposes the port in the returned object", () => {
     if (!server) return;
     expect(server.port).toBeGreaterThan(0);

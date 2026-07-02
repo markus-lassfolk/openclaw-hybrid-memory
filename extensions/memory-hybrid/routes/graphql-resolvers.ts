@@ -304,12 +304,15 @@ export const resolvers: GraphQLResolvers = {
       const sourceId = asString(input.sourceId);
       const targetId = asString(input.targetId);
       const linkType = asString(input.linkType);
-      return getAllLinks(context.factsDb).filter(
-        (link) =>
-          (!sourceId || link.sourceId === sourceId) &&
-          (!targetId || link.targetId === targetId) &&
-          (!linkType || link.linkType === linkType),
-      );
+      const limit = Math.max(1, Math.min(500, asNumber(input.limit) ?? 100));
+      return getAllLinks(context.factsDb)
+        .filter(
+          (link) =>
+            (!sourceId || link.sourceId === sourceId) &&
+            (!targetId || link.targetId === targetId) &&
+            (!linkType || link.linkType === linkType),
+        )
+        .slice(0, limit);
     },
     relatedFacts: (_parent, args, context) => {
       const input = asRecord(args);
@@ -346,10 +349,11 @@ export const resolvers: GraphQLResolvers = {
       const entity = asString(input.entity);
       const key = asString(input.key);
       if (!entity) return [];
+      const limit = Math.max(1, Math.min(500, asNumber(input.limit) ?? 200));
       const nowSec = Math.floor(Date.now() / 1000);
-      return allFacts(context).filter(
-        (fact) => fact.entity === entity && (!key || fact.key === key) && isActiveFact(fact, nowSec),
-      );
+      return allFacts(context)
+        .filter((fact) => fact.entity === entity && (!key || fact.key === key) && isActiveFact(fact, nowSec))
+        .slice(0, limit);
     },
 
     graph: (_parent, args, context) => {
@@ -358,11 +362,16 @@ export const resolvers: GraphQLResolvers = {
       const decayClasses = asStringArray(filter.decayClasses);
       const minImportance = asNumber(filter.minImportance);
       const scope = asString(filter.scope);
+      // Clamped to [20, 2000], default 400 — matches the REST /api/graph route's maxNodes bound,
+      // preventing a single request from forcing an unbounded node/edge payload and O(n^2)-ish
+      // edge-filtering work.
+      const maxNodes = Math.min(2000, Math.max(20, asNumber(filter.maxNodes) ?? 400));
       let facts = allFacts(context).filter((fact) => isActiveFact(fact));
       if (categories?.length) facts = facts.filter((fact) => categories.includes(fact.category));
       if (decayClasses?.length) facts = facts.filter((fact) => decayClasses.includes(fact.decayClass));
       if (minImportance !== undefined) facts = facts.filter((fact) => fact.importance >= minImportance);
       if (scope) facts = facts.filter((fact) => fact.scope === scope);
+      facts = facts.slice(0, maxNodes);
       const factIds = new Set(facts.map((fact) => fact.id));
       const linkEdges = getAllLinks(context.factsDb)
         .filter((link) => factIds.has(link.sourceId) && factIds.has(link.targetId))

@@ -173,6 +173,8 @@ export const graphqlSchema = `#graphql
     maxDepth: Int
     startNodeIds: [ID!]
     scope: String
+    # Clamped to [20, 2000], default 400 — matches the REST /api/graph route's maxNodes bound.
+    maxNodes: Int
   }
 
   # Queries
@@ -200,7 +202,7 @@ export const graphqlSchema = `#graphql
 
     # Links and relationships
     link(id: ID!): Link
-    links(sourceId: ID, targetId: ID, linkType: String): [Link!]!
+    links(sourceId: ID, targetId: ID, linkType: String, limit: Int): [Link!]!
     relatedFacts(factId: ID!, maxDepth: Int, linkTypes: [String!]): [Fact!]!
 
     # Graph visualization
@@ -210,7 +212,7 @@ export const graphqlSchema = `#graphql
     stats: MemoryStats!
 
     # Entity lookup
-    entityFacts(entity: String!, key: String): [Fact!]!
+    entityFacts(entity: String!, key: String, limit: Int): [Fact!]!
   }
 
   # Mutations
