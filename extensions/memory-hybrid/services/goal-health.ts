@@ -388,18 +388,21 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
 
       const invalidLinkedTasksReason = await findInvalidLinkedTasksReason(goalsDir, goal.id);
       if (invalidLinkedTasksReason) {
-        const blockers = g.currentBlockers.includes(invalidLinkedTasksReason)
-          ? g.currentBlockers
-          : [...g.currentBlockers, invalidLinkedTasksReason];
+        // currentBlockers/consecutiveFailures are derived from `fresh` (re-read inside
+        // updateGoal's lock), not from `g` above — a concurrent goal_assess/subagent-end call
+        // updating the same arrays could otherwise have its update silently reverted by this
+        // patch overwriting from a stale pre-lock snapshot.
         await updateGoal(
           goalsDir,
           g.id,
-          {
+          (fresh) => ({
             status: "blocked",
-            currentBlockers: blockers,
+            currentBlockers: fresh.currentBlockers.includes(invalidLinkedTasksReason)
+              ? fresh.currentBlockers
+              : [...fresh.currentBlockers, invalidLinkedTasksReason],
             lastOutcome: invalidLinkedTasksReason,
-            consecutiveFailures: g.consecutiveFailures + 1,
-          },
+            consecutiveFailures: fresh.consecutiveFailures + 1,
+          }),
           {
             timestamp: nowIso(),
             action: "goal-schema-invalid",
@@ -427,29 +430,30 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
         const hasSession = typeof lt.sessionKey === "string" && lt.sessionKey.trim().length > 0;
         if (hasSession) continue;
         const reason = `Linked task "${lt.label}" is missing dispatch metadata (sessionKey/runId).`;
-        const updatedTasks = g.linkedTasks.map((t) =>
-          t.label === lt.label
-            ? {
-                ...t,
-                status: "failed",
-                dispatchFailureReason: reason,
-                updatedAt: nowIso(),
-                sessionKey: null,
-                runId: null,
-              }
-            : t,
-        );
-        const blockers = g.currentBlockers.includes(reason) ? g.currentBlockers : [...g.currentBlockers, reason];
+        const targetLabel = lt.label;
+        // linkedTasks/currentBlockers/consecutiveFailures derived from `fresh`, not `g` — same
+        // stale-array-clobber rationale as the invalidLinkedTasksReason branch above.
         await updateGoal(
           goalsDir,
           g.id,
-          {
-            linkedTasks: updatedTasks,
-            consecutiveFailures: g.consecutiveFailures + 1,
+          (fresh) => ({
+            linkedTasks: fresh.linkedTasks.map((t) =>
+              t.label === targetLabel
+                ? {
+                    ...t,
+                    status: "failed",
+                    dispatchFailureReason: reason,
+                    updatedAt: nowIso(),
+                    sessionKey: null,
+                    runId: null,
+                  }
+                : t,
+            ),
+            consecutiveFailures: fresh.consecutiveFailures + 1,
             status: "blocked",
-            currentBlockers: blockers,
+            currentBlockers: fresh.currentBlockers.includes(reason) ? fresh.currentBlockers : [...fresh.currentBlockers, reason],
             lastOutcome: reason,
-          },
+          }),
           { timestamp: nowIso(), action: "dispatch-metadata-missing", detail: reason, actor: "watchdog" },
         );
         result.goalsUpdated++;
@@ -468,19 +472,21 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
           const pid = Number(pidMatch[1]);
           if (!Number.isNaN(pid) && !isPidAlive(pid)) {
             const reason = `Linked task "${lt.label}" died: pid ${pid} is no longer alive`;
-            const updatedTasks = g.linkedTasks.map((t) =>
-              t.label === lt.label ? { ...t, status: "failed", updatedAt: nowIso() } : t,
-            );
-            const blockers = g.currentBlockers.includes(reason) ? g.currentBlockers : [...g.currentBlockers, reason];
+            const targetLabel = lt.label;
+            // Same rationale as the two branches above: derive from `fresh`, not `g`.
             await updateGoal(
               goalsDir,
               g.id,
-              {
-                linkedTasks: updatedTasks,
-                consecutiveFailures: g.consecutiveFailures + 1,
+              (fresh) => ({
+                linkedTasks: fresh.linkedTasks.map((t) =>
+                  t.label === targetLabel ? { ...t, status: "failed", updatedAt: nowIso() } : t,
+                ),
+                consecutiveFailures: fresh.consecutiveFailures + 1,
                 status: "blocked",
-                currentBlockers: blockers,
-              },
+                currentBlockers: fresh.currentBlockers.includes(reason)
+                  ? fresh.currentBlockers
+                  : [...fresh.currentBlockers, reason],
+              }),
               {
                 timestamp: nowIso(),
                 action: "subagent-died",
