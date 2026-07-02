@@ -17,7 +17,10 @@ export type ResolvedVaultBackends = {
 
 export function resolveToolVaultBackends(runtime: MemoryToolRuntime, vaultName?: string): ResolvedVaultBackends {
   const trimmed = vaultName?.trim();
-  if (!trimmed || trimmed === "default") {
+  // "all" has no single backing store — it means "fan out via listToolVaultHandles" — so it
+  // falls back to the default vault here rather than being forwarded to resolveVault(), which
+  // has no "all" entry (it's a reserved name, never a configured vault) and would throw.
+  if (!trimmed || trimmed === "default" || trimmed === "all") {
     return { factsDb: runtime.factsDb, vectorDb: runtime.vectorDb, vaultName: "default" };
   }
   if (!runtime.resolveVault) {
