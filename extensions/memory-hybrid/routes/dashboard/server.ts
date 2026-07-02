@@ -348,7 +348,11 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     if (pathname === "/api/viewer/facts") {
       try {
         const limit = Math.min(500, Math.max(1, Number.parseInt(searchParams.get("limit") ?? "50", 10) || 50));
-        const offset = Math.max(0, Number.parseInt(searchParams.get("offset") ?? "0", 10) || 0);
+        // Capped (not just floored) — when `search` is also supplied, `offset` flows into
+        // listForDashboard's searchLimit (Math.max(2000, offset + limit)), which seeds the FIRST
+        // FTS query's LIMIT before any internal cap applies. An unbounded offset (e.g. 50,000,000)
+        // would force that first query to request on the order of 10^8 rows.
+        const offset = Math.min(1_000_000, Math.max(0, Number.parseInt(searchParams.get("offset") ?? "0", 10) || 0));
         const categoryFilter = searchParams.get("category") || undefined;
         const entityFilter = searchParams.get("entity") || undefined;
         // #1187: honor `?tier=hot|warm|cold|structural` so operators can drill into a single tier

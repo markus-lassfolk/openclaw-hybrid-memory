@@ -899,6 +899,18 @@ describe("Memory Viewer API (Issue #1023)", () => {
     });
   });
 
+  it("GET /api/viewer/facts clamps an absurdly large offset instead of passing it through unbounded (#67)", async () => {
+    await withServer(async (ctx, port) => {
+      const spy = vi.spyOn(ctx.factsDb, "listForDashboard");
+      const { status } = await apiGet(port, "/api/viewer/facts?search=x&offset=50000000&limit=50");
+      expect(status).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const passedOffset = spy.mock.calls[0]?.[0]?.offset;
+      expect(passedOffset).toBeLessThanOrEqual(1_000_000);
+      spy.mockRestore();
+    });
+  });
+
   it("GET /api/viewer/facts parses comma-separated tags into an array", async () => {
     await withServer(async (ctx, port) => {
       ctx.factsDb.store({ text: "Tag test", category: "fact", source: "test", tags: ["alpha", "beta"] });
