@@ -10,6 +10,7 @@ import type { CredentialType, MemoryCategory } from "../config.js";
 import type { MemoryEntry } from "../types/memory.js";
 import { extractTags } from "../utils/tags.js";
 import { VAULT_POINTER_PREFIX } from "./auto-capture.js";
+import { capturePluginError } from "./error-reporter.js";
 
 export function credentialPointerValue(service: string, type: CredentialType): string {
   return `${VAULT_POINTER_PREFIX}${service}:${type}`;
@@ -67,16 +68,27 @@ export function abortCredentialVaultWriteOnPointerDedupe(
   return true;
 }
 
+/** Default failure reporter used when a caller doesn't supply its own `onFailure` — every
+ * rollback failure orphans a live secret in the vault, so it must never be silently discarded. */
+function defaultRollbackFailureHandler(message: string, err: unknown): void {
+  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+    operation: "rollback-vault-credential-write",
+    subsystem: "credentials",
+    severity: "warning",
+    tags: { message },
+  });
+}
+
 export function rollbackVaultCredentialWrite(
   credentialsDb: CredentialsDB,
   service: string,
   type: CredentialType,
-  onFailure?: (message: string, err: unknown) => void,
+  onFailure: (message: string, err: unknown) => void = defaultRollbackFailureHandler,
 ): void {
   try {
     credentialsDb.delete(service, type);
   } catch (err) {
-    onFailure?.(`Failed to clean up orphaned credential for ${service}`, err);
+    onFailure(`Failed to clean up orphaned credential for ${service}`, err);
   }
 }
 
