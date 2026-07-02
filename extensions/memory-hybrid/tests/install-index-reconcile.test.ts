@@ -21,7 +21,7 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -317,6 +317,15 @@ describe("install-index reconciliation (#2008)", () => {
     const next = JSON.parse(readFileSync(legacyPath, "utf-8")) as { installRecords: Record<string, unknown> };
     expect(next.installRecords["openclaw-hybrid-memory"]).toBeUndefined();
     expect(next.installRecords.codex).toBeDefined();
+
+    // Backup must be colocated with the target file (a sibling directory), not under the global
+    // os.tmpdir() — periodic cleanup (systemd-tmpfiles-clean and similar) deletes files under
+    // /tmp untouched for >10 days, which would silently make the "operator's state is never
+    // silently lost" backup disappear. (The test fixture's own stateDir happens to live under
+    // tmpdir() too, so this asserts colocation with legacyPath specifically, not "outside /tmp".)
+    if (result.backupPath) {
+      expect(dirname(result.backupPath)).toBe(join(dirname(legacyPath), "openclaw-hybrid-memory-install-index-backups"));
+    }
   });
 
   it("dry-run does not mutate the sidecar but still reports the verdict", () => {
