@@ -988,7 +988,9 @@ export function registerManageReflectionPipeline(
                   operation: "dream-cycle:tool-effectiveness",
                 });
                 toolEffectivenessSummary = `degraded (${err instanceof Error ? err.message : String(err)})`;
-                recordDreamCycleFollowUpFailure(followUpFailures, "tool effectiveness", err);
+                // runFollowUpStage already pushed this failure onto followUpFailures before
+                // re-throwing — recording it again here would double-count a single failure in
+                // the "N failure(s)" summary and follow_up_failures count below.
               }
             } else if (!skipFollowUps) {
               if (!runToolEffectiveness) {
