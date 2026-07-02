@@ -16,8 +16,9 @@ import {
   computeCircuitBreakerStateAfterAssess,
   evaluateCircuitBreakerTrip,
 } from "../services/goal-circuit-breaker.js";
-import type { GoalHistoryEntry } from "../services/goal-stewardship-types.js";
+import type { Goal, GoalHistoryEntry } from "../services/goal-stewardship-types.js";
 import {
+  type GoalUpdatePatch,
   type GoalVerification,
   createGoal,
   goalStewardshipDefaultsFromConfig,
@@ -404,8 +405,6 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             return { content: [{ type: "text", text: "Assessment budget exhausted." }], details: { error: "budget" } };
           }
           const ts = nowIso();
-          let dispatchCount = goal.dispatchCount;
-          let lastDispatchedAt = goal.lastDispatchedAt;
           if (p.dispatched) {
             if (isGlobalRateLimited(gs.globalLimits.maxDispatchesPerHour, goalsDir)) {
               return {
@@ -420,74 +419,107 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
               };
             }
             recordGoalDispatch(goalsDir);
-            dispatchCount += 1;
-            lastDispatchedAt = ts;
           }
           const blockersExplicitlyProvided = p.blockers !== undefined;
-          const newBlockers = blockersExplicitlyProvided
+          const requestedBlockers = blockersExplicitlyProvided
             ? (p.blockers ?? [])
                 .filter((b): b is string => typeof b === "string")
                 .map((b) => b.trim())
                 .filter(Boolean)
-            : goal.currentBlockers;
-          const newAssessmentCount = goal.assessmentCount + 1;
-          const cbState = blockersExplicitlyProvided
-            ? computeCircuitBreakerStateAfterAssess(goal, newBlockers, newAssessmentCount)
-            : {
-                lastBlockerFingerprint: goal.lastBlockerFingerprint,
-                sameBlockerStreak: goal.sameBlockerStreak,
-                circuitBreakerLastProgressAssessmentCount: goal.circuitBreakerLastProgressAssessmentCount,
-              };
-          // Only evaluate a trip when this call actually provided fresh blocker evidence.
-          // When blockers is omitted, cbState reuses the goal's frozen prior circuit-breaker
-          // state while newAssessmentCount still advances — evaluating the trip here would let
-          // the "assessments without progress" counter grow purely from call volume (an agent
-          // simply not re-passing the optional blockers field) rather than genuine repeated-
-          // blocker evidence, tripping the breaker "too early" relative to its documented intent
-          // (stop retrying when blockers do not change).
-          const tripEval = blockersExplicitlyProvided
-            ? evaluateCircuitBreakerTrip(gs.circuitBreaker, cbState, newAssessmentCount)
-            : ({ trip: false } as const);
+            : null;
 
-          const basePatch = {
-            assessmentCount: newAssessmentCount,
-            lastAssessedAt: ts,
-            dispatchCount,
-            lastDispatchedAt,
-            lastOutcome: `${assessment.slice(0, 400)} | next: ${nextAction.slice(0, 200)}`,
-            currentBlockers: newBlockers,
-            ...cbState,
+          // Recompute everything derived from goal state (assessmentCount, blockers, circuit
+          // breaker state, the trip decision, and the resulting patch) from `fresh` — the goal
+          // as re-read *inside* updateGoal's lock — rather than from the pre-lock `goal` snapshot
+          // above. A plain-object patch built from that snapshot would silently clobber a
+          // concurrent writer's fresh state on commit: the lock only serializes *when* each
+          // update lands, not what data drove its contents, so a concurrent goal_assess for the
+          // same goal_id could otherwise let assessmentCount/dispatchCount undercount relative to
+          // the number of assessments actually recorded to history, defeating the very budget
+          // and circuit-breaker checks this mechanism exists to enforce.
+          type AssessDecision = {
+            patch: GoalUpdatePatch;
+            historyEntries: GoalHistoryEntry[];
+            blocked: boolean;
+            tripReason?: string;
           };
+          const decisionRef: { current: AssessDecision | null } = { current: null };
 
-          const assessEntry: GoalHistoryEntry = {
-            timestamp: ts,
-            action: "assessed",
-            detail: `${assessment.slice(0, 400)} | next: ${nextAction.slice(0, 100)}`,
-            actor: "steward",
-          };
+          const computeAssessDecision = (fresh: Goal): AssessDecision => {
+            const newBlockers = requestedBlockers ?? fresh.currentBlockers;
+            const newAssessmentCount = fresh.assessmentCount + 1;
+            const cbState = blockersExplicitlyProvided
+              ? computeCircuitBreakerStateAfterAssess(fresh, newBlockers, newAssessmentCount)
+              : {
+                  lastBlockerFingerprint: fresh.lastBlockerFingerprint,
+                  sameBlockerStreak: fresh.sameBlockerStreak,
+                  circuitBreakerLastProgressAssessmentCount: fresh.circuitBreakerLastProgressAssessmentCount,
+                };
+            // Only evaluate a trip when this call actually provided fresh blocker evidence.
+            // When blockers is omitted, cbState reuses the goal's frozen prior circuit-breaker
+            // state while newAssessmentCount still advances — evaluating the trip here would let
+            // the "assessments without progress" counter grow purely from call volume (an agent
+            // simply not re-passing the optional blockers field) rather than genuine repeated-
+            // blocker evidence, tripping the breaker "too early" relative to its documented intent
+            // (stop retrying when blockers do not change).
+            const tripEval = blockersExplicitlyProvided
+              ? evaluateCircuitBreakerTrip(gs.circuitBreaker, cbState, newAssessmentCount)
+              : ({ trip: false } as const);
 
-          if (tripEval.trip) {
-            const goalPreview = {
-              ...goal,
-              ...basePatch,
+            const basePatch = {
+              assessmentCount: newAssessmentCount,
+              lastAssessedAt: ts,
+              dispatchCount: fresh.dispatchCount + (p.dispatched ? 1 : 0),
+              lastDispatchedAt: p.dispatched ? ts : fresh.lastDispatchedAt,
+              lastOutcome: `${assessment.slice(0, 400)} | next: ${nextAction.slice(0, 200)}`,
               currentBlockers: newBlockers,
+              ...cbState,
             };
-            const summary = composeCircuitBreakerHumanSummary(goalPreview, tripEval.reason, gs.circuitBreaker);
-            const blockedPatch = {
-              ...basePatch,
-              status: "blocked" as const,
-              currentBlockers: [circuitBreakerShortBlocker(tripEval.reason)],
-              humanEscalationSummary: summary,
-              escalationKind: "circuit_breaker" as const,
-              lastOutcome: circuitBreakerShortBlocker(tripEval.reason),
-            };
-            const cbEntry: GoalHistoryEntry = {
+
+            const assessEntry: GoalHistoryEntry = {
               timestamp: ts,
-              action: "circuit_breaker",
-              detail: summary.slice(0, 8000),
-              actor: "watchdog",
+              action: "assessed",
+              detail: `${assessment.slice(0, 400)} | next: ${nextAction.slice(0, 100)}`,
+              actor: "steward",
             };
-            const updated = await updateGoal(goalsDir, goal.id, blockedPatch, [assessEntry, cbEntry]);
+
+            if (tripEval.trip) {
+              const goalPreview = { ...fresh, ...basePatch, currentBlockers: newBlockers };
+              const summary = composeCircuitBreakerHumanSummary(goalPreview, tripEval.reason, gs.circuitBreaker);
+              const blockedPatch = {
+                ...basePatch,
+                status: "blocked" as const,
+                currentBlockers: [circuitBreakerShortBlocker(tripEval.reason)],
+                humanEscalationSummary: summary,
+                escalationKind: "circuit_breaker" as const,
+                lastOutcome: circuitBreakerShortBlocker(tripEval.reason),
+              };
+              const cbEntry: GoalHistoryEntry = {
+                timestamp: ts,
+                action: "circuit_breaker",
+                detail: summary.slice(0, 8000),
+                actor: "watchdog",
+              };
+              return { patch: blockedPatch, historyEntries: [assessEntry, cbEntry], blocked: true, tripReason: tripEval.reason };
+            }
+            return { patch: basePatch, historyEntries: [assessEntry], blocked: false };
+          };
+
+          const updated = await updateGoal(
+            goalsDir,
+            goal.id,
+            (fresh) => {
+              decisionRef.current = computeAssessDecision(fresh);
+              return decisionRef.current.patch;
+            },
+            () => decisionRef.current?.historyEntries ?? [],
+          );
+          const decision = decisionRef.current;
+          if (!decision) {
+            throw new Error("memory-hybrid: goal_assess decision missing after updateGoal");
+          }
+
+          if (decision.blocked) {
             try {
               eventLog?.append({
                 sessionId: "goal-stewardship",
@@ -497,17 +529,17 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
                   kind: "goal.circuit_breaker",
                   goalId: updated.id,
                   label: updated.label,
-                  reason: tripEval.reason,
+                  reason: decision.tripReason,
                 },
               });
             } catch {
               /* */
             }
-            if (gs.circuitBreaker.appendMemoryEscalation) {
+            if (gs.circuitBreaker.appendMemoryEscalation && updated.humanEscalationSummary) {
               await flushGoalOutcomeToMemory(memoryDir, `Circuit breaker: ${updated.label}`, [
                 "**Summary:**",
                 "",
-                ...summary.split("\n"),
+                ...updated.humanEscalationSummary.split("\n"),
               ]);
             }
             return {
@@ -517,11 +549,10 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
                   text: `Circuit breaker: ${updated.label} is blocked — human escalation required. See goal JSON (humanEscalationSummary) or workspace memory/.`,
                 },
               ],
-              details: { goal: updated, circuitBreaker: tripEval.reason },
+              details: { goal: updated, circuitBreaker: decision.tripReason },
             };
           }
 
-          const updated = await updateGoal(goalsDir, goal.id, basePatch, assessEntry);
           try {
             eventLog?.append({
               sessionId: "goal-stewardship",
