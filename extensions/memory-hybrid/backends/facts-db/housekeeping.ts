@@ -526,13 +526,22 @@ export function pruneScopedFacts(db: DatabaseSync, scopeFilter: ScopeFilter): st
       const ids = idRows.map((r) => r.id);
       if (ids.length === 0) return ids;
 
-      const linkCleanupQuery = `DELETE FROM memory_links
-          WHERE target_fact_id IN (
-            SELECT id FROM facts WHERE (${conditions.join(" OR ")})
-              AND id NOT IN (SELECT fact_id FROM verified_facts)
-          )
-          AND link_type != 'DERIVED_FROM'`;
-      db.prepare(linkCleanupQuery).run(...params);
+      // Match deleteFact()'s cleanup exactly: both link directions (not just target_fact_id),
+      // no link_type exclusion (a purged fact's DERIVED_FROM edges are just as dangling as any
+      // other), and the contradictions table (previously never touched here at all) — otherwise
+      // a hard-deleted fact leaves orphaned memory_links/contradictions rows that silently vanish
+      // from queryContradictionSurface's INNER JOIN listings and make applyContradictionDecisions
+      // FromReview fail with a confusing "could not persist decision" error (#83).
+      const scopedIdsSubquery = `SELECT id FROM facts WHERE (${conditions.join(" OR ")})
+              AND id NOT IN (SELECT fact_id FROM verified_facts)`;
+      db.prepare(
+        `DELETE FROM contradictions
+           WHERE fact_id_new IN (${scopedIdsSubquery}) OR fact_id_old IN (${scopedIdsSubquery})`,
+      ).run(...params, ...params);
+      db.prepare(
+        `DELETE FROM memory_links
+           WHERE source_fact_id IN (${scopedIdsSubquery}) OR target_fact_id IN (${scopedIdsSubquery})`,
+      ).run(...params, ...params);
 
       const query = `DELETE FROM facts WHERE (${conditions.join(" OR ")})
         AND id NOT IN (SELECT fact_id FROM verified_facts)`;

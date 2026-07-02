@@ -3441,6 +3441,58 @@ describe("FactsDB scoping", () => {
     }
   });
 
+  it("pruneScopedFacts cleans DERIVED_FROM memory_links and contradictions referencing a purged fact (#83)", () => {
+    const purged = db.store({
+      text: "Global fact to be purged",
+      category: "other",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "global",
+    });
+    const survivor = db.store({
+      text: "Survivor session fact",
+      category: "other",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "session",
+      scopeTarget: "sess-keep",
+    });
+
+    const raw = db.getRawDb();
+    // DERIVED_FROM rows can't be created via createLink() (it throws for that link type — see
+    // links.ts), but the pre-fix cleanup query explicitly excluded them, implying they can exist
+    // via another path (e.g. legacy data); insert one directly to exercise that gap.
+    raw
+      .prepare(
+        "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?, ?, ?, 'DERIVED_FROM', 1.0, ?)",
+      )
+      .run("link-derived-1", survivor.id, purged.id, Math.floor(Date.now() / 1000));
+    raw
+      .prepare("INSERT INTO contradictions (id, fact_id_new, fact_id_old, detected_at) VALUES (?, ?, ?, ?)")
+      .run("contradiction-1", purged.id, survivor.id, new Date().toISOString());
+
+    db.pruneScopedFacts({ global: true });
+
+    const remainingLinks = raw.prepare("SELECT COUNT(*) AS n FROM memory_links WHERE target_fact_id = ?").get(
+      purged.id,
+    ) as { n: number };
+    expect(remainingLinks.n).toBe(0);
+
+    const remainingContradictions = raw
+      .prepare("SELECT COUNT(*) AS n FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ?")
+      .get(purged.id, purged.id) as { n: number };
+    expect(remainingContradictions.n).toBe(0);
+
+    // The survivor fact and its unrelated data are untouched.
+    expect(db.getById(survivor.id)).not.toBeNull();
+  });
+
   it("promoteScope changes scope from session to global", () => {
     const entry = db.store({
       text: "Promoted note",
