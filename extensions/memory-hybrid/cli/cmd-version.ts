@@ -167,6 +167,6 @@ export async function runHybridMemVersion(
   if (opts?.format === "flag") {
     printVersionFlag(report, { json: opts.json });
   } else {
-    printVersionSubcommand(report, { json: opts.json });
+    printVersionSubcommand(report, { json: opts?.json });
   }
 }

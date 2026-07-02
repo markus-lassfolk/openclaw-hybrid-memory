@@ -7,7 +7,10 @@ type ContextEngineRegistrationRuntime = Pick<
   "factsDb" | "vectorDb" | "wal" | "embeddings" | "cfg" | "injectedFactIdsBySession"
 >;
 
-type ContextEngineRegistrar = (opts: {
+// Shape of the `registerHybridContextEngine` function loaded from services/context-engine.js — not
+// to be confused with `ContextEngineRegistrar` (imported above), which is the `api.registerContextEngine`
+// id/factory callback passed *through* this function's `registerContextEngine` option.
+type RegisterHybridContextEngineFn = (opts: {
   factsDb: ContextEngineRegistrationRuntime["factsDb"];
   vectorDb: ContextEngineRegistrationRuntime["vectorDb"];
   wal: ContextEngineRegistrationRuntime["wal"];
@@ -16,10 +19,11 @@ type ContextEngineRegistrar = (opts: {
   injectedFactIdsBySession: ContextEngineRegistrationRuntime["injectedFactIdsBySession"];
   logger: { warn?: (message: string) => void };
   pluginVersion: string;
+  registerContextEngine?: ContextEngineRegistrar;
 }) => unknown;
 
 type ContextEngineLoader = () => Promise<{
-  registerHybridContextEngine: ContextEngineRegistrar;
+  registerHybridContextEngine: RegisterHybridContextEngineFn;
 }>;
 
 export function registerContextEngineBestEffort(args: {
