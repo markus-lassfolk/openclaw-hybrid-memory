@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { atomicWriteFile } from "../../utils/atomic-write.js";
 import { getEnv } from "../../utils/env-manager.js";
 import { findPluginRoot } from "../../utils/plugin-root.js";
 
@@ -193,7 +194,11 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
   try {
     mkdirSync(openclawDir, { recursive: true });
     mkdirSync(join(openclawDir, "memory"), { recursive: true });
-    writeFileSync(configPath, after, "utf-8");
+    // openclaw.json is the entire gateway's config (every plugin's, not just this one's) — a
+    // process kill or disk-full mid-write with a plain writeFileSync leaves it truncated/corrupt,
+    // breaking the whole gateway on next start with no recovery path. Write-to-temp-then-rename
+    // instead, matching the codebase's own convention for files where corruption is costly.
+    atomicWriteFile(configPath, after);
     const skillInstall = installHybridMemoryWorkspaceSkill({
       mergedOpenclawConfig: config,
       pluginRootDir,
@@ -348,7 +353,7 @@ export function runUninstallForCli(
       const entries = plugins.entries as Record<string, unknown>;
       if (!entries[PLUGIN_ID] || typeof entries[PLUGIN_ID] !== "object") entries[PLUGIN_ID] = {};
       (entries[PLUGIN_ID] as Record<string, boolean>).enabled = false;
-      writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+      atomicWriteFile(configPath, JSON.stringify(config, null, 2));
       outcome = "config_updated";
     } catch (e) {
       capturePluginError(e as Error, { subsystem: "cli", operation: "runUninstallForCli:update-config" });
@@ -391,7 +396,8 @@ export function runUninstallForCli(
   return { ...base, outcome } as UninstallCliResult;
 }
 
-function rollbackUpgradePluginDir(pluginDir: string, backupDir: string): void {
+/** Returns true only when `backupDir` actually existed and was restored to `pluginDir`. */
+function rollbackUpgradePluginDir(pluginDir: string, backupDir: string): boolean {
   if (existsSync(pluginDir)) {
     const failedDir = join(dirname(pluginDir), `${basename(pluginDir)}.failed-${Date.now()}`);
     try {
@@ -402,7 +408,12 @@ function rollbackUpgradePluginDir(pluginDir: string, backupDir: string): void {
   }
   if (existsSync(backupDir)) {
     renameSync(backupDir, pluginDir);
+    return true;
   }
+  // backupDir is missing (e.g. a second concurrent upgrade already consumed/renamed it away) —
+  // pluginDir was just moved aside above with nothing to replace it, so the plugin directory is
+  // now completely absent. Callers must not report "restored from backup" in this case.
+  return false;
 }
 
 function removeInstalledPluginDirIfDistinct(installedPluginDir: string, preUpgradePluginDir: string): void {
@@ -422,13 +433,14 @@ function removeInstalledPluginDirIfDistinct(installedPluginDir: string, preUpgra
   }
 }
 
+/** Returns true only when the plugin dir was actually restored from `backupDir`. */
 function rollbackUpgradeToPreInstallState(
   preUpgradePluginDir: string,
   installedPluginDir: string,
   backupDir: string,
-): void {
+): boolean {
   removeInstalledPluginDirIfDistinct(installedPluginDir, preUpgradePluginDir);
-  rollbackUpgradePluginDir(preUpgradePluginDir, backupDir);
+  return rollbackUpgradePluginDir(preUpgradePluginDir, backupDir);
 }
 
 function resolveUpgradePluginDirForResult(installedPluginDir: string): string {
@@ -507,8 +519,10 @@ function rollbackUpgradeAfterFailure(opts: {
   let error: string | undefined;
   removeInstalledPluginDirIfDistinct(opts.installedPluginDir, opts.preUpgradePluginDir);
   try {
-    rollbackUpgradePluginDir(opts.preUpgradePluginDir, opts.backupDir);
-    pluginRestored = true;
+    pluginRestored = rollbackUpgradePluginDir(opts.preUpgradePluginDir, opts.backupDir);
+    if (!pluginRestored) {
+      error = `backup directory missing at ${opts.backupDir}; plugin directory could not be restored`;
+    }
   } catch (e) {
     error = `plugin rollback failed: ${e instanceof Error ? e.message : String(e)}`;
     capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:rollback" });
@@ -595,8 +609,9 @@ export async function runUpgradeForCli(
   }
 
   if (!existsSync(join(installedPluginDir, "openclaw.plugin.json"))) {
+    let restored = false;
     try {
-      rollbackUpgradeToPreInstallState(preUpgradePluginDir, installedPluginDir, backupDir);
+      restored = rollbackUpgradeToPreInstallState(preUpgradePluginDir, installedPluginDir, backupDir);
     } catch (e) {
       capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:rollback-missing-install" });
       return {
@@ -606,14 +621,17 @@ export async function runUpgradeForCli(
     }
     return {
       ok: false,
-      error: `Post-install plugin missing at ${installedPluginDir}. Previous plugin version restored from backup.`,
+      error: restored
+        ? `Post-install plugin missing at ${installedPluginDir}. Previous plugin version restored from backup.`
+        : `Post-install plugin missing at ${installedPluginDir}. Backup directory ${backupDir} was also missing — the plugin directory could not be restored. Run manually: npx -y openclaw-hybrid-memory-install ${version}`,
     };
   }
 
   const bundleError = verifyUpgradePluginBundle(installedPluginDir);
   if (bundleError) {
+    let restored = false;
     try {
-      rollbackUpgradeToPreInstallState(preUpgradePluginDir, installedPluginDir, backupDir);
+      restored = rollbackUpgradeToPreInstallState(preUpgradePluginDir, installedPluginDir, backupDir);
     } catch (e) {
       capturePluginError(e as Error, { subsystem: "cli", operation: "runUpgradeForCli:rollback-bundle" });
       return {
@@ -623,7 +641,9 @@ export async function runUpgradeForCli(
     }
     return {
       ok: false,
-      error: `${bundleError}. Previous plugin version restored from backup.`,
+      error: restored
+        ? `${bundleError}. Previous plugin version restored from backup.`
+        : `${bundleError}. Backup directory ${backupDir} was also missing — the plugin directory could not be restored. Run manually: npx -y openclaw-hybrid-memory-install ${version}`,
     };
   }
 
