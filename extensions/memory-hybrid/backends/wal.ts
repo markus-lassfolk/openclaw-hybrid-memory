@@ -12,6 +12,9 @@ import { pluginLogger } from "../utils/logger.js";
 
 export const WAL_ENTRY_SCHEMA_VERSION = 1;
 
+/** Lock files older than this are treated as abandoned by a crashed rewrite, not a live one. */
+const WAL_REWRITE_LOCK_STALE_MS = 5 * 60 * 1000;
+
 export type WALEntry = {
   schemaVersion?: number;
   id: string;
@@ -542,6 +545,61 @@ export class WriteAheadLog {
     await this.fsyncAfterWrite();
   }
 
+  private getRewriteLockPath(): string {
+    return `${this.walPath}.rewrite.lock`;
+  }
+
+  /**
+   * Cross-process advisory lock guarding the read-snapshot → atomic-replace window used by
+   * pruneStale/compactIfOversized. this.writeLock only serializes calls made through THIS
+   * instance; it does nothing against a second WriteAheadLog instance (a different process, or
+   * e.g. a manual CLI `hybrid-mem` invocation racing the gateway's own scheduled prune/compact)
+   * pointed at the same walPath. Without this, two rewrites racing each other can each snapshot
+   * the file, then alternately rename() over one another — the loser's atomic replace silently
+   * discards whatever the winner's snapshot didn't include (#80). Uses exclusive file creation
+   * (`wx`), matching services/cron-guard.ts's acquireStepLock pattern; a lock file older than
+   * WAL_REWRITE_LOCK_STALE_MS is assumed abandoned by a crashed rewrite and is reclaimed.
+   */
+  private async acquireRewriteLock(nowMs: number = Date.now()): Promise<boolean> {
+    const lockPath = this.getRewriteLockPath();
+    try {
+      const fh = await open(lockPath, "wx");
+      try {
+        await fh.writeFile(String(nowMs), "utf-8");
+      } finally {
+        await fh.close();
+      }
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      let lockedAtMs: number;
+      try {
+        lockedAtMs = Number((await readFile(lockPath, "utf-8")).trim());
+      } catch {
+        return false; // couldn't read the lock file — fail closed, don't run concurrently
+      }
+      if (!Number.isFinite(lockedAtMs) || nowMs - lockedAtMs <= WAL_REWRITE_LOCK_STALE_MS) {
+        return false; // held by a live (or recent) rewrite
+      }
+      // Stale — reclaim it. Not perfectly atomic, but the consequence of losing that race is a
+      // harmless skipped rewrite this cycle, not corruption.
+      try {
+        await writeFile(lockPath, String(nowMs), "utf-8");
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  }
+
+  private async releaseRewriteLock(): Promise<void> {
+    try {
+      await rm(this.getRewriteLockPath(), { force: true });
+    } catch {
+      /* non-fatal — worst case a stale lock sits until WAL_REWRITE_LOCK_STALE_MS passes */
+    }
+  }
+
   async pruneStale(): Promise<number> {
     const prevLock = this.writeLock;
     let releaseLock: () => void;
@@ -551,22 +609,30 @@ export class WriteAheadLog {
 
     try {
       await prevLock;
-      const { entries, hadCorruption } = await this.readAllWithCorruptionFallback();
-      if (hadCorruption) {
-        pluginLogger.warn(
-          `memory-hybrid: WAL pruneStale detected corruption, rewriting ${entries.length} recoverable entr${entries.length === 1 ? "y" : "ies"} (preserving all for replay)`,
-        );
-        await this.atomicRewriteEntries(entries);
+      if (!(await this.acquireRewriteLock())) {
+        pluginLogger.warn("memory-hybrid: WAL pruneStale skipped — another rewrite is already in progress");
         return 0;
       }
-      const now = Date.now();
-      const valid = entries.filter((e) => now - e.timestamp < this.maxAge);
-      const pruned = entries.length - valid.length;
+      try {
+        const { entries, hadCorruption } = await this.readAllWithCorruptionFallback();
+        if (hadCorruption) {
+          pluginLogger.warn(
+            `memory-hybrid: WAL pruneStale detected corruption, rewriting ${entries.length} recoverable entr${entries.length === 1 ? "y" : "ies"} (preserving all for replay)`,
+          );
+          await this.atomicRewriteEntries(entries);
+          return 0;
+        }
+        const now = Date.now();
+        const valid = entries.filter((e) => now - e.timestamp < this.maxAge);
+        const pruned = entries.length - valid.length;
 
-      if (pruned > 0) {
-        await this.atomicRewriteEntries(valid);
+        if (pruned > 0) {
+          await this.atomicRewriteEntries(valid);
+        }
+        return pruned;
+      } finally {
+        await this.releaseRewriteLock();
       }
-      return pruned;
     } finally {
       // biome-ignore lint/style/noNonNullAssertion: Synchronous
       releaseLock!();
@@ -585,24 +651,32 @@ export class WriteAheadLog {
       if (!existsSync(this.walPath)) return 0;
       const st = statSync(this.walPath);
       if (st.size <= maxBytes) return 0;
-      const { entries, hadCorruption } = await this.readAllWithCorruptionFallback();
-      if (hadCorruption) {
-        pluginLogger.warn(
-          "memory-hybrid: WAL compactIfOversized detected corruption, attempting repair by rewriting valid entries",
-        );
-        if (entries.length === 0) {
-          await this._clearInternal();
+      if (!(await this.acquireRewriteLock())) {
+        pluginLogger.warn("memory-hybrid: WAL compactIfOversized skipped — another rewrite is already in progress");
+        return 0;
+      }
+      try {
+        const { entries, hadCorruption } = await this.readAllWithCorruptionFallback();
+        if (hadCorruption) {
+          pluginLogger.warn(
+            "memory-hybrid: WAL compactIfOversized detected corruption, attempting repair by rewriting valid entries",
+          );
+          if (entries.length === 0) {
+            await this._clearInternal();
+            return 1;
+          }
+          pluginLogger.info(
+            `memory-hybrid: WAL compactIfOversized repaired corruption, recovered ${entries.length} valid entries`,
+          );
+          await this.atomicRewriteEntries(entries);
           return 1;
         }
-        pluginLogger.info(
-          `memory-hybrid: WAL compactIfOversized repaired corruption, recovered ${entries.length} valid entries`,
-        );
+        // Size compaction must retain all recoverable entries for replay; age pruning is pruneStale's job.
         await this.atomicRewriteEntries(entries);
         return 1;
+      } finally {
+        await this.releaseRewriteLock();
       }
-      // Size compaction must retain all recoverable entries for replay; age pruning is pruneStale's job.
-      await this.atomicRewriteEntries(entries);
-      return 1;
     } catch (err) {
       pluginLogger.warn(
         `memory-hybrid: WAL compactIfOversized failed; skipping compaction: ${err instanceof Error ? err.message : String(err)}`,

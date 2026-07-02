@@ -560,6 +560,50 @@ describe("WriteAheadLog", () => {
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("WAL pruneStale detected corruption"));
       warnSpy.mockRestore();
     });
+
+    it("skips pruning rather than clobbering a concurrent rewrite already in progress (#80)", async () => {
+      const oldEntry = {
+        id: randomUUID(),
+        timestamp: Date.now() - 5000,
+        operation: "store" as const,
+        data: { text: "Old memory", category: "general", importance: 0.7, source: "test" },
+      };
+      await wal.write(oldEntry);
+
+      // Simulate a second process's pruneStale/compactIfOversized already holding the
+      // cross-process rewrite lock for this walPath.
+      writeFileSync(`${walPath}.rewrite.lock`, String(Date.now()), "utf-8");
+
+      const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+      const pruned = await wal.pruneStale();
+
+      expect(pruned).toBe(0);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("WAL pruneStale skipped"));
+      // The old entry is untouched — a naive stale-snapshot rewrite would have removed it.
+      const entries = await wal.readAll();
+      expect(entries).toHaveLength(1);
+      expect(entries[0].id).toBe(oldEntry.id);
+      warnSpy.mockRestore();
+      rmSync(`${walPath}.rewrite.lock`, { force: true });
+    });
+
+    it("reclaims a stale rewrite lock abandoned by a crashed process", async () => {
+      const oldEntry = {
+        id: randomUUID(),
+        timestamp: Date.now() - 5000,
+        operation: "store" as const,
+        data: { text: "Old memory", category: "general", importance: 0.7, source: "test" },
+      };
+      await wal.write(oldEntry);
+
+      // A lock file far older than WAL_REWRITE_LOCK_STALE_MS (5 min) — abandoned, not live.
+      writeFileSync(`${walPath}.rewrite.lock`, String(Date.now() - 10 * 60 * 1000), "utf-8");
+
+      const pruned = await wal.pruneStale();
+
+      expect(pruned).toBe(1);
+      expect(existsSync(walPath)).toBe(false);
+    });
   });
 
   describe("getValidEntries", () => {
@@ -676,6 +720,29 @@ describe("WriteAheadLog", () => {
       const entries = await localWal.readAll();
       expect(entries).toHaveLength(2);
       expect(entries.map((entry) => entry.id).sort()).toEqual([oldEntry.id, recentEntry.id].sort());
+    });
+
+    it("skips compaction rather than clobbering a concurrent rewrite already in progress (#80)", async () => {
+      const entry = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "Pending entry", category: "general", importance: 0.7, source: "test" },
+      };
+      await wal.write(entry);
+
+      writeFileSync(`${walPath}.rewrite.lock`, String(Date.now()), "utf-8");
+
+      const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+      const compacted = await wal.compactIfOversized(0);
+
+      expect(compacted).toBe(0);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("WAL compactIfOversized skipped"));
+      const entries = await wal.readAll();
+      expect(entries).toHaveLength(1);
+      expect(entries[0].id).toBe(entry.id);
+      warnSpy.mockRestore();
+      rmSync(`${walPath}.rewrite.lock`, { force: true });
     });
   });
 
