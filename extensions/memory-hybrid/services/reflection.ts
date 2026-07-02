@@ -38,6 +38,7 @@ import { capturePluginError } from "./error-reporter.js";
 import { runContaminationGuard } from "./contamination-guard.js";
 import { quarantineSynthesisDraft } from "./synthesis-quarantine.js";
 import { recordMaintenanceTimestamp } from "./maintenance-timestamp.js";
+import { maintenanceRunDeadlineReached } from "../utils/maintenance-run-deadline.js";
 import type { ProvenanceService } from "./provenance.js";
 import {
   dotProductSimilarity,
@@ -745,6 +746,10 @@ export async function runReflection(
   const inRunFactVectors = new Map<string, { vector: number[]; embeddingModel: string }>();
 
   for (const patternText of uniqueNewPatterns) {
+    if (maintenanceRunDeadlineReached()) {
+      logger.warn("memory-hybrid: reflection stopped — maintenance run deadline reached");
+      break;
+    }
     candidateIndex++;
     let vec: number[];
     try {
@@ -1457,6 +1462,10 @@ export async function runReflectionRules(
   const reflectionRunId = provenanceService ? randomUUID() : null;
   const inRunFactVectors = new Map<string, { vector: number[]; embeddingModel: string }>();
   for (const ruleText of uniqueRules) {
+    if (maintenanceRunDeadlineReached()) {
+      logger.warn("memory-hybrid: reflect-rules stopped — maintenance run deadline reached");
+      break;
+    }
     let vec: number[];
     try {
       vec = await embeddings.embed(ruleText);
@@ -2097,6 +2106,10 @@ export async function runReflectionMeta(
   const reflectionRunId = provenanceService ? randomUUID() : null;
   const inRunFactVectors = new Map<string, { vector: number[]; embeddingModel: string }>();
   for (const metaText of uniqueMetas) {
+    if (maintenanceRunDeadlineReached()) {
+      logger.warn("memory-hybrid: reflect-meta stopped — maintenance run deadline reached");
+      break;
+    }
     let vec: number[];
     try {
       vec = await embeddings.embed(metaText);
