@@ -152,6 +152,7 @@ export function createPluginService(ctx: PluginServiceContext) {
 
   let watchdogRunning = false;
   let watchdogRunPromise: Promise<void> | null = null;
+  let maintenanceTickPromise: Promise<void> | null = null;
   let shuttingDown = false;
   let dashboardServer: DashboardServer | null = null;
   let versionCheckPromise: Promise<void> | null = null;
@@ -801,13 +802,19 @@ export function createPluginService(ctx: PluginServiceContext) {
         }
       };
 
+      const runTrackedMaintenanceCycleTick = (label: string) => {
+        maintenanceTickPromise = runMaintenanceCycleTick(label).finally(() => {
+          maintenanceTickPromise = null;
+        });
+      };
+
       timers.maintenanceStartupTimeout.value = setTimeout(() => {
-        void runMaintenanceCycleTick("startup");
+        runTrackedMaintenanceCycleTick("startup");
         timers.maintenanceStartupTimeout.value = null;
       }, 5 * 60_000);
 
       timers.maintenanceTick.value = setInterval(() => {
-        void runMaintenanceCycleTick("interval");
+        runTrackedMaintenanceCycleTick("interval");
       }, 60 * 60_000);
       api.logger.info("memory-hybrid: unified maintenance tick enabled (cycle tier, 60m interval)");
 
@@ -1075,6 +1082,18 @@ export function createPluginService(ctx: PluginServiceContext) {
           api.logger.warn("memory-hybrid: task-queue-watchdog shutdown timed out; continuing shutdown anyway");
         }
       }
+      if (maintenanceTickPromise) {
+        // A tick still holding factsDb/vectorDb handles when they're closed below can throw
+        // "database is closed" mid-operation, or (worse) race a write against handle teardown.
+        const timeoutMs = 5000;
+        const completed = await Promise.race([
+          maintenanceTickPromise.then(() => true).catch(() => true),
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+        ]);
+        if (!completed) {
+          api.logger.warn("memory-hybrid: maintenance-tick shutdown timed out; continuing shutdown anyway");
+        }
+      }
       if (versionCheckPromise) {
         const timeoutMs = 5000;
         const completed = await Promise.race([
@@ -1101,6 +1120,31 @@ export function createPluginService(ctx: PluginServiceContext) {
       }
       if (agentHealthStore) {
         agentHealthStore.close();
+      }
+      edictStore.close();
+      if (eventLog) {
+        eventLog.close();
+      }
+      if (narrativesDb) {
+        narrativesDb.close();
+      }
+      if (issueStore) {
+        issueStore.close();
+      }
+      if (workflowStore) {
+        workflowStore.close();
+      }
+      if (crystallizationStore) {
+        crystallizationStore.close();
+      }
+      if (toolProposalStore) {
+        toolProposalStore.close();
+      }
+      if (verificationStore) {
+        verificationStore.close();
+      }
+      if (eventBus) {
+        eventBus.close();
       }
     },
   };

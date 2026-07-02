@@ -132,6 +132,7 @@ function buildMinimalCtx(
   return {
     PLUGIN_ID: "memory-hybrid",
     factsDb,
+    edictStore: { close: vi.fn() } as never,
     vectorDb,
     embeddings: {
       embed: vi.fn().mockResolvedValue(new Array(EMBEDDING_DIM).fill(0.1)),
@@ -301,6 +302,108 @@ describe("createPluginService startup — dashboard wiring (#1968)", () => {
     const warnCalls = api.logger.warn.mock.calls.map((c: unknown[]) => c[0] as string);
     expect(warnCalls.some((msg) => msg.includes("embeddingRegistry is not defined"))).toBe(false);
     expect(warnCalls.some((msg) => msg.includes("dashboard server failed to start"))).toBe(false);
+
+    (ctx.factsDb as InstanceType<typeof FactsDB>).close();
+    (ctx.vectorDb as InstanceType<typeof VectorDB>).close();
+  });
+});
+
+describe("createPluginService stop() — resource cleanup (#57, #58)", () => {
+  let tmpDir: string;
+  let timers: ReturnType<typeof makeTimers>;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "plugin-svc-stop-"));
+    timers = makeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    clearTimers(timers);
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("waits for an in-flight maintenance tick to finish before closing factsDb/vectorDb (#57)", async () => {
+    vi.useFakeTimers();
+    let releaseTick: (() => void) | undefined;
+    const tickGate = new Promise<void>((resolve) => {
+      releaseTick = resolve;
+    });
+    const order: string[] = [];
+    const maintenanceOrchestrator = await import("../services/maintenance-orchestrator.js");
+    const runMaintenanceTiersSpy = vi
+      .spyOn(maintenanceOrchestrator, "runMaintenanceTiers")
+      .mockImplementation(async () => {
+        order.push("tick-started");
+        await tickGate;
+        order.push("tick-resolved");
+        return { exitCode: 0, summaryLine: "ok", steps: [] } as never;
+      });
+    // The watchdog interval fires at the exact same 5-minute mark as the maintenance startup
+    // timeout below — neutralize it so stop()'s pre-existing watchdogRunPromise drain logic
+    // can't accidentally make this test pass regardless of the maintenance-tick fix under test.
+    const taskQueueWatchdog = await import("../services/task-queue-watchdog.js");
+    const watchdogSpy = vi.spyOn(taskQueueWatchdog, "runTaskQueueWatchdog").mockResolvedValue(undefined as never);
+
+    const api = makeMockApi(RECOMMENDED_OPENCLAW_VERSION);
+    const ctx = buildMinimalCtx(tmpDir, api, timers, {
+      errorReporting: { enabled: false, consent: false },
+    });
+    const closeSpy = vi.spyOn(ctx.factsDb as InstanceType<typeof FactsDB>, "close").mockImplementation(() => {
+      order.push("db-closed");
+    });
+
+    const service = createPluginService(ctx);
+    await service.start();
+
+    // Fire the 5-minute maintenance startup timeout and let the tick reach the mocked await point.
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(order).toEqual(["tick-started"]);
+
+    const stopPromise = service.stop();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(order).not.toContain("db-closed");
+
+    releaseTick?.();
+    await vi.advanceTimersByTimeAsync(0);
+    await stopPromise;
+
+    expect(order).toEqual(["tick-started", "tick-resolved", "db-closed"]);
+    runMaintenanceTiersSpy.mockRestore();
+    watchdogSpy.mockRestore();
+    closeSpy.mockRestore();
+    (ctx.vectorDb as InstanceType<typeof VectorDB>).close();
+  });
+
+  it("closes every configured SQLite-backed store, not just factsDb/vectorDb/credentialsDb (#58)", async () => {
+    const api = makeMockApi(RECOMMENDED_OPENCLAW_VERSION);
+    const ctx = buildMinimalCtx(tmpDir, api, timers);
+    const closes = {
+      eventLog: vi.fn(),
+      narrativesDb: vi.fn(),
+      issueStore: vi.fn(),
+      workflowStore: vi.fn(),
+      crystallizationStore: vi.fn(),
+      toolProposalStore: vi.fn(),
+      verificationStore: vi.fn(),
+      eventBus: vi.fn(),
+    };
+    ctx.eventLog = { close: closes.eventLog } as never;
+    ctx.narrativesDb = { close: closes.narrativesDb } as never;
+    ctx.issueStore = { close: closes.issueStore } as never;
+    ctx.workflowStore = { close: closes.workflowStore } as never;
+    ctx.crystallizationStore = { close: closes.crystallizationStore } as never;
+    ctx.toolProposalStore = { close: closes.toolProposalStore } as never;
+    ctx.verificationStore = { close: closes.verificationStore } as never;
+    ctx.eventBus = { close: closes.eventBus } as never;
+    const edictCloseSpy = vi.spyOn(ctx.edictStore, "close");
+
+    await createPluginService(ctx).stop();
+
+    for (const [name, spy] of Object.entries(closes)) {
+      expect(spy, `${name}.close() should have been called`).toHaveBeenCalledTimes(1);
+    }
+    expect(edictCloseSpy).toHaveBeenCalledTimes(1);
 
     (ctx.factsDb as InstanceType<typeof FactsDB>).close();
     (ctx.vectorDb as InstanceType<typeof VectorDB>).close();
