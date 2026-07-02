@@ -321,9 +321,15 @@ export function getBatch(
   const nowSec = Math.floor(Date.now() / 1000);
   const { includeSuperseded = false } = options ?? {};
   const temporalFilter = includeSuperseded ? "" : " AND superseded_at IS NULL";
+  // `created_at` has 1-second resolution, so a bursty ingestion window can put many rows on the
+  // same tick — ORDER BY created_at alone gives ties no stable order. Callers page through this
+  // (embedding-migration.ts, storage maintenance loops) with an increasing OFFSET while the table
+  // can receive concurrent writes, so an unstable tiebreak can skip or double-count rows straddling
+  // a page boundary. `id` is a UUID with no ordering relationship to insertion time, but it only
+  // needs to be *stable*, not meaningful, to fix the pagination — add it as a secondary sort key.
   const rows = db
     .prepare(
-      `SELECT * FROM facts WHERE (expires_at IS NULL OR expires_at > ?)${temporalFilter} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      `SELECT * FROM facts WHERE (expires_at IS NULL OR expires_at > ?)${temporalFilter} ORDER BY created_at DESC, id ASC LIMIT ? OFFSET ?`,
     )
     .all(nowSec, limit, offset) as Array<Record<string, unknown>>;
   return rows.map((row) => rowToMemoryEntry(row));

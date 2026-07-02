@@ -270,6 +270,56 @@ describe("FactsDB.getByIds", () => {
   });
 });
 
+describe("FactsDB.getBatch", () => {
+  it("orders by created_at DESC with id ASC as a stable tiebreaker", () => {
+    // created_at has 1-second resolution, so a bursty ingestion window routinely produces ties;
+    // ORDER BY created_at DESC alone gives SQLite no deterministic order among tied rows, which
+    // can skip or double-count rows across separate paginated getBatch() calls made while the
+    // table is being written to concurrently (embedding-migration.ts, storage maintenance loops).
+    const raw = db.getRawDb();
+    const prepareSpy = vi.spyOn(raw, "prepare");
+
+    db.getBatch(0, 10);
+
+    const batchCalls = prepareSpy.mock.calls.filter(
+      ([sql]) => typeof sql === "string" && sql.includes("FROM facts") && sql.includes("OFFSET"),
+    );
+    expect(batchCalls).toHaveLength(1);
+    expect(String(batchCalls[0]?.[0])).toMatch(/ORDER BY created_at DESC, id ASC/);
+  });
+
+  it("returns every row exactly once across pages when several facts share the same created_at", () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      const entry = db.store({
+        text: `Tied-timestamp fact ${i}`,
+        category: "fact",
+        importance: 0.7,
+        entity: null,
+        key: null,
+        value: null,
+        source: "test",
+      });
+      ids.push(entry.id);
+    }
+    // Force every row onto the exact same created_at second to simulate a bursty write window.
+    const raw = db.getRawDb();
+    const tiedSec = Math.floor(Date.now() / 1000);
+    raw.prepare(`UPDATE facts SET created_at = ? WHERE id IN (${ids.map(() => "?").join(",")})`).run(
+      tiedSec,
+      ...ids,
+    );
+
+    const seen = new Set<string>();
+    for (let offset = 0; offset < ids.length; offset += 2) {
+      const page = db.getBatch(offset, 2);
+      for (const entry of page) seen.add(entry.id);
+    }
+    expect(seen.size).toBe(ids.length);
+    for (const id of ids) expect(seen.has(id)).toBe(true);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Count
 // ---------------------------------------------------------------------------
