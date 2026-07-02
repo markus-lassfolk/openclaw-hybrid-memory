@@ -133,6 +133,24 @@ function extractLastAssistantText(messages: unknown[]): string | undefined {
   return undefined;
 }
 
+const COLLECT_STRING_VALUES_MAX_DEPTH = 8;
+
+/**
+ * Recursively collect every string value from a parsed tool-call arguments object, including
+ * strings nested in objects/arrays (e.g. `{ headers: { Authorization: "Bearer ..." } }`) — a
+ * shallow `Object.values(...)` scan only sees top-level string fields and misses secrets nested
+ * one level down, which is a common shape for HTTP-tool calls (url + headers object).
+ */
+function collectStringValuesDeep(value: unknown, depth = 0): string[] {
+  if (depth > COLLECT_STRING_VALUES_MAX_DEPTH) return [];
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap((v) => collectStringValuesDeep(v, depth + 1));
+  if (value && typeof value === "object") {
+    return Object.values(value).flatMap((v) => collectStringValuesDeep(v, depth + 1));
+  }
+  return [];
+}
+
 export async function runCapture(
   event: unknown,
   api: ClawdbotPluginApi,
@@ -1157,9 +1175,7 @@ export async function runCapture(
               });
             }
           }
-          const argsToScan = Object.values(parsedArgs)
-            .filter((v): v is string => typeof v === "string")
-            .join(" ");
+          const argsToScan = collectStringValuesDeep(parsedArgs).join(" ");
           const creds = extractCredentialsFromToolCalls(argsToScan || args);
           for (const cred of creds) {
             if (ctx.credentialsDb) {
