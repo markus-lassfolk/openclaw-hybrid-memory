@@ -197,7 +197,16 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
   // For shadow-table migration, skip duplicate checks (we're rebuilding from scratch)
   const checkDuplicate = targetTableName ? async () => false : (vec: number[]) => vectorDb.hasDuplicate(vec);
 
-  while (offset < total) {
+  // Loop until getBatch() itself returns empty (below), NOT `offset < total`. `total` is a
+  // snapshot taken once at the start; it's used for progress/checkpoint reporting only. getBatch
+  // orders by created_at DESC with no stable tiebreaker, so a fact captured concurrently while
+  // this (potentially long-running, fire-and-forget) migration is in progress sorts to the top
+  // and pushes every existing fact's offset down by one. Stopping at the frozen `total` would
+  // then silently leave that many facts at the tail unread — permanently stuck on the old
+  // model's (possibly wrong-dimension) embedding once embedding_meta is marked migrated, with no
+  // way to detect the gap later. `while (true)` + the batch.length===0 break below already
+  // exists (see "ended early" case) and correctly keeps going until the source is truly drained.
+  while (true) {
     // VectorDB was recycled mid-run (hot-reload, plugin re-registration, or
     // a stray close from a peer subsystem — see #1248). Try a transparent
     // reconnect first so a routine connection bump no longer guts re-index.
@@ -245,14 +254,14 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
           ).getBatch(offset, batchSize, { includeSuperseded: false })
         : facts?.slice(offset, offset + batchSize)) ?? [];
     if (batch.length === 0) {
-      // The loop is supposed to terminate via `offset >= total`. Reaching here
-      // with `offset < total` typically means the underlying source returned
-      // fewer rows than the snapshot `total` reported — usually because facts
-      // expired or were superseded between `getCount()` and `getBatch()` on a
-      // long run. This is not a hard failure (the vector store is still
-      // consistent for the facts that DO exist), so we log it explicitly as
-      // "ended early" instead of marking the run as aborted. Callers can
-      // safely treat this as a clean termination and update embedding meta.
+      // This is the loop's only termination condition (see `while (true)` above). Reaching here
+      // with `offset < total` means the underlying source returned fewer rows than the snapshot
+      // `total` reported — usually because facts expired or were superseded between getCount()
+      // and getBatch() on a long run. This is not a hard failure (the vector store is still
+      // consistent for the facts that DO exist), so we log it explicitly as "ended early" instead
+      // of marking the run as aborted. Callers can safely treat this as a clean termination and
+      // update embedding meta. (offset >= total is the common/expected case now — it means facts
+      // were added concurrently during the run, which the source has fully drained regardless.)
       if (offset < total) {
         log.warn(
           `memory-hybrid: embedding-migration: ended early at ${migrated + skipped}/${total} ` +
