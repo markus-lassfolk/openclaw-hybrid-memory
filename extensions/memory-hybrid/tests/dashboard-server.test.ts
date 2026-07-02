@@ -31,7 +31,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseDashboardConfig } from "../config/parsers/features.js";
 import { _testing } from "../index.js";
-import { collectStatus, createDashboardServer, graphqlBodyIsMutation } from "../routes/dashboard-server.js";
+import { collectStatus, createDashboardServer, graphqlBodyIsMutation, parseLimitParam } from "../routes/dashboard-server.js";
 import * as fsUtils from "../utils/fs.js";
 
 const { FactsDB, VectorDB } = _testing;
@@ -138,6 +138,34 @@ async function httpPost(port: number, path: string, body: string): Promise<{ sta
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+describe("parseLimitParam (#20)", () => {
+  it("returns the fallback for a missing param", () => {
+    expect(parseLimitParam(null, 50, 200)).toBe(50);
+    expect(parseLimitParam("", 50, 200)).toBe(50);
+  });
+
+  it("returns the fallback for a non-numeric param instead of NaN", () => {
+    // Regression: the old `Number.parseInt(raw ?? "50", 10)` (no `|| fallback`) let a
+    // non-numeric limit propagate as NaN into a SQL bind, which node:sqlite rejects with
+    // "datatype mismatch" — silently swallowed by the route's catch into an empty 200 response.
+    expect(parseLimitParam("abc", 50, 200)).toBe(50);
+    expect(Number.isNaN(parseLimitParam("abc", 50, 200))).toBe(false);
+  });
+
+  it("returns the fallback for zero or negative input", () => {
+    expect(parseLimitParam("0", 50, 200)).toBe(50);
+    expect(parseLimitParam("-5", 50, 200)).toBe(50);
+  });
+
+  it("clamps to max for an oversized value", () => {
+    expect(parseLimitParam("999999", 50, 200)).toBe(200);
+  });
+
+  it("passes through a valid in-range value", () => {
+    expect(parseLimitParam("75", 50, 200)).toBe(75);
+  });
+});
 
 describe("parseDashboardConfig", () => {
   it("defaults to enabled=true and port=7700", () => {
@@ -797,6 +825,44 @@ describe("Memory Viewer API (Issue #1023)", () => {
       const { status, body } = await apiGet(port, "/api/viewer/entities");
       expect(status).toBe(200);
       expect(Array.isArray(JSON.parse(body))).toBe(true);
+    });
+  });
+
+  it("GET /api/viewer/entities?limit=abc falls back to the default limit instead of silently returning empty (#20)", async () => {
+    await withServer(async (ctx, port) => {
+      ctx.factsDb.store({ text: "Entity test", category: "fact", source: "test", entity: "MyEntity" });
+      const { status, body } = await apiGet(port, "/api/viewer/entities?limit=abc");
+      expect(status).toBe(200);
+      const entities = JSON.parse(body);
+      expect(Array.isArray(entities)).toBe(true);
+      expect(entities.length).toBeGreaterThan(0);
+    });
+  });
+
+  it("GET /api/viewer/provenance/ (empty id) returns 400 instead of an unvalidated lookup (#20)", async () => {
+    await withServer(async (_ctx, port) => {
+      const { status } = await apiGet(port, "/api/viewer/provenance/");
+      expect(status).toBe(400);
+    });
+  });
+
+  it("error responses from viewer routes do not leak raw error text (#20)", async () => {
+    await withServer(async (ctx, port) => {
+      // Force a real internal error with a message that would be an obvious leak if surfaced
+      // verbatim (e.g. an internal path), then verify the response is a generic message instead.
+      const leakedDetail = "ENOENT: /home/user/.openclaw/secrets/private.db";
+      const spy = vi.spyOn(ctx.factsDb, "listForDashboard").mockImplementation(() => {
+        throw new Error(leakedDetail);
+      });
+      try {
+        const { status, body } = await apiGet(port, "/api/viewer/facts");
+        expect(status).toBe(500);
+        expect(body).not.toContain(leakedDetail);
+        const parsed = JSON.parse(body);
+        expect(parsed.error).toBe("InternalServerError");
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 
