@@ -77,8 +77,16 @@ export function createVaultRegistry(opts: {
   // same resolved sqlite file would silently share state while every consumer treats them as
   // independent, so this must be caught eagerly (at registry creation) rather than left to
   // whichever vault happens to be opened first lazily.
+  //
+  // Distinct sqlite paths are not sufficient: resolveVaultLancePath/resolveVaultWalPath only
+  // strip a trailing ".db" before appending ".lance"/".wal", so e.g. "personal.db" and
+  // "personal" (no extension) resolve to distinct sqlite paths but the SAME derived lance/WAL
+  // path — the fact stores stay isolated but the two vaults' VectorDB instances would silently
+  // share one LanceDB dataset. Check the derived paths too.
   {
     const seenPaths = new Map<string, string>([[defaultSqlitePath, "default"]]);
+    const seenLancePaths = new Map<string, string>([[defaultLancePath, "default"]]);
+    const seenWalPaths = new Map<string, string>([[resolveVaultWalPath(defaultSqlitePath), "default"]]);
     for (const name of listConfiguredVaultNames(cfg.vaults)) {
       const rawPath = cfg.vaults?.[name];
       if (!rawPath) continue;
@@ -91,6 +99,28 @@ export function createVaultRegistry(opts: {
         );
       }
       seenPaths.set(resolvedPath, name);
+
+      const resolvedLancePath = api.resolvePath(resolveVaultLancePath(rawPath));
+      const lanceCollidesWith = seenLancePaths.get(resolvedLancePath);
+      if (lanceCollidesWith) {
+        throw new Error(
+          `Vault "${name}" resolves to the same LanceDB path as vault "${lanceCollidesWith}" (${resolvedLancePath}), ` +
+            `even though their sqlite paths differ. Vault sqlite paths must not differ only by a ".db" suffix ` +
+            "(e.g. \"personal.db\" and \"personal\" both derive lance path \"personal.lance\") — " +
+            "sharing a LanceDB dataset would silently merge embeddings that other vault code assumes is isolated.",
+        );
+      }
+      seenLancePaths.set(resolvedLancePath, name);
+
+      const resolvedWalPath = resolveVaultWalPath(resolvedPath);
+      const walCollidesWith = seenWalPaths.get(resolvedWalPath);
+      if (walCollidesWith) {
+        throw new Error(
+          `Vault "${name}" resolves to the same WAL path as vault "${walCollidesWith}" (${resolvedWalPath}), ` +
+            "even though their sqlite paths differ. Vault sqlite paths must not differ only by a \".db\" suffix.",
+        );
+      }
+      seenWalPaths.set(resolvedWalPath, name);
     }
   }
 

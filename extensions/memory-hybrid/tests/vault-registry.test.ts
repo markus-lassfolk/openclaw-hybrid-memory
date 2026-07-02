@@ -136,6 +136,69 @@ describe("vault registry (#1917)", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("rejects two vaults resolving to the same sqlite path", () => {
+    const dir = mkdtempSync(join(homedir(), ".hm-vault-collide-sqlite-"));
+    try {
+      const sqlitePath = join(dir, "facts.db");
+      const lancePath = join(dir, "facts.lance");
+      const factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false, storeConfig: { fuzzyDedupe: false } });
+      const vectorDb = new VectorDB(lancePath, 8, false);
+      const sharedPath = join(dir, "shared.db");
+      expect(() =>
+        createVaultRegistry({
+          cfg: {
+            vaults: { alpha: sharedPath, beta: sharedPath },
+            wal: { enabled: false, maxAge: 60_000 },
+            store: { fuzzyDedupe: false },
+            vector: { autoRepair: false },
+          } as never,
+          api: { resolvePath: (p: string) => p, logger: { warn: () => {}, info: () => {} } } as never,
+          defaultFactsDb: factsDb,
+          defaultVectorDb: vectorDb,
+          defaultSqlitePath: sqlitePath,
+          defaultLancePath: lancePath,
+          defaultWal: null,
+          vectorDim: 8,
+        }),
+      ).toThrow(/same sqlite path/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects two vaults whose sqlite paths differ only by a .db suffix (same derived lance path)", () => {
+    const dir = mkdtempSync(join(homedir(), ".hm-vault-collide-lance-"));
+    try {
+      const sqlitePath = join(dir, "facts.db");
+      const lancePath = join(dir, "facts.lance");
+      const factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false, storeConfig: { fuzzyDedupe: false } });
+      const vectorDb = new VectorDB(lancePath, 8, false);
+      // "personal.db" and "personal" are distinct sqlite paths, but resolveVaultLancePath()
+      // strips a trailing ".db" before appending ".lance" — both derive "personal.lance".
+      const withExt = join(dir, "personal.db");
+      const withoutExt = join(dir, "personal");
+      expect(() =>
+        createVaultRegistry({
+          cfg: {
+            vaults: { personal: withExt, "personal-noext": withoutExt },
+            wal: { enabled: false, maxAge: 60_000 },
+            store: { fuzzyDedupe: false },
+            vector: { autoRepair: false },
+          } as never,
+          api: { resolvePath: (p: string) => p, logger: { warn: () => {}, info: () => {} } } as never,
+          defaultFactsDb: factsDb,
+          defaultVectorDb: vectorDb,
+          defaultSqlitePath: sqlitePath,
+          defaultLancePath: lancePath,
+          defaultWal: null,
+          vectorDim: 8,
+        }),
+      ).toThrow(/same LanceDB path/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("injection attribution store (#1916)", () => {
