@@ -7,6 +7,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { type DecayClass, type MemoryCategory, type StoreConfig, TTL_DEFAULTS } from "../../config.js";
 import { applyDedupe, hasGlobalDuplicateProbe, resolveDedupeProfile } from "../../services/dedupe-policy.js";
 import { isPromptArtifactOrReasoningTrace } from "../../services/capture-utils.js";
+import { capturePluginError } from "../../services/error-reporter.js";
 import type { MemoryEntry, MemoryTier } from "../../types/memory.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../../utils/constants.js";
 import { formatDateUtc, formatTimestampUtc } from "../../utils/dates.js";
@@ -352,8 +353,14 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
 
       const rawMergedText = `${existing.text}\n${entry.text}`;
       if (rawMergedText.length > 4000) {
-        process.stderr.write(
-          `memory-hybrid: dedupe merge for fact ${existing.id} truncated to 4000 chars (combined length=${rawMergedText.length}); some content may be lost\n`,
+        capturePluginError(
+          new Error(`dedupe merge for fact ${existing.id} truncated to 4000 chars; some content may be lost`),
+          {
+            operation: "dedupe-merge-truncate",
+            subsystem: "facts-db",
+            severity: "warning",
+            tags: { factId: existing.id, combinedLength: rawMergedText.length, truncatedLength: 4000 },
+          },
         );
       }
       const mergedText = rawMergedText.slice(0, 4000);

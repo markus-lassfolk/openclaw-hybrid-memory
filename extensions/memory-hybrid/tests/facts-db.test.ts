@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
+import * as errorReporter from "../services/error-reporter.js";
 
 const { FactsDB, isIsoUtcTimestamp } = _testing;
 
@@ -1358,6 +1359,57 @@ describe("FactsDB fuzzy deduplication", () => {
       expect(second.id).toBe(first.id);
       expect(mergeDb.getById(first.id)?.text.length).toBe(4500);
     } finally {
+      mergeDb.close();
+    }
+  });
+
+  it("reports dedupe-merge truncation via capturePluginError instead of raw stderr (#78)", () => {
+    const mergeDb = new FactsDB(join(tmpDir, "dedupe-merge-truncate.db"), {
+      // fuzzyDedupe must be set at the top level (not just inside storeConfig) — StoreFactContext
+      // reads options.fuzzyDedupe directly, which is what gates the hash-based dedupe check
+      // needed here (a same-length case-only difference doesn't satisfy the raw-text exact match).
+      fuzzyDedupe: true,
+      storeConfig: {
+        fuzzyDedupe: true,
+        defaultProfile: {
+          onDuplicate: "merge",
+        },
+      },
+    });
+    const captureSpy = vi.spyOn(errorReporter, "capturePluginError").mockImplementation(() => undefined);
+    try {
+      // normalizedHash() lowercases before hashing, so an all-lowercase and an all-uppercase
+      // string of the same length hash-dedupe against each other (triggering "merge") while
+      // still failing the raw-text `existing.text.includes(entry.text)` short-circuit (case
+      // differs), forcing the append+truncate path below. Combined length (3000 + 1 + 3000 =
+      // 6001) exceeds the 4000-char merge cap.
+      const first = mergeDb.store({
+        text: "a".repeat(3000),
+        category: "fact",
+        importance: 0.8,
+        entity: null,
+        key: null,
+        value: null,
+        source: "merge-source",
+      });
+      mergeDb.store({
+        text: "A".repeat(3000),
+        category: "fact",
+        importance: 0.8,
+        entity: null,
+        key: null,
+        value: null,
+        source: "merge-source",
+      });
+
+      expect(mergeDb.getById(first.id)?.text.length).toBe(4000);
+      const truncateCalls = captureSpy.mock.calls.filter(
+        ([, ctx]) => ctx?.operation === "dedupe-merge-truncate",
+      );
+      expect(truncateCalls).toHaveLength(1);
+      expect(truncateCalls[0][1]).toMatchObject({ subsystem: "facts-db", severity: "warning" });
+    } finally {
+      captureSpy.mockRestore();
       mergeDb.close();
     }
   });
