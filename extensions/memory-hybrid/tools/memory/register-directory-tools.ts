@@ -214,7 +214,8 @@ export function registerDirectoryTools(runtime: MemoryToolRuntime): void {
             scope: "global" | "agent";
             scopeTarget?: string;
           };
-          const entry = factsDb.getById(memoryId);
+          const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
+          const entry = factsDb.getById(memoryId, { scopeFilter });
           if (!entry) {
             return {
               content: [{ type: "text", text: `No memory found with id: ${memoryId}.` }],
@@ -277,13 +278,14 @@ export function registerDirectoryTools(runtime: MemoryToolRuntime): void {
             query?: string;
             memoryId?: string;
           };
+          const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
 
           if (memoryId) {
             // Support prefix matching: if the ID looks truncated (not a full UUID),
             // try to resolve the full ID via prefix search
             let resolvedId = memoryId;
             if (memoryId.length < 36 && !memoryId.includes("-")) {
-              const prefixResult = factsDb.findByIdPrefix(memoryId);
+              const prefixResult = factsDb.findByIdPrefixScoped(memoryId, scopeFilter);
               if (prefixResult && "ambiguous" in prefixResult) {
                 const countText = prefixResult.count >= 3 ? `${prefixResult.count}+` : `${prefixResult.count}`;
                 return {
@@ -296,7 +298,7 @@ export function registerDirectoryTools(runtime: MemoryToolRuntime): void {
                   details: { action: "ambiguous", prefix: memoryId, matchCount: prefixResult.count },
                 };
               }
-              if (prefixResult && "id" in prefixResult) {
+              if (prefixResult && "id" in prefixResult && prefixResult.id) {
                 resolvedId = prefixResult.id;
               }
             }
@@ -312,6 +314,21 @@ export function registerDirectoryTools(runtime: MemoryToolRuntime): void {
                   },
                 ],
                 details: { action: "invalid_id", originalId: memoryId },
+              };
+            }
+
+            // Re-verify the resolved id is visible under the caller's scope before mutating —
+            // findByIdPrefixScoped already scopes prefix lookups, but a caller-supplied full
+            // UUID skips prefix resolution entirely, so it must be scope-checked here too.
+            if (!factsDb.getById(resolvedId, { scopeFilter })) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Failed to delete memory "${memoryId}" — not found in either backend. Use the full UUID from memory_recall.`,
+                  },
+                ],
+                details: { action: "not_found", originalId: memoryId, resolvedId },
               };
             }
 
@@ -368,7 +385,7 @@ export function registerDirectoryTools(runtime: MemoryToolRuntime): void {
           }
 
           if (query) {
-            const sqlResults = factsDb.search(query, 5);
+            const sqlResults = factsDb.search(query, 5, { scopeFilter });
             let lanceResults: SearchResult[] = [];
             try {
               const vector = await embedCallWithTimeoutAndRetry(
@@ -389,7 +406,11 @@ export function registerDirectoryTools(runtime: MemoryToolRuntime): void {
               api.logger.warn(`memory-hybrid: vector search failed: ${err}`);
             }
 
-            const results = mergeResults(sqlResults, lanceResults, 5, factsDb);
+            // vectorDb has no scope awareness, so lanceResults may include out-of-scope facts —
+            // re-check every candidate against the caller's scope before it can be surfaced or deleted.
+            const results = mergeResults(sqlResults, lanceResults, 5, factsDb).filter((r) =>
+              factsDb.getById(r.entry.id, { scopeFilter }),
+            );
 
             if (results.length === 0) {
               return {

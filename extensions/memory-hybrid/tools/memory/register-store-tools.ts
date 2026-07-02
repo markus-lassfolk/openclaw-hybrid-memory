@@ -34,7 +34,7 @@ import { emitFeatureTelemetry } from "../../services/feature-telemetry.js";
 import { extractStructuredFields } from "../../services/fact-extraction.js";
 import { storeAliases } from "../../services/retrieval-aliases.js";
 import { classifyMemoryOperation } from "../../services/classification.js";
-import { validateScopedClassificationTarget } from "../../services/classification-scope.js";
+import { matchesExactScope, validateScopedClassificationTarget } from "../../services/classification-scope.js";
 import { shouldAutoVerify } from "../../services/verification-store.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../../services/vector-maintenance.js";
 import { mirrorMemoryStoreToActiveTaskLedger } from "../../services/task-ledger-facts.js";
@@ -1096,15 +1096,30 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             let supersededAppliedId: string | null = null;
             if (supersedes?.trim() && storeResult.newlyStored) {
               const supersededId = supersedes.trim();
-              supersededAppliedId = supersededId;
-              storeFactsDb.supersede(supersededId, entry.id);
-              aliasDb?.deleteByFactId(supersededId);
-              await deleteVectorForFactId({
-                vectorDb: storeVectorDb,
-                factId: supersededId,
-                logger: api.logger,
-                context: "store-manual-supersede",
-              });
+              // The `supersedes` id is caller-supplied and unrelated to the classifier's own
+              // candidate set, so unlike the auto-classification DELETE/UPDATE paths above it
+              // can't reuse validateScopedClassificationTarget's candidate check — but it must
+              // still be blocked from touching a fact outside the current write's scope.
+              const supersedeTarget = storeFactsDb.getById(supersededId);
+              if (supersedeTarget && matchesExactScope(supersedeTarget, scope, scopeTarget)) {
+                supersededAppliedId = supersededId;
+                const applied = storeFactsDb.supersede(supersededId, entry.id);
+                if (applied) {
+                  aliasDb?.deleteByFactId(supersededId);
+                  await deleteVectorForFactId({
+                    vectorDb: storeVectorDb,
+                    factId: supersededId,
+                    logger: api.logger,
+                    context: "store-manual-supersede",
+                  });
+                } else {
+                  supersededAppliedId = null;
+                }
+              } else {
+                api.logger.warn?.(
+                  `memory-hybrid: blocked cross-scope or unknown memory_store supersedes target ${supersededId}`,
+                );
+              }
             }
 
             try {
