@@ -203,15 +203,13 @@ export async function updateGoalOnSubagentEnd(
     const byLabel = matches.filter((m) => taskLabelsMatch(m.taskLabel, info.label));
     if (byLabel.length === 1) resolved = byLabel;
   }
-  if (resolved.length !== 1 && info.label) {
-    const labelOnly: Array<{ goal: Goal; taskLabel: string }> = [];
-    for (const g of goals) {
-      const linkedTasks = normalizedLinkedTasks(g);
-      const task = linkedTasks.find((t) => taskLabelsMatch(t.label, info.label));
-      if (task) labelOnly.push({ goal: g, taskLabel: task.label });
-    }
-    if (labelOnly.length === 1) resolved = labelOnly;
-  }
+  // Label-only fallback across ALL goals is intentionally NOT attempted here when
+  // info.sessionKey is set but didn't uniquely resolve above: task labels aren't enforced
+  // unique across different goals, so guessing by label alone could attribute this subagent's
+  // outcome to a different goal's same-named task (marking the wrong goal's task
+  // completed/failed while the real one is left stuck in_progress forever). When info.sessionKey
+  // is null, the loop above already matched by label directly — no separate fallback is needed
+  // for that case.
   if (resolved.length !== 1) {
     return;
   }
