@@ -2905,6 +2905,62 @@ describe("FactsDB.createOrStrengthenRelatedLink", () => {
     const links = db.getLinksFrom(a.id);
     expect(links.length).toBe(0);
   });
+
+  it("runs its existence check and write inside a single transaction", () => {
+    // memory_links has no UNIQUE constraint on (source_fact_id, target_fact_id, link_type), so
+    // the "does a RELATED_TO link already exist" check and the UPDATE-or-INSERT that follows it
+    // must be atomic — otherwise two concurrent writers can both see "no existing row" and both
+    // INSERT, creating duplicate parallel edges. Assert the whole sequence is wrapped in one
+    // BEGIN IMMEDIATE ... COMMIT rather than unguarded statements.
+    const a = db.store({
+      text: "Fact A for tx test",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const b = db.store({
+      text: "Fact B for tx test",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    const raw = db.getRawDb();
+    const callLog: Array<{ kind: "exec" | "prepare"; sql: string }> = [];
+    const originalExec = raw.exec.bind(raw);
+    const originalPrepare = raw.prepare.bind(raw);
+    vi.spyOn(raw, "exec").mockImplementation((sql: string) => {
+      callLog.push({ kind: "exec", sql });
+      return originalExec(sql);
+    });
+    vi.spyOn(raw, "prepare").mockImplementation((sql: string) => {
+      callLog.push({ kind: "prepare", sql });
+      return originalPrepare(sql);
+    });
+
+    db.createOrStrengthenRelatedLink(a.id, b.id);
+
+    const beginIndex = callLog.findIndex((c) => c.kind === "exec" && c.sql.startsWith("BEGIN"));
+    const commitIndex = callLog.findIndex((c) => c.kind === "exec" && c.sql === "COMMIT");
+    expect(beginIndex).toBeGreaterThanOrEqual(0);
+    expect(commitIndex).toBeGreaterThan(beginIndex);
+
+    const linkStatementIndexes = callLog
+      .map((c, i) => ({ ...c, i }))
+      .filter((c) => c.kind === "prepare" && c.sql.includes("memory_links"))
+      .map((c) => c.i);
+    expect(linkStatementIndexes.length).toBeGreaterThan(0);
+    for (const i of linkStatementIndexes) {
+      expect(i).toBeGreaterThan(beginIndex);
+      expect(i).toBeLessThan(commitIndex);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

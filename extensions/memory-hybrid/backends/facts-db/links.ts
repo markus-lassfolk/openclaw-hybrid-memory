@@ -32,18 +32,29 @@ export function createOrStrengthenRelatedLink(
   if (factIdA === factIdB) return;
   const [source, target] = factIdA < factIdB ? [factIdA, factIdB] : [factIdB, factIdA];
 
-  const existing = db
-    .prepare(
-      `SELECT id, strength FROM memory_links WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'RELATED_TO'`,
-    )
-    .get(source, target) as { id: string; strength: number } | undefined;
+  // memory_links has no UNIQUE constraint on (source_fact_id, target_fact_id, link_type), so the
+  // read-then-write below must be atomic — otherwise two concurrent writers (e.g. an interactive
+  // store racing a background consolidation/enrichment pass) can both see "no existing row" and
+  // both INSERT, creating duplicate parallel edges that corrupt strength/degree accounting.
+  const tx = createTransaction(
+    db,
+    () => {
+      const existing = db
+        .prepare(
+          `SELECT id, strength FROM memory_links WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'RELATED_TO'`,
+        )
+        .get(source, target) as { id: string; strength: number } | undefined;
 
-  const newStrength = Math.min(1, (existing?.strength ?? 0) + deltaStrength);
-  if (existing) {
-    db.prepare("UPDATE memory_links SET strength = ? WHERE id = ?").run(newStrength, existing.id);
-  } else {
-    createLink(db, source, target, "RELATED_TO", newStrength);
-  }
+      const newStrength = Math.min(1, (existing?.strength ?? 0) + deltaStrength);
+      if (existing) {
+        db.prepare("UPDATE memory_links SET strength = ? WHERE id = ?").run(newStrength, existing.id);
+      } else {
+        createLink(db, source, target, "RELATED_TO", newStrength);
+      }
+    },
+    "IMMEDIATE",
+  );
+  tx();
 }
 
 export function strengthenRelatedLinksBatch(db: DatabaseSync, pairs: [string, string][], deltaStrength = 0.1): void {
