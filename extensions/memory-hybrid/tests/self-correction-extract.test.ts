@@ -104,4 +104,38 @@ describe("self-correction-extract", () => {
     expect(result.incidents[0].precedingAssistant.length).toBeLessThanOrEqual(503);
     expect(result.incidents[0].followingAssistant.length).toBeLessThanOrEqual(503);
   });
+
+  it("reports failures when a session file cannot be read (#26)", () => {
+    const result = runSelfCorrectionExtract({
+      filePaths: [join(tmpDir, "does-not-exist.jsonl")],
+      correctionRegex: /that was wrong/i,
+    });
+    expect(result.failures).toBe(1);
+  });
+
+  it("reports failures when a session file has malformed JSONL lines (#26)", () => {
+    const jsonl = [
+      msg("assistant", "I ran the command without checking."),
+      "{not valid json at all",
+      msg("user", "That was wrong — you should have verified first."),
+    ].join("\n");
+    const path = join(tmpDir, "malformed.jsonl");
+    writeFileSync(path, jsonl, "utf-8");
+
+    const result = runSelfCorrectionExtract({ filePaths: [path], correctionRegex: /that was wrong/i });
+    expect(result.failures).toBe(1);
+    expect(result.incidents).toHaveLength(1);
+  });
+
+  it("does not set failures when every file reads and parses cleanly (#26)", () => {
+    const jsonl = [
+      msg("assistant", "I ran the command without checking."),
+      msg("user", "That was wrong — you should have verified first."),
+    ].join("\n");
+    const path = join(tmpDir, "clean.jsonl");
+    writeFileSync(path, jsonl, "utf-8");
+
+    const result = runSelfCorrectionExtract({ filePaths: [path], correctionRegex: /that was wrong/i });
+    expect(result.failures).toBeUndefined();
+  });
 });

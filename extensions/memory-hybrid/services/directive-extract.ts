@@ -58,6 +58,8 @@ export type DirectiveExtractResult = {
   rejected?: number;
   /** Count of candidates rejected by reason (regex hit + user turn, failed classifyDirectiveCandidate). */
   rejectionReasons?: Partial<Record<DirectiveRejectionReason, number>>;
+  /** Count of session files that failed to read, or lines that failed to parse, this run. */
+  failures?: number;
 };
 
 export const DIRECTIVE_EXTRACTION_METHOD = "directive-extract:regex-heuristic-v2";
@@ -404,6 +406,7 @@ export function runDirectiveExtract(opts: RunDirectiveExtractOpts): DirectiveExt
   const { filePaths, directiveRegex, verboseRejections, logRejection } = opts;
   const incidents: DirectiveIncident[] = [];
   let rejected = 0;
+  let failures = 0;
   const rejectionReasons: Partial<Record<DirectiveRejectionReason, number>> = {};
 
   for (const filePath of filePaths) {
@@ -411,6 +414,7 @@ export function runDirectiveExtract(opts: RunDirectiveExtractOpts): DirectiveExt
     try {
       lines = readFileSync(filePath, "utf-8").split("\n");
     } catch (err) {
+      failures++;
       capturePluginError(err as Error, {
         operation: "read-session-file",
         severity: "info",
@@ -432,6 +436,7 @@ export function runDirectiveExtract(opts: RunDirectiveExtractOpts): DirectiveExt
         const text = extractMessageText(msg.content);
         messages.push({ role, text });
       } catch (err) {
+        failures++;
         capturePluginError(err as Error, {
           operation: "parse-session-line",
           severity: "info",
@@ -486,5 +491,6 @@ export function runDirectiveExtract(opts: RunDirectiveExtractOpts): DirectiveExt
     sessionsScanned: filePaths.length,
     rejected,
     rejectionReasons: rejected > 0 ? rejectionReasons : undefined,
+    ...(failures > 0 ? { failures } : {}),
   };
 }

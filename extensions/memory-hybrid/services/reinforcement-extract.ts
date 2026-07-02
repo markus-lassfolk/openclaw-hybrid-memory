@@ -95,6 +95,8 @@ export type ReinforcementExtractResult = {
    * truncation on every future run, so callers should surface this rather than let it pass silently.
    */
   truncatedSessions?: string[];
+  /** Count of session files that failed to read, or lines that failed to parse, this run. */
+  failures?: number;
 };
 
 /** Hard cap on bytes read per file per run to avoid unbounded JSONL reads (matches passive observer). */
@@ -213,6 +215,7 @@ export async function runReinforcementExtract(opts: RunReinforcementExtractOpts)
   const { filePaths, reinforcementRegex } = opts;
   const incidents: ReinforcementIncident[] = [];
   const truncatedSessions: string[] = [];
+  let failures = 0;
 
   for (const filePath of filePaths) {
     let lines: string[];
@@ -254,6 +257,7 @@ export async function runReinforcementExtract(opts: RunReinforcementExtractOpts)
       }
       lines = rawBuf.toString("utf-8").split("\n");
     } catch (err) {
+      failures++;
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "read-session-file",
         severity: "info",
@@ -262,7 +266,9 @@ export async function runReinforcementExtract(opts: RunReinforcementExtractOpts)
       continue;
     }
 
-    const messages = parseSessionMessagesFromLines(lines, "reinforcement-extract");
+    const messages = parseSessionMessagesFromLines(lines, "reinforcement-extract", () => {
+      failures++;
+    });
 
     const sessionName = basename(filePath);
     const ts = timestampFromFilename(sessionName);
@@ -300,5 +306,6 @@ export async function runReinforcementExtract(opts: RunReinforcementExtractOpts)
     incidents,
     sessionsScanned: filePaths.length,
     ...(truncatedSessions.length > 0 ? { truncatedSessions } : {}),
+    ...(failures > 0 ? { failures } : {}),
   };
 }

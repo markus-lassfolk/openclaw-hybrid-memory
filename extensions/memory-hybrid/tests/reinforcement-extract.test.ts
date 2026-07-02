@@ -349,4 +349,55 @@ describe("reinforcement-extract", () => {
 
     rmSync(tmpDir, { recursive: true, force: true });
   });
+
+  it("reports failures when a session file cannot be read (#26)", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
+    const result = await runReinforcementExtract({
+      filePaths: [join(tmpDir, "does-not-exist.jsonl")],
+      reinforcementRegex: /\bperfect\b/i,
+    });
+    expect(result.failures).toBe(1);
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("reports failures when a session file has malformed JSONL lines (#26)", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
+    const sessionFile = join(tmpDir, "2026-02-19-malformed.jsonl");
+    const jsonl = [
+      "{not valid json",
+      `{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"I checked the logs and found the error."}]}}`,
+      `{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Perfect! That's exactly what I needed"}]}}`,
+    ].join("\n");
+    writeFileSync(sessionFile, jsonl, "utf-8");
+
+    const result = await runReinforcementExtract({
+      filePaths: [sessionFile],
+      reinforcementRegex:
+        /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
+    });
+
+    expect(result.failures).toBe(1);
+    expect(result.incidents.length).toBeGreaterThan(0);
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("does not set failures when every file reads and parses cleanly (#26)", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
+    const sessionFile = join(tmpDir, "2026-02-19-clean.jsonl");
+    const jsonl = `{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"I checked the logs and found the error."}]}}
+{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Perfect! That's exactly what I needed"}]}}`;
+    writeFileSync(sessionFile, jsonl, "utf-8");
+
+    const result = await runReinforcementExtract({
+      filePaths: [sessionFile],
+      reinforcementRegex:
+        /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
+    });
+
+    expect(result.failures).toBeUndefined();
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
 });

@@ -38,8 +38,16 @@ export function testSignalRegex(regex: RegExp, text: string): boolean {
 
 /**
  * Parse session JSONL lines into role/text/content messages.
+ *
+ * @param onParseFailure - Optional callback invoked once per line that fails to parse, so
+ * callers that need to surface a failure count (rather than relying solely on the
+ * capturePluginError side-channel) can track it without changing the return shape.
  */
-export function parseSessionMessagesFromLines(lines: string[], subsystem: string): SessionMessage[] {
+export function parseSessionMessagesFromLines(
+  lines: string[],
+  subsystem: string,
+  onParseFailure?: () => void,
+): SessionMessage[] {
   const messages: SessionMessage[] = [];
   for (const line of lines) {
     const trimmed = line.trim();
@@ -68,6 +76,7 @@ export function parseSessionMessagesFromLines(lines: string[], subsystem: string
         details: msg.details,
       });
     } catch (err) {
+      onParseFailure?.();
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "parse-session-line",
         severity: "info",
@@ -78,11 +87,20 @@ export function parseSessionMessagesFromLines(lines: string[], subsystem: string
   return messages;
 }
 
-export function parseSessionMessagesSync(filePath: string, subsystem: string): SessionMessage[] {
+/**
+ * @param onFailure - Optional callback invoked once if the file read fails, or once per line
+ * that fails to parse (see parseSessionMessagesFromLines). Lets callers surface a failure count.
+ */
+export function parseSessionMessagesSync(
+  filePath: string,
+  subsystem: string,
+  onFailure?: () => void,
+): SessionMessage[] {
   try {
     const lines = readFileSync(filePath, "utf-8").split("\n");
-    return parseSessionMessagesFromLines(lines, subsystem);
+    return parseSessionMessagesFromLines(lines, subsystem, onFailure);
   } catch (err) {
+    onFailure?.();
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: "read-session-file",
       severity: "info",
