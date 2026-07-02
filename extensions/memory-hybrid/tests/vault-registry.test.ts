@@ -2,7 +2,7 @@
  * Vault registry and injection attribution tests (#1917, #1916).
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -12,6 +12,7 @@ import { createVaultRegistry } from "../services/vault-registry.js";
 import { resolveVaultWalPath } from "../config/vaults.js";
 import { WriteAheadLog } from "../backends/wal.js";
 import { recordInjectionAttribution } from "../services/injection-attribution-store.js";
+import * as errorReporter from "../services/error-reporter.js";
 
 describe("vault registry (#1917)", () => {
   it("resolves default vault without opening extra handles", () => {
@@ -101,6 +102,47 @@ describe("vault registry (#1917)", () => {
       expect(named.name).toBe("project");
       registry.closeAll();
       expect(() => named.factsDb.getRawDb().prepare("SELECT 1").get()).toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports (instead of silently swallowing) a close failure during closeAll (#55)", () => {
+    const dir = mkdtempSync(join(homedir(), ".hm-vault-close-err-"));
+    try {
+      const sqlitePath = join(dir, "facts.db");
+      const lancePath = join(dir, "facts.lance");
+      const factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false, storeConfig: { fuzzyDedupe: false } });
+      const vectorDb = new VectorDB(lancePath, 8, false);
+      const projectDbPath = join(dir, "project.db");
+      const registry = createVaultRegistry({
+        cfg: {
+          vaults: { project: projectDbPath },
+          wal: { enabled: true, maxAge: 60_000 },
+          store: { fuzzyDedupe: false },
+          vector: { autoRepair: false },
+        } as never,
+        api: { resolvePath: (p: string) => p, logger: { warn: () => {}, info: () => {} } } as never,
+        defaultFactsDb: factsDb,
+        defaultVectorDb: vectorDb,
+        defaultSqlitePath: sqlitePath,
+        defaultLancePath: lancePath,
+        defaultWal: null,
+        vectorDim: 8,
+      });
+      const named = registry.resolve("project");
+      const captureSpy = vi.spyOn(errorReporter, "capturePluginError").mockImplementation(() => undefined);
+      vi.spyOn(named.vectorDb, "close").mockImplementation(() => {
+        throw new Error("close boom");
+      });
+
+      registry.closeAll();
+
+      const vectorCloseCalls = captureSpy.mock.calls.filter(
+        ([, ctx]) => (ctx as { operation?: string })?.operation === "close-vector-db",
+      );
+      expect(vectorCloseCalls.length).toBeGreaterThan(0);
+      captureSpy.mockRestore();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

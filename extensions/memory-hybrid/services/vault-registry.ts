@@ -34,8 +34,13 @@ export type VaultRegistry = {
 function closeNamedVaultHandle(handle: VaultHandle): void {
   try {
     handle.vectorDb.close?.();
-  } catch {
-    /* non-fatal */
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "vault-registry",
+      operation: "close-vector-db",
+      severity: "warning",
+      vault: handle.name,
+    });
   }
   try {
     if (typeof handle.factsDb.permanentClose === "function") {
@@ -43,8 +48,13 @@ function closeNamedVaultHandle(handle: VaultHandle): void {
     } else {
       handle.factsDb.close?.();
     }
-  } catch {
-    /* non-fatal */
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "vault-registry",
+      operation: "close-facts-db",
+      severity: "warning",
+      vault: handle.name,
+    });
   }
 }
 
