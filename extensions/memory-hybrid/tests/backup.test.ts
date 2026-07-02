@@ -24,10 +24,13 @@ describe("backup", () => {
       CREATE TABLE IF NOT EXISTS facts (
         id INTEGER PRIMARY KEY,
         content TEXT NOT NULL,
-        superseded_by TEXT
+        superseded_by TEXT,
+        superseded_at INTEGER
       );
     `);
-    db.exec("INSERT INTO facts (content, superseded_by) VALUES ('test fact 1', NULL), ('test fact 2', NULL);");
+    db.exec(
+      "INSERT INTO facts (content, superseded_by, superseded_at) VALUES ('test fact 1', NULL, NULL), ('test fact 2', NULL, NULL);",
+    );
     db.close();
 
     // Create a test LanceDB directory with some dummy files
@@ -343,7 +346,27 @@ describe("backup", () => {
     it("should count only non-superseded facts", () => {
       // Add a superseded fact
       const db = new DatabaseSync(sqlitePath);
-      db.exec("INSERT INTO facts (content, superseded_by) VALUES ('superseded fact', 'fact-123');");
+      db.exec(
+        "INSERT INTO facts (content, superseded_by, superseded_at) VALUES ('superseded fact', 'fact-123', 1700000000);",
+      );
+      db.close();
+
+      const result = runBackupVerify({ resolvedSqlitePath: sqlitePath });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.factCount).toBe(2); // Still 2, not 3
+      }
+    });
+
+    it("counts an evicted fact (superseded_at set, superseded_by NULL) as inactive (#82)", () => {
+      // The daily-quota eviction path and expiry/decay pruning only set superseded_at — there's
+      // no replacement fact, so superseded_by stays NULL. Filtering on superseded_by IS NULL
+      // (the pre-fix behavior) would have miscounted this as still active.
+      const db = new DatabaseSync(sqlitePath);
+      db.exec(
+        "INSERT INTO facts (content, superseded_by, superseded_at) VALUES ('evicted fact', NULL, 1700000000);",
+      );
       db.close();
 
       const result = runBackupVerify({ resolvedSqlitePath: sqlitePath });
@@ -398,7 +421,8 @@ describe("backup", () => {
         CREATE TABLE facts (
           id INTEGER PRIMARY KEY,
           content TEXT NOT NULL,
-          superseded_by TEXT
+          superseded_by TEXT,
+          superseded_at INTEGER
         );
       `);
       db.close();

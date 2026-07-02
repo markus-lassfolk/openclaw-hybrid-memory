@@ -320,8 +320,12 @@ export function runBackupVerify(ctx: { resolvedSqlitePath: string }): BackupVeri
     const row = db.prepare("PRAGMA integrity_check").get() as { integrity_check?: string } | undefined;
     const integrityOk = row?.integrity_check === "ok";
 
-    // Count facts
-    const countRow = db.prepare("SELECT COUNT(*) as n FROM facts WHERE superseded_by IS NULL").get() as
+    // Count active facts. superseded_at (not superseded_by) is the "is this fact still active"
+    // marker — the daily-quota eviction path and expiry/decay pruning only set superseded_at,
+    // never superseded_by (that column is only populated when a fact is replaced by a specific
+    // newer fact), so filtering on superseded_by IS NULL would miscount evicted/expired facts
+    // as still active (#82).
+    const countRow = db.prepare("SELECT COUNT(*) as n FROM facts WHERE superseded_at IS NULL").get() as
       | { n: number }
       | undefined;
     const factCount = countRow?.n ?? 0;
