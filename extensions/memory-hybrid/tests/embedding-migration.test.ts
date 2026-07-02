@@ -214,6 +214,54 @@ describe("migrateEmbeddings — duplicate handling", () => {
     expect(vectorDb.store).toHaveBeenCalledWith(expect.objectContaining({ id: "x" }));
   });
 
+  it("retries store once after a transient failure and still migrates the fact (#50)", async () => {
+    const facts = [makeFact("retry-ok")];
+    const factsDb = makeFactsDB({ getAll: vi.fn().mockReturnValue(facts) });
+    const vectorDb = makeVectorDB({
+      store: vi.fn().mockRejectedValueOnce(new Error("transient write failure")).mockResolvedValue("id"),
+    });
+    const embeddings = makeEmbeddings();
+
+    const result = await migrateEmbeddings({
+      factsDb: factsDb as any,
+      edictStore: null as any,
+      vectorDb: vectorDb as any,
+      embeddings: embeddings as any,
+      logger: silentLogger(),
+    });
+
+    expect(vectorDb.store).toHaveBeenCalledTimes(2);
+    expect(result.migrated).toBe(1);
+    expect(result.skipped).toBe(0);
+    expect(result.errors).toHaveLength(0);
+    expect(factsDb.setEmbeddingModel).toHaveBeenCalledWith("retry-ok", "test-model");
+  });
+
+  it("flags data loss distinctly when both the store and its retry fail (#50)", async () => {
+    const facts = [makeFact("retry-fail")];
+    const factsDb = makeFactsDB({ getAll: vi.fn().mockReturnValue(facts) });
+    const vectorDb = makeVectorDB({
+      store: vi.fn().mockRejectedValue(new Error("write failure")),
+    });
+    const embeddings = makeEmbeddings();
+
+    const result = await migrateEmbeddings({
+      factsDb: factsDb as any,
+      edictStore: null as any,
+      vectorDb: vectorDb as any,
+      embeddings: embeddings as any,
+      logger: silentLogger(),
+    });
+
+    expect(vectorDb.store).toHaveBeenCalledTimes(2);
+    expect(result.migrated).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain("retry-fail");
+    expect(result.errors[0]).toContain("NO vector");
+    expect(factsDb.setEmbeddingModel).not.toHaveBeenCalled();
+  });
+
   it("continues when delete throws (entry not found)", async () => {
     const facts = [makeFact("y")];
     const factsDb = makeFactsDB({ getAll: vi.fn().mockReturnValue(facts) });

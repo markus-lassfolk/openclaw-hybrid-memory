@@ -185,10 +185,11 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
     category: string;
   }) => {
     if (targetTableName) {
-      await (vectorDb as { storeToTable?: (name: string, entry: unknown) => Promise<void> }).storeToTable?.(
-        targetTableName,
-        entry,
-      );
+      const target = vectorDb as { storeToTable?: (name: string, entry: unknown) => Promise<void> };
+      if (!target.storeToTable) {
+        throw new Error("vectorDb does not support storeToTable — cannot write to shadow table");
+      }
+      await target.storeToTable(targetTableName, entry);
     } else {
       await vectorDb.store(entry);
     }
@@ -352,13 +353,39 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
               // Entry may not exist — expected on first migration
             }
           }
-          await storeVector({
-            id: fact.id,
-            text: fact.text,
-            vector: vec,
-            importance: fact.importance ?? 0.5,
-            category: fact.category,
-          });
+          try {
+            await storeVector({
+              id: fact.id,
+              text: fact.text,
+              vector: vec,
+              importance: fact.importance ?? 0.5,
+              category: fact.category,
+            });
+          } catch (storeErr) {
+            if (!targetTableName) {
+              // The old vector was already deleted above, so a failed store leaves this fact
+              // with NO vector at all — worse than the pre-delete state. Give the store one
+              // immediate retry (transient failures — timeouts, lock contention — are common
+              // here) before surfacing a clearly-flagged data-loss error distinct from an
+              // ordinary store failure where the old vector might still be intact.
+              try {
+                await storeVector({
+                  id: fact.id,
+                  text: fact.text,
+                  vector: vec,
+                  importance: fact.importance ?? 0.5,
+                  category: fact.category,
+                });
+              } catch (retryErr) {
+                throw new Error(
+                  `vector store failed after stale entry was already removed — fact ${fact.id} now has NO vector (retry also failed: ${retryErr instanceof Error ? retryErr.message : String(retryErr)})`,
+                  { cause: retryErr },
+                );
+              }
+            } else {
+              throw storeErr;
+            }
+          }
           // Update SQLite metadata (only when writing to main table, not shadow)
           if (!targetTableName) {
             factsDb.setEmbeddingModel(fact.id, embeddings.modelName);
