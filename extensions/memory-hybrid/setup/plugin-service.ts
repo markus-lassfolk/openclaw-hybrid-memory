@@ -105,20 +105,7 @@ export interface PluginServiceContext {
   changeFeed?: import("../services/change-feed.js").ChangeFeed | null;
   eventBus?: import("../backends/event-bus.js").EventBus | null;
   // Mutable timer refs that will be updated by the start handler
-  timers: {
-    pruneTimer: { value: ReturnType<typeof setInterval> | null };
-    classifyTimer: { value: ReturnType<typeof setInterval> | null };
-    classifyStartupTimeout: { value: ReturnType<typeof setTimeout> | null };
-    proposalsPruneTimer: { value: ReturnType<typeof setInterval> | null };
-    languageKeywordsTimer: { value: ReturnType<typeof setInterval> | null };
-    languageKeywordsStartupTimeout: { value: ReturnType<typeof setTimeout> | null };
-    postUpgradeTimeout: { value: ReturnType<typeof setTimeout> | null };
-    passiveObserverTimer: { value: ReturnType<typeof setInterval> | null };
-    watchdogTimer: { value: ReturnType<typeof setInterval> | null };
-    maintenanceTick: { value: ReturnType<typeof setInterval> | null };
-    maintenanceStartupTimeout: { value: ReturnType<typeof setTimeout> | null };
-    shuttingDownRef: { value: boolean };
-  };
+  timers: PluginRuntime["timers"];
 }
 
 /**
@@ -555,7 +542,7 @@ export function createPluginService(ctx: PluginServiceContext) {
 
           runWikiWorkspaceExport();
           const wikiExportIntervalMs = cfg.wikiIntegration.workspaceExportIntervalMinutes * 60 * 1000;
-          (timers as Record<string, unknown>).wikiWorkspaceExport = {
+          timers.wikiWorkspaceExport = {
             value: setInterval(runWikiWorkspaceExport, wikiExportIntervalMs),
           };
           api.logger.info(
@@ -586,7 +573,7 @@ export function createPluginService(ctx: PluginServiceContext) {
           embeddings,
           cfg,
           api,
-          timers: timers as PluginRuntime["timers"],
+          timers,
           shouldAbort: createWorkboardStartupShouldAbort(bootRegistrationGeneration, timers.shuttingDownRef),
           connectLabel: "startup",
         });

@@ -158,6 +158,8 @@ export interface PluginRuntime {
     workboardSync?: { value: ReturnType<typeof setInterval> | null };
     /** Deferred Workboard cold-start probe (#1940). */
     workboardStartupTimeout?: { value: ReturnType<typeof setTimeout> | null };
+    /** Wiki workspace markdown mirror export timer. */
+    wikiWorkspaceExport?: { value: ReturnType<typeof setInterval> | null };
     /** Plugin service shutdown flag (Issue #1893 re-arm abort guard). */
     shuttingDownRef: { value: boolean };
   };
@@ -237,5 +239,9 @@ export function clearRuntimeTimers(timers: PluginRuntime["timers"]): void {
   if (timers.workboardStartupTimeout?.value) {
     clearTimeout(timers.workboardStartupTimeout.value);
     timers.workboardStartupTimeout.value = null;
+  }
+  if (timers.wikiWorkspaceExport?.value) {
+    clearInterval(timers.wikiWorkspaceExport.value);
+    timers.wikiWorkspaceExport.value = null;
   }
 }
