@@ -68,10 +68,17 @@ function validateAndWriteConfig(
   }
   try {
     writeFileSync(configPath, JSON.stringify(root, null, 2), "utf-8");
-    writeFileSync(getRestartPendingPath(), "", "utf-8");
   } catch (e) {
     capturePluginError(e as Error, { subsystem: "cli", operation: `runConfigSetForCli:write-${operation}` });
     return { ok: false, error: `Could not write config: ${e}` };
+  }
+  // Best-effort only: the config change above already succeeded, so a failure here must not be
+  // reported as "could not write config" — that would tell the caller the change was lost when
+  // it wasn't. Worst case the operator has to restart the gateway manually without the reminder.
+  try {
+    writeFileSync(getRestartPendingPath(), "", "utf-8");
+  } catch (e) {
+    capturePluginError(e as Error, { subsystem: "cli", operation: `runConfigSetForCli:restart-pending-${operation}` });
   }
   return { ok: true };
 }
