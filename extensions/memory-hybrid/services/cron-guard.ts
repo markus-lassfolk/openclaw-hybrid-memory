@@ -19,7 +19,7 @@
  *   runner processes the queue on startup.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -54,6 +54,63 @@ export function writeStepGuardTimestampMs(stepName: string, timestampMs: number,
   const guardDir = getGuardDir(openclawDir);
   mkdirSync(guardDir, { recursive: true });
   writeFileSync(getStepGuardFilePath(stepName, openclawDir), String(timestampMs), "utf-8");
+}
+
+/** Per-step in-progress lock file: `step--{name}.lock` — a real cross-process mutex. */
+function getStepLockFilePath(stepName: string, openclawDir?: string): string {
+  return join(getGuardDir(openclawDir), `step--${stepName}.lock`);
+}
+
+/** Lock files older than this are treated as abandoned by a crashed process, not a live run. */
+export const STEP_LOCK_STALE_MS = 30 * 60 * 1000;
+
+/**
+ * Acquire a real cross-process/cross-invocation lock for a maintenance step, so two orchestrator
+ * runs starting near-simultaneously (a manual CLI run overlapping the gateway's own tick, or a
+ * double-fired cron trigger) cannot both execute the same step concurrently. stepGuardEligible()
+ * above only tracks *cadence* (has enough time passed since the last successful run) — it has no
+ * concept of "currently running," so it does not prevent overlap by itself.
+ *
+ * Uses exclusive file creation (`wx`), which atomically fails if the file already exists. A lock
+ * file older than STEP_LOCK_STALE_MS is assumed abandoned by a process that crashed without
+ * releasing it and is forcibly reclaimed, so a stuck lock cannot permanently block the step.
+ */
+export function acquireStepLock(stepName: string, openclawDir?: string, nowMs = Date.now()): boolean {
+  const guardDir = getGuardDir(openclawDir);
+  mkdirSync(guardDir, { recursive: true });
+  const lockPath = getStepLockFilePath(stepName, openclawDir);
+  try {
+    writeFileSync(lockPath, String(nowMs), { encoding: "utf-8", flag: "wx" });
+    return true;
+  } catch {
+    // Lock file already exists — check whether it's stale (abandoned by a crashed process).
+    try {
+      const raw = readFileSync(lockPath, "utf-8").trim();
+      const lockedAtMs = Number(raw);
+      if (!Number.isFinite(lockedAtMs) || nowMs - lockedAtMs <= STEP_LOCK_STALE_MS) {
+        return false; // held by a live (or recent) run
+      }
+    } catch {
+      return false; // couldn't read the lock file — fail closed, don't run concurrently
+    }
+    // Stale — reclaim it. Not perfectly atomic (a fresh writer could win the race between the
+    // failed `wx` above and this write), but the window is a single fs call and the consequence
+    // of losing that race is a harmless re-run of an idempotent step, not corruption.
+    try {
+      writeFileSync(lockPath, String(nowMs), "utf-8");
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+export function releaseStepLock(stepName: string, openclawDir?: string): void {
+  try {
+    rmSync(getStepLockFilePath(stepName, openclawDir), { force: true });
+  } catch {
+    /* non-fatal — worst case a stale lock sits until STEP_LOCK_STALE_MS passes */
+  }
 }
 
 export function stepGuardEligible(

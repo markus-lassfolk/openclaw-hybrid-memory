@@ -21,7 +21,13 @@ import {
   semanticOutcomeBlocksOrchestratorGuard,
 } from "./maintenance-job-run/semantic-outcome.js";
 import type { JobRunSemanticOutcome } from "./maintenance-job-run/types.js";
-import { stepGuardEligible, writeStepGuardTimestampMs } from "./cron-guard.js";
+import {
+  acquireStepLock,
+  readStepGuardTimestampMs,
+  releaseStepLock,
+  stepGuardEligible,
+  writeStepGuardTimestampMs,
+} from "./cron-guard.js";
 
 export type StepTier = "cycle" | "nightly";
 export type StepLlmTier = "none" | "nano" | "maintenance" | "default" | "heavy" | "embed" | "local";
@@ -393,9 +399,16 @@ function isRateLimitError(err: unknown): boolean {
   return is429OrWrapped(err);
 }
 
-function dependenciesMet(step: MaintenanceStepDef, completedThisRun: Set<string>): boolean {
+function dependenciesMet(step: MaintenanceStepDef, completedThisRun: Set<string>, openclawDir?: string): boolean {
   if (!step.dependsOn?.length) return true;
-  return step.dependsOn.every((dep) => completedThisRun.has(dep));
+  // dependsOn documents "must have run at least once (guard file exists)" — not "must also run
+  // in this same orchestrator invocation." completedThisRun alone wrongly marks dependent steps
+  // skipped_dep forever whenever they're targeted without their dependency in the same run (e.g.
+  // `--include reflect-rules` alone, or the dependency being excluded/gated/deferred this cycle),
+  // even though the dependency ran successfully yesterday and its output still exists.
+  return step.dependsOn.every(
+    (dep) => completedThisRun.has(dep) || readStepGuardTimestampMs(dep, openclawDir) !== null,
+  );
 }
 
 function sleep(ms: number): Promise<void> {
@@ -537,7 +550,7 @@ export async function runMaintenanceOrchestrator(
       continue;
     }
 
-    if (!dependenciesMet(step, completedThisRun)) {
+    if (!dependenciesMet(step, completedThisRun, openclawDir)) {
       pushStepResult({
         name: step.name,
         status: "skipped_dep",
@@ -602,6 +615,20 @@ export async function runMaintenanceOrchestrator(
       if (cooldownMs > 0) {
         await sleep(cooldownMs);
       }
+    }
+
+    // Real cross-process mutex on top of stepGuardEligible's cadence-only check above — prevents
+    // two orchestrator invocations that start near-simultaneously (a manual CLI run overlapping
+    // the gateway's own tick, or a double-fired cron trigger) from executing the same step
+    // concurrently (duplicate LLM calls, duplicate decay/prune passes).
+    if (!acquireStepLock(step.name, openclawDir)) {
+      pushStepResult({
+        name: step.name,
+        status: "skipped_guard",
+        summary: "locked by a concurrent maintenance run",
+        durationMs: 0,
+      });
+      continue;
     }
 
     const stepStarted = Date.now();
@@ -672,6 +699,8 @@ export async function runMaintenanceOrchestrator(
         });
       }
       lastWasLlmStep = isLlmProviderStep(step.llmTier);
+    } finally {
+      releaseStepLock(step.name, openclawDir);
     }
   }
 

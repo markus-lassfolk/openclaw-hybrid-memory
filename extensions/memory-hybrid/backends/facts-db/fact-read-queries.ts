@@ -213,7 +213,7 @@ export function getByIds(
 export function getRecentFacts(
   db: DatabaseSync,
   days: number,
-  options?: { excludeCategories?: string[]; excludeTags?: string[] },
+  options?: { excludeCategories?: string[]; excludeTags?: string[]; globalOnly?: boolean },
 ): MemoryEntry[] {
   const nowSec = Math.floor(Date.now() / 1000);
   const windowStartSec = nowSec - Math.max(1, Math.min(90, days)) * 86400;
@@ -226,11 +226,17 @@ export function getRecentFacts(
   const tagPredicates = excludeTags.map(() => "(',' || COALESCE(tags,'') || ',') NOT LIKE ?").join(" AND ");
   const tagClause = excludeTags.length > 0 ? ` AND ${tagPredicates}` : "";
   const tagParams = excludeTags.map((t) => `%,${t},%`);
+  // globalOnly: reflection synthesizes its output as scope='global' (visible to every
+  // agent/user/session), so its *input* must not read agent/user/session-scoped facts —
+  // otherwise a private observation becomes a globally-visible pattern/rule. Deliberate
+  // cross-scope generalization is cross-agent-learning.ts's job (explicit opt-in, provenance
+  // tracked); reflection's default input must stay scope-consistent with its output.
+  const scopeClause = options?.globalOnly ? " AND scope = 'global'" : "";
   const rows = db
     .prepare(
       `SELECT * FROM facts WHERE (expires_at IS NULL OR expires_at > ?) AND superseded_at IS NULL
          AND (COALESCE(source_date, created_at) >= ?)
-         AND category NOT IN (${placeholders})${tagClause}
+         AND category NOT IN (${placeholders})${tagClause}${scopeClause}
          ORDER BY COALESCE(source_date, created_at) DESC`,
     )
     .all(nowSec, windowStartSec, ...exclude, ...tagParams) as Array<Record<string, unknown>>;
@@ -457,10 +463,11 @@ export function getHotFacts(db: DatabaseSync, maxTokens: number, scopeFilter?: S
   return results;
 }
 
-export function getByCategory(db: DatabaseSync, category: string): MemoryEntry[] {
-  const rows = db.prepare("SELECT * FROM facts WHERE category = ? ORDER BY created_at DESC").all(category) as Array<
-    Record<string, unknown>
-  >;
+export function getByCategory(db: DatabaseSync, category: string, globalOnly?: boolean): MemoryEntry[] {
+  const scopeClause = globalOnly ? " AND scope = 'global'" : "";
+  const rows = db
+    .prepare(`SELECT * FROM facts WHERE category = ?${scopeClause} ORDER BY created_at DESC`)
+    .all(category) as Array<Record<string, unknown>>;
   return rows.map((row) => rowToMemoryEntry(row));
 }
 

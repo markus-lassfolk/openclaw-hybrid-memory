@@ -583,7 +583,11 @@ export async function runReflection(
   const touchReflectLastRun = () => {
     if (!opts.dryRun) recordMaintenanceTimestamp(factsDb.sqlitePath, ".reflect_last_run");
   };
-  const recentFacts = factsDb.getRecentFacts(windowDays);
+  // globalOnly: reflection's synthesized output is stored as scope='global' (visible to every
+  // agent/user/session) below, so its input must not read agent/user/session-scoped facts —
+  // otherwise a private observation becomes a globally-visible pattern. Deliberate cross-scope
+  // generalization is cross-agent-learning.ts's job (explicit opt-in, provenance tracked).
+  const recentFacts = factsDb.getRecentFacts(windowDays, { globalOnly: true });
 
   if (recentFacts.length < config.minObservations) {
     logger.info(`memory-hybrid: reflection — ${recentFacts.length} facts in window (min ${config.minObservations})`);
@@ -620,7 +624,7 @@ export async function runReflection(
   const factsBlock = factLines.join("\n");
   const nowSec = Math.floor(Date.now() / 1000);
   const existingPatternFacts = factsDb
-    .getByCategory("pattern")
+    .getByCategory("pattern", true)
     .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
   const existingPatternsFingerprint = existingPatternFacts
     .map((f) => f.id)
@@ -807,6 +811,7 @@ export async function runReflection(
         value: null,
         source: "reflection",
         decayClass: "permanent",
+        scope: "global",
         tags: ["reflection", "pattern"],
         extractionMethod: "reflection",
         extractionConfidence: REFLECTION_IMPORTANCE,
@@ -1186,7 +1191,7 @@ export async function runReflectionRules(
   };
   const nowSec = Math.floor(Date.now() / 1000);
   const patternFacts = factsDb
-    .getByCategory("pattern")
+    .getByCategory("pattern", true)
     .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
   const patterns = patternFacts.slice(0, REFLECTION_MAX_PATTERNS_FOR_RULES).map((f) => f.text);
   if (patterns.length < 2) {
@@ -1414,7 +1419,7 @@ export async function runReflectionRules(
     }
   }
   const existingRuleFacts = factsDb
-    .getByCategory("rule")
+    .getByCategory("rule", true)
     .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
   let existingVectors: (number[] | null)[] = [];
   if (existingRuleFacts.length > 0) {
@@ -1506,6 +1511,7 @@ export async function runReflectionRules(
         value: null,
         source: "reflection",
         decayClass: "permanent",
+        scope: "global",
         tags: ["reflection", "rule"],
         extractionMethod: "reflection",
         extractionConfidence: REFLECTION_IMPORTANCE,
@@ -1932,7 +1938,7 @@ export async function runReflectionMeta(
 ): Promise<ReflectionMetaResult> {
   const nowSec = Math.floor(Date.now() / 1000);
   const patternFacts = factsDb
-    .getByCategory("pattern")
+    .getByCategory("pattern", true)
     .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
   const patterns = patternFacts.slice(0, REFLECTION_MAX_PATTERNS_FOR_META).map((f) => f.text);
   if (patterns.length < 3) {
@@ -2057,7 +2063,7 @@ export async function runReflectionMeta(
     }
   }
   const existingMetaFacts = factsDb
-    .getByCategory("pattern")
+    .getByCategory("pattern", true)
     .filter(
       (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec) && f.tags?.includes("meta") === true,
     );
@@ -2138,6 +2144,7 @@ export async function runReflectionMeta(
         value: null,
         source: "reflection",
         decayClass: "permanent",
+        scope: "global",
         tags: ["reflection", "pattern", "meta"],
         extractionMethod: "reflection",
         extractionConfidence: REFLECTION_IMPORTANCE,
