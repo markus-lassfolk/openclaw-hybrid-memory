@@ -323,6 +323,20 @@ describe("EventLog.markConsolidated", () => {
 
     expect(log.markConsolidated([id, "missing-event-id"], "fact-xyz")).toBe(1);
   });
+
+  it("does not clobber an already-consolidated event with a different fact id (compare-and-swap)", () => {
+    const ts = new Date().toISOString();
+    const id = log.append({ sessionId: "s", timestamp: ts, eventType: "fact_learned", content: {} });
+
+    // First writer wins.
+    expect(log.markConsolidated([id], "fact-first")).toBe(1);
+    // A second, racing consolidation run targeting the same event with a different fact
+    // must see 0 rows updated, not silently overwrite the first writer's fact id.
+    expect(log.markConsolidated([id], "fact-second")).toBe(0);
+
+    const entry = log.getBySession("s").find((e) => e.id === id)!;
+    expect(entry.consolidatedInto).toBe("fact-first");
+  });
 });
 
 // ---------------------------------------------------------------------------
