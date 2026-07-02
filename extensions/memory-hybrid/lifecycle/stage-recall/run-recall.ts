@@ -243,13 +243,8 @@ export async function runRecall(
     return suppressStaleLifecycleDbError(ctx, err, api.logger, debugMessage);
   };
 
-  ctx.recallInFlightRef.value++;
   // Global ref supports plugin drain/shutdown; per-session recallInFlightBySession drives degradation.
   const trackedSessionScopeKey = sessionState.resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default";
-  sessionState.recallInFlightBySession.set(
-    trackedSessionScopeKey,
-    (sessionState.recallInFlightBySession.get(trackedSessionScopeKey) ?? 0) + 1,
-  );
   const recallStartMs = Date.now();
   const recallProbeId = `recall-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   let recallProbePhase = "start";
@@ -294,6 +289,18 @@ export async function runRecall(
   };
   const recallSpan = recallTiming.span;
   try {
+    // Increment as the first statements inside the try that decrements them in `finally` below —
+    // if any of this function's own setup above (createRecallTimingLogger, phaseStarted, watchdog
+    // scheduling) throws, neither counter should have incremented in the first place, since a
+    // leaked increment here permanently forces every future hot-reload drain to wait the full
+    // RECALL_DRAIN_MS and can permanently degrade this session's recall via forceDegraded's
+    // sessionInFlight comparison.
+    ctx.recallInFlightRef.value++;
+    sessionState.recallInFlightBySession.set(
+      trackedSessionScopeKey,
+      (sessionState.recallInFlightBySession.get(trackedSessionScopeKey) ?? 0) + 1,
+    );
+
     if (shouldAbortRecall()) return completeStage(emptyRecallStage());
 
     const { currentAgentIdRef } = ctx;
