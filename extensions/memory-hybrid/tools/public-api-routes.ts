@@ -127,6 +127,11 @@ const AUTO_SNAPSHOT_COOLDOWN_MS = 3_600_000; // 1 hour
 
 let lastAutoSnapshotTimestamp = 0;
 
+/** Test-only: reset the heap-snapshot auto-cooldown timestamp between test cases. */
+export function resetHeapSnapshotCooldownForTests(): void {
+  lastAutoSnapshotTimestamp = 0;
+}
+
 function resolveHeapSnapshotDir(): string {
   const override = getEnv("OPENCLAW_HEAP_SNAPSHOT_DIR");
   const base = override && override.trim().length > 0 ? override.trim() : HEAP_SNAPSHOT_DIR;
@@ -618,14 +623,19 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
       autoMode === "critical" &&
       leakVerdict === "likely_leak" &&
       timeSinceLastAuto >= AUTO_SNAPSHOT_COOLDOWN_MS;
+    if (shouldAutoSnapshot) {
+      // Reserve the cooldown slot synchronously, before the (blocking) snapshot write, and
+      // regardless of whether the write succeeds. Setting it only after a successful write left
+      // the cooldown permanently disengaged on persistent failure (e.g. an unwritable snapshot
+      // dir) — every subsequent diagnostics request during an ongoing "likely_leak" incident would
+      // retry the full mkdirSync + writeHeapSnapshot pipeline instead of waiting out the cooldown.
+      lastAutoSnapshotTimestamp = now;
+    }
     if (heapSnapshotRequested || shouldAutoSnapshot) {
       const snap = writeV8HeapSnapshotWithMeta({
         trigger: shouldAutoSnapshot ? "auto_critical_leak" : "manual_query",
         verdict: leakVerdict,
       });
-      if (shouldAutoSnapshot && snap) {
-        lastAutoSnapshotTimestamp = now;
-      }
       return toJson(200, { ...diag, heapSnapshot: snap });
     }
     return toJson(200, diag);

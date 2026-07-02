@@ -1,6 +1,6 @@
 // @ts-nocheck
 
-import { mkdtempSync, readFileSync, rmSync, utimesSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
@@ -13,6 +13,7 @@ import {
   PUBLIC_API_PATHS,
   PUBLIC_API_PREFIX,
   registerPublicApiRoutes,
+  resetHeapSnapshotCooldownForTests,
 } from "../tools/public-api-routes.js";
 import { recordReregisterFullTeardown, resetReregisterPolicyForTests } from "../setup/reregister-policy.js";
 import { setEnv } from "../utils/env-manager.js";
@@ -36,6 +37,7 @@ describe("registerPublicApiRoutes", () => {
     setEnv("OPENCLAW_WORKSPACE", tmp);
     factsDb = new FactsDB(join(tmp, "facts.db"));
     narrativesDb = new NarrativesDB(join(tmp, "narratives.db"));
+    resetHeapSnapshotCooldownForTests();
   });
 
   afterEach(() => {
@@ -776,6 +778,49 @@ describe("registerPublicApiRoutes", () => {
     expect(body.heapSnapshot.trigger).toBe("auto_critical_leak");
     expect(body.heapSnapshot.verdict).toBe("likely_leak");
     expect(body.heapSnapshot.path).toMatch(/snapshots-auto\/[^/]+\.heapsnapshot$/);
+  });
+
+  it("engages the auto-snapshot cooldown even when the write fails, instead of retrying every request (#19)", async () => {
+    // Point the snapshot dir at a path that is actually a file — mkdirSync(..., {recursive:true})
+    // will fail every time, simulating a persistently unwritable snapshot directory.
+    const blockedPath = join(tmp, "blocked-snapshot-dir");
+    writeFileSync(blockedPath, "not a directory");
+    setEnv("OPENCLAW_HEAP_SNAPSHOT_DIR", blockedPath);
+    setEnv("OPENCLAW_HEAP_SNAPSHOT_AUTO", "critical");
+    resetReregisterPolicyForTests();
+    for (let i = 0; i < 3; i++) recordReregisterFullTeardown();
+    const { api, routes } = makeApi();
+    const vectorDb = {
+      getPath: () => join(tmp, "lancedb"),
+      count: async () => 0,
+      isInitialized: () => false,
+    };
+    registerPublicApiRoutes(
+      {
+        cfg: makeCfg(true),
+        factsDb,
+        narrativesDb,
+        vectorDb: vectorDb as never,
+        resolvedSqlitePath: join(tmp, "facts.db"),
+      },
+      api,
+    );
+    const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.memoryDiagnostics}`)!;
+    const diagnosticsReq = fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.memoryDiagnostics}`);
+
+    const first = await invokeNodeHttpRoute(route.handler, diagnosticsReq);
+    expect(first.status).toBe(200);
+    const firstBody = JSON.parse(first.body);
+    // The write attempt was made (heapSnapshot key present) but failed (null — dir unwritable).
+    expect(firstBody.heapSnapshot).toBeNull();
+
+    // A second request immediately after: the cooldown must already be engaged from the failed
+    // first attempt, so no second write is attempted (heapSnapshot key is entirely absent, same
+    // as the plain non-auto-triggering response) rather than retrying and failing again.
+    const second = await invokeNodeHttpRoute(route.handler, diagnosticsReq);
+    expect(second.status).toBe(200);
+    const secondBody = JSON.parse(second.body);
+    expect(secondBody.heapSnapshot).toBeUndefined();
   });
 
   it("memory-diagnostics rejects ?heapSnapshot=1 when unauthenticated", async () => {
