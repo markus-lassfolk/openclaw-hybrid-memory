@@ -9,7 +9,6 @@
 import type { SessionSeenFacts } from "../services/ambient-retrieval.js";
 import type { FrustrationConversationTurn } from "../services/frustration-detector.js";
 import { clearIntentSessionCache } from "../services/intent-classifier.js";
-import { clearNudgeSessionState } from "../services/memory-nudge.js";
 import type { SessionState } from "./types.js";
 
 const MAX_TRACKED_SESSIONS = 200;
@@ -104,6 +103,13 @@ export function createSessionState(
     sessionLastActivity.delete(sessionKey);
     // Do NOT clear capabilityHintsSessionsSeen here — that set persists across agent turns
     // within the same chat session so "session" mode injects once per chat, not once per turn.
+    // Do NOT clear memory-nudge state here either, for the same reason: clearSessionState runs
+    // at the end of EVERY agent turn (see run-capture.ts), not once per session, but
+    // recordNudgeEmission's timestamp is meant to persist across turns to enforce
+    // nudge.throttleHours — clearing it here would reset the throttle every turn, so the nudge
+    // would re-fire on every single turn instead of at most once per throttle window.
+    // services/memory-nudge.ts's own sweepStaleNudgeSessionState (TTL-based) and
+    // disposeMemoryNudge (plugin shutdown) handle cleanup of this state instead.
     const prefix = `${sessionKey}:`;
     for (const key of authFailureRecallsThisSession.keys()) {
       if (key.startsWith(prefix)) authFailureRecallsThisSession.delete(key);
@@ -113,7 +119,6 @@ export function createSessionState(
     progressiveIndexBySession?.delete(sessionKey);
     lastAutoRecallPromptBySession?.delete(sessionKey);
     clearIntentSessionCache(sessionKey);
-    clearNudgeSessionState(sessionKey);
   }
 
   function clearInjectedFactIdsForSession(
