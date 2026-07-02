@@ -336,6 +336,37 @@ describe("createPluginService startup — dashboard wiring (#1968)", () => {
     (ctx.factsDb as InstanceType<typeof FactsDB>).close();
     (ctx.vectorDb as InstanceType<typeof VectorDB>).close();
   });
+
+  it("closes the dashboard server immediately, and skips arming later timers, when stop() runs concurrently during startup (#88)", async () => {
+    const closeMock = vi.fn();
+    vi.mocked(createDashboardServer).mockImplementationOnce(async (_ctx, port) => {
+      // Simulate a concurrent stop() completing while createDashboardServer() is still awaiting
+      // startup — clearRuntimeTimers already ran by the time start() resumes, so anything armed
+      // after this point would leak past shutdown instead of ever being cleared.
+      timers.shuttingDownRef.value = true;
+      return { port: port === 0 ? 17702 : port, close: closeMock };
+    });
+
+    const api = makeMockApi(RECOMMENDED_OPENCLAW_VERSION);
+    const ctx = buildMinimalCtx(tmpDir, api, timers, {
+      dashboard: { enabled: true, port: 0 },
+    });
+
+    await createPluginService(ctx).start();
+
+    expect(closeMock).toHaveBeenCalledTimes(1);
+    const infoCalls = api.logger.info.mock.calls.map((c: unknown[]) => c[0] as string);
+    expect(infoCalls.some((msg) => msg.includes("dashboard started"))).toBe(false);
+    expect(infoCalls.some((msg) => msg.includes("unified maintenance tick enabled"))).toBe(false);
+    expect(infoCalls.some((msg) => msg.includes("task-queue-watchdog enabled"))).toBe(false);
+    expect(timers.maintenanceStartupTimeout.value).toBeNull();
+    expect(timers.maintenanceTick.value).toBeNull();
+    expect(timers.watchdogTimer.value).toBeNull();
+
+    timers.shuttingDownRef.value = false;
+    (ctx.factsDb as InstanceType<typeof FactsDB>).close();
+    (ctx.vectorDb as InstanceType<typeof VectorDB>).close();
+  });
 });
 
 describe("createPluginService stop() — resource cleanup (#57, #58)", () => {

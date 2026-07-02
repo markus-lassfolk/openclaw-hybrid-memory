@@ -574,13 +574,19 @@ export function createPluginService(ctx: PluginServiceContext) {
           };
 
           runWikiWorkspaceExport();
-          const wikiExportIntervalMs = cfg.wikiIntegration.workspaceExportIntervalMinutes * 60 * 1000;
-          timers.wikiWorkspaceExport = {
-            value: setInterval(runWikiWorkspaceExport, wikiExportIntervalMs),
-          };
-          api.logger.info(
-            `memory-hybrid: wiki workspace mirror enabled — syncing to memory/hybrid-wiki/ every ${cfg.wikiIntegration.workspaceExportIntervalMinutes} min`,
-          );
+          // #88: a concurrent stop() may have run during the dynamic import above; arming a fresh
+          // interval after that would leak forever since clearRuntimeTimers already ran and won't run again.
+          if (timers.shuttingDownRef.value) {
+            api.logger.debug?.("memory-hybrid: skipping wiki workspace export timer — shutdown in progress");
+          } else {
+            const wikiExportIntervalMs = cfg.wikiIntegration.workspaceExportIntervalMinutes * 60 * 1000;
+            timers.wikiWorkspaceExport = {
+              value: setInterval(runWikiWorkspaceExport, wikiExportIntervalMs),
+            };
+            api.logger.info(
+              `memory-hybrid: wiki workspace mirror enabled — syncing to memory/hybrid-wiki/ every ${cfg.wikiIntegration.workspaceExportIntervalMinutes} min`,
+            );
+          }
         } catch (err) {
           api.logger.warn?.(
             `memory-hybrid: wiki workspace export startup failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
@@ -599,17 +605,23 @@ export function createPluginService(ctx: PluginServiceContext) {
           captureWorkboardBootRegistrationGeneration,
           createWorkboardStartupShouldAbort,
         } = await import("./workboard-integration.js");
-        const bootRegistrationGeneration = captureWorkboardBootRegistrationGeneration();
-        scheduleWorkboardStartupIntegration({
-          factsDb,
-          vectorDb,
-          embeddings,
-          cfg,
-          api,
-          timers,
-          shouldAbort: createWorkboardStartupShouldAbort(bootRegistrationGeneration, timers.shuttingDownRef),
-          connectLabel: "startup",
-        });
+        // #88: a concurrent stop() may have run during the dynamic import above; scheduling a fresh
+        // deferred timer after that would leak until it self-aborts, and races clearRuntimeTimers.
+        if (timers.shuttingDownRef.value) {
+          api.logger.debug?.("memory-hybrid: skipping workboard integration setup — shutdown in progress");
+        } else {
+          const bootRegistrationGeneration = captureWorkboardBootRegistrationGeneration();
+          scheduleWorkboardStartupIntegration({
+            factsDb,
+            vectorDb,
+            embeddings,
+            cfg,
+            api,
+            timers,
+            shouldAbort: createWorkboardStartupShouldAbort(bootRegistrationGeneration, timers.shuttingDownRef),
+            connectLabel: "startup",
+          });
+        }
       }
 
       // Issue #309: Mission Control dashboard HTTP server
@@ -646,7 +658,16 @@ export function createPluginService(ctx: PluginServiceContext) {
             },
             cfg.dashboard.port,
           );
-          api.logger.info(`memory-hybrid: dashboard started on http://127.0.0.1:${dashboardServer.port}`);
+          // #88: a concurrent stop() may have run while createDashboardServer() was awaiting startup;
+          // stop()'s dashboard-close block already ran and won't run again, so close it here instead
+          // of leaking a live HTTP server past shutdown.
+          if (timers.shuttingDownRef.value) {
+            dashboardServer.close();
+            dashboardServer = null;
+            api.logger.debug?.("memory-hybrid: dashboard server closed immediately — shutdown occurred during startup");
+          } else {
+            api.logger.info(`memory-hybrid: dashboard started on http://127.0.0.1:${dashboardServer.port}`);
+          }
         } catch (err) {
           api.logger.warn(`memory-hybrid: dashboard server failed to start (non-fatal): ${err}`);
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -840,15 +861,21 @@ export function createPluginService(ctx: PluginServiceContext) {
         });
       };
 
-      timers.maintenanceStartupTimeout.value = setTimeout(() => {
-        runTrackedMaintenanceCycleTick("startup");
-        timers.maintenanceStartupTimeout.value = null;
-      }, 5 * 60_000);
+      // #88: guard against arming timers after a concurrent stop() already ran clearRuntimeTimers —
+      // those handles would never be cleared and would keep firing past shutdown.
+      if (timers.shuttingDownRef.value) {
+        api.logger.debug?.("memory-hybrid: skipping maintenance tick timers — shutdown in progress");
+      } else {
+        timers.maintenanceStartupTimeout.value = setTimeout(() => {
+          runTrackedMaintenanceCycleTick("startup");
+          timers.maintenanceStartupTimeout.value = null;
+        }, 5 * 60_000);
 
-      timers.maintenanceTick.value = setInterval(() => {
-        runTrackedMaintenanceCycleTick("interval");
-      }, 60 * 60_000);
-      api.logger.info("memory-hybrid: unified maintenance tick enabled (cycle tier, 60m interval)");
+        timers.maintenanceTick.value = setInterval(() => {
+          runTrackedMaintenanceCycleTick("interval");
+        }, 60 * 60_000);
+        api.logger.info("memory-hybrid: unified maintenance tick enabled (cycle tier, 60m interval)");
+      }
 
       // Task queue watchdog: periodically detect stale/broken autonomous queue runs and self-heal
       const WATCHDOG_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -966,17 +993,22 @@ export function createPluginService(ctx: PluginServiceContext) {
           }
         }
       };
-      timers.watchdogTimer.value = setInterval(() => {
-        if (shuttingDown) return;
-        if (typeof factsDb.isOpen === "function" && !factsDb.isOpen()) return;
-        if (watchdogRunning) return;
-        watchdogRunning = true;
-        watchdogRunPromise = watchdogRun().finally(() => {
-          watchdogRunning = false;
-          watchdogRunPromise = null;
-        });
-      }, WATCHDOG_INTERVAL_MS);
-      api.logger.info("memory-hybrid: task-queue-watchdog enabled (interval: 5m)");
+      // #88: guard against arming this timer after a concurrent stop() already ran clearRuntimeTimers.
+      if (timers.shuttingDownRef.value) {
+        api.logger.debug?.("memory-hybrid: skipping task-queue-watchdog timer — shutdown in progress");
+      } else {
+        timers.watchdogTimer.value = setInterval(() => {
+          if (shuttingDown) return;
+          if (typeof factsDb.isOpen === "function" && !factsDb.isOpen()) return;
+          if (watchdogRunning) return;
+          watchdogRunning = true;
+          watchdogRunPromise = watchdogRun().finally(() => {
+            watchdogRunning = false;
+            watchdogRunPromise = null;
+          });
+        }, WATCHDOG_INTERVAL_MS);
+        api.logger.info("memory-hybrid: task-queue-watchdog enabled (interval: 5m)");
+      }
 
       // Post-upgrade pipeline: once per version bump, run build-languages, self-correction, reflection, procedures (via CLI)
       const rawVersionFilePath = join(dirname(resolvedSqlitePath), ".last-post-upgrade-version");
