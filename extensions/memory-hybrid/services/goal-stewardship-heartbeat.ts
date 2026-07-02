@@ -247,46 +247,60 @@ export async function buildMultiGoalStewardshipPrepend(
   const now = Date.now();
   const candidates = sortGoalsForRoundRobin(candidateGoals(allGoals, now), cfg.attentionWeights);
   if (candidates.length === 0) return null;
+  const cap = Math.max(0, cfg.multiGoalMaxChars);
 
-  const { rrOffset, nextOff, selected } = await withRoundRobinLock(goalsDir, async () => {
+  // Read rr.offset, select this call's goal slice, build the prompt blocks, AND persist
+  // nextOff — all inside ONE lock acquisition. Splitting this into a read-lock then a
+  // write-lock (with the CPU-only block-building work running lock-free in between) let two
+  // concurrent heartbeat calls both read the same rr.offset, compute overlapping goal
+  // selections, and then have the second writer's nextOff silently overwrite the first's —
+  // losing that heartbeat's round-robin rotation advance. Block-building is pure string work
+  // (no I/O), so holding the lock across it is cheap and closes the gap entirely.
+  const { rrOffset, nextOff, blocks, includedGoals, suggestHeavy } = await withRoundRobinLock(goalsDir, async () => {
     const rr = await readRoundRobin(goalsDir);
     const rot = rr.offset % candidates.length;
     const rotated = [...candidates.slice(rot), ...candidates.slice(0, rot)];
     const maxGoals = Math.min(cfg.multiGoalMaxGoals, rotated.length);
-    const selectedGoals = rotated.slice(0, maxGoals);
-    const next = (rot + selectedGoals.length) % Math.max(1, candidates.length);
-    return { rrOffset: rr.offset, nextOff: next, selected: selectedGoals };
+    const selected = rotated.slice(0, maxGoals);
+    const next = (rot + selected.length) % Math.max(1, candidates.length);
+
+    const weights = selected.map((g) => priorityWeight(g.priority, cfg.attentionWeights));
+    const sumW = weights.reduce((a, b) => a + b, 0) || 1;
+    const budgets = weights.map((w) => Math.max(1, Math.floor((w / sumW) * cap)));
+
+    const blocksOut: string[] = [];
+    const includedGoalsOut: Goal[] = [];
+    let suggestHeavyOut = opts.triageHeavy;
+    const totalActive = allGoals.length;
+    let remaining = cap;
+    for (let i = 0; i < selected.length; i++) {
+      if (remaining <= 0) break;
+      const g = selected[i];
+      if (!g) continue;
+      const budget = Math.max(1, Math.min(remaining, budgets[i] ?? remaining));
+      const block = buildStewardshipBlockCompact(g, budget, totalActive);
+      if (!block) continue;
+      if (block.length > remaining) break;
+      blocksOut.push(block);
+      includedGoalsOut.push(g);
+      remaining -= block.length;
+      if (heuristicNeedsHeavyAttention([g])) suggestHeavyOut = true;
+    }
+
+    if (blocksOut.length > 0) {
+      await writeRoundRobin(goalsDir, { offset: next });
+    }
+
+    return {
+      rrOffset: rr.offset,
+      nextOff: next,
+      blocks: blocksOut,
+      includedGoals: includedGoalsOut,
+      suggestHeavy: suggestHeavyOut,
+    };
   });
-
-  const weights = selected.map((g) => priorityWeight(g.priority, cfg.attentionWeights));
-  const sumW = weights.reduce((a, b) => a + b, 0) || 1;
-  const cap = Math.max(0, cfg.multiGoalMaxChars);
-  const budgets = weights.map((w) => Math.max(1, Math.floor((w / sumW) * cap)));
-
-  const blocks: string[] = [];
-  const includedGoals: Goal[] = [];
-  let suggestHeavy = opts.triageHeavy;
-  const totalActive = allGoals.length;
-  let remaining = cap;
-  for (let i = 0; i < selected.length; i++) {
-    if (remaining <= 0) break;
-    const g = selected[i];
-    if (!g) continue;
-    const budget = Math.max(1, Math.min(remaining, budgets[i] ?? remaining));
-    const block = buildStewardshipBlockCompact(g, budget, totalActive);
-    if (!block) continue;
-    if (block.length > remaining) break;
-    blocks.push(block);
-    includedGoals.push(g);
-    remaining -= block.length;
-    if (heuristicNeedsHeavyAttention([g])) suggestHeavy = true;
-  }
 
   if (blocks.length === 0) return null;
-
-  await withRoundRobinLock(goalsDir, async () => {
-    await writeRoundRobin(goalsDir, { offset: nextOff });
-  });
 
   let header = "<goal-stewardship-bundle>\n";
   header += `<!-- goals: ${includedGoals.length} | cap: ${cap} chars | rr: ${rrOffset}->${nextOff} -->\n`;
