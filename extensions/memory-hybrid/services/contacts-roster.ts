@@ -63,6 +63,15 @@ export function parseContactsRoster(markdown: string): RosterOrg[] {
   return orgs;
 }
 
+/** Drop trailing empty fields (e.g. ["Name", "", "", ""] -> ["Name"]) without a backtracking-prone regex. */
+function stripTrailingEmptyFields(fields: string[]): string[] {
+  const result = [...fields];
+  while (result.length > 0 && result[result.length - 1] === "") {
+    result.pop();
+  }
+  return result;
+}
+
 /** Render orgs/people back to the CONTACTS.md format — used by tests and as a starter-file generator. */
 export function formatContactsRoster(orgs: RosterOrg[]): string {
   const lines: string[] = [
@@ -73,7 +82,8 @@ export function formatContactsRoster(orgs: RosterOrg[]): string {
   for (const org of orgs) {
     lines.push(`## ${org.name}`, "");
     for (const p of org.people) {
-      lines.push(`- ${[p.name, p.email ?? "", p.role ?? "", p.boardStatus ?? ""].join(" | ").replace(/(\s*\|\s*)+$/, "")}`);
+      const fields = stripTrailingEmptyFields([p.name, p.email ?? "", p.role ?? "", p.boardStatus ?? ""]);
+      lines.push(`- ${fields.join(" | ")}`);
     }
     lines.push("");
   }
