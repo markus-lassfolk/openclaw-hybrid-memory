@@ -243,7 +243,18 @@ export function normalizeWorkflowToolSequence(tools: string[]): string[] {
 
 /** Prefer trajectory tool.call rows when a sidecar exists; fall back to session messages. */
 export function collectWorkflowToolsFromSessionFile(filePath: string, subsystem: string): string[] {
-  const lines = readFileSync(filePath, "utf-8").split("\n");
+  let lines: string[];
+  try {
+    lines = readFileSync(filePath, "utf-8").split("\n");
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: "read-session-file",
+      severity: "info",
+      subsystem,
+      context: basename(filePath),
+    });
+    return [];
+  }
   const messages = parseSessionMessagesFromLines(lines, subsystem);
   const trajLines = readTrajectoryLines(filePath);
   const tools = trajLines

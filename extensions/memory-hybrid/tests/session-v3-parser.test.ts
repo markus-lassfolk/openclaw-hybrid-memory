@@ -166,4 +166,11 @@ describe("session-v3-parser", () => {
     );
     expect(collectWorkflowToolsFromSessionFile(sessionFile, "test")).toEqual(["memory_recall", "exec"]);
   });
+
+  it("collectWorkflowToolsFromSessionFile returns [] instead of throwing when the session file cannot be read (#28)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "wf-tools-missing-"));
+    const missingFile = join(dir, "does-not-exist.jsonl");
+    expect(() => collectWorkflowToolsFromSessionFile(missingFile, "test")).not.toThrow();
+    expect(collectWorkflowToolsFromSessionFile(missingFile, "test")).toEqual([]);
+  });
 });
