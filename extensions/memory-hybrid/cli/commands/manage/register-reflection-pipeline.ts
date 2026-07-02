@@ -1178,6 +1178,7 @@ export function registerManageReflectionPipeline(
                 for (const error of res.errors) {
                   console.log(`  - ${error}`);
                 }
+                process.exitCode = 1;
               }
               return;
             }
@@ -1285,7 +1286,12 @@ export function registerManageReflectionPipeline(
                 degradedConsecutiveThreshold,
                 previousConsecutiveNoProgressRuns: previousConsecutive,
               });
-              persistConsecutiveNoProgressState(metrics, evaluation);
+              // Only a real (--apply) run persists the shared no-progress counter — this file is also
+              // read/written by the nightly maintenance orchestrator's own `--auto --apply` step, and an
+              // ad-hoc `--auto` dry-run preview must not reset or inflate that job's degraded-alert streak.
+              if (apply) {
+                persistConsecutiveNoProgressState(metrics, evaluation);
+              }
               if (exportReview) {
                 writeContradictionReviewFile(exportReview, res.reviewItems);
               }
