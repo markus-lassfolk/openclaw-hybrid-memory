@@ -35,6 +35,18 @@ function safeStringArray(v: unknown): string[] | null {
   return out.length > 0 ? out : null;
 }
 
+/**
+ * Reject the whole precomputed vector if any element is non-numeric or non-finite, rather than
+ * silently dropping the bad elements — filtering them out shrinks the array below the table's
+ * configured dimension, which vectorDb.store() now rejects outright, and previously risked
+ * writing a corrupt (wrong-width) vector. A partially-NaN vector is not safely replayable; fall
+ * back to re-embedding the fact's text instead.
+ */
+function safeVector(v: unknown): number[] | null {
+  if (!Array.isArray(v) || v.length === 0) return null;
+  return v.every((n) => typeof n === "number" && Number.isFinite(n)) ? (v as number[]) : null;
+}
+
 const VALID_WAL_SCOPES = new Set(["global", "user", "agent", "session"]);
 
 function safeScope(v: unknown): "global" | "user" | "agent" | "session" | null {
@@ -145,7 +157,15 @@ async function ensureVectorAndEmbeddingMeta(opts: {
         factsDb.storeEmbedding(factId, embeddings.modelName, "canonical", new Float32Array(v), v.length);
       }
       return Array.from(v);
-    } catch {
+    } catch (err) {
+      // Fact ends up with no vector for this replay pass — must be visible to operators,
+      // not just silently dropped (it will be caught by embedding-maintenance's vectorless
+      // fact scan eventually, but that lag is exactly what this report shortens).
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "wal-replay",
+        operation: "embed-and-store-fallback",
+        factId,
+      });
       return null;
     }
   };
@@ -174,8 +194,15 @@ async function ensureVectorAndEmbeddingMeta(opts: {
       }
       return;
     }
-  } catch {
-    // Non-fatal: fall back to re-embed if possible.
+  } catch (err) {
+    // Non-fatal: fall back to re-embed if possible, but the precomputed-vector store failure
+    // itself must still be reported — e.g. a dimension mismatch means this WAL entry's vector
+    // came from a different embedding model than the live table expects.
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "wal-replay",
+      operation: "store-precomputed-vector",
+      factId,
+    });
   }
 
   await embedAndStore();
@@ -236,9 +263,7 @@ export async function replayWalEntries(
         const provenanceJson = safeString(entry.data.provenanceJson);
         const sourceSessions = safeString(entry.data.sourceSessions);
 
-        const precomputedVector = Array.isArray(entry.data.vector)
-          ? (entry.data.vector as number[]).filter((n) => typeof n === "number" && Number.isFinite(n))
-          : null;
+        const precomputedVector = safeVector(entry.data.vector);
         const embeddingModelName = safeString(entry.data.embeddingModelName);
 
         // Guard: a non-global scope without a scopeTarget cannot be safely replayed — storing it
@@ -386,9 +411,7 @@ export async function replayWalEntries(
         const provenanceJson = safeString(entry.data.provenanceJson);
         const sourceSessions = safeString(entry.data.sourceSessions);
 
-        const precomputedVector = Array.isArray(entry.data.vector)
-          ? (entry.data.vector as number[]).filter((n) => typeof n === "number" && Number.isFinite(n))
-          : null;
+        const precomputedVector = safeVector(entry.data.vector);
         const embeddingModelName = safeString(entry.data.embeddingModelName);
 
         // Guard: same as "store" path — do not replay a non-global scoped update without a scopeTarget.
