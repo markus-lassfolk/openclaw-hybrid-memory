@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -250,6 +250,72 @@ describe("runGoalHealthCheck", () => {
       workspaceRoot,
       logger: {},
     });
+    expect(r.actions.some((a: { action: string }) => a.action === "verifying")).toBe(true);
+  });
+
+  it("blocks file_exists verification targets that escape the workspace via '..' (#40)", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    // A file that genuinely exists just outside workspaceRoot — proves the guard is a real
+    // containment check, not merely relying on the file being absent.
+    const outsideMarker = join(workspaceRoot, "..", `escape-marker-${Date.now()}.txt`);
+    await writeFile(outsideMarker, "secret", "utf-8");
+    try {
+      const g = await createGoal(
+        goalsDir,
+        {
+          label: "verify_escape",
+          description: "d",
+          acceptanceCriteria: ["a"],
+          verification: { type: "file_exists", target: `../${outsideMarker.split("/").pop()}` },
+        },
+        defaults,
+      );
+      const r = await runGoalHealthCheck({ goalsDir, cfg: baseCfg(), workspaceRoot, logger: {} });
+      expect(r.actions.some((a: { action: string }) => a.action === "verifying")).toBe(false);
+      const after = await readGoal(goalsDir, g.id);
+      expect(after?.lastMechanicalCheck?.detail).toContain("escapes workspace");
+    } finally {
+      await rm(outsideMarker, { force: true });
+    }
+  });
+
+  it("blocks file_exists verification targets that are absolute paths outside the workspace (#40)", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    const g = await createGoal(
+      goalsDir,
+      {
+        label: "verify_absolute_escape",
+        description: "d",
+        acceptanceCriteria: ["a"],
+        verification: { type: "file_exists", target: "/etc/hostname" },
+      },
+      defaults,
+    );
+    const r = await runGoalHealthCheck({ goalsDir, cfg: baseCfg(), workspaceRoot, logger: {} });
+    expect(r.actions.some((a: { action: string }) => a.action === "verifying")).toBe(false);
+    const after = await readGoal(goalsDir, g.id);
+    expect(after?.lastMechanicalCheck?.detail).toContain("escapes workspace");
+  });
+
+  it("allows file_exists verification targets that are absolute paths inside the workspace (#40)", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    const marker = join(workspaceRoot, "nested", "proof.txt");
+    await mkdir(join(workspaceRoot, "nested"), { recursive: true });
+    await writeFile(marker, "ok", "utf-8");
+    await createGoal(
+      goalsDir,
+      {
+        label: "verify_absolute_inside",
+        description: "d",
+        acceptanceCriteria: ["a"],
+        verification: { type: "file_exists", target: marker },
+      },
+      defaults,
+    );
+    const r = await runGoalHealthCheck({ goalsDir, cfg: baseCfg(), workspaceRoot, logger: {} });
     expect(r.actions.some((a: { action: string }) => a.action === "verifying")).toBe(true);
   });
 

@@ -9,7 +9,7 @@ import { lookup } from "node:dns/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import type { EventLog } from "../backends/event-log.js";
@@ -188,7 +188,16 @@ export async function verifyGoalMechanically(
     return verifyPrMergedApi(v.target);
   }
   if (v.type === "file_exists") {
-    const p = isAbsolute(v.target) ? v.target : join(workspaceRoot, v.target);
+    const p = resolve(isAbsolute(v.target) ? v.target : join(workspaceRoot, v.target));
+    // Reject targets that resolve outside workspaceRoot (absolute paths pointing elsewhere, or
+    // relative paths using ".." to climb out) — without this, file_exists could be used to probe
+    // for the presence of arbitrary files anywhere on the filesystem (e.g. ~/.ssh/id_rsa), since
+    // the verification target is attacker/agent-controlled goal input.
+    const rel = relative(resolve(workspaceRoot), p);
+    const contained = rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+    if (!contained) {
+      return { ok: false, detail: `file_exists: target escapes workspace (${p})` };
+    }
     return { ok: existsSync(p), detail: `file_exists: ${p}` };
   }
   if (v.type === "command_exit_zero") {
