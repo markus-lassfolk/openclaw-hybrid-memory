@@ -440,26 +440,28 @@ export class WriteAheadLog {
       this.activeIds.delete(id);
       await this.fsyncAfterWrite();
       if (this.activeIds.size === 0) {
-        if (this.initLoadFailed) {
-          const { entries: remaining, hadCorruption } = await this.readAllWithCorruptionFallback();
-          if (remaining.length === 0) {
-            if (hadCorruption) {
-              pluginLogger.warn(
-                "WAL remove: disk verification found corruption and no recoverable entries, clearing WAL",
-              );
-            }
-            await this._clearInternal();
-          } else {
-            if (hadCorruption) {
-              pluginLogger.warn(
-                `WAL remove: disk verification found corruption, recovered ${remaining.length} valid entries — preserving WAL`,
-              );
-            }
-            for (const e of remaining) this.activeIds.add(e.id);
-            this.initLoadFailed = false;
+        // Always verify against the on-disk file before clearing, not just when this instance's
+        // own init() failed to load — a concurrent process (e.g. a doctor durability probe)
+        // constructing its own WriteAheadLog against the same walPath has its own independent
+        // in-memory activeIds. If it appended an entry after this instance last loaded, this
+        // instance's activeIds.size could hit 0 while the disk still holds that entry; clearing
+        // on in-memory state alone would silently discard it (#79).
+        const { entries: remaining, hadCorruption } = await this.readAllWithCorruptionFallback();
+        if (remaining.length === 0) {
+          if (hadCorruption) {
+            pluginLogger.warn(
+              "WAL remove: disk verification found corruption and no recoverable entries, clearing WAL",
+            );
           }
-        } else {
           await this._clearInternal();
+        } else {
+          if (hadCorruption) {
+            pluginLogger.warn(
+              `WAL remove: disk verification found corruption, recovered ${remaining.length} valid entries — preserving WAL`,
+            );
+          }
+          for (const e of remaining) this.activeIds.add(e.id);
+          this.initLoadFailed = false;
         }
       }
     } catch (err) {

@@ -357,7 +357,7 @@ describe("WriteAheadLog", () => {
       readAllSpy.mockRestore();
     });
 
-    it("batch removals do not trigger any readAll() call", async () => {
+    it("only the final drain-to-empty removal triggers a readAll() disk-verification call (#79)", async () => {
       const ids: string[] = [];
       for (let i = 0; i < 10; i++) {
         const entry = {
@@ -375,7 +375,9 @@ describe("WriteAheadLog", () => {
         await wal.remove(id);
       }
 
-      expect(readAllSpy).not.toHaveBeenCalled();
+      // Every remove() that leaves other entries active stays O(1) (no disk read); only the
+      // single removal that drains activeIds to 0 verifies against disk before clearing (#79).
+      expect(readAllSpy).toHaveBeenCalledTimes(1);
       readAllSpy.mockRestore();
     });
 
@@ -414,6 +416,40 @@ describe("WriteAheadLog", () => {
       const entries = await wal.readAll();
       expect(entries).toHaveLength(1);
       expect(entries[0].id).toBe(entry.id);
+    });
+
+    it("does not wipe another process's concurrently-appended entry when this instance's own activeIds drains to 0 (#79)", async () => {
+      // Simulates cmd-doctor's WAL durability probe racing the long-running gateway process:
+      // a second WriteAheadLog instance pointed at the same walPath, whose init() resolves
+      // against an empty/pre-gateway-write file (so ensureInitialized() is a no-op for the
+      // rest of its lifetime — it never re-reads disk), then the gateway appends its own real
+      // entry that the probe instance's in-memory activeIds never learns about.
+      const probeWal = new WriteAheadLog(walPath, DEFAULT_MAX_AGE_MS);
+      await probeWal.init(); // resolves against the still-empty walPath
+
+      const gatewayEntry = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "Gateway's pending entry", category: "general", importance: 0.7, source: "test" },
+      };
+      await wal.write(gatewayEntry); // a different WriteAheadLog instance, same walPath
+
+      // Matches cmd-doctor.ts's `wal.write(probeEntry); wal.remove(probeId);` round-trip.
+      const probeId = randomUUID();
+      const probeEntry = {
+        id: probeId,
+        timestamp: Date.now(),
+        operation: "update" as const,
+        data: { text: "doctor-wal-durability-probe", probe: "doctor-wal-durability" },
+      };
+      await probeWal.write(probeEntry);
+      await probeWal.remove(probeId);
+
+      // The probe's own activeIds is now empty, but the gateway's entry must survive on disk.
+      expect(existsSync(walPath)).toBe(true);
+      const survivingEntries = await wal.readAll();
+      expect(survivingEntries.map((e) => e.id)).toEqual([gatewayEntry.id]);
     });
   });
 
