@@ -11,6 +11,7 @@ import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
+import { parse as parseGraphQL } from "graphql";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { getRecallStatsSnapshot } from "../../services/recall-timing-stats.js";
 import { getRecallSignalsSnapshot } from "../../services/recall-signals.js";
@@ -112,32 +113,34 @@ function rejectUnauthorizedDashboardWrite(res: ServerResponse): void {
   res.end(JSON.stringify({ error: "Unauthorized" }));
 }
 
-const GRAPHQL_MUTATION_ROOT_FIELDS = [
-  "createFact",
-  "updateFact",
-  "deleteFact",
-  "supersedeFact",
-  "createLink",
-  "deleteLink",
-  "importFacts",
-  "pruneFacts",
-  "consolidateFacts",
-  "recomputeEmbeddings",
-] as const;
-
-/** Detect named and anonymous GraphQL mutations for dashboard.token auth. */
+/**
+ * Detect GraphQL mutations for dashboard.token auth by parsing the query with the real GraphQL
+ * parser rather than regex heuristics on raw text.
+ *
+ * The previous regex-based approach (starts-with-"mutation" / "mutation" keyword within the
+ * first 500 chars / root-field name scan gated on starts-with-"{") was bypassable: a document
+ * starting with a `fragment` definition, followed by enough whitespace to push the `mutation`
+ * keyword past the 500-char scan window, matched none of the three checks and executed
+ * unauthenticated even though it contained a real mutation. GraphQL documents can lead with
+ * fragment definitions before their sole operation, so "starts with mutation/{" is not a valid
+ * proxy for "is this a mutation."
+ *
+ * Fails closed: any parse error, or any document containing so much as one mutation operation
+ * (even alongside query operations), is treated as requiring auth.
+ */
 export function graphqlBodyIsMutation(body: unknown): boolean {
   if (typeof body !== "object" || body == null) return false;
   const query = (body as { query?: unknown }).query;
   if (typeof query !== "string") return false;
-  const trimmed = query.replace(/^\s*(#[^\n]*\n)*/m, "").trimStart();
-  if (trimmed.startsWith("mutation") || /\bmutation\b/.test(trimmed.slice(0, 500))) return true;
-  if (trimmed.startsWith("{")) {
-    for (const field of GRAPHQL_MUTATION_ROOT_FIELDS) {
-      if (new RegExp(`\\b${field}\\s*\\(`).test(trimmed)) return true;
-    }
+  try {
+    const doc = parseGraphQL(query);
+    return doc.definitions.some(
+      (def) => def.kind === "OperationDefinition" && def.operation === "mutation",
+    );
+  } catch {
+    // Malformed/unparseable query — can't prove it's read-only, so require auth.
+    return true;
   }
-  return false;
 }
 
 export interface DashboardServer {

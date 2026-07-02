@@ -174,8 +174,32 @@ describe("parseDashboardConfig", () => {
   it("graphqlBodyIsMutation detects named and anonymous mutations", () => {
     expect(graphqlBodyIsMutation({ query: "{ __typename }" })).toBe(false);
     expect(graphqlBodyIsMutation({ query: "mutation { deleteFact(id: \"x\") }" })).toBe(true);
-    expect(graphqlBodyIsMutation({ query: '{ deleteFact(id: "x") }' })).toBe(true);
+    expect(graphqlBodyIsMutation({ query: "mutation DeleteIt { deleteFact(id: \"x\") }" })).toBe(true);
     expect(graphqlBodyIsMutation({ query: "query { facts { id } }" })).toBe(false);
+    // Anonymous shorthand `{ ... }` is unambiguously a query-type operation per the GraphQL
+    // spec — it can never actually invoke a Mutation-type field regardless of the field's name,
+    // so this is correctly NOT flagged (unlike the old regex heuristic, which over-matched this
+    // case defensively while still missing the real bypass below).
+    expect(graphqlBodyIsMutation({ query: '{ deleteFact(id: "x") }' })).toBe(false);
+  });
+
+  it("graphqlBodyIsMutation is not bypassable via a leading fragment definition", () => {
+    // Regression for the auth-bypass reported against the old regex-based detector: a document
+    // starting with `fragment` (not "mutation" or "{") followed by enough padding to push the
+    // `mutation` keyword past a fixed-length scan window matched none of the old heuristic's
+    // three checks, so a real mutation executed unauthenticated.
+    const padding = " ".repeat(600);
+    const query = `fragment F on Query { __typename }${padding}mutation Evil { deleteFact(id: "1") }`;
+    expect(graphqlBodyIsMutation({ query })).toBe(true);
+  });
+
+  it("graphqlBodyIsMutation flags a document containing any mutation operation, even mixed with queries", () => {
+    const query = `query Q { facts { id } } mutation M { deleteFact(id: "1") }`;
+    expect(graphqlBodyIsMutation({ query })).toBe(true);
+  });
+
+  it("graphqlBodyIsMutation fails closed (requires auth) on unparseable queries", () => {
+    expect(graphqlBodyIsMutation({ query: "{ this is not valid graphql (((" })).toBe(true);
   });
 });
 
@@ -900,7 +924,7 @@ describe("Memory Viewer API (Issue #1023)", () => {
     }
   });
 
-  it("POST /graphql anonymous deleteFact returns 401 when dashboard.token is set", async () => {
+  it("POST /graphql anonymous deleteFact mutation returns 401 when dashboard.token is set", async () => {
     const td = mkdtempSync(join(tmpdir(), "dashboard-auth-gql-mut-"));
     try {
       const ctx = await makeContextWithStores(td);
@@ -908,13 +932,40 @@ describe("Memory Viewer API (Issue #1023)", () => {
       const srv = await createDashboardServer(ctx, 0);
       try {
         const entry = ctx.factsDb.store({ text: "GQL delete", category: "fact", source: "test" });
-        const query = JSON.stringify({ query: `{ deleteFact(id: "${entry.id}") }` });
+        // A real, executable mutation — the anonymous *shorthand* `{ deleteFact(...) }` form
+        // (tested separately below) is unambiguously a query-type operation per the GraphQL
+        // spec and can never actually invoke a Mutation-type field, so it isn't a valid probe
+        // for "does this endpoint gate real mutations."
+        const query = JSON.stringify({ query: `mutation { deleteFact(id: "${entry.id}") }` });
         const unauthorized = await apiPost(srv.port, "/graphql", query);
         expect(unauthorized.status).toBe(401);
         const authorized = await apiPost(srv.port, "/graphql", query, {
           Authorization: "Bearer test-secret",
         });
         expect(authorized.status).not.toBe(401);
+      } finally {
+        closeAll(ctx);
+        srv.close();
+      }
+    } finally {
+      rmSync(td, { recursive: true, force: true });
+    }
+  });
+
+  it("POST /graphql anonymous-shorthand deleteFact cannot actually delete (query-type operations can't invoke mutation fields)", async () => {
+    const td = mkdtempSync(join(tmpdir(), "dashboard-auth-gql-shorthand-"));
+    try {
+      const ctx = await makeContextWithStores(td);
+      ctx.hybridCfg = { dashboard: { enabled: true, port: 7700, token: "test-secret" } };
+      const srv = await createDashboardServer(ctx, 0);
+      try {
+        const entry = ctx.factsDb.store({ text: "GQL shorthand delete", category: "fact", source: "test" });
+        const query = JSON.stringify({ query: `{ deleteFact(id: "${entry.id}") }` });
+        const res = await apiPost(srv.port, "/graphql", query);
+        // Not gated by dashboard.token (it's not a mutation operation) — but the GraphQL executor
+        // rejects it (deleteFact isn't defined on the Query root type), so no deletion happens.
+        expect(res.status).not.toBe(401);
+        expect(ctx.factsDb.getById(entry.id)).not.toBeNull();
       } finally {
         closeAll(ctx);
         srv.close();
