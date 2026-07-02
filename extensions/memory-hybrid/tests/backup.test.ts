@@ -159,6 +159,62 @@ describe("backup", () => {
       }
     });
 
+    it("writes a backup-manifest.json recording snapshot timestamps for drift detection (#81)", async () => {
+      const backupDir = join(testDir, "backups");
+      const before = Date.now();
+      const result = await runBackup({
+        resolvedSqlitePath: sqlitePath,
+        resolvedLancePath: lancePath,
+        backupDir,
+      });
+      const after = Date.now();
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      expect(result.sqliteSnapshotAt).toBeDefined();
+      expect(result.lancedbSnapshotAt).toBeDefined();
+      // SQLite is snapshotted first, then LanceDB — the two timestamps must be ordered and
+      // both fall within the call's wall-clock window.
+      expect(result.sqliteSnapshotAt).toBeGreaterThanOrEqual(before);
+      expect(result.lancedbSnapshotAt).toBeGreaterThanOrEqual(result.sqliteSnapshotAt as number);
+      expect(result.lancedbSnapshotAt).toBeLessThanOrEqual(after);
+      expect(result.snapshotSkewMs).toBeGreaterThanOrEqual(0);
+
+      const manifestPath = join(result.backupDir, "backup-manifest.json");
+      expect(existsSync(manifestPath)).toBe(true);
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+      expect(manifest).toMatchObject({
+        version: 1,
+        sqliteSnapshotAt: result.sqliteSnapshotAt,
+        lancedbSnapshotAt: result.lancedbSnapshotAt,
+        snapshotSkewMs: result.snapshotSkewMs,
+        sqliteSize: result.sqliteSize,
+        lancedbSize: result.lancedbSize,
+        integrityOk: result.integrityOk,
+      });
+    });
+
+    it("manifest records null snapshot timestamps for a half that doesn't exist", async () => {
+      const backupDir = join(testDir, "backups");
+      const missingLancePath = join(testDir, "does-not-exist-lancedb");
+      const result = await runBackup({
+        resolvedSqlitePath: sqlitePath,
+        resolvedLancePath: missingLancePath,
+        backupDir,
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      expect(result.sqliteSnapshotAt).toBeDefined();
+      expect(result.lancedbSnapshotAt).toBeUndefined();
+      expect(result.snapshotSkewMs).toBe(0);
+
+      const manifest = JSON.parse(readFileSync(join(result.backupDir, "backup-manifest.json"), "utf-8"));
+      expect(manifest.lancedbSnapshotAt).toBeNull();
+    });
+
     it("should handle missing SQLite file gracefully", async () => {
       const backupDir = join(testDir, "backups");
       const result = await runBackup({

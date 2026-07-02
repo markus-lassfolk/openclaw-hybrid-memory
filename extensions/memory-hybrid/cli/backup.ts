@@ -31,6 +31,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
@@ -49,8 +50,34 @@ export type BackupCliResult =
       lancedbSize: number;
       durationMs: number;
       integrityOk: boolean;
+      /** Epoch ms when the SQLite VACUUM INTO snapshot completed (undefined if no SQLite db existed). */
+      sqliteSnapshotAt?: number;
+      /** Epoch ms when the LanceDB directory copy completed (undefined if no LanceDB dir existed). */
+      lancedbSnapshotAt?: number;
+      /**
+       * Gap in ms between the two snapshots — the window during which a live write could have
+       * landed in one half but not the other, since the two stores are copied sequentially with
+       * no write-quiesce between them (#81). 0 when either half is missing.
+       */
+      snapshotSkewMs: number;
     }
   | { ok: false; error: string };
+
+/**
+ * Written to the backup directory alongside the copied data so downstream verify/restore
+ * tooling can detect (not prevent) SQLite/LanceDB drift caused by a write landing in the gap
+ * between the two sequential snapshots (#81).
+ */
+export type BackupManifest = {
+  version: 1;
+  createdAt: number;
+  sqliteSnapshotAt: number | null;
+  lancedbSnapshotAt: number | null;
+  snapshotSkewMs: number;
+  sqliteSize: number;
+  lancedbSize: number;
+  integrityOk: boolean;
+};
 
 export type BackupVerifyResult =
   | { ok: true; integrityOk: boolean; sqlitePath: string; factCount: number; message: string }
@@ -178,6 +205,13 @@ export async function runBackup(ctx: BackupContext): Promise<BackupCliResult> {
   // ran, and reporting `integrityOk: true` in that case falsely implied a check passed. Failing
   // closed means a caller relying on this flag can't mistake "never checked" for "verified ok."
   let integrityOk = false;
+  // The two stores are copied sequentially (SQLite via VACUUM INTO, then LanceDB via directory
+  // copy) with no write-quiesce between them — a store()/evict() landing in that gap makes the
+  // two halves disagree. There is no cheap way to make the pair atomic without pausing all
+  // writes, so instead we record when each snapshot completed; verify/restore tooling can use
+  // the gap to reason about how much drift is possible (#81).
+  let sqliteSnapshotAt: number | null = null;
+  let lancedbSnapshotAt: number | null = null;
 
   if (existsSync(ctx.resolvedSqlitePath)) {
     const destSqlite = join(dest, basename(ctx.resolvedSqlitePath));
@@ -197,6 +231,7 @@ export async function runBackup(ctx: BackupContext): Promise<BackupCliResult> {
         db.close();
       }
       sqliteSize = statSync(destSqlite).size;
+      sqliteSnapshotAt = Date.now();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "backup",
@@ -213,6 +248,7 @@ export async function runBackup(ctx: BackupContext): Promise<BackupCliResult> {
     try {
       copyDirSync(ctx.resolvedLancePath, destLance);
       lancedbSize = dirSizeSync(destLance);
+      lancedbSnapshotAt = Date.now();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "backup",
@@ -220,6 +256,33 @@ export async function runBackup(ctx: BackupContext): Promise<BackupCliResult> {
       });
       return cleanupAndFail(`LanceDB backup failed: ${err}`);
     }
+  }
+
+  const snapshotSkewMs =
+    sqliteSnapshotAt !== null && lancedbSnapshotAt !== null
+      ? Math.abs(lancedbSnapshotAt - sqliteSnapshotAt)
+      : 0;
+
+  const manifest: BackupManifest = {
+    version: 1,
+    createdAt: start,
+    sqliteSnapshotAt,
+    lancedbSnapshotAt,
+    snapshotSkewMs,
+    sqliteSize,
+    lancedbSize,
+    integrityOk,
+  };
+  try {
+    writeFileSync(join(dest, "backup-manifest.json"), JSON.stringify(manifest, null, 2), "utf-8");
+  } catch (err) {
+    // Non-fatal — the data itself backed up successfully; only the drift-detection metadata
+    // failed to write.
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "backup",
+      operation: "write-manifest",
+      severity: "warning",
+    });
   }
 
   const durationMs = Date.now() - start;
@@ -230,6 +293,9 @@ export async function runBackup(ctx: BackupContext): Promise<BackupCliResult> {
     lancedbSize,
     durationMs,
     integrityOk,
+    sqliteSnapshotAt: sqliteSnapshotAt ?? undefined,
+    lancedbSnapshotAt: lancedbSnapshotAt ?? undefined,
+    snapshotSkewMs,
   };
 }
 
