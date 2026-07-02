@@ -282,7 +282,12 @@ async function handleCorruptGoalRegistryEntry(goalsDir: string, filename: string
   await quarantineCorruptGoalFile(goalsDir, filename);
   const srcPath = join(goalsDir, filename);
   if (existsSync(srcPath)) {
-    /* Quarantine failed — do not ledger-suppress future retries (#1988). */
+    /* Quarantine failed — do not ledger-suppress future retries (#1988), but still surface the
+     * failure so a persistently-corrupt file (e.g. one whose rename keeps failing due to
+     * permissions or a full disk) doesn't go completely silent forever. capturePluginError's
+     * chronic-fingerprint dedup window (24h, see error-reporter.ts) keeps this from spamming even
+     * though this branch can be re-entered on every index rebuild. */
+    captureInvalidGoalRegistryEntry(filename, err);
     return;
   }
   await persistCorruptReportKey(goalsDir, dedupeKey);
