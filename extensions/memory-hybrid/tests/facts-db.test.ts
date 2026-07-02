@@ -1872,6 +1872,44 @@ describe("FactsDB.pruneExpired", () => {
       .get().c;
     expect(linksLeft).toBe(0);
   });
+
+  it("pruneExpiredWithDetails cleans contradictions referencing the expired fact (#84)", () => {
+    const expired = db.store({
+      text: "Expiring fact with contradiction",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "session",
+    });
+    const survivor = db.store({
+      text: "Contradiction survivor",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "permanent",
+    });
+    const raw = db.getRawDb();
+    raw
+      .prepare("UPDATE facts SET expires_at = strftime('%s','now') - 100 WHERE id = ?")
+      .run(expired.id);
+    raw
+      .prepare("INSERT INTO contradictions (id, fact_id_new, fact_id_old, detected_at) VALUES (?, ?, ?, ?)")
+      .run("c-expired-1", expired.id, survivor.id, new Date().toISOString());
+
+    const details = db.pruneExpiredWithDetails();
+    expect(details.deletedFactIds).toContain(expired.id);
+
+    const contradictionsLeft = raw
+      .prepare("SELECT COUNT(*) AS c FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ?")
+      .get(expired.id, expired.id) as { c: number };
+    expect(contradictionsLeft.c).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2027,6 +2065,43 @@ describe("FactsDB.decayConfidence", () => {
       .prepare("SELECT COUNT(*) AS c FROM memory_links")
       .get().c;
     expect(linksLeft).toBe(0);
+  });
+
+  it("decayConfidenceWithDetails cleans contradictions referencing the decayed fact (#84)", () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const low = db.store({
+      text: "Low confidence fact with contradiction",
+      category: "fact",
+      importance: 0.4,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "active",
+      confidence: 0.05,
+    });
+    const survivor = db.store({
+      text: "Contradiction survivor (decay)",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "permanent",
+    });
+    const raw = db.getRawDb();
+    raw
+      .prepare("INSERT INTO contradictions (id, fact_id_new, fact_id_old, detected_at) VALUES (?, ?, ?, ?)")
+      .run("c-decay-1", low.id, survivor.id, new Date().toISOString());
+
+    const details = db.decayConfidenceWithDetails(nowSec);
+    expect(details.deletedFactIds).toContain(low.id);
+
+    const contradictionsLeft = raw
+      .prepare("SELECT COUNT(*) AS c FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ?")
+      .get(low.id, low.id) as { c: number };
+    expect(contradictionsLeft.c).toBe(0);
   });
 });
 
@@ -3342,6 +3417,41 @@ describe("FactsDB scoping", () => {
     const count = db.pruneSessionScope("sess-links");
     expect(count).toBe(1);
     expect(db.getLinksFrom(globalFact.id).length).toBe(0);
+  });
+
+  it("pruneSessionScope cleans contradictions referencing deleted session facts (#84)", () => {
+    const sessionFact = db.store({
+      text: "Session fact with contradiction",
+      category: "other",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "session",
+      scopeTarget: "sess-contradiction",
+    });
+    const globalFact = db.store({
+      text: "Global contradiction survivor",
+      category: "other",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    const raw = db.getRawDb();
+    raw
+      .prepare("INSERT INTO contradictions (id, fact_id_new, fact_id_old, detected_at) VALUES (?, ?, ?, ?)")
+      .run("c-session-1", sessionFact.id, globalFact.id, new Date().toISOString());
+
+    const count = db.pruneSessionScope("sess-contradiction");
+    expect(count).toBe(1);
+
+    const contradictionsLeft = raw
+      .prepare("SELECT COUNT(*) AS c FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ?")
+      .get(sessionFact.id, sessionFact.id) as { c: number };
+    expect(contradictionsLeft.c).toBe(0);
   });
 
   it("pruneScopedFacts supports global scope filter", () => {
