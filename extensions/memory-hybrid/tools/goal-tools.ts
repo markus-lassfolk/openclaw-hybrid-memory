@@ -438,7 +438,16 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
                 sameBlockerStreak: goal.sameBlockerStreak,
                 circuitBreakerLastProgressAssessmentCount: goal.circuitBreakerLastProgressAssessmentCount,
               };
-          const tripEval = evaluateCircuitBreakerTrip(gs.circuitBreaker, cbState, newAssessmentCount);
+          // Only evaluate a trip when this call actually provided fresh blocker evidence.
+          // When blockers is omitted, cbState reuses the goal's frozen prior circuit-breaker
+          // state while newAssessmentCount still advances — evaluating the trip here would let
+          // the "assessments without progress" counter grow purely from call volume (an agent
+          // simply not re-passing the optional blockers field) rather than genuine repeated-
+          // blocker evidence, tripping the breaker "too early" relative to its documented intent
+          // (stop retrying when blockers do not change).
+          const tripEval = blockersExplicitlyProvided
+            ? evaluateCircuitBreakerTrip(gs.circuitBreaker, cbState, newAssessmentCount)
+            : ({ trip: false } as const);
 
           const basePatch = {
             assessmentCount: newAssessmentCount,
