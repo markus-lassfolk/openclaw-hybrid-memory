@@ -357,10 +357,22 @@ export class CredentialsDB extends BaseSqliteStore {
           }
         }
 
-        // Drop any remaining unsupported types that were not handled above.
+        // Drop any remaining unsupported types that were not handled above ("url" is the only
+        // known legacy type with a defined migration path — anything else has no safe
+        // transformation and is dropped here rather than left permanently unreadable via
+        // assertValidCredentialType()).
+        const droppedRows = this.liveDb
+          .prepare(`SELECT service, type FROM credentials WHERE type NOT IN (${CREDENTIAL_TYPES.map(() => "?").join(", ")})`)
+          .all(...CREDENTIAL_TYPES) as Array<{ service: string; type: string }>;
         this.liveDb
           .prepare(`DELETE FROM credentials WHERE type NOT IN (${CREDENTIAL_TYPES.map(() => "?").join(", ")})`)
           .run(...CREDENTIAL_TYPES);
+        if (droppedRows.length > 0) {
+          pluginLogger.warn(
+            `memory-hybrid: dropped ${droppedRows.length} credential row(s) with an unrecognized type that has no known migration path: ` +
+              droppedRows.map((r) => `${r.service} (type="${r.type}")`).join(", "),
+          );
+        }
       },
       "IMMEDIATE",
     );
