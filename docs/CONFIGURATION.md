@@ -1894,6 +1894,64 @@ The seven defaults (`preference`, `fact`, `decision`, `entity`, `pattern`, `rule
 
 ---
 
+## Contacts profile enrichment (#2014)
+
+Extends the [NER entity layer](GRAPH-MEMORY.md#person-and-organization-enrichment-entity-layer) so `contacts` rows carry more than a bare name: automatic `email`/`role`/`board_status` fill-in from fact text, auto-merge of partial-name NER duplicates ("Daniel" → "Daniel Thunberg"), and a `CONTACTS.md`-style roster import. See [GRAPH-MEMORY.md](GRAPH-MEMORY.md#contact-profile-enrichment-vs-ner-issue-2014) for how profile enrichment differs from plain NER.
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "contacts": {
+            "requireSurname": false
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `requireSurname` | `false` | When `true`, NER does not create a *new* PERSON contact from a single-token surface (e.g. bare "Daniel") unless the same fact also mentions an organization. Existing contacts and multi-token names are unaffected. |
+
+Requires `graph.enabled: true` (contact profile enrichment runs alongside the NER pipeline it depends on).
+
+### `contacts` CLI
+
+| Command | Description |
+|---------|-------------|
+| `contacts list [--prefix <name>] [--limit <n>] [--json]` | List contacts with role, org, email |
+| `contacts suggest-merges [--json]` | List unambiguous partial-name duplicate candidates |
+| `contacts merge <fromId> <intoId>` | Merge `fromId` into `intoId`: repoints NER mentions, folds in profile fields (manual wins conflicts), deletes `fromId` |
+| `contacts import --from <file> [--dry-run]` | Upsert organizations/contacts/roster facts from a roster file (idempotent — safe to re-run) |
+| `contacts sync --from <file> [--force]` | Re-run `contacts import` only if the file's mtime changed since the last sync |
+
+### `CONTACTS.md` roster format
+
+```markdown
+## Avoki
+
+- Daniel Thunberg | daniel.thunberg@avoki.com | Sverigechef | management
+- Jane Doe | jane@avoki.com | | board
+
+## Example Corp
+
+- John Smith | john@example.com | CEO | management
+- Jane Roe
+```
+
+- `## Org Name` starts an organization section; everything up to the next `##` heading belongs to it.
+- `- Name | email | role | board_status` — only `Name` is required; trailing fields may be omitted or left blank (`| |`).
+- `board_status` is `board` or `management` (case-insensitive); anything else is ignored.
+- Each person becomes: an upserted `organizations` row, an upserted `contacts` row (`source: "import"` — manual edits and `contacts merge` still take priority over future imports), a roster **fact** (stored through the normal store path, so it gets embedded and is searchable via `memory_recall`), and an `org_fact_links` row (`reason: "roster_import"`) so `memory_directory org_view` finds it.
+- Re-running `contacts import` on an unchanged file is a no-op for facts (deduped by the normal store dedupe) and an idempotent upsert for organizations/contacts.
+
+---
+
 ## Version metadata
 
 | Source | Meaning |
