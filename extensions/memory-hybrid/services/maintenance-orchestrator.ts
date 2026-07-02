@@ -615,6 +615,24 @@ export async function runMaintenanceOrchestrator(
       if (cooldownMs > 0) {
         await sleep(cooldownMs);
       }
+      // Re-check eligibility after the cooldown sleep: another process (a manual CLI run, or a
+      // double-fired cron trigger) could have run and completed this step entirely inside the
+      // sleep window. acquireStepLock below only prevents *concurrent* execution — it does
+      // nothing to stop this process from re-running a step that already finished sequentially
+      // just before it woke up, since the lock is free again by the time it wakes.
+      if (!options.force && guardMs > 0) {
+        const recheck = stepGuardEligible(step.name, guardMs, openclawDir);
+        if (!recheck.eligible) {
+          const agoH = recheck.lastRunMs ? Math.round((Date.now() - recheck.lastRunMs) / HOUR_MS) : 0;
+          pushStepResult({
+            name: step.name,
+            status: "skipped_guard",
+            summary: `guard (ran ${agoH}h ago)`,
+            durationMs: 0,
+          });
+          continue;
+        }
+      }
     }
 
     // Real cross-process mutex on top of stepGuardEligible's cadence-only check above — prevents
