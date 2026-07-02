@@ -271,13 +271,26 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     resetStartupMemoryAttribution();
     // Dispose tool registrations when API exposes unregister/dispose handles.
     old.toolRegistrationHandle?.dispose();
-    try {
-      old.vaultRegistry?.closeAll();
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "registration",
-        operation: "plugin-reregister:close-vaults",
-        severity: "warning",
+    // The new registration always creates a fresh VaultRegistry (never reuses the old one, even
+    // when reuseDatabases is true), so old named-vault handles are always orphaned here. Unlike
+    // that, recallInFlightRef is a single counter shared by every recall call regardless of which
+    // vault it targets — closing named-vault DB handles immediately (as opposed to the default
+    // vault's databases, which drain via schedulePluginTeardown below) could close a vault
+    // connection out from under an in-flight recall/store against that vault. Drain first.
+    const oldVaultRegistry = old.vaultRegistry;
+    const oldRecallInFlightRef = old.recallInFlightRef;
+    if (oldVaultRegistry) {
+      schedulePluginTeardown(async () => {
+        try {
+          await drainOldRecall(oldRecallInFlightRef);
+          oldVaultRegistry.closeAll();
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "registration",
+            operation: "plugin-reregister:close-vaults",
+            severity: "warning",
+          });
+        }
       });
     }
     if (reuseDatabases) {

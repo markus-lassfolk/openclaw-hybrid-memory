@@ -72,6 +72,28 @@ export function createVaultRegistry(opts: {
     lancePath: defaultLancePath,
   };
 
+  // Vaults are meant to be isolated silos — dedupe, contradiction checks, and multi-vault fan-out
+  // merge all assume distinct underlying storage per vault name. Two vault names pointing at the
+  // same resolved sqlite file would silently share state while every consumer treats them as
+  // independent, so this must be caught eagerly (at registry creation) rather than left to
+  // whichever vault happens to be opened first lazily.
+  {
+    const seenPaths = new Map<string, string>([[defaultSqlitePath, "default"]]);
+    for (const name of listConfiguredVaultNames(cfg.vaults)) {
+      const rawPath = cfg.vaults?.[name];
+      if (!rawPath) continue;
+      const resolvedPath = api.resolvePath(rawPath);
+      const collidesWith = seenPaths.get(resolvedPath);
+      if (collidesWith) {
+        throw new Error(
+          `Vault "${name}" resolves to the same sqlite path as vault "${collidesWith}" (${resolvedPath}). ` +
+            "Each vault must use a distinct path — sharing a path would silently merge state that other vault code assumes is isolated.",
+        );
+      }
+      seenPaths.set(resolvedPath, name);
+    }
+  }
+
   function openNamedVault(name: string): VaultHandle {
     const path = cfg.vaults?.[name];
     if (!path) {
