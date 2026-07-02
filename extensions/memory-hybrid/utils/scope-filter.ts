@@ -16,6 +16,28 @@ export function globalOnlyScopeFilter(): ScopeFilter {
   return { agentId: GLOBAL_ONLY_SCOPE_SENTINEL };
 }
 
+/**
+ * Resolve a ScopeFilter from the `x-openclaw-{user,agent,session}-id` identity headers, shared
+ * by every HTTP-adjacent entry point (REST public API, GraphQL) so they enforce the same
+ * fail-closed default.
+ *
+ * SECURITY: identity headers must be populated by trusted gateway middleware. Missing identity
+ * defaults to global-only visibility — callers must never let arbitrary client-controlled scope
+ * params reach here directly.
+ */
+export function scopeFilterFromIdentityHeaders(getHeader: (name: string) => string | null | undefined): ScopeFilter {
+  const trim = (v: string | null | undefined) => (typeof v === "string" && v.trim().length > 0 ? v.trim() : null);
+  const userId = trim(getHeader("x-openclaw-user-id"));
+  const agentId = trim(getHeader("x-openclaw-agent-id"));
+  const sessionId = trim(getHeader("x-openclaw-session-id"));
+
+  if (!userId && !agentId && !sessionId) {
+    return globalOnlyScopeFilter();
+  }
+
+  return { userId: userId ?? undefined, agentId: agentId ?? undefined, sessionId: sessionId ?? undefined };
+}
+
 type ScopeConfig = {
   multiAgent: { orchestratorId: string; trustToolScopeParams?: boolean };
   autoRecall: { scopeFilter?: ScopeFilter };

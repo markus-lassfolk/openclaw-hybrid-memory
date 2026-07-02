@@ -8,7 +8,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import { DECAY_CLASSES, type DecayClass } from "../config.js";
 import type { MemoryLinkType } from "../backends/facts-db/types.js";
 import { isPromptArtifactOrReasoningTrace } from "../services/capture-utils.js";
-import type { MemoryEntry } from "../types/memory.js";
+import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import type { EmbeddingProvider } from "../services/embeddings/types.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
@@ -25,6 +25,8 @@ export type GraphQLContext = {
   factsDb: FactsDB;
   vectorDb?: VectorDB;
   pluginContext: Record<string, unknown>;
+  /** Caller's resolved scope, derived from identity headers. Every read resolver must apply this. */
+  scopeFilter: ScopeFilter;
 };
 
 type ResolverFn = (parent: unknown, args: unknown, context: GraphQLContext) => unknown;
@@ -111,8 +113,8 @@ async function indexGraphqlFactVector(context: GraphQLContext, entry: MemoryEntr
   }
 }
 
-function allFacts(factsDb: FactsDB, includeSuperseded = false): MemoryEntry[] {
-  return factsDb.getAll({ includeSuperseded });
+function allFacts(context: GraphQLContext, includeSuperseded = false): MemoryEntry[] {
+  return context.factsDb.getAll({ includeSuperseded, scopeFilter: context.scopeFilter });
 }
 
 function isActiveFact(fact: MemoryEntry, nowSec = Math.floor(Date.now() / 1000)): boolean {
@@ -155,7 +157,7 @@ function searchFacts(
   const includeExpired = input.includeExpired === true;
   const nowSec = Math.floor(Date.now() / 1000);
 
-  let facts = allFacts(context.factsDb, includeSuperseded);
+  let facts = allFacts(context, includeSuperseded);
   if (!includeExpired) facts = facts.filter((fact) => isActiveFact(fact, nowSec));
   if (scope) facts = facts.filter((fact) => fact.scope === scope);
   if (categories?.length) facts = facts.filter((fact) => categories.includes(fact.category));
@@ -250,7 +252,7 @@ export const resolvers: GraphQLResolvers = {
   Query: {
     fact: (_parent, args, context) => {
       const id = asString(asRecord(args).id);
-      return id ? context.factsDb.getById(id) : null;
+      return id ? context.factsDb.getById(id, { scopeFilter: context.scopeFilter }) : null;
     },
 
     facts: (_parent, args, context) => {
@@ -265,7 +267,7 @@ export const resolvers: GraphQLResolvers = {
       const includeExpired = input.includeExpired === true;
       const nowSec = Math.floor(Date.now() / 1000);
 
-      let facts = allFacts(context.factsDb, includeSuperseded);
+      let facts = allFacts(context, includeSuperseded);
       if (category) facts = facts.filter((fact) => fact.category === category);
       if (decayClass) facts = facts.filter((fact) => fact.decayClass === decayClass);
       if (tags?.length) facts = facts.filter((fact) => tags.some((tag) => fact.tags?.includes(tag)));
@@ -326,7 +328,7 @@ export const resolvers: GraphQLResolvers = {
           .filter((id) => id !== factId);
       }
       return neighborIds
-        .map((id) => context.factsDb.getById(id))
+        .map((id) => context.factsDb.getById(id, { scopeFilter: context.scopeFilter }))
         .filter((fact): fact is MemoryEntry => fact != null && isActiveFact(fact, nowSec));
     },
 
@@ -336,7 +338,7 @@ export const resolvers: GraphQLResolvers = {
       const key = asString(input.key);
       if (!entity) return [];
       const nowSec = Math.floor(Date.now() / 1000);
-      return allFacts(context.factsDb).filter(
+      return allFacts(context).filter(
         (fact) => fact.entity === entity && (!key || fact.key === key) && isActiveFact(fact, nowSec),
       );
     },
@@ -347,7 +349,7 @@ export const resolvers: GraphQLResolvers = {
       const decayClasses = asStringArray(filter.decayClasses);
       const minImportance = asNumber(filter.minImportance);
       const scope = asString(filter.scope);
-      let facts = allFacts(context.factsDb).filter((fact) => isActiveFact(fact));
+      let facts = allFacts(context).filter((fact) => isActiveFact(fact));
       if (categories?.length) facts = facts.filter((fact) => categories.includes(fact.category));
       if (decayClasses?.length) facts = facts.filter((fact) => decayClasses.includes(fact.decayClass));
       if (minImportance !== undefined) facts = facts.filter((fact) => fact.importance >= minImportance);
@@ -384,7 +386,7 @@ export const resolvers: GraphQLResolvers = {
     },
 
     stats: (_parent, _args, context) => {
-      const facts = allFacts(context.factsDb, true);
+      const facts = allFacts(context, true);
       const nowSec = Math.floor(Date.now() / 1000);
       const active = facts.filter((fact) => isActiveFact(fact, nowSec));
       const expired = facts.filter((fact) => fact.expiresAt != null && fact.expiresAt > 0 && fact.expiresAt <= nowSec);
@@ -570,7 +572,7 @@ export const resolvers: GraphQLResolvers = {
       }
       const olderThan = parsePruneOlderThan(input.olderThan);
       const category = asString(input.category);
-      const toDelete = allFacts(context.factsDb).filter(
+      const toDelete = allFacts(context).filter(
         (fact) => fact.createdAt < olderThan && (!category || fact.category === category),
       );
       let deleted = 0;
@@ -610,22 +612,22 @@ export const resolvers: GraphQLResolvers = {
     },
     supersedes: (parent, _args, context) => {
       const fact = asRecord(parent) as Partial<MemoryEntry>;
-      return fact.supersedesId ? context.factsDb.getById(fact.supersedesId) : null;
+      return fact.supersedesId ? context.factsDb.getById(fact.supersedesId, { scopeFilter: context.scopeFilter }) : null;
     },
     supersededByFact: (parent, _args, context) => {
       const fact = asRecord(parent) as Partial<MemoryEntry>;
-      return fact.supersededBy ? context.factsDb.getById(fact.supersededBy) : null;
+      return fact.supersededBy ? context.factsDb.getById(fact.supersededBy, { scopeFilter: context.scopeFilter }) : null;
     },
   },
 
   Link: {
     source: (parent, _args, context) => {
       const sourceId = asString(asRecord(parent).sourceId);
-      return sourceId ? context.factsDb.getById(sourceId) : null;
+      return sourceId ? context.factsDb.getById(sourceId, { scopeFilter: context.scopeFilter }) : null;
     },
     target: (parent, _args, context) => {
       const targetId = asString(asRecord(parent).targetId);
-      return targetId ? context.factsDb.getById(targetId) : null;
+      return targetId ? context.factsDb.getById(targetId, { scopeFilter: context.scopeFilter }) : null;
     },
   },
 

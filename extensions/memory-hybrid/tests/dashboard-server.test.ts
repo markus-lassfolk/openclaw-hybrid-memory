@@ -536,6 +536,40 @@ describeCreateDashboardServer("createDashboardServer", () => {
     expect(headers["access-control-allow-origin"]).toBeUndefined();
   });
 
+  it("POST /graphql facts query does not leak a different tenant's scoped fact (#63)", async () => {
+    if (!server) return;
+    ctx.factsDb.store({
+      text: "victim's private note",
+      category: "fact",
+      source: "test",
+      scope: "user",
+      scopeTarget: "victim-user",
+    });
+    const query = JSON.stringify({ query: "query { facts(limit: 100) { text } }" });
+
+    // No identity headers at all — defaults to global-only visibility.
+    const anon = await httpPost(port, "/graphql", query);
+    expect(JSON.parse(anon.body).data.facts.map((f: { text: string }) => f.text)).not.toContain(
+      "victim's private note",
+    );
+
+    // A DIFFERENT tenant's identity headers — must not see the victim's scoped fact either.
+    const attacker = await httpPostWithHeaders(port, "/graphql", query, {
+      "x-openclaw-user-id": "attacker-user",
+    });
+    expect(JSON.parse(attacker.body).data.facts.map((f: { text: string }) => f.text)).not.toContain(
+      "victim's private note",
+    );
+
+    // The victim's own identity headers — must see their own scoped fact.
+    const victim = await httpPostWithHeaders(port, "/graphql", query, {
+      "x-openclaw-user-id": "victim-user",
+    });
+    expect(JSON.parse(victim.body).data.facts.map((f: { text: string }) => f.text)).toContain(
+      "victim's private note",
+    );
+  });
+
   it("exposes the port in the returned object", () => {
     if (!server) return;
     expect(server.port).toBeGreaterThan(0);

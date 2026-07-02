@@ -8,12 +8,13 @@ interface MemoryPluginContext {
   [key: string]: unknown;
 }
 
-import { createSchema, createYoga } from "graphql-yoga";
+import { createSchema, createYoga, type YogaInitialContext } from "graphql-yoga";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import { graphqlSchema } from "./graphql-schema.js";
 import { graphqlPubSub } from "./graphql-pubsub.js";
 import { pluginLogger } from "../utils/logger.js";
+import { scopeFilterFromIdentityHeaders } from "../utils/scope-filter.js";
 import { resolvers, type GraphQLContext } from "./graphql-resolvers.js";
 
 type FactSubscriptionPayload = { fact: unknown; category?: string; scope?: string };
@@ -138,10 +139,14 @@ export function createGraphQLServer(
         },
       },
     }),
-    context: (): GraphQLContext => ({
+    context: (initialContext: YogaInitialContext): GraphQLContext => ({
       factsDb,
       vectorDb,
       pluginContext,
+      // SECURITY: resolvers must scope every fact read through this filter — see resolveScopeFilter
+      // in tools/public-api-routes.ts for the REST equivalent. Missing identity headers default to
+      // global-only visibility (fail closed), matching the REST API's behavior.
+      scopeFilter: scopeFilterFromIdentityHeaders((name) => initialContext.request.headers.get(name)),
     }),
     graphiql: {
       title: "OpenClaw Hybrid Memory GraphQL API",

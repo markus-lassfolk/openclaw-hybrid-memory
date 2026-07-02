@@ -21,7 +21,11 @@ import {
   readActiveTaskRowsFromFacts,
   refreshActiveTaskProjectionBestEffort,
 } from "../services/task-ledger-facts.js";
-import { globalOnlyScopeFilter, scopeFieldsFromEntry, scopeFieldsFromFilter } from "../utils/scope-filter.js";
+import {
+  scopeFieldsFromEntry,
+  scopeFieldsFromFilter,
+  scopeFilterFromIdentityHeaders,
+} from "../utils/scope-filter.js";
 import { pluginLogger } from "../utils/logger.js";
 import type { ScopeFilter } from "../types/memory.js";
 import { parseDuration } from "../utils/duration.js";
@@ -257,15 +261,7 @@ function getHeader(req: { headers?: Record<string, string> }, key: string): stri
  * Missing identity defaults to global-only visibility.
  */
 function resolveScopeFilter(req: { headers?: Record<string, string> }): ScopeFilter {
-  const userId = getHeader(req, "x-openclaw-user-id");
-  const agentId = getHeader(req, "x-openclaw-agent-id");
-  const sessionId = getHeader(req, "x-openclaw-session-id");
-
-  if (!userId && !agentId && !sessionId) {
-    return globalOnlyScopeFilter();
-  }
-
-  return { userId: userId ?? undefined, agentId: agentId ?? undefined, sessionId: sessionId ?? undefined };
+  return scopeFilterFromIdentityHeaders((key) => getHeader(req, key));
 }
 
 function rejectWhenUnauthenticated(
