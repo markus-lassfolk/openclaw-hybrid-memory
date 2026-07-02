@@ -14,7 +14,7 @@ import type { EventLog } from "../backends/event-log.js";
 import type { GoalStewardshipConfig } from "../config/types/index.js";
 import { getEnv } from "../utils/env-manager.js";
 import { nowIso } from "../utils/dates.js";
-import { appendGoalHistory, isTerminalStatus, listGoals, readGoal, updateGoal, writeGoal } from "./goal-registry.js";
+import { appendGoalHistory, isTerminalStatus, listGoals, readGoal, updateGoal } from "./goal-registry.js";
 import type { Goal, GoalHistoryEntry, GoalPulseOutcome } from "./goal-stewardship-types.js";
 import { isPidAlive } from "./task-queue-watchdog.js";
 
@@ -593,7 +593,16 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
             const rereadAfterVerify = await readGoal(goalsDir, goal.id);
             if (rereadAfterVerify) g = rereadAfterVerify;
           } else {
-            await writeGoal(goalsDir, { ...g, lastMechanicalCheck: { at: checkAt, ok: mech.ok, detail: mech.detail } });
+            // Use updateGoal (lock + fresh re-read), not a direct writeGoal(...g) spread — mechanical
+            // verification can block for several seconds (command/PR/http checks), during which a
+            // concurrent goal_assess could have updated blockers/circuit-breaker state; overwriting
+            // the whole file from the stale pre-verification `g` snapshot would silently discard it.
+            g = await updateGoal(
+              goalsDir,
+              g.id,
+              { lastMechanicalCheck: { at: checkAt, ok: mech.ok, detail: mech.detail } },
+              { timestamp: checkAt, action: "verification-checked", detail: mech.detail, actor: "watchdog" },
+            );
             if (!mech.ok) waitingReason = `Mechanical verification failed: ${mech.detail}`;
           }
         }

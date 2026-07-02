@@ -10,7 +10,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { getCronModelConfig, getDefaultCronModel } from "../../config/index.js";
 import type { MemoryCategory } from "../../config.js";
 import "../../config.js";
-import { detectCredentialPatterns } from "../../services/auto-capture.js";
+import { detectCredentialPatterns, isStructuredCredentialCandidate } from "../../services/auto-capture.js";
 import { runCaptureStoreWithDedupWindow, peekCaptureDedupWindow } from "../../services/capture-dedup.js";
 import {
   abortCredentialVaultWriteOnPointerDedupe,
@@ -375,6 +375,17 @@ export async function runCapture(
           if (!textToStore || !isSubstantiveMemoryText(textToStore)) continue;
           const category: MemoryCategory = ctx.detectCategory(textToStore);
           const extracted = extractStructuredFields(textToStore, category);
+          // Conversational auto-capture (unlike memory_store / cmd-store / cmd-distill / the
+          // tool-call credential scanner just below) never routed detected credentials to the
+          // vault — shouldCapture()'s keyword filter doesn't cover secret-pattern regexes like
+          // sk-/ghp_/JWT, so e.g. "remember this: sk-proj-..." would land verbatim in facts.text
+          // (and get embedded into the vector DB) even with the credential vault enabled. Skip
+          // capture for this path rather than storing a raw secret; the existing
+          // credentials.autoDetect nudge (below) still prompts the user to store it via
+          // memory_store, which does vault-route correctly.
+          if (isStructuredCredentialCandidate(textToStore, extracted.entity, extracted.key, extracted.value)) {
+            continue;
+          }
           if (ctx.factsDb.hasDuplicate(textToStore, "auto-capture")) {
             ctx.auditStore?.append({
               agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
