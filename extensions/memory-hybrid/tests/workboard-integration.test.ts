@@ -13,6 +13,7 @@ import {
   scheduleWorkboardIntegrationAfterReregister,
   scheduleWorkboardStartupIntegration,
 } from "../setup/workboard-integration.js";
+import type { WorkboardAdapterContext } from "../services/workboard-adapter.js";
 
 function minimalWorkboardCfg(): HybridMemoryConfig {
   return {
@@ -335,5 +336,38 @@ describe("workboard-integration", () => {
 
     expect(isAvailable).not.toHaveBeenCalled();
     expect(sync).not.toHaveBeenCalled();
+  });
+
+  it("propagates listGoals() failures to the adapter instead of silently treating it as zero goals", async () => {
+    const sync = vi.fn();
+    const isAvailable = vi.fn().mockResolvedValue(false);
+    const createWorkboardAdapterMock = vi
+      .spyOn(await import("../services/workboard-adapter.js"), "createWorkboardAdapter")
+      .mockReturnValue({ isAvailable, sync } as never);
+    vi.spyOn(await import("../services/goal-registry.js"), "listGoals").mockRejectedValue(
+      new Error("goals dir read failed"),
+    );
+
+    const timers = createTimers() as PluginRuntime["timers"];
+    const logger = mockLogger();
+    const cfg = minimalWorkboardCfg();
+    cfg.workboard.syncGoals = true;
+    cfg.goalStewardship = { enabled: true, goalsDir: "state/goals" } as never;
+
+    await armWorkboardIntegration({
+      factsDb: {} as never,
+      vectorDb: {} as never,
+      embeddings: {} as never,
+      cfg,
+      api: { logger } as never,
+      timers,
+      connectLabel: "test",
+    });
+
+    const ctx = createWorkboardAdapterMock.mock.calls[0]?.[0] as WorkboardAdapterContext;
+    // A transient goals-directory read failure must propagate, not resolve to []  — resolving
+    // to [] made workboard-adapter.ts's sync() treat every existing Workboard goal card as
+    // stale and delete it, even though the underlying goal data was intact.
+    await expect(Promise.resolve(ctx.loadGoals())).rejects.toThrow("goals dir read failed");
   });
 });
