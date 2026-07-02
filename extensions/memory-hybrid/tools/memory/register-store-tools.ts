@@ -1338,7 +1338,12 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 stopWords: cfg.entityExtraction.stopWords,
               })
                 .then(({ mentions, detectedLang }) => {
-                  storeFactsDb.applyEntityEnrichment(entry.id, mentions, detectedLang);
+                  storeFactsDb.applyEntityEnrichment(entry.id, mentions, detectedLang, {
+                    requireSurnameForNewContacts: cfg.contacts.requireSurname,
+                  });
+                  // Structured contact profile enrichment (#2014): fill email/phone/role/board
+                  // status on the fact's single PERSON contact from the same text.
+                  storeFactsDb.applyContactProfileEnrichment(entry.id, textToStore, "ner");
                 })
                 .catch((err) => {
                   const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);

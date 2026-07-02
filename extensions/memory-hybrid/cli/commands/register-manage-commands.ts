@@ -8,6 +8,7 @@ import { registerManageAgentsAuditRunall } from "./manage/register-agents-audit-
 import { registerManageBudgetAndProposals } from "./manage/register-budget-proposals.js";
 import { registerManageCorrectionsAndPipeline } from "./manage/register-corrections-and-pipeline.js";
 import { registerManageCouncil } from "./manage/register-council.js";
+import { registerManageContacts } from "./manage/register-contacts.js";
 import { registerManageCredentialsAndScope } from "./manage/register-credentials-scope.js";
 import { registerManageProcedureAndLifecycle } from "./manage/register-procedure-lifecycle.js";
 import { registerManageDigest } from "./manage/register-digest.js";
@@ -24,6 +25,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
   registerManageBudgetAndProposals(mem, b);
   registerManageCorrectionsAndPipeline(mem, b);
   registerManageCredentialsAndScope(mem, b);
+  registerManageContacts(mem, b);
   registerManageProcedureAndLifecycle(mem, b);
   registerManageCouncil(mem, b);
   registerManageDigest(mem, b);

@@ -7,8 +7,13 @@ declare module "openclaw/plugin-sdk/core" {
 
   // ClawdbotPluginApi is the local plugin API type — a named alias for the SDK's OpenClawPluginApi.
   // This preserves the plugin's existing type name while using the scoped subpath import.
-  export type ClawdbotPluginApi = _OpenClawPluginApi;
+  export type ClawdbotPluginApi = _OpenClawPluginApi & {
+    /** OpenClaw ≥ 2026.6 — register a ContextEngine factory (preferred over SDK module import). */
+    registerContextEngine?: (id: string, factory: () => unknown) => void;
+  };
+}
 
-  /** Optional SDK hook (OpenClaw ≥2026.5); feature-detected at runtime in `registerHybridContextEngine`. */
+declare module "openclaw/plugin-sdk" {
+  /** Fallback for older hosts that export registerContextEngine from the SDK entry. */
   export function registerContextEngine(id: string, factory: () => unknown): void;
 }

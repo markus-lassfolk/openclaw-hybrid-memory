@@ -5,6 +5,15 @@ export type EntityExtractionConfig = {
   stopWords: string[];
 };
 
+/** Structured contact profile enrichment: NER → contacts merge, roster import (#2014). */
+export type ContactsConfig = {
+  /**
+   * When true, NER does not create a new PERSON contact from a single-token surface (e.g. "Daniel")
+   * unless the same fact also mentions an organization. Default false (matches pre-#2014 behavior).
+   */
+  requireSurname: boolean;
+};
+
 /** Graph-based spreading activation: auto-linking and traversal settings */
 export type GraphConfig = {
   enabled: boolean;

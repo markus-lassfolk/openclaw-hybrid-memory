@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { canonicalizeEntityMention, countReason, makeEntityMentionKey } from "../../utils/entity-mention-quality.js";
 import { isEntityStopWord, normalizeEntityStopWord } from "../../utils/entity-stopwords.js";
+import { parseContactProfileHints, type ContactProfileHints } from "../../utils/contact-profile-patterns.js";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { readSchemaVersion, runVersionedSchemaMigration } from "../sqlite-schema-meta.js";
 
@@ -43,14 +44,25 @@ export type OrganizationRow = {
   aliasesJson: string | null;
 };
 
+/** Who last wrote profile fields on a contact — used to arbitrate conflicting merges (#2014). */
+export type ContactUpdatedBy = "ner" | "import" | "agent" | "manual";
+
 export type ContactRow = {
   id: string;
   normalizedKey: string;
   displayName: string;
   email: string | null;
+  phone: string | null;
+  mobile: string | null;
+  role: string | null;
+  boardStatus: string | null;
   notes: string | null;
   aliasesJson: string | null;
   primaryOrgId: string | null;
+  source: string | null;
+  sourceDate: number | null;
+  updatedBy: string | null;
+  updatedAt: number;
 };
 
 export type EntityEnrichmentBacklogByTier = {
@@ -280,9 +292,16 @@ export function migrateEntityLayerTables(db: DatabaseSync): void {
       normalized_key TEXT NOT NULL,
       display_name TEXT NOT NULL,
       email TEXT,
+      phone TEXT,
+      mobile TEXT,
+      role TEXT,
+      board_status TEXT,
       notes TEXT,
       aliases_json TEXT,
       primary_org_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+      source TEXT,
+      source_date INTEGER,
+      updated_by TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -350,6 +369,26 @@ export function migrateEntityLayerTables(db: DatabaseSync): void {
     });
   }
 
+  // Contact profile enrichment columns (#2014): fresh installs get them from CREATE TABLE above;
+  // existing DBs need ALTER TABLE. Re-read the version since the v1 block above may have just run.
+  const version2 = readSchemaVersion(db, "entity_layer");
+  if (version2 < 2) {
+    runVersionedSchemaMigration(db, "entity_layer", 2, () => {
+      const cols = db.prepare("PRAGMA table_info(contacts)").all() as Array<{ name: string }>;
+      const colNames = new Set(cols.map((c) => c.name));
+      const addColumnIfMissing = (name: string, ddl: string) => {
+        if (!colNames.has(name)) db.exec(`ALTER TABLE contacts ADD COLUMN ${ddl}`);
+      };
+      addColumnIfMissing("phone", "phone TEXT");
+      addColumnIfMissing("mobile", "mobile TEXT");
+      addColumnIfMissing("role", "role TEXT");
+      addColumnIfMissing("board_status", "board_status TEXT");
+      addColumnIfMissing("source", "source TEXT");
+      addColumnIfMissing("source_date", "source_date INTEGER");
+      addColumnIfMissing("updated_by", "updated_by TEXT");
+    });
+  }
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS org_fact_links (
       org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -363,7 +402,8 @@ export function migrateEntityLayerTables(db: DatabaseSync): void {
   `);
 }
 
-function upsertOrganization(db: DatabaseSync, displayName: string): { id: string; created: boolean } | null {
+/** Exported for `contacts import` (issue #2014), which upserts organizations from a roster file. */
+export function upsertOrganization(db: DatabaseSync, displayName: string): { id: string; created: boolean } | null {
   const canonicalKey = normalizeEntityKey(displayName);
   if (!canonicalKey) {
     return null;
@@ -389,11 +429,44 @@ function upsertOrganization(db: DatabaseSync, displayName: string): { id: string
   return { id, created: true };
 }
 
-function upsertContact(
+export type UpsertContactOptions = ContactProfileFieldUpdate & {
+  /**
+   * When true (default), auto-merge into a single unambiguous existing contact whose
+   * normalized_key is a token prefix/suffix of the new name — instead of creating a duplicate
+   * row — when no exact normalized_key match exists (issue #2014). Ambiguous (0 or 2+
+   * candidates) always falls through to creating a new contact.
+   */
+  autoMerge?: boolean;
+};
+
+function mergeAliasesForRename(
+  aliasesJson: string | null,
+  keptDisplayName: string,
+  droppedDisplayName: string,
+): string {
+  const aliasSet = new Set<string>();
+  if (aliasesJson) {
+    try {
+      const parsed = JSON.parse(aliasesJson);
+      if (Array.isArray(parsed)) {
+        for (const a of parsed) if (typeof a === "string") aliasSet.add(a);
+      }
+    } catch {
+      /* ignore malformed aliases_json */
+    }
+  }
+  aliasSet.add(droppedDisplayName);
+  aliasSet.delete(keptDisplayName);
+  return JSON.stringify([...aliasSet]);
+}
+
+/** Exported for `contacts import` (issue #2014), which upserts contacts with profile fields from a roster file. */
+export function upsertContact(
   db: DatabaseSync,
   displayName: string,
   primaryOrgId: string | null,
-): { id: string; created: boolean } | null {
+  options: UpsertContactOptions = {},
+): { id: string; created: boolean; mergedInto?: string } | null {
   const nk = normalizeEntityKey(displayName);
   if (!nk) {
     return null;
@@ -417,14 +490,94 @@ function upsertContact(
         existing.id,
       );
     }
+    applyContactProfileFields(db, existing.id, options);
     return { id: existing.id, created: false };
   }
+
+  if (options.autoMerge !== false) {
+    const candidates = findContactMergeCandidates(db, nk);
+    if (candidates.length === 1) {
+      const target = candidates[0];
+      const newIsLonger = nk.length > target.normalizedKey.length;
+      const nextDisplayName = newIsLonger ? displayName.trim() : target.displayName;
+      const droppedDisplayName = newIsLonger ? target.displayName : displayName.trim();
+      const nextAliasesJson = mergeAliasesForRename(target.aliasesJson, nextDisplayName, droppedDisplayName);
+      db.prepare(
+        "UPDATE contacts SET display_name = ?, normalized_key = ?, primary_org_id = COALESCE(?, primary_org_id), aliases_json = ?, updated_at = ? WHERE id = ?",
+      ).run(nextDisplayName, normalizeEntityKey(nextDisplayName), primaryOrgId, nextAliasesJson, now, target.id);
+      applyContactProfileFields(db, target.id, options);
+      return { id: target.id, created: false, mergedInto: target.id };
+    }
+  }
+
   const id = randomUUID();
   db.prepare(
-    `INSERT INTO contacts (id, normalized_key, display_name, email, notes, aliases_json, primary_org_id, created_at, updated_at)
-     VALUES (?, ?, ?, NULL, NULL, NULL, ?, ?, ?)`,
-  ).run(id, nk, displayName.trim(), primaryOrgId, now, now);
+    `INSERT INTO contacts (
+       id, normalized_key, display_name, email, phone, mobile, role, board_status, notes,
+       aliases_json, primary_org_id, source, source_date, updated_by, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id,
+    nk,
+    displayName.trim(),
+    options.email ?? null,
+    options.phone ?? null,
+    options.mobile ?? null,
+    options.role ?? null,
+    options.boardStatus ?? null,
+    options.notes ?? null,
+    primaryOrgId,
+    options.source ?? null,
+    options.source ? now : null,
+    options.updatedBy ?? null,
+    now,
+    now,
+  );
   return { id, created: true };
+}
+
+/**
+ * Explicitly merge one contact into another (issue #2014 — `contacts merge` CLI): repoints
+ * `fact_entity_mentions.contact_id`, folds in profile fields (manual priority) and aliases, then
+ * deletes the source row. Manual merges always win field conflicts (source: "manual").
+ */
+export function mergeContacts(
+  db: DatabaseSync,
+  fromId: string,
+  intoId: string,
+): { ok: true; mergedFactMentions: number } | { ok: false; error: string } {
+  if (fromId === intoId) {
+    return { ok: false, error: "Cannot merge a contact into itself." };
+  }
+  const from = getContactById(db, fromId);
+  const into = getContactById(db, intoId);
+  if (!from) return { ok: false, error: `Contact ${fromId} not found.` };
+  if (!into) return { ok: false, error: `Contact ${intoId} not found.` };
+
+  const tx = createTransaction(db, () => {
+    const now = Math.floor(Date.now() / 1000);
+    const nextAliasesJson = mergeAliasesForRename(into.aliasesJson, into.displayName, from.displayName);
+    applyContactProfileFields(db, intoId, {
+      email: from.email,
+      phone: from.phone,
+      mobile: from.mobile,
+      role: from.role,
+      boardStatus: from.boardStatus,
+      notes: from.notes,
+      source: "manual",
+      updatedBy: "manual",
+    });
+    db.prepare(
+      "UPDATE contacts SET aliases_json = ?, primary_org_id = COALESCE(primary_org_id, ?), updated_at = ? WHERE id = ?",
+    ).run(nextAliasesJson, from.primaryOrgId, now, intoId);
+    const mentionsRes = db
+      .prepare("UPDATE fact_entity_mentions SET contact_id = ? WHERE contact_id = ?")
+      .run(intoId, fromId);
+    db.prepare("DELETE FROM contacts WHERE id = ?").run(fromId);
+    return { mergedFactMentions: Number(mentionsRes.changes ?? 0) };
+  });
+  const result = tx();
+  return { ok: true, mergedFactMentions: result.mergedFactMentions };
 }
 
 export function replaceFactEntityMentions(
@@ -440,12 +593,15 @@ export function replaceFactEntityMentions(
     detectedLang: string | null;
     source: string;
   }>,
-  options: { preserveEnrichmentTimestamp?: boolean } = {},
+  options: { preserveEnrichmentTimestamp?: boolean; requireSurnameForNewContacts?: boolean } = {},
 ): void {
   const tx = createTransaction(db, () => {
     db.prepare("DELETE FROM fact_entity_mentions WHERE fact_id = ?").run(factId);
     db.prepare("DELETE FROM org_fact_links WHERE fact_id = ? AND reason = 'ner_mention'").run(factId);
     const normalizedMentions = normalizeFactEntityMentionsForPersistence(mentions);
+    // Issue #2014: gate new single-token PERSON contacts (no surname) unless the fact also has org context.
+    const hasOrgMention = normalizedMentions.some((m) => m.label === "ORG");
+    const hasSurname = (surface: string) => surface.trim().split(/\s+/).filter(Boolean).length >= 2;
 
     const now = Math.floor(Date.now() / 1000);
     // Intentional OR IGNORE: idx_fem_fact_label_norm enforces idempotent logical mention writes.
@@ -474,7 +630,8 @@ export function replaceFactEntityMentions(
           insOrgLink.run(org.id, factId, now);
         }
       } else if (m.label === "PERSON") {
-        const con = upsertContact(db, m.surfaceText, null);
+        const allowNewContact = options.requireSurnameForNewContacts !== true || hasSurname(m.surfaceText) || hasOrgMention;
+        const con = allowNewContact ? upsertContact(db, m.surfaceText, null, { source: "ner", updatedBy: "ner" }) : null;
         if (con) {
           contactId = con.id;
           personRows.push({ surface: m.surfaceText, contactId: con.id });
@@ -517,6 +674,48 @@ export function replaceFactEntityMentions(
   tx();
 }
 
+export type ContactProfileEnrichmentSource = ContactUpdatedBy;
+
+export type ContactProfileEnrichmentResult = {
+  contactId: string;
+  hints: ContactProfileHints;
+};
+
+/**
+ * Parse email/phone/role/board-status hints from fact text and merge them onto the single PERSON
+ * contact mentioned in the fact (issue #2014: "structured contact profile enrichment"). No-ops
+ * when the fact mentions zero or multiple people — attributing hints to the wrong person is worse
+ * than not enriching — or when nothing was parsed from the text.
+ */
+export function applyContactProfileEnrichmentForFact(
+  db: DatabaseSync,
+  factId: string,
+  factText: string,
+  source: ContactProfileEnrichmentSource,
+): ContactProfileEnrichmentResult | null {
+  const personRows = db
+    .prepare(
+      `SELECT DISTINCT contact_id FROM fact_entity_mentions
+       WHERE fact_id = ? AND label = 'PERSON' AND contact_id IS NOT NULL`,
+    )
+    .all(factId) as Array<{ contact_id: string }>;
+  if (personRows.length !== 1) return null;
+
+  const hints = parseContactProfileHints(factText);
+  if (!hints.email && !hints.phone && !hints.role) return null;
+
+  const contactId = personRows[0].contact_id;
+  applyContactProfileFields(db, contactId, {
+    email: hints.email,
+    phone: hints.phone,
+    role: hints.role,
+    boardStatus: hints.boardStatus,
+    source,
+    updatedBy: source,
+  });
+  return { contactId, hints };
+}
+
 export function getOrganizationByKeyOrName(db: DatabaseSync, query: string): OrganizationRow | null {
   const nk = normalizeEntityKey(query);
   if (!nk) return null;
@@ -531,6 +730,11 @@ export function getOrganizationByKeyOrName(db: DatabaseSync, query: string): Org
     )
     .get(like) as Record<string, unknown> | undefined;
   return byName ? rowToOrg(byName) : null;
+}
+
+export function getOrganizationById(db: DatabaseSync, id: string): OrganizationRow | null {
+  const row = db.prepare("SELECT * FROM organizations WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+  return row ? rowToOrg(row) : null;
 }
 
 function rowToOrg(row: Record<string, unknown>): OrganizationRow {
@@ -584,10 +788,126 @@ function rowToContact(row: Record<string, unknown>): ContactRow {
     normalizedKey: row.normalized_key as string,
     displayName: row.display_name as string,
     email: (row.email as string | null) ?? null,
+    phone: (row.phone as string | null) ?? null,
+    mobile: (row.mobile as string | null) ?? null,
+    role: (row.role as string | null) ?? null,
+    boardStatus: (row.board_status as string | null) ?? null,
     notes: (row.notes as string | null) ?? null,
     aliasesJson: (row.aliases_json as string | null) ?? null,
     primaryOrgId: (row.primary_org_id as string | null) ?? null,
+    source: (row.source as string | null) ?? null,
+    sourceDate: (row.source_date as number | null) ?? null,
+    updatedBy: (row.updated_by as string | null) ?? null,
+    updatedAt: row.updated_at as number,
   };
+}
+
+export function getContactById(db: DatabaseSync, id: string): ContactRow | null {
+  const row = db.prepare("SELECT * FROM contacts WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+  return row ? rowToContact(row) : null;
+}
+
+/** Priority order for arbitrating conflicting profile-field writes (#2014): higher wins ties. */
+const CONTACT_SOURCE_PRIORITY: Record<string, number> = { manual: 3, agent: 2, import: 2, ner: 1 };
+
+function contactSourcePriority(updatedBy: string | null | undefined): number {
+  return CONTACT_SOURCE_PRIORITY[updatedBy ?? ""] ?? 0;
+}
+
+export type ContactProfileFieldUpdate = {
+  email?: string | null;
+  phone?: string | null;
+  mobile?: string | null;
+  role?: string | null;
+  boardStatus?: string | null;
+  /** Appended as a new line (deduped), never replaces existing notes. */
+  notes?: string | null;
+  source?: string | null;
+  updatedBy?: ContactUpdatedBy | null;
+};
+
+/**
+ * Merge profile fields onto an existing contact: fills empty fields unconditionally, and only
+ * overwrites already-populated fields when the incoming source has >= priority of the current one
+ * (manual > agent/import > ner). Notes are appended (deduplicated), never overwritten.
+ */
+function applyContactProfileFields(db: DatabaseSync, contactId: string, fields: ContactProfileFieldUpdate): void {
+  const hasUpdate =
+    fields.email != null ||
+    fields.phone != null ||
+    fields.mobile != null ||
+    fields.role != null ||
+    fields.boardStatus != null ||
+    fields.notes != null;
+  if (!hasUpdate) return;
+
+  const row = db
+    .prepare("SELECT email, phone, mobile, role, board_status, notes, updated_by FROM contacts WHERE id = ?")
+    .get(contactId) as
+    | {
+        email: string | null;
+        phone: string | null;
+        mobile: string | null;
+        role: string | null;
+        board_status: string | null;
+        notes: string | null;
+        updated_by: string | null;
+      }
+    | undefined;
+  if (!row) return;
+
+  const canOverwrite = contactSourcePriority(fields.updatedBy) >= contactSourcePriority(row.updated_by);
+  const pick = (current: string | null, incoming: string | null | undefined): string | null =>
+    !current || (canOverwrite && incoming != null) ? (incoming ?? current) : current;
+
+  const nextEmail = pick(row.email, fields.email);
+  const nextPhone = pick(row.phone, fields.phone);
+  const nextMobile = pick(row.mobile, fields.mobile);
+  const nextRole = pick(row.role, fields.role);
+  const nextBoardStatus = pick(row.board_status, fields.boardStatus);
+
+  let nextNotes = row.notes;
+  const noteLine = fields.notes?.trim();
+  if (noteLine) {
+    const existingLines = (row.notes ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
+    if (!existingLines.includes(noteLine)) {
+      nextNotes = [...existingLines, noteLine].join("\n");
+    }
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(
+    `UPDATE contacts SET email = ?, phone = ?, mobile = ?, role = ?, board_status = ?, notes = ?,
+       source = COALESCE(?, source), source_date = ?, updated_by = COALESCE(?, updated_by), updated_at = ?
+     WHERE id = ?`,
+  ).run(nextEmail, nextPhone, nextMobile, nextRole, nextBoardStatus, nextNotes, fields.source ?? null, now, fields.updatedBy ?? null, now, contactId);
+}
+
+/** True when one name's tokens are a contiguous prefix or suffix run of the other's (#2014). */
+function isTokenPrefixOrSuffix(a: string, b: string): boolean {
+  const at = a.split(" ").filter(Boolean);
+  const bt = b.split(" ").filter(Boolean);
+  if (at.length === 0 || bt.length === 0 || at.length === bt.length) return false;
+  const [shorter, longer] = at.length < bt.length ? [at, bt] : [bt, at];
+  const isPrefix = shorter.every((tok, i) => longer[i] === tok);
+  const isSuffix = shorter.every((tok, i) => longer[longer.length - shorter.length + i] === tok);
+  return isPrefix || isSuffix;
+}
+
+/**
+ * Find existing contacts whose normalized_key is a token prefix/suffix of `normalizedKey` (or vice
+ * versa) — candidates for auto-merge when NER creates a partial-name duplicate (e.g. "Daniel" vs.
+ * "Daniel Thunberg"). Exported for `contacts merge --suggest` (#2014).
+ */
+export function findContactMergeCandidates(db: DatabaseSync, normalizedKey: string, excludeId?: string): ContactRow[] {
+  const rows = (
+    excludeId
+      ? db.prepare("SELECT * FROM contacts WHERE id != ?").all(excludeId)
+      : db.prepare("SELECT * FROM contacts").all()
+  ) as Array<Record<string, unknown>>;
+  return rows
+    .filter((row) => isTokenPrefixOrSuffix(normalizedKey, row.normalized_key as string))
+    .map(rowToContact);
 }
 
 export function listFactIdsForOrg(db: DatabaseSync, orgId: string, limit: number): string[] {

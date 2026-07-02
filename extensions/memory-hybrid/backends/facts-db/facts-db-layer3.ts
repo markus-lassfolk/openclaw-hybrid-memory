@@ -56,21 +56,32 @@ import {
   getKnownEntities as getKnownEntitiesImpl,
 } from "./entity-autolink.js";
 import {
+  type ContactProfileEnrichmentResult,
+  type ContactProfileEnrichmentSource,
   type EntityEnrichmentBacklogSummary,
   type EntityMentionsAuditSummary,
   type EntityMentionsCleanupSummary,
   type ContactRow,
+  type ContactUpdatedBy,
   type ListFactsNeedingEnrichmentOptions,
   type OrganizationRow,
+  type UpsertContactOptions,
   getEntityEnrichmentBacklogSummary as entityLayerGetEntityEnrichmentBacklogSummary,
+  applyContactProfileEnrichmentForFact as entityLayerApplyContactProfileEnrichmentForFact,
   auditEntityMentions as entityLayerAuditEntityMentions,
   cleanupEntityMentions as entityLayerCleanupEntityMentions,
+  findContactMergeCandidates as entityLayerFindContactMergeCandidates,
+  getContactById as entityLayerGetContactById,
+  getOrganizationById as entityLayerGetOrganizationById,
   listContactsByNamePrefix as entityLayerListContactsByNamePrefix,
   listContactsForOrg as entityLayerListContactsForOrg,
   listFactIdsForOrg as entityLayerListFactIdsForOrg,
   listFactsNeedingEnrichment as entityLayerListFactsNeedingEnrichment,
   getOrganizationByKeyOrName as lookupOrganizationByKeyOrName,
+  mergeContacts as entityLayerMergeContacts,
   replaceFactEntityMentions,
+  upsertContact as entityLayerUpsertContact,
+  upsertOrganization as entityLayerUpsertOrganization,
 } from "./entity-layer.js";
 import {
   deleteEpisode as deleteEpisodeImpl,
@@ -539,7 +550,12 @@ export class FactsDB extends FactsDBLayer2 {
   // --- Entity layer: NER mentions, organizations, contacts (#985–#987) ---
 
   /** Replace stored NER rows for a fact (typically after LLM extraction). */
-  applyEntityEnrichment(factId: string, mentions: ExtractedMention[], detectedLang: string): void {
+  applyEntityEnrichment(
+    factId: string,
+    mentions: ExtractedMention[],
+    detectedLang: string,
+    opts?: { requireSurnameForNewContacts?: boolean },
+  ): void {
     runWithSqliteBusyRetry(this.liveDb, () =>
       replaceFactEntityMentions(
         this.liveDb,
@@ -554,6 +570,7 @@ export class FactsDB extends FactsDBLayer2 {
           detectedLang,
           source: "llm",
         })),
+        { requireSurnameForNewContacts: opts?.requireSurnameForNewContacts },
       ),
     );
   }
@@ -601,5 +618,60 @@ export class FactsDB extends FactsDBLayer2 {
       limit: opts.limit ?? 500,
       apply: opts.apply === true,
     });
+  }
+
+  // --- Contact profile enrichment & merge (#2014) ---
+
+  /** Parse email/phone/role/board-status from fact text and merge onto the fact's single PERSON contact. */
+  applyContactProfileEnrichment(
+    factId: string,
+    factText: string,
+    source: ContactProfileEnrichmentSource,
+  ): ContactProfileEnrichmentResult | null {
+    return runWithSqliteBusyRetry(this.liveDb, () =>
+      entityLayerApplyContactProfileEnrichmentForFact(this.liveDb, factId, factText, source),
+    );
+  }
+
+  getContactById(id: string): ContactRow | null {
+    return entityLayerGetContactById(this.liveDb, id);
+  }
+
+  getOrganizationById(id: string): OrganizationRow | null {
+    return entityLayerGetOrganizationById(this.liveDb, id);
+  }
+
+  /** Contacts whose normalized_key is a token prefix/suffix of `normalizedKey` — merge candidates. */
+  findContactMergeCandidates(normalizedKey: string, excludeId?: string): ContactRow[] {
+    return entityLayerFindContactMergeCandidates(this.liveDb, normalizedKey, excludeId);
+  }
+
+  /** Explicitly merge one contact into another (`contacts merge` CLI). Manual source always wins field conflicts. */
+  mergeContacts(fromId: string, intoId: string): { ok: true; mergedFactMentions: number } | { ok: false; error: string } {
+    return runWithSqliteBusyRetry(this.liveDb, () => entityLayerMergeContacts(this.liveDb, fromId, intoId));
+  }
+
+  /** Upsert an organization by display name (roster import). */
+  upsertOrganization(displayName: string): { id: string; created: boolean } | null {
+    return runWithSqliteBusyRetry(this.liveDb, () => entityLayerUpsertOrganization(this.liveDb, displayName));
+  }
+
+  /** Upsert a contact with profile fields (roster import / manual CLI). Auto-merges unambiguous partial-name duplicates. */
+  upsertContactWithProfile(
+    displayName: string,
+    primaryOrgId: string | null,
+    options: UpsertContactOptions & { updatedBy: ContactUpdatedBy },
+  ): { id: string; created: boolean; mergedInto?: string } | null {
+    return runWithSqliteBusyRetry(this.liveDb, () => entityLayerUpsertContact(this.liveDb, displayName, primaryOrgId, options));
+  }
+
+  /** Link a fact to an organization outside the NER pipeline (roster import uses reason='roster_import'). */
+  linkFactToOrganization(orgId: string, factId: string, reason: string): void {
+    const now = Math.floor(Date.now() / 1000);
+    runWithSqliteBusyRetry(this.liveDb, () =>
+      this.liveDb
+        .prepare("INSERT OR IGNORE INTO org_fact_links (org_id, fact_id, reason, created_at) VALUES (?, ?, ?, ?)")
+        .run(orgId, factId, reason, now),
+    );
   }
 }

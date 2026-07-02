@@ -18,6 +18,7 @@ import type {
   ApiTapConfig,
   ClosedLoopConfig,
   ClustersConfig,
+  ContactsConfig,
   CostTrackingConfig,
   CrossAgentLearningConfig,
   CrystallizationConfig,
@@ -60,6 +61,11 @@ export function parseEntityExtractionConfig(cfg: Record<string, unknown>): Entit
       ]
     : [];
   return { stopWords };
+}
+
+export function parseContactsConfig(cfg: Record<string, unknown>): ContactsConfig {
+  const raw = cfg.contacts as Record<string, unknown> | undefined;
+  return { requireSurname: raw?.requireSurname === true };
 }
 
 function parseUnitInterval(value: unknown, fallback: number): number {

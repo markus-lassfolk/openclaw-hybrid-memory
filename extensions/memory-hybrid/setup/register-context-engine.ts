@@ -1,4 +1,5 @@
 import type { PluginRuntime } from "../api/plugin-runtime.js";
+import type { ContextEngineRegistrar } from "../services/context-engine.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
 type ContextEngineRegistrationRuntime = Pick<
@@ -6,7 +7,10 @@ type ContextEngineRegistrationRuntime = Pick<
   "factsDb" | "vectorDb" | "wal" | "embeddings" | "cfg" | "injectedFactIdsBySession"
 >;
 
-type ContextEngineRegistrar = (opts: {
+// Shape of the `registerHybridContextEngine` function loaded from services/context-engine.js — not
+// to be confused with `ContextEngineRegistrar` (imported above), which is the `api.registerContextEngine`
+// id/factory callback passed *through* this function's `registerContextEngine` option.
+type RegisterHybridContextEngineFn = (opts: {
   factsDb: ContextEngineRegistrationRuntime["factsDb"];
   vectorDb: ContextEngineRegistrationRuntime["vectorDb"];
   wal: ContextEngineRegistrationRuntime["wal"];
@@ -15,19 +19,21 @@ type ContextEngineRegistrar = (opts: {
   injectedFactIdsBySession: ContextEngineRegistrationRuntime["injectedFactIdsBySession"];
   logger: { warn?: (message: string) => void };
   pluginVersion: string;
+  registerContextEngine?: ContextEngineRegistrar;
 }) => unknown;
 
 type ContextEngineLoader = () => Promise<{
-  registerHybridContextEngine: ContextEngineRegistrar;
+  registerHybridContextEngine: RegisterHybridContextEngineFn;
 }>;
 
 export function registerContextEngineBestEffort(args: {
   runtime: ContextEngineRegistrationRuntime;
   logger: { warn?: (message: string) => void };
   pluginVersion: string;
+  registerContextEngine?: ContextEngineRegistrar;
   loadContextEngine?: ContextEngineLoader;
 }): void {
-  const { runtime, logger, pluginVersion } = args;
+  const { runtime, logger, pluginVersion, registerContextEngine } = args;
   const loadContextEngine = args.loadContextEngine ?? (() => import("../services/context-engine.js"));
 
   void loadContextEngine()
@@ -41,6 +47,7 @@ export function registerContextEngineBestEffort(args: {
         injectedFactIdsBySession: runtime.injectedFactIdsBySession,
         logger,
         pluginVersion,
+        registerContextEngine,
       }),
     )
     .catch((err: unknown) => {

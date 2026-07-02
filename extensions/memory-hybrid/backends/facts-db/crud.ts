@@ -32,11 +32,10 @@ function sleepSync(ms: number): void {
   Atomics.wait(SQLITE_BUSY_STORE_SLEEP, 0, 0, ms);
 }
 
-export function runWithSqliteBusyRetry(db: DatabaseSync, run: () => void): void {
+export function runWithSqliteBusyRetry<T = void>(db: DatabaseSync, run: () => T): T {
   for (let attempt = 0; attempt <= SQLITE_BUSY_STORE_MAX_RETRIES; attempt += 1) {
     try {
-      run();
-      return;
+      return run();
     } catch (err) {
       if (!isSqliteBusyError(err) || attempt === SQLITE_BUSY_STORE_MAX_RETRIES) {
         throw err;
@@ -47,6 +46,7 @@ export function runWithSqliteBusyRetry(db: DatabaseSync, run: () => void): void 
       sleepSync(delayMs);
     }
   }
+  throw new Error("unreachable: runWithSqliteBusyRetry exhausted retries without throwing");
 }
 
 // Pre-store guard constants: filter internal artifacts (#1560, #1561).

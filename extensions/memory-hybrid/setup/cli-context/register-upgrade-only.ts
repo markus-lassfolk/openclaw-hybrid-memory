@@ -68,6 +68,9 @@ export function registerHybridMemCliUpgradeOnlyWithApi(api: ClawdbotPluginApi): 
     ({ program }: { program: Command }) => {
       const mem = program.command("hybrid-mem").description(HYBRID_MEM_CLI_ROOT_DESCRIPTOR.description);
       attachHybridMemCliFatalExit(mem);
+      // `--version` is handled by a dedicated fast path (registerHybridMemCliVersionOnlyWithApi,
+      // issue #2012), not registered here — a root `--version`/`--json` option previously shadowed
+      // this "upgrade" subcommand's own flags (PR #2013 review).
       mem
         .command("upgrade [version]")
         .description("Upgrade hybrid-mem to a specific version (or latest). Downloads and installs plugin from npm.")
