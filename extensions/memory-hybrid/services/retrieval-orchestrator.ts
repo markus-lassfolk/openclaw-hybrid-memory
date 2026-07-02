@@ -16,7 +16,7 @@ import { getCandidateIdsByStructuredFilters, hasActiveFilters } from "../backend
 import type { IssueStore } from "../backends/issue-store.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ClustersConfig, RerankingConfig, RetrievalConfig } from "../config.js";
-import type { MemoryEntry, SearchResult } from "../types/memory.js";
+import type { MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
 import { formatDateUtc } from "../utils/dates.js";
 import { pluginLogger } from "../utils/logger.js";
 import { stableStringify } from "../utils/stable-stringify.js";
@@ -541,12 +541,17 @@ function buildOrchestratorResult(
   fused: FusedResult[],
   orderedEntries: Array<{ factId: string; entry: MemoryEntry }>,
   budgetTokens: number,
+  scopeFilter?: ScopeFilter,
 ): OrchestratorResult {
   const contradictedIds = collectContradictedIds(factsDb, orderedEntries);
   const provenanceByFactId = new Map<string, string>();
   for (const { factId, entry } of orderedEntries) {
     const provenance = parseFactProvenanceJson(entry.provenanceJson);
-    const sourceFacts = resolveProvenanceSourceFacts(factsDb, provenance, 3);
+    // Source facts referenced by provenance must be re-checked against the caller's own scope —
+    // a consolidated/derived fact can legitimately reference source facts from another
+    // scope, and previewing their text here would leak them to a caller who couldn't
+    // otherwise see them.
+    const sourceFacts = resolveProvenanceSourceFacts(factsDb, provenance, 3, scopeFilter);
     if (sourceFacts.length === 0) continue;
     const preview = sourceFacts.map((s) => sanitizePromptInjection(s.text).slice(0, 40)).join("; ");
     provenanceByFactId.set(factId, `${sourceFacts.length} src: ${preview}`.slice(0, 120));
@@ -605,7 +610,7 @@ function buildCachedResult(
     acceptedCount++;
   }
 
-  return buildOrchestratorResult(factsDb, fused, orderedEntries, budgetTokens);
+  return buildOrchestratorResult(factsDb, fused, orderedEntries, budgetTokens, options.scopeFilter as ScopeFilter | undefined);
 }
 
 /**
@@ -856,7 +861,13 @@ export async function runExplicitDeepRetrieval(
             (rerankedOrder.get(a.factId) ?? Number.POSITIVE_INFINITY) -
             (rerankedOrder.get(b.factId) ?? Number.POSITIVE_INFINITY),
         );
-      return buildOrchestratorResult(factsDb, fusedReranked, orderedEntriesReranked, budgetTokens);
+      return buildOrchestratorResult(
+        factsDb,
+        fusedReranked,
+        orderedEntriesReranked,
+        budgetTokens,
+        options.scopeFilter as ScopeFilter | undefined,
+      );
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "retrieval",
@@ -1179,7 +1190,13 @@ export async function runExplicitDeepRetrieval(
       if (grades.length > 0) {
         if (grades.every((grade) => !grade.relevant)) {
           return {
-            result: buildOrchestratorResult(factsDb, scopedFused, [], budgetTokens),
+            result: buildOrchestratorResult(
+              factsDb,
+              scopedFused,
+              [],
+              budgetTokens,
+              options.scopeFilter as ScopeFilter | undefined,
+            ),
             shouldRewrite: true,
             fromCache: false,
           };
@@ -1242,7 +1259,13 @@ export async function runExplicitDeepRetrieval(
     }
 
     return {
-      result: buildOrchestratorResult(factsDb, scopedFused, orderedEntries, budgetTokens),
+      result: buildOrchestratorResult(
+        factsDb,
+        scopedFused,
+        orderedEntries,
+        budgetTokens,
+        options.scopeFilter as ScopeFilter | undefined,
+      ),
       shouldRewrite: false,
       fromCache: false,
     };
