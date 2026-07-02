@@ -395,40 +395,20 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           if (isTerminalStatus(goal.status)) {
             return { content: [{ type: "text", text: `Goal already ${goal.status}` }], details: { error: "terminal" } };
           }
-          if (goal.assessmentCount >= goal.maxAssessments) {
-            const budgetReason = "Assessment budget exhausted";
-            // Function-form patch: currentBlockers is merged against `fresh` (re-read inside the
-            // lock), not clobbered from this pre-lock `goal` snapshot — a concurrent writer's
-            // blocker (e.g. another goal_assess call, or the watchdog) would otherwise be
-            // silently discarded by overwriting the array with a single-element list.
-            await updateGoal(
-              goalsDir,
-              goal.id,
-              (fresh) => ({
-                status: "blocked",
-                currentBlockers: fresh.currentBlockers.includes(budgetReason)
-                  ? fresh.currentBlockers
-                  : [...fresh.currentBlockers, budgetReason],
-              }),
-              { timestamp: nowIso(), action: "blocked", detail: "assessments", actor: "steward" },
-            );
-            return { content: [{ type: "text", text: "Assessment budget exhausted." }], details: { error: "budget" } };
-          }
           const ts = nowIso();
-          if (p.dispatched) {
-            if (isGlobalRateLimited(gs.globalLimits.maxDispatchesPerHour, goalsDir)) {
-              return {
-                content: [{ type: "text", text: "Global dispatch rate limit reached." }],
-                details: { error: "rate_limited" },
-              };
-            }
-            if (goal.dispatchCount >= goal.maxDispatches) {
-              return {
-                content: [{ type: "text", text: "Dispatch budget exhausted." }],
-                details: { error: "dispatch_budget" },
-              };
-            }
-            recordGoalDispatch(goalsDir);
+          // The assessmentCount/dispatchCount budget checks are intentionally NOT evaluated here
+          // against this pre-lock `goal` snapshot. Two overlapping goal_assess calls could both
+          // read the same one-below-cap count and both pass a pre-lock check; the authoritative
+          // budget checks are re-evaluated against `fresh` inside computeAssessDecision below,
+          // atomically with the increment (see the comment there), so a call can no longer push
+          // assessmentCount/dispatchCount past their configured caps. Only isGlobalRateLimited is
+          // still checked as a pre-lock fast path — it has its own independent file-based lock
+          // and isn't derived from this goal's state, so it isn't subject to the same race.
+          if (p.dispatched && isGlobalRateLimited(gs.globalLimits.maxDispatchesPerHour, goalsDir)) {
+            return {
+              content: [{ type: "text", text: "Global dispatch rate limit reached." }],
+              details: { error: "rate_limited" },
+            };
           }
           const blockersExplicitlyProvided = p.blockers !== undefined;
           const requestedBlockers = blockersExplicitlyProvided
@@ -450,12 +430,35 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           type AssessDecision = {
             patch: GoalUpdatePatch;
             historyEntries: GoalHistoryEntry[];
-            blocked: boolean;
+            outcome: "normal" | "circuit_breaker" | "assessment_budget" | "dispatch_budget";
             tripReason?: string;
           };
           const decisionRef: { current: AssessDecision | null } = { current: null };
 
           const computeAssessDecision = (fresh: Goal): AssessDecision => {
+            // Re-check both budgets against `fresh` (read inside updateGoal's lock), not the
+            // pre-lock `goal` snapshot: this makes the budget check and the increment atomic
+            // under a single lock acquisition, closing the race where two overlapping calls both
+            // pass a stale pre-lock check and both proceed to increment past the cap.
+            if (fresh.assessmentCount >= fresh.maxAssessments) {
+              const budgetReason = "Assessment budget exhausted";
+              return {
+                patch: {
+                  status: "blocked",
+                  currentBlockers: fresh.currentBlockers.includes(budgetReason)
+                    ? fresh.currentBlockers
+                    : [...fresh.currentBlockers, budgetReason],
+                },
+                historyEntries: [{ timestamp: ts, action: "blocked", detail: "assessments", actor: "steward" }],
+                outcome: "assessment_budget",
+              };
+            }
+            if (p.dispatched && fresh.dispatchCount >= fresh.maxDispatches) {
+              // No-op patch/history: matches the pre-fix behavior of rejecting the whole call
+              // (including the assessment text) rather than partially recording it.
+              return { patch: {}, historyEntries: [], outcome: "dispatch_budget" };
+            }
+            if (p.dispatched) recordGoalDispatch(goalsDir);
             const newBlockers = requestedBlockers ?? fresh.currentBlockers;
             const newAssessmentCount = fresh.assessmentCount + 1;
             const cbState = blockersExplicitlyProvided
@@ -510,9 +513,14 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
                 detail: summary.slice(0, 8000),
                 actor: "watchdog",
               };
-              return { patch: blockedPatch, historyEntries: [assessEntry, cbEntry], blocked: true, tripReason: tripEval.reason };
+              return {
+                patch: blockedPatch,
+                historyEntries: [assessEntry, cbEntry],
+                outcome: "circuit_breaker",
+                tripReason: tripEval.reason,
+              };
             }
-            return { patch: basePatch, historyEntries: [assessEntry], blocked: false };
+            return { patch: basePatch, historyEntries: [assessEntry], outcome: "normal" };
           };
 
           const updated = await updateGoal(
@@ -529,7 +537,17 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             throw new Error("memory-hybrid: goal_assess decision missing after updateGoal");
           }
 
-          if (decision.blocked) {
+          if (decision.outcome === "assessment_budget") {
+            return { content: [{ type: "text", text: "Assessment budget exhausted." }], details: { error: "budget" } };
+          }
+          if (decision.outcome === "dispatch_budget") {
+            return {
+              content: [{ type: "text", text: "Dispatch budget exhausted." }],
+              details: { error: "dispatch_budget" },
+            };
+          }
+
+          if (decision.outcome === "circuit_breaker") {
             try {
               eventLog?.append({
                 sessionId: "goal-stewardship",

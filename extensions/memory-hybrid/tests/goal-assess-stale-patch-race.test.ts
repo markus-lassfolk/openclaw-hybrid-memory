@@ -262,4 +262,140 @@ describe("goal_assess stale-patch write race", () => {
     expect(onDisk?.currentBlockers).toContain("concurrent-blocker");
     expect(onDisk?.currentBlockers.some((b) => b.includes("Assessment budget exhausted"))).toBe(true);
   });
+
+  it("does not let assessmentCount overshoot maxAssessments across two calls racing past the pre-lock check (#38)", async () => {
+    const g = await createGoal(
+      goalsDir,
+      { label: "assess-overshoot-goal", description: "d", acceptanceCriteria: ["a"], maxAssessments: 1 },
+      { ...defaults, maxAssessments: 1 },
+    );
+
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-that-is-long-enough-to-pass", model: "text-embedding-3-small" },
+      goalStewardship: { enabled: true, goalsDir: "state/goals" },
+    });
+    const tools = new Map<string, { execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }>();
+    const api: Pick<ClawdbotPluginApi, "registerTool"> = {
+      registerTool(toolDefinition: {
+        name: string;
+        execute: (id: string, params: Record<string, unknown>) => Promise<unknown>;
+      }) {
+        tools.set(toolDefinition.name, { execute: toolDefinition.execute });
+      },
+    };
+    registerGoalTools(
+      {
+        cfg,
+        goalsDir,
+        workspaceRoot,
+        resolvedActiveTaskPath: join(workspaceRoot, "ACTIVE-TASKS.md"),
+        factsDb: null,
+        vectorDb: null,
+        embeddings: null,
+        eventLog: null,
+        memoryDir: join(workspaceRoot, "memory"),
+      },
+      api as ClawdbotPluginApi,
+    );
+    const assess = tools.get("goal_assess");
+    expect(assess).toBeDefined();
+
+    // Simulate two overlapping goal_assess calls: this call's pre-lock resolveGoalIdResult
+    // returns a snapshot with assessmentCount still 0 (below the cap of 1), but a "concurrent"
+    // call has already committed assessmentCount=1 by the time this call's own updateGoal() runs
+    // — the exact race window the pre-fix code never re-checked inside the lock.
+    const resolveSpy = vi.spyOn(goalStewardship, "resolveGoalIdResult");
+    resolveSpy.mockImplementationOnce(async (dir, idOrLabel) => {
+      const staleResult = await goalStewardship.resolveGoalIdResult(dir, idOrLabel);
+      await goalStewardship.updateGoal(goalsDir, g.id, { assessmentCount: 1 }, {
+        timestamp: new Date().toISOString(),
+        action: "assessed",
+        detail: "concurrent call",
+        actor: "steward",
+      });
+      return staleResult;
+    });
+
+    const result = (await assess?.execute("tc", {
+      goal_id: g.id,
+      assessment: "made progress",
+      next_action: "continue",
+    })) as { details?: { error?: string } };
+    expect(result.details?.error).toBe("budget");
+
+    const onDisk = await readGoal(goalsDir, g.id);
+    // Must stay at the concurrent writer's 1 — never incremented to 2, which is what would
+    // happen if this call's increment were computed without re-checking the cap against fresh
+    // state inside the lock.
+    expect(onDisk?.assessmentCount).toBe(1);
+    expect(onDisk?.status).toBe("blocked");
+  });
+
+  it("does not let dispatchCount overshoot maxDispatches across two calls racing past the pre-lock check (#38)", async () => {
+    const g = await createGoal(
+      goalsDir,
+      { label: "dispatch-overshoot-goal", description: "d", acceptanceCriteria: ["a"], maxDispatches: 1 },
+      { ...defaults, maxDispatches: 1 },
+    );
+
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-that-is-long-enough-to-pass", model: "text-embedding-3-small" },
+      goalStewardship: { enabled: true, goalsDir: "state/goals" },
+    });
+    const tools = new Map<string, { execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }>();
+    const api: Pick<ClawdbotPluginApi, "registerTool"> = {
+      registerTool(toolDefinition: {
+        name: string;
+        execute: (id: string, params: Record<string, unknown>) => Promise<unknown>;
+      }) {
+        tools.set(toolDefinition.name, { execute: toolDefinition.execute });
+      },
+    };
+    registerGoalTools(
+      {
+        cfg,
+        goalsDir,
+        workspaceRoot,
+        resolvedActiveTaskPath: join(workspaceRoot, "ACTIVE-TASKS.md"),
+        factsDb: null,
+        vectorDb: null,
+        embeddings: null,
+        eventLog: null,
+        memoryDir: join(workspaceRoot, "memory"),
+      },
+      api as ClawdbotPluginApi,
+    );
+    const assess = tools.get("goal_assess");
+    expect(assess).toBeDefined();
+
+    // Same race, but for the dispatch budget: this call's pre-lock snapshot sees dispatchCount
+    // still 0 (below the cap of 1), while a concurrent call has already committed dispatchCount=1
+    // by the time this call's own updateGoal() runs.
+    const resolveSpy = vi.spyOn(goalStewardship, "resolveGoalIdResult");
+    resolveSpy.mockImplementationOnce(async (dir, idOrLabel) => {
+      const staleResult = await goalStewardship.resolveGoalIdResult(dir, idOrLabel);
+      await goalStewardship.updateGoal(goalsDir, g.id, { dispatchCount: 1 }, {
+        timestamp: new Date().toISOString(),
+        action: "assessed",
+        detail: "concurrent dispatch",
+        actor: "steward",
+      });
+      return staleResult;
+    });
+
+    const result = (await assess?.execute("tc", {
+      goal_id: g.id,
+      assessment: "made progress",
+      next_action: "continue",
+      dispatched: true,
+    })) as { details?: { error?: string } };
+    expect(result.details?.error).toBe("dispatch_budget");
+
+    const onDisk = await readGoal(goalsDir, g.id);
+    // Must stay at the concurrent writer's 1 — never incremented to 2.
+    expect(onDisk?.dispatchCount).toBe(1);
+    // The whole call is rejected (matching pre-fix all-or-nothing behavior): no assessment text
+    // or history entry recorded for this rejected attempt.
+    expect(onDisk?.assessmentCount).toBe(0);
+  });
 });
