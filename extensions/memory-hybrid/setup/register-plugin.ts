@@ -771,6 +771,12 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
         toolProposalStore: runtime.toolProposalStore ?? null,
         changeFeed: runtime.changeFeed,
         eventBus: runtime.eventBus,
+        identityReflectionStore: runtime.identityReflectionStore,
+        personaStateStore: runtime.personaStateStore,
+        learningsDb: runtime.learningsDb,
+        apitapStore: runtime.apitapStore,
+        aliasDb: runtime.aliasDb,
+        vaultRegistry: runtime.vaultRegistry,
       }),
     );
   } catch (err) {

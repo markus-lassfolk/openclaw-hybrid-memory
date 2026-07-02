@@ -482,6 +482,35 @@ describe("createPluginService stop() — resource cleanup (#57, #58)", () => {
     (ctx.vectorDb as InstanceType<typeof VectorDB>).close();
   });
 
+  it("closes identityReflectionStore, personaStateStore, learningsDb, apitapStore, aliasDb, and vaultRegistry (#90)", async () => {
+    const api = makeMockApi(RECOMMENDED_OPENCLAW_VERSION);
+    const ctx = buildMinimalCtx(tmpDir, api, timers);
+    const closes = {
+      identityReflectionStore: vi.fn(),
+      personaStateStore: vi.fn(),
+      learningsDb: vi.fn(),
+      apitapStore: vi.fn(),
+      aliasDb: vi.fn(),
+    };
+    ctx.identityReflectionStore = { close: closes.identityReflectionStore } as never;
+    ctx.personaStateStore = { close: closes.personaStateStore } as never;
+    ctx.learningsDb = { close: closes.learningsDb } as never;
+    ctx.apitapStore = { close: closes.apitapStore } as never;
+    ctx.aliasDb = { close: closes.aliasDb } as never;
+    const closeAllSpy = vi.fn();
+    ctx.vaultRegistry = { closeAll: closeAllSpy } as never;
+
+    await createPluginService(ctx).stop();
+
+    for (const [name, spy] of Object.entries(closes)) {
+      expect(spy, `${name}.close() should have been called`).toHaveBeenCalledTimes(1);
+    }
+    expect(closeAllSpy).toHaveBeenCalledTimes(1);
+
+    (ctx.factsDb as InstanceType<typeof FactsDB>).close();
+    (ctx.vectorDb as InstanceType<typeof VectorDB>).close();
+  });
+
   it("permanently closes factsDb so a stale closure can't silently reopen it after stop() (#86)", async () => {
     const api = makeMockApi(RECOMMENDED_OPENCLAW_VERSION);
     const ctx = buildMinimalCtx(tmpDir, api, timers);

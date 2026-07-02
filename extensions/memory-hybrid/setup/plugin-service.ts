@@ -104,6 +104,14 @@ export interface PluginServiceContext {
   toolProposalStore?: import("../backends/tool-proposal-store.js").ToolProposalStore | null;
   changeFeed?: import("../services/change-feed.js").ChangeFeed | null;
   eventBus?: import("../backends/event-bus.js").EventBus | null;
+  // #90: previously threaded into the runtime but never passed to the plugin service, so
+  // stop() had no way to close them.
+  identityReflectionStore?: import("../backends/identity-reflection-store.js").IdentityReflectionStore | null;
+  personaStateStore?: import("../backends/persona-state-store.js").PersonaStateStore | null;
+  learningsDb?: import("../backends/learnings-db.js").LearningsDB | null;
+  apitapStore?: import("../backends/apitap-store.js").ApitapStore | null;
+  aliasDb?: import("../services/retrieval-aliases.js").AliasDB | null;
+  vaultRegistry?: import("../services/vault-registry.js").VaultRegistry | null;
   // Mutable timer refs that will be updated by the start handler
   timers: PluginRuntime["timers"];
 }
@@ -180,6 +188,12 @@ export function createPluginService(ctx: PluginServiceContext) {
     toolProposalStore,
     changeFeed,
     eventBus,
+    identityReflectionStore,
+    personaStateStore,
+    learningsDb,
+    apitapStore,
+    aliasDb,
+    vaultRegistry,
   } = ctx;
 
   let watchdogRunning = false;
@@ -1212,6 +1226,27 @@ export function createPluginService(ctx: PluginServiceContext) {
       // closeStorePermanently() falls back to its plain close().
       closeStorePermanently(verificationStore, "verificationStore", api.logger);
       closeStorePermanently(eventBus, "eventBus", api.logger);
+      // #90: these were threaded through PluginRuntime but never reached plugin-service's stop(),
+      // so they leaked open SQLite handles on shutdown (only closed on re-register, not a plain stop()).
+      closeStorePermanently(identityReflectionStore, "identityReflectionStore", api.logger);
+      closeStorePermanently(personaStateStore, "personaStateStore", api.logger);
+      closeStorePermanently(learningsDb, "learningsDb", api.logger);
+      closeStorePermanently(apitapStore, "apitapStore", api.logger);
+      // AliasDB doesn't extend BaseSqliteStore / doesn't implement permanentClose();
+      // closeStorePermanently() falls back to its plain close().
+      closeStorePermanently(aliasDb, "aliasDb", api.logger);
+      if (vaultRegistry) {
+        try {
+          vaultRegistry.closeAll();
+        } catch (err) {
+          api.logger.warn(`memory-hybrid: failed to close vaultRegistry during shutdown: ${err}`);
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "plugin-service",
+            operation: "close-vaultRegistry",
+            severity: "warning",
+          });
+        }
+      }
     },
   };
 }
