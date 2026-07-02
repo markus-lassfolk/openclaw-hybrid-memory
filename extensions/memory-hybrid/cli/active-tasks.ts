@@ -19,9 +19,11 @@ import {
   flushCompletedTaskToMemory,
   isTerminalActiveTaskStatus,
   readActiveTaskFile,
+  readActiveTaskFileWithMtime,
   reconcileActiveTaskInProgressSessions,
   upsertTask,
   writeActiveTaskFile,
+  writeActiveTaskFileOptimistic,
 } from "../services/active-task.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import {
@@ -241,7 +243,7 @@ export async function runActiveTaskComplete(ctx: ActiveTaskContext, label: strin
     return { ok: true, label, flushedTo };
   }
 
-  const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, ctx.staleMinutes);
+  const taskFile = await readActiveTaskFileWithMtime(ctx.activeTaskFilePath, ctx.staleMinutes);
   if (!taskFile) {
     return { ok: false, error: `ACTIVE-TASKS.md not found at ${ctx.activeTaskFilePath}` };
   }
@@ -252,13 +254,33 @@ export async function runActiveTaskComplete(ctx: ActiveTaskContext, label: strin
     return { ok: false, error: `No active task found with label "${label}"` };
   }
 
-  const existingCompleted = taskFile.completed;
-  await writeActiveTaskFile(ctx.activeTaskFilePath, updated, [...existingCompleted, completed]);
+  // Written optimistically: a concurrent writer (another CLI invocation, a lifecycle hook
+  // flushing task signals) between this read and the write could otherwise silently clobber the
+  // other's changes with a stale full-list overwrite. On a conflict, re-run completeTask against
+  // the fresh state so the concurrent write's changes survive alongside this completion.
+  let finalCompleted = completed;
+  const wrote = await writeActiveTaskFileOptimistic(
+    ctx.activeTaskFilePath,
+    updated,
+    [...taskFile.completed, completed],
+    taskFile.mtime,
+    async (fresh) => {
+      const retry = completeTask(fresh.active, label);
+      if (!retry.completed) return null;
+      finalCompleted = retry.completed;
+      return [retry.updated, [...fresh.completed, retry.completed]];
+    },
+    3,
+    ctx.staleMinutes,
+  );
+  if (!wrote) {
+    return { ok: false, error: `Could not complete task "${label}": concurrent update conflict` };
+  }
 
   let flushedTo: string | undefined;
   if (ctx.flushOnComplete) {
     try {
-      flushedTo = await flushCompletedTaskToMemory(completed, ctx.memoryDir);
+      flushedTo = await flushCompletedTaskToMemory(finalCompleted, ctx.memoryDir);
     } catch {
       // Non-fatal — task was still completed
     }
@@ -324,59 +346,90 @@ export async function runActiveTaskAdd(
     return { ok: true, label: opts.label, upserted: wasExisting };
   }
 
-  const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, ctx.staleMinutes);
-  const existingActive = taskFile?.active ?? [];
-  const existingCompleted = taskFile?.completed ?? [];
-  const wasExisting =
-    existingActive.some((t) => t.label === opts.label) || existingCompleted.some((t) => t.label === opts.label);
-  const existing =
-    existingActive.find((t) => t.label === opts.label) ?? existingCompleted.find((t) => t.label === opts.label);
+  // Computes the full add/upsert result against a given snapshot. Factored out so the initial
+  // attempt and an optimistic-write conflict retry (against a freshly re-read snapshot) apply
+  // the exact same upsert logic instead of blindly overwriting a concurrent writer's changes.
+  const computeUpsert = (
+    snapshotActive: ActiveTaskEntry[],
+    snapshotCompleted: ActiveTaskEntry[],
+  ): { active: ActiveTaskEntry[]; completed: ActiveTaskEntry[]; entry: ActiveTaskEntry; wasExisting: boolean } => {
+    const wasExisting =
+      snapshotActive.some((t) => t.label === opts.label) || snapshotCompleted.some((t) => t.label === opts.label);
+    const existing =
+      snapshotActive.find((t) => t.label === opts.label) ?? snapshotCompleted.find((t) => t.label === opts.label);
 
-  const status: ActiveTaskStatus = (() => {
-    if (opts.status && ACTIVE_TASK_STATUSES.includes(opts.status as ActiveTaskStatus)) {
-      return opts.status as ActiveTaskStatus;
-    }
-    return existing?.status ?? "In progress";
-  })();
-
-  const existingInCompleted = existingCompleted.some((t) => t.label === opts.label);
-  const reopening = isReopeningActiveTaskEntry(existing, status, existingInCompleted);
-
-  const entry: ActiveTaskEntry = {
-    label: opts.label,
-    description: opts.description,
-    status,
-    branch: opts.branch ?? existing?.branch,
-    subagent: opts.subagent ?? (status === "Done" || reopening ? "" : existing?.subagent),
-    next: opts.next ?? (reopening ? "" : existing?.next),
-    stashCommit: existing?.stashCommit,
-    ...(existing?.handoff ? { handoff: existing.handoff } : {}),
-    started: existing?.started ?? now,
-    updated: now,
-  };
-  if (reopening) clearActiveTaskHandoff(entry);
-
-  if (status === "Done") {
-    const updatedActive = existingActive.filter((t) => t.label !== opts.label);
-    const updatedCompleted = [...existingCompleted.filter((t) => t.label !== opts.label), entry];
-    await writeActiveTaskFile(ctx.activeTaskFilePath, updatedActive, updatedCompleted);
-    if (ctx.flushOnComplete) {
-      try {
-        await flushCompletedTaskToMemory(entry, ctx.memoryDir);
-      } catch {
-        // Non-fatal
+    const status: ActiveTaskStatus = (() => {
+      if (opts.status && ACTIVE_TASK_STATUSES.includes(opts.status as ActiveTaskStatus)) {
+        return opts.status as ActiveTaskStatus;
       }
+      return existing?.status ?? "In progress";
+    })();
+
+    const existingInCompleted = snapshotCompleted.some((t) => t.label === opts.label);
+    const reopening = isReopeningActiveTaskEntry(existing, status, existingInCompleted);
+
+    const entry: ActiveTaskEntry = {
+      label: opts.label,
+      description: opts.description,
+      status,
+      branch: opts.branch ?? existing?.branch,
+      subagent: opts.subagent ?? (status === "Done" || reopening ? "" : existing?.subagent),
+      next: opts.next ?? (reopening ? "" : existing?.next),
+      stashCommit: existing?.stashCommit,
+      ...(existing?.handoff ? { handoff: existing.handoff } : {}),
+      started: existing?.started ?? now,
+      updated: now,
+    };
+    if (reopening) clearActiveTaskHandoff(entry);
+
+    if (status === "Done") {
+      return {
+        active: snapshotActive.filter((t) => t.label !== opts.label),
+        completed: [...snapshotCompleted.filter((t) => t.label !== opts.label), entry],
+        entry,
+        wasExisting,
+      };
     }
-  } else {
-    const updatedActive = upsertTask(
-      existingActive.filter((t) => t.label !== opts.label),
+    return {
+      active: upsertTask(
+        snapshotActive.filter((t) => t.label !== opts.label),
+        entry,
+      ),
+      completed: snapshotCompleted.filter((t) => t.label !== opts.label),
       entry,
-    );
-    const updatedCompleted = existingCompleted.filter((t) => t.label !== opts.label);
-    await writeActiveTaskFile(ctx.activeTaskFilePath, updatedActive, updatedCompleted);
+      wasExisting,
+    };
+  };
+
+  const taskFile = await readActiveTaskFileWithMtime(ctx.activeTaskFilePath, ctx.staleMinutes);
+  const initial = computeUpsert(taskFile?.active ?? [], taskFile?.completed ?? []);
+
+  let finalResult = initial;
+  const wrote = await writeActiveTaskFileOptimistic(
+    ctx.activeTaskFilePath,
+    initial.active,
+    initial.completed,
+    taskFile?.mtime ?? 0,
+    async (fresh) => {
+      finalResult = computeUpsert(fresh.active, fresh.completed);
+      return [finalResult.active, finalResult.completed];
+    },
+    3,
+    ctx.staleMinutes,
+  );
+  if (!wrote) {
+    return { ok: false, error: `Could not save task "${opts.label}": concurrent update conflict` };
   }
 
-  return { ok: true, label: opts.label, upserted: wasExisting };
+  if (finalResult.entry.status === "Done" && ctx.flushOnComplete) {
+    try {
+      await flushCompletedTaskToMemory(finalResult.entry, ctx.memoryDir);
+    } catch {
+      // Non-fatal
+    }
+  }
+
+  return { ok: true, label: opts.label, upserted: finalResult.wasExisting };
 }
 
 /** Detect/apply active-task hygiene: duplicates, stale failed tasks, dead-session in-progress tasks. */
