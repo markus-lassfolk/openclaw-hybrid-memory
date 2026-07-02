@@ -1010,8 +1010,11 @@ export async function runDreamCycle(
     }
   } catch (err) {
     stageCoreError ??= err;
-    recordStageFailure("core prune/decay/link/vector maintenance", err);
     logger.warn(`memory-hybrid: dream-cycle — vector reconciliation failed: ${err}`);
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: "dream-cycle-orphan-vector-reconcile",
+      subsystem: "vector-db",
+    });
   }
   vectorReconcileStep.complete(`removed=${orphanVectorsRemoved}`);
   {
