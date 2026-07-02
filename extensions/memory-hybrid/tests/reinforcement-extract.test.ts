@@ -2,7 +2,7 @@
  * Tests for reinforcement extraction.
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -295,6 +295,57 @@ describe("reinforcement-extract", () => {
     // Should still detect the praise incident near the top of the file
     expect(result.incidents.length).toBeGreaterThan(0);
     expect(result.sessionsScanned).toBe(1);
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("reads from the tail of an oversized file so recent content is not silently dropped (#25)", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
+    const sessionFile = join(tmpDir, "2026-02-19-oversized.jsonl");
+
+    // Pad past the 2MB cap with non-praise filler first, so a head-only read (the old behavior)
+    // would only ever see this filler and never reach the real incident below.
+    const padding = `{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Acknowledged. ${"x".repeat(60)}"}]}}`;
+    const linesNeeded = Math.ceil((2_100_000 - padding.length) / (padding.length + 1));
+    const lines: string[] = new Array(linesNeeded).fill(padding);
+
+    // The real incident lives at the very end of the file (in the last ~2MB tail).
+    lines.push(
+      `{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"I fixed the root cause of the recall bug."}]}}`,
+    );
+    lines.push(
+      `{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Perfect! Exactly what I needed."}]}}`,
+    );
+    writeFileSync(sessionFile, lines.join("\n"), "utf-8");
+    expect(statSync(sessionFile).size).toBeGreaterThan(2_000_000);
+
+    const result = await runReinforcementExtract({
+      filePaths: [sessionFile],
+      reinforcementRegex:
+        /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
+    });
+
+    expect(result.incidents.length).toBeGreaterThan(0);
+    expect(result.incidents.some((i) => i.agentBehavior.includes("root cause of the recall bug"))).toBe(true);
+    expect(result.truncatedSessions).toContain("2026-02-19-oversized.jsonl");
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("does not mark an under-cap file as truncated", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
+    const sessionFile = join(tmpDir, "2026-02-19-small.jsonl");
+    const jsonl = `{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"I checked the logs and found the error."}]}}
+{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Perfect! That's exactly what I needed"}]}}`;
+    writeFileSync(sessionFile, jsonl, "utf-8");
+
+    const result = await runReinforcementExtract({
+      filePaths: [sessionFile],
+      reinforcementRegex:
+        /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
+    });
+
+    expect(result.truncatedSessions).toBeUndefined();
 
     rmSync(tmpDir, { recursive: true, force: true });
   });

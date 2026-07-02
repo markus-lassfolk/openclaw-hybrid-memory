@@ -290,6 +290,15 @@ export async function runExtractReinforcementForCli(
       reinforcementRegex,
     });
 
+    if (result.truncatedSessions && result.truncatedSessions.length > 0) {
+      // These files exceed the per-run byte cap and are read from the tail only; since this
+      // extractor has no byte-offset resume cursor (unlike passive-observer), the skipped older
+      // content in each of these files will never be scanned by a future run either.
+      logger.warn?.(
+        `memory-hybrid: ${SCAN_TYPE} truncated ${result.truncatedSessions.length} oversized session file(s) (reading tail only, older content permanently skipped): ${result.truncatedSessions.join(", ")}`,
+      );
+    }
+
     if (opts.verbose) {
       for (const incident of result.incidents) {
         console.log(
