@@ -65,13 +65,18 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
     } else {
       try {
         const reconcilePolicy = opts.reconcilePolicy ?? "balanced";
+        const reconcileMaxFixesExplicit = opts.reconcileMaxFixes !== undefined;
         const reconcileMaxFixes = Math.max(0, Math.min(5000, opts.reconcileMaxFixes ?? 200));
         const sqliteOrphanRebuildBudget =
           reconcilePolicy === "conservative"
             ? 0
             : reconcilePolicy === "balanced"
               ? reconcileMaxFixes
-              : Math.max(reconcileMaxFixes, 2000);
+              : // aggressive: widen to 2000 by default, but an explicit --reconcile-max-fixes is always
+                // honored as a hard cap rather than being silently overridden upward.
+                reconcileMaxFixesExplicit
+                ? reconcileMaxFixes
+                : Math.max(reconcileMaxFixes, 2000);
         const sqliteIds = new Set(factsDb.getAllIds());
         const vectorIds = await vectorDb.getAllIds();
 
@@ -148,6 +153,7 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
             } else {
               log("  → Run with --fix to delete these orphan vectors from LanceDB.");
               state.issues.push(`${vectorOrphans.length} orphan vector(s) in LanceDB with no matching SQLite fact`);
+              state.allOk = false;
             }
           }
           if (sqliteOrphans.length > 0) {
@@ -196,6 +202,7 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
               log("  → Re-run the plugin or use the re-index command to rebuild missing vectors.");
             }
             state.issues.push(`${sqliteOrphans.length} SQLite fact(s) without corresponding vectors in LanceDB`);
+            state.allOk = false;
           }
         }
         if (resolvedSqlitePath) {

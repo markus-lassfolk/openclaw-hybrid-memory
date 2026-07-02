@@ -22,4 +22,14 @@ export async function runVerifyForCli(
   await runVerifyConfigCronSection(state);
   await runVerifyUiIntegrationsSection(state);
   await runVerifyReconcileSection(state);
+
+  // Centralized, single point of truth for the exit code: runVerifyConfigCronSection prints its
+  // own summary and previously only set process.exitCode for the restartPending case, never for
+  // real issues (state.allOk === false) — a CI/automation script gating on `verify`'s exit code
+  // silently passed despite genuine problems. Reconcile/UiIntegrations run AFTER ConfigCron and
+  // can also flip state.allOk to false, so this check must happen here, after every section has
+  // run, not inside any single section.
+  if (!state.allOk && process.exitCode == null) {
+    process.exitCode = 1;
+  }
 }
