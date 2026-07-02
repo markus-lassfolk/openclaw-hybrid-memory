@@ -195,8 +195,11 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
     }
   };
 
-  // For shadow-table migration, skip duplicate checks (we're rebuilding from scratch)
-  const checkDuplicate = targetTableName ? async () => false : (vec: number[]) => vectorDb.hasDuplicate(vec);
+  // For shadow-table migration, skip duplicate checks (we're rebuilding from scratch).
+  // excludeId prevents a fact from matching its own not-yet-deleted vector below.
+  const checkDuplicate = targetTableName
+    ? async () => false
+    : (vec: number[], excludeId: string) => vectorDb.hasDuplicate(vec, undefined, excludeId);
 
   // Loop until getBatch() itself returns empty (below), NOT `offset < total`. `total` is a
   // snapshot taken once at the start; it's used for progress/checkpoint reporting only. getBatch
@@ -343,7 +346,7 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
       try {
         // Check for duplicate BEFORE deleting old vector: if a different fact already has
         // a similar embedding, skip rather than removing the existing entry unnecessarily.
-        const isDuplicate = await checkDuplicate(vec);
+        const isDuplicate = await checkDuplicate(vec, fact.id);
         if (!isDuplicate) {
           // Remove stale entry so dimension-changed stores succeed (only for main table)
           if (!targetTableName) {

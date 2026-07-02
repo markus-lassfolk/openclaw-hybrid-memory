@@ -196,6 +196,23 @@ describe("migrateEmbeddings — duplicate handling", () => {
     expect(factsDb.setEmbeddingModel).not.toHaveBeenCalled();
   });
 
+  it("passes the fact's own id as excludeId to hasDuplicate so it can't self-match (#51)", async () => {
+    const facts = [makeFact("self-match")];
+    const factsDb = makeFactsDB({ getAll: vi.fn().mockReturnValue(facts) });
+    const vectorDb = makeVectorDB();
+    const embeddings = makeEmbeddings();
+
+    await migrateEmbeddings({
+      factsDb: factsDb as any,
+      edictStore: null as any,
+      vectorDb: vectorDb as any,
+      embeddings: embeddings as any,
+      logger: silentLogger(),
+    });
+
+    expect(vectorDb.hasDuplicate).toHaveBeenCalledWith(expect.any(Array), undefined, "self-match");
+  });
+
   it("removes stale entry before storing (handles dimension change)", async () => {
     const facts = [makeFact("x")];
     const factsDb = makeFactsDB({ getAll: vi.fn().mockReturnValue(facts) });

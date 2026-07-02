@@ -514,3 +514,51 @@ describe("VectorDB runtime bounds/telemetry observability", () => {
     expect(capturedLimit).toBeLessThanOrEqual(bounds.semanticCacheCandidateLimitMax);
   });
 });
+
+describe("VectorDB hasDuplicate() excludeId (#51)", () => {
+  let tmpDir: string;
+  let db: InstanceType<typeof VectorDB>;
+  const DIM = 3;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "vector-hasdup-excludeid-test-"));
+    db = new VectorDB(join(tmpDir, "lance"), DIM);
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("does not treat a fact's own not-yet-deleted vector as a duplicate when excludeId matches it", async () => {
+    await db.store({
+      text: "user prefers TypeScript",
+      vector: [0.1, 0.2, 0.3],
+      importance: 0.8,
+      category: "preference",
+      id: "self-id",
+    });
+
+    // Re-embedding the same fact produces (near-)identical vector; without excludeId this
+    // would self-match and be (wrongly) reported as a duplicate before the stale entry is
+    // deleted and the new vector stored.
+    const stillDuplicate = await db.hasDuplicate([0.1, 0.2, 0.3], 0.95);
+    expect(stillDuplicate).toBe(true);
+
+    const excluded = await db.hasDuplicate([0.1, 0.2, 0.3], 0.95, "self-id");
+    expect(excluded).toBe(false);
+  });
+
+  it("still detects a genuine duplicate from a different fact when excludeId is set", async () => {
+    await db.store({
+      text: "user prefers TypeScript",
+      vector: [0.1, 0.2, 0.3],
+      importance: 0.8,
+      category: "preference",
+      id: "other-id",
+    });
+
+    const result = await db.hasDuplicate([0.1, 0.2, 0.3], 0.95, "self-id");
+    expect(result).toBe(true);
+  });
+});

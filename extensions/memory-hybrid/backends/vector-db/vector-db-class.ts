@@ -1660,7 +1660,7 @@ export class VectorDB {
     }
   }
 
-  async hasDuplicate(vector: number[], threshold = 0.95): Promise<boolean> {
+  async hasDuplicate(vector: number[], threshold = 0.95, excludeId?: string): Promise<boolean> {
     try {
       if (!this.lanceDbAvailable && this.lanceInitFailed) return false;
       await this.ensureInitialized();
@@ -1673,9 +1673,13 @@ export class VectorDB {
       if (vector.length !== this.vectorDim) return false;
       const acquired = this.acquireReader();
       try {
-        const results = await this.getTable().vectorSearch(vector).limit(1).toArray();
-        if (results.length === 0) return false;
-        const score = 1 / (1 + (results[0]._distance ?? 0));
+        // Fetch one extra result when excluding an id, so a self-match against the
+        // caller's own (not-yet-deleted) vector doesn't hide a genuine duplicate.
+        const limit = excludeId ? 2 : 1;
+        const results = await this.getTable().vectorSearch(vector).limit(limit).toArray();
+        const match = excludeId ? results.find((row) => String(row.id) !== excludeId) : results[0];
+        if (!match) return false;
+        const score = 1 / (1 + (match._distance ?? 0));
         return score >= threshold;
       } finally {
         this.releaseReader(acquired);
