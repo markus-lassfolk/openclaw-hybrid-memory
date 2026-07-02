@@ -63,42 +63,48 @@ export async function linkSubagentToGoal(
     dispatchFailureReason?: string;
   },
 ): Promise<void> {
-  const g = await readGoal(goalsDir, goalId);
-  if (!g || isTerminalStatus(g.status)) return;
+  const precheck = await readGoal(goalsDir, goalId);
+  if (!precheck || isTerminalStatus(precheck.status)) return;
   const ts = nowIso();
-  const existing = g.linkedTasks.find((t) => taskLabelsMatch(t.label, task.label));
-  const linkedTasks = existing
-    ? g.linkedTasks.map((t) =>
-        taskLabelsMatch(t.label, task.label)
-          ? {
-              ...t,
-              sessionKey: task.sessionKey,
-              runId: task.runId ?? t.runId ?? null,
-              dispatchFailureReason:
-                task.dispatchFailureReason === undefined
-                  ? (t.dispatchFailureReason ?? null)
-                  : (task.dispatchFailureReason ?? null),
-              status: task.status,
-              updatedAt: ts,
-            }
-          : t,
-      )
-    : [
-        ...g.linkedTasks,
-        {
-          label: task.label,
-          sessionKey: task.sessionKey,
-          runId: task.runId ?? null,
-          dispatchFailureReason: task.dispatchFailureReason ?? null,
-          status: task.status,
-          linkedAt: ts,
-          updatedAt: ts,
-        },
-      ];
+  // linkedTasks is computed from `fresh` (re-read inside updateGoal's lock), not from the
+  // pre-check read above — a concurrent linkSubagentToGoal/markGoalDispatchFailure/
+  // updateGoalOnSubagentEnd call for a different task on the same goal could otherwise have its
+  // linkedTasks entry silently reverted by this call overwriting the array from stale data.
   await updateGoal(
     goalsDir,
-    g.id,
-    { linkedTasks },
+    goalId,
+    (fresh) => {
+      const existing = fresh.linkedTasks.find((t) => taskLabelsMatch(t.label, task.label));
+      const linkedTasks = existing
+        ? fresh.linkedTasks.map((t) =>
+            taskLabelsMatch(t.label, task.label)
+              ? {
+                  ...t,
+                  sessionKey: task.sessionKey,
+                  runId: task.runId ?? t.runId ?? null,
+                  dispatchFailureReason:
+                    task.dispatchFailureReason === undefined
+                      ? (t.dispatchFailureReason ?? null)
+                      : (task.dispatchFailureReason ?? null),
+                  status: task.status,
+                  updatedAt: ts,
+                }
+              : t,
+          )
+        : [
+            ...fresh.linkedTasks,
+            {
+              label: task.label,
+              sessionKey: task.sessionKey,
+              runId: task.runId ?? null,
+              dispatchFailureReason: task.dispatchFailureReason ?? null,
+              status: task.status,
+              linkedAt: ts,
+              updatedAt: ts,
+            },
+          ];
+      return { linkedTasks };
+    },
     {
       timestamp: ts,
       action: "subagent-linked",
@@ -113,48 +119,49 @@ export async function markGoalDispatchFailure(
   goalId: string,
   info: { label: string; sessionKey: string | null; runId: string | null; reason: string },
 ): Promise<void> {
-  const g = await readGoal(goalsDir, goalId);
-  if (!g || isTerminalStatus(g.status)) return;
+  const precheck = await readGoal(goalsDir, goalId);
+  if (!precheck || isTerminalStatus(precheck.status)) return;
   const ts = nowIso();
-  const existing = g.linkedTasks.find((t) => taskLabelsMatch(t.label, info.label));
-  const linkedTasks = existing
-    ? g.linkedTasks.map((t) =>
-        taskLabelsMatch(t.label, info.label)
-          ? {
-              ...t,
-              sessionKey: info.sessionKey ?? t.sessionKey ?? null,
-              runId: info.runId ?? t.runId ?? null,
-              dispatchFailureReason: info.reason,
-              status: "failed",
-              updatedAt: ts,
-            }
-          : t,
-      )
-    : [
-        ...g.linkedTasks,
-        {
-          label: info.label,
-          sessionKey: info.sessionKey,
-          runId: info.runId,
-          dispatchFailureReason: info.reason,
-          status: "failed",
-          linkedAt: ts,
-          updatedAt: ts,
-        },
-      ];
-
-  const mergedBlockers = g.currentBlockers.includes(info.reason)
-    ? g.currentBlockers
-    : [...g.currentBlockers, info.reason];
   await updateGoal(
     goalsDir,
-    g.id,
-    {
-      linkedTasks,
-      consecutiveFailures: g.consecutiveFailures + 1,
-      status: "blocked",
-      currentBlockers: mergedBlockers,
-      lastOutcome: info.reason,
+    goalId,
+    (fresh) => {
+      const existing = fresh.linkedTasks.find((t) => taskLabelsMatch(t.label, info.label));
+      const linkedTasks = existing
+        ? fresh.linkedTasks.map((t) =>
+            taskLabelsMatch(t.label, info.label)
+              ? {
+                  ...t,
+                  sessionKey: info.sessionKey ?? t.sessionKey ?? null,
+                  runId: info.runId ?? t.runId ?? null,
+                  dispatchFailureReason: info.reason,
+                  status: "failed",
+                  updatedAt: ts,
+                }
+              : t,
+          )
+        : [
+            ...fresh.linkedTasks,
+            {
+              label: info.label,
+              sessionKey: info.sessionKey,
+              runId: info.runId,
+              dispatchFailureReason: info.reason,
+              status: "failed",
+              linkedAt: ts,
+              updatedAt: ts,
+            },
+          ];
+      const mergedBlockers = fresh.currentBlockers.includes(info.reason)
+        ? fresh.currentBlockers
+        : [...fresh.currentBlockers, info.reason];
+      return {
+        linkedTasks,
+        consecutiveFailures: fresh.consecutiveFailures + 1,
+        status: "blocked",
+        currentBlockers: mergedBlockers,
+        lastOutcome: info.reason,
+      };
     },
     {
       timestamp: ts,
@@ -213,50 +220,47 @@ export async function updateGoalOnSubagentEnd(
   if (resolved.length !== 1) {
     return;
   }
-  const { goal: g, taskLabel: matchedTaskLabel } = resolved[0];
+  const { goal: matchedGoal, taskLabel: matchedTaskLabel } = resolved[0];
 
   const ts = nowIso();
   const newStatus = info.success ? "completed" : "failed";
-  const linkedTasks = normalizedLinkedTasks(g).map((t) =>
-    taskLabelsMatch(t.label, matchedTaskLabel)
-      ? { ...t, status: newStatus, updatedAt: ts, sessionKey: info.sessionKey ?? t.sessionKey }
-      : t,
-  );
-  const consecutiveFailures = info.success ? 0 : g.consecutiveFailures + 1;
-  const lastOutcome = info.outcome ?? g.lastOutcome;
-
-  if (info.success && allLinkedTasksTerminal({ ...g, linkedTasks })) {
-    await updateGoal(
-      goalsDir,
-      g.id,
-      {
-        linkedTasks,
-        consecutiveFailures,
-        status: "verifying",
-        lastOutcome: lastOutcome ?? "All linked tasks completed — verify goal",
-      },
-      {
-        timestamp: ts,
-        action: "all-tasks-complete",
-        detail: "ready for LLM verification",
-        actor: "agent",
-      },
-    );
-  } else {
-    await updateGoal(
-      goalsDir,
-      g.id,
-      {
-        linkedTasks,
-        consecutiveFailures,
-        lastOutcome,
-      },
-      {
+  // linkedTasks/consecutiveFailures/lastOutcome — and which of the two outcome branches applies
+  // — are all recomputed from `fresh` (re-read inside updateGoal's lock) rather than from
+  // `matchedGoal` above: a concurrent subagent-end handler for a *different* linked task on the
+  // same goal could otherwise have its own linkedTasks/consecutiveFailures update silently
+  // reverted by this call overwriting the array from a stale pre-lock snapshot (matchedGoal is
+  // only used to resolve WHICH goal/task this call targets — an identity that doesn't change).
+  await updateGoal(
+    goalsDir,
+    matchedGoal.id,
+    (fresh) => {
+      const linkedTasks = normalizedLinkedTasks(fresh).map((t) =>
+        taskLabelsMatch(t.label, matchedTaskLabel)
+          ? { ...t, status: newStatus, updatedAt: ts, sessionKey: info.sessionKey ?? t.sessionKey }
+          : t,
+      );
+      const consecutiveFailures = info.success ? 0 : fresh.consecutiveFailures + 1;
+      const lastOutcome = info.outcome ?? fresh.lastOutcome;
+      if (info.success && allLinkedTasksTerminal({ ...fresh, linkedTasks })) {
+        return {
+          linkedTasks,
+          consecutiveFailures,
+          status: "verifying",
+          lastOutcome: lastOutcome ?? "All linked tasks completed — verify goal",
+        };
+      }
+      return { linkedTasks, consecutiveFailures, lastOutcome };
+    },
+    (_fresh, resolvedPatch) => {
+      if (resolvedPatch.status === "verifying") {
+        return { timestamp: ts, action: "all-tasks-complete", detail: "ready for LLM verification", actor: "agent" };
+      }
+      return {
         timestamp: ts,
         action: info.success ? "subagent-succeeded" : "subagent-failed",
         detail: info.outcome ?? (info.success ? "ok" : "failed"),
         actor: "agent",
-      },
-    );
-  }
+      };
+    },
+  );
 }

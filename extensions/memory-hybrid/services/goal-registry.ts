@@ -647,39 +647,56 @@ export async function createGoal(
   return goal;
 }
 
+export type GoalUpdatePatch = Partial<
+  Pick<
+    Goal,
+    | "status"
+    | "currentBlockers"
+    | "lastOutcome"
+    | "lastAssessedAt"
+    | "lastDispatchedAt"
+    | "assessmentCount"
+    | "dispatchCount"
+    | "consecutiveFailures"
+    | "linkedTasks"
+    | "description"
+    | "acceptanceCriteria"
+    | "priority"
+    | "lastBlockerFingerprint"
+    | "sameBlockerStreak"
+    | "circuitBreakerLastProgressAssessmentCount"
+    | "humanEscalationSummary"
+    | "escalationKind"
+    | "lastMechanicalCheck"
+  >
+>;
+
 export async function updateGoal(
   goalsDir: string,
   id: string,
-  patch: Partial<
-    Pick<
-      Goal,
-      | "status"
-      | "currentBlockers"
-      | "lastOutcome"
-      | "lastAssessedAt"
-      | "lastDispatchedAt"
-      | "assessmentCount"
-      | "dispatchCount"
-      | "consecutiveFailures"
-      | "linkedTasks"
-      | "description"
-      | "acceptanceCriteria"
-      | "priority"
-      | "lastBlockerFingerprint"
-      | "sameBlockerStreak"
-      | "circuitBreakerLastProgressAssessmentCount"
-      | "humanEscalationSummary"
-      | "escalationKind"
-      | "lastMechanicalCheck"
-    >
-  >,
-  historyEntry: GoalHistoryEntry | GoalHistoryEntry[],
+  /**
+   * Either a plain patch object, or a function that receives the goal as freshly re-read
+   * *inside* the lock and returns the patch. Prefer the function form whenever any patch field
+   * is derived from the goal's current value (e.g. `consecutiveFailures: g.consecutiveFailures +
+   * 1`, or a `linkedTasks` array rebuilt from `g.linkedTasks`) — a plain object computed from a
+   * pre-lock read can silently clobber a concurrent writer's fresh state: the lock only
+   * serializes *when* each update commits, not what data drove its contents. See #storage-recall-review.
+   */
+  patch: GoalUpdatePatch | ((fresh: Goal) => GoalUpdatePatch),
+  /** Also accepts a function when the history action/detail depends on which patch branch was
+   * taken (itself decided from `fresh` state) — see {@link patch}. */
+  historyEntry:
+    | GoalHistoryEntry
+    | GoalHistoryEntry[]
+    | ((fresh: Goal, resolvedPatch: GoalUpdatePatch) => GoalHistoryEntry | GoalHistoryEntry[]),
 ): Promise<Goal> {
   return withGoalLock(goalsDir, id, async () => {
     const g = await readGoal(goalsDir, id);
     if (!g) throw new Error(`Goal not found: ${id}`);
-    const entries = Array.isArray(historyEntry) ? historyEntry : [historyEntry];
-    const next = { ...g, ...patch, history: [...(g.history ?? []), ...entries] };
+    const resolvedPatch = typeof patch === "function" ? patch(g) : patch;
+    const resolvedHistoryEntry = typeof historyEntry === "function" ? historyEntry(g, resolvedPatch) : historyEntry;
+    const entries = Array.isArray(resolvedHistoryEntry) ? resolvedHistoryEntry : [resolvedHistoryEntry];
+    const next = { ...g, ...resolvedPatch, history: [...(g.history ?? []), ...entries] };
     await writeGoal(goalsDir, next);
     return next;
   });
