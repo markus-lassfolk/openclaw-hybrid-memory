@@ -487,9 +487,10 @@ export function listScopedFactIdsPendingPrune(db: DatabaseSync, scopeFilter: Sco
  * Prune facts matching scopeFilter and return the IDs that were actually deleted.
  * Callers doing follow-up cleanup keyed by fact ID (e.g. LanceDB vector deletion) should use
  * this return value rather than a separately-collected id snapshot: the SELECT-then-DELETE here
- * runs back-to-back with nothing else able to run in between, so it reflects exactly what was
- * deleted — unlike a snapshot taken earlier (e.g. before a confirmation prompt), which can drift
- * if a fact enters or leaves the scope in the meantime and silently leave its vector orphaned.
+ * runs inside a single IMMEDIATE transaction with nothing else able to run in between, so it
+ * reflects exactly what was deleted — unlike a snapshot taken earlier (e.g. before a confirmation
+ * prompt), which can drift if a fact enters or leaves the scope in the meantime and silently
+ * leave its vector orphaned.
  */
 export function pruneScopedFacts(db: DatabaseSync, scopeFilter: ScopeFilter): string[] {
   const conditions: string[] = [];
@@ -513,27 +514,34 @@ export function pruneScopedFacts(db: DatabaseSync, scopeFilter: ScopeFilter): st
 
   if (conditions.length === 0) return [];
 
-  const idRows = db
-    .prepare(
-      `SELECT id FROM facts WHERE (${conditions.join(" OR ")})
-         AND id NOT IN (SELECT fact_id FROM verified_facts)`,
-    )
-    .all(...params) as Array<{ id: string }>;
-  const ids = idRows.map((r) => r.id);
-  if (ids.length === 0) return [];
+  const tx = createTransaction(
+    db,
+    () => {
+      const idRows = db
+        .prepare(
+          `SELECT id FROM facts WHERE (${conditions.join(" OR ")})
+             AND id NOT IN (SELECT fact_id FROM verified_facts)`,
+        )
+        .all(...params) as Array<{ id: string }>;
+      const ids = idRows.map((r) => r.id);
+      if (ids.length === 0) return ids;
 
-  const linkCleanupQuery = `DELETE FROM memory_links
-      WHERE target_fact_id IN (
-        SELECT id FROM facts WHERE (${conditions.join(" OR ")})
-          AND id NOT IN (SELECT fact_id FROM verified_facts)
-      )
-      AND link_type != 'DERIVED_FROM'`;
-  db.prepare(linkCleanupQuery).run(...params);
+      const linkCleanupQuery = `DELETE FROM memory_links
+          WHERE target_fact_id IN (
+            SELECT id FROM facts WHERE (${conditions.join(" OR ")})
+              AND id NOT IN (SELECT fact_id FROM verified_facts)
+          )
+          AND link_type != 'DERIVED_FROM'`;
+      db.prepare(linkCleanupQuery).run(...params);
 
-  const query = `DELETE FROM facts WHERE (${conditions.join(" OR ")})
-    AND id NOT IN (SELECT fact_id FROM verified_facts)`;
-  db.prepare(query).run(...params);
-  return ids;
+      const query = `DELETE FROM facts WHERE (${conditions.join(" OR ")})
+        AND id NOT IN (SELECT fact_id FROM verified_facts)`;
+      db.prepare(query).run(...params);
+      return ids;
+    },
+    "IMMEDIATE",
+  );
+  return tx();
 }
 
 export function findSessionFactsForPromotion(

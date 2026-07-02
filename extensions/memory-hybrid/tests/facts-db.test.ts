@@ -2,7 +2,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
 
 const { FactsDB, isIsoUtcTimestamp } = _testing;
@@ -3230,6 +3230,57 @@ describe("FactsDB scoping", () => {
     expect(db.getById(g1.id)).toBeNull();
     expect(db.getById(g2.id)).toBeNull();
     expect(db.getById(session.id)).not.toBeNull();
+  });
+
+  it("pruneScopedFacts runs its id-select and deletes inside a single transaction", () => {
+    // The returned ids are only trustworthy for downstream vector cleanup if nothing else can
+    // run between the SELECT and the DELETEs — otherwise a fact inserted into the scope mid-call
+    // gets swept up by the unconditional DELETE but never appears in the returned ids, orphaning
+    // its vector. Assert the whole sequence is wrapped in one BEGIN IMMEDIATE ... COMMIT rather
+    // than three unguarded statements.
+    db.store({
+      text: "Global note for tx test",
+      category: "other",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "global",
+    });
+
+    const raw = db.getRawDb();
+    const callLog: Array<{ kind: "exec" | "prepare"; sql: string }> = [];
+    const originalExec = raw.exec.bind(raw);
+    const originalPrepare = raw.prepare.bind(raw);
+    vi.spyOn(raw, "exec").mockImplementation((sql: string) => {
+      callLog.push({ kind: "exec", sql });
+      return originalExec(sql);
+    });
+    vi.spyOn(raw, "prepare").mockImplementation((sql: string) => {
+      callLog.push({ kind: "prepare", sql });
+      return originalPrepare(sql);
+    });
+
+    db.pruneScopedFacts({ global: true });
+
+    const beginIndex = callLog.findIndex((c) => c.kind === "exec" && c.sql.startsWith("BEGIN"));
+    const commitIndex = callLog.findIndex((c) => c.kind === "exec" && c.sql === "COMMIT");
+    expect(beginIndex).toBeGreaterThanOrEqual(0);
+    expect(commitIndex).toBeGreaterThan(beginIndex);
+
+    // Every SELECT/DELETE that pruneScopedFacts issues against facts/memory_links must fall
+    // strictly between BEGIN and COMMIT — proving the id-select and the deletes share one
+    // transaction, with no gap where a concurrent writer could slip in an unaccounted-for row.
+    const pruneStatementIndexes = callLog
+      .map((c, i) => ({ ...c, i }))
+      .filter((c) => c.kind === "prepare" && (c.sql.includes("FROM facts") || c.sql.includes("memory_links")))
+      .map((c) => c.i);
+    expect(pruneStatementIndexes.length).toBeGreaterThan(0);
+    for (const i of pruneStatementIndexes) {
+      expect(i).toBeGreaterThan(beginIndex);
+      expect(i).toBeLessThan(commitIndex);
+    }
   });
 
   it("promoteScope changes scope from session to global", () => {
