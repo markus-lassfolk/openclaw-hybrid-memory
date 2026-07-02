@@ -263,11 +263,18 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
       withExit(async (opts?: { json?: boolean }) => {
         const audit = runCredentialsAudit();
         if (opts?.json) {
-          console.log(JSON.stringify({ total: audit.total, entries: audit.entries }, null, 2));
+          console.log(
+            JSON.stringify({ total: audit.total, entries: audit.entries, undecryptable: audit.undecryptable }, null, 2),
+          );
           return;
         }
+        if (audit.undecryptable > 0) {
+          console.log(
+            `WARNING: ${audit.undecryptable} credential row(s) could not be decrypted with the current key and are excluded below — this usually means the wrong/rotated encryption key is configured, not that the vault is empty.`,
+          );
+        }
         if (audit.total === 0) {
-          console.log("No credentials in vault.");
+          console.log(audit.undecryptable > 0 ? "No decryptable credentials in vault." : "No credentials in vault.");
           return;
         }
         const suspicious = audit.entries.filter((e) => e.flags.length > 0);
@@ -296,6 +303,11 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
               .filter(Boolean)
           : undefined;
         const res = runCredentialsPrune({ dryRun, yes, onlyFlags });
+        if (res.undecryptable > 0) {
+          console.log(
+            `WARNING: ${res.undecryptable} credential row(s) could not be decrypted with the current key and were skipped — not evaluated for pruning.`,
+          );
+        }
         if (res.removed === 0) {
           console.log(res.dryRun ? "No suspicious entries to prune (dry-run)." : "No entries removed.");
           return;
