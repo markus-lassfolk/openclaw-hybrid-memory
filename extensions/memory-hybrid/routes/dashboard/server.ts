@@ -900,14 +900,19 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           res.end(JSON.stringify({ error: "missing id" }));
           return;
         }
-        const detail = collectWorkshopProposalDetail(wctx, id);
-        if (!detail) {
-          res.writeHead(404, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "not found" }));
-          return;
+        try {
+          const detail = collectWorkshopProposalDetail(wctx, id);
+          if (!detail) {
+            res.writeHead(404, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "not found" }));
+            return;
+          }
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(detail));
+        } catch (err) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: workshopClientError(err, "/api/workshop/proposals/:id") }));
         }
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(detail));
         return;
       }
       if (req.method === "POST" && actionMatch) {

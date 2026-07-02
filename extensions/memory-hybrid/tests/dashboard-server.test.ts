@@ -32,6 +32,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseDashboardConfig } from "../config/parsers/features.js";
 import { _testing } from "../index.js";
 import { collectStatus, createDashboardServer, graphqlBodyIsMutation, parseLimitParam } from "../routes/dashboard-server.js";
+import * as workshopCollectors from "../routes/dashboard/workshop-collectors.js";
 import * as fsUtils from "../utils/fs.js";
 
 const { FactsDB, VectorDB } = _testing;
@@ -1270,6 +1271,33 @@ describeCreateDashboardServer("Workshop API", () => {
       const detail = JSON.parse(body) as { id: string; title: string };
       expect(detail.id).toBe(proposal.id);
       expect(detail.title).toBe("Inspect me");
+    });
+  });
+
+  it("GET proposal detail returns 500 JSON instead of crashing when the collector throws (#65)", async () => {
+    await withWorkshopServer(async (ctx, port) => {
+      const { makeUnifiedKey } = await import("../services/unified-proposals.js");
+      const proposal = ctx.proposalsDb.create({
+        targetFile: "SOUL.md",
+        title: "Inspect me",
+        observation: "obs",
+        suggestedChange: "Guidance.",
+        confidence: 0.8,
+        evidenceSessions: [],
+      });
+      const key = makeUnifiedKey("persona", proposal.id);
+      const spy = vi
+        .spyOn(workshopCollectors, "collectWorkshopProposalDetail")
+        .mockImplementation(() => {
+          throw new Error("simulated corrupted proposal record");
+        });
+      try {
+        const { status, body } = await httpGet(port, `/api/workshop/proposals/${encodeURIComponent(key)}`);
+        expect(status).toBe(500);
+        expect(JSON.parse(body).error).toBeDefined();
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 
