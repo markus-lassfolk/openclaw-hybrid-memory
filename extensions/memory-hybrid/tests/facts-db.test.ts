@@ -3225,7 +3225,8 @@ describe("FactsDB scoping", () => {
     expect(pending.has(session.id)).toBe(false);
 
     const deleted = db.pruneScopedFacts({ global: true });
-    expect(deleted).toBe(2);
+    expect(deleted).toHaveLength(2);
+    expect(new Set(deleted)).toEqual(new Set([g1.id, g2.id]));
     expect(db.getById(g1.id)).toBeNull();
     expect(db.getById(g2.id)).toBeNull();
     expect(db.getById(session.id)).not.toBeNull();

@@ -202,14 +202,15 @@ export class FactsDB extends FactsDBLayer2 {
     return scopeStatsImpl(this.liveDb);
   }
 
-  pruneScopedFacts(scopeFilter: ScopeFilter): number {
+  /** Prune facts matching scopeFilter; returns the IDs actually deleted (see housekeeping.ts). */
+  pruneScopedFacts(scopeFilter: ScopeFilter): string[] {
     return pruneScopedFactsImpl(this.liveDb, scopeFilter);
   }
 
   /**
-   * Return the fact IDs that `pruneScopedFacts(scopeFilter)` would delete.
-   * Call this *before* `pruneScopedFacts` to collect IDs for LanceDB vector cleanup.
-   * Excludes verified/pinned facts (same guard as the DELETE).
+   * Return the fact IDs that `pruneScopedFacts(scopeFilter)` would delete, for dry-run previews
+   * before a destructive confirmation prompt. For the post-delete vector cleanup, prefer
+   * `pruneScopedFacts`'s own return value instead of this snapshot (see its doc comment).
    */
   listScopedFactIdsPendingPrune(scopeFilter: ScopeFilter): string[] {
     return listScopedFactIdsPendingPruneImpl(this.liveDb, scopeFilter);

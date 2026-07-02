@@ -483,7 +483,15 @@ export function listScopedFactIdsPendingPrune(db: DatabaseSync, scopeFilter: Sco
   return rows.map((r) => r.id);
 }
 
-export function pruneScopedFacts(db: DatabaseSync, scopeFilter: ScopeFilter): number {
+/**
+ * Prune facts matching scopeFilter and return the IDs that were actually deleted.
+ * Callers doing follow-up cleanup keyed by fact ID (e.g. LanceDB vector deletion) should use
+ * this return value rather than a separately-collected id snapshot: the SELECT-then-DELETE here
+ * runs back-to-back with nothing else able to run in between, so it reflects exactly what was
+ * deleted — unlike a snapshot taken earlier (e.g. before a confirmation prompt), which can drift
+ * if a fact enters or leaves the scope in the meantime and silently leave its vector orphaned.
+ */
+export function pruneScopedFacts(db: DatabaseSync, scopeFilter: ScopeFilter): string[] {
   const conditions: string[] = [];
   const params: (string | null)[] = [];
 
@@ -503,7 +511,16 @@ export function pruneScopedFacts(db: DatabaseSync, scopeFilter: ScopeFilter): nu
     params.push(scopeFilter.sessionId);
   }
 
-  if (conditions.length === 0) return 0;
+  if (conditions.length === 0) return [];
+
+  const idRows = db
+    .prepare(
+      `SELECT id FROM facts WHERE (${conditions.join(" OR ")})
+         AND id NOT IN (SELECT fact_id FROM verified_facts)`,
+    )
+    .all(...params) as Array<{ id: string }>;
+  const ids = idRows.map((r) => r.id);
+  if (ids.length === 0) return [];
 
   const linkCleanupQuery = `DELETE FROM memory_links
       WHERE target_fact_id IN (
@@ -515,8 +532,8 @@ export function pruneScopedFacts(db: DatabaseSync, scopeFilter: ScopeFilter): nu
 
   const query = `DELETE FROM facts WHERE (${conditions.join(" OR ")})
     AND id NOT IN (SELECT fact_id FROM verified_facts)`;
-  const result = db.prepare(query).run(...params);
-  return Number(result.changes ?? 0);
+  db.prepare(query).run(...params);
+  return ids;
 }
 
 export function findSessionFactsForPromotion(
