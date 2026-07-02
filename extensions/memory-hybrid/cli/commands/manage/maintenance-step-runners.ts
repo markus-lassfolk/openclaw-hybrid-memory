@@ -47,6 +47,7 @@ import { extractImplicitSemanticOutcome, isGracefulExtractImplicitPartial } from
 import { cleanupImplicitFeedbackDuplicates } from "../../cmd-feedback.js";
 import { resolveScanMaintenanceOverrides, type ScanMaintenanceOverrideInput } from "../../maintenance-overrides.js";
 import { nowIso } from "../../../utils/dates.js";
+import { maintenanceRunDeadlineReached } from "../../../utils/maintenance-run-deadline.js";
 import {
   parseSemanticTokenFromSummary,
   semanticOutcomeBlocksOrchestratorGuard,
@@ -666,6 +667,7 @@ export function buildCliMaintenanceRunners(
         dryRun: false,
         afterRowid: afterRowid > 0 ? afterRowid : undefined,
         seedCanonical: carryCanonical,
+        wallClockCheck: () => maintenanceRunDeadlineReached(),
       });
       scanned += res.scanned;
       collapsed += res.collapsed;
