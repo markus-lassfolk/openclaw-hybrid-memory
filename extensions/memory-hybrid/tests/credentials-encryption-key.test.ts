@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hybridConfigSchema } from "../config.js";
 import {
+  parseCredentialsConfig,
   resolveCredentialsEncryptionKeyCandidates,
   resolveCredentialsEncryptionKeyForConfig,
 } from "../config/parsers/core.js";
@@ -55,6 +56,42 @@ describe("resolveCredentialsEncryptionKeyCandidates", () => {
     const missing = `file:${join(tmpdir(), "cred-key-missing", "vault.key")}`;
     expect(resolveCredentialsEncryptionKeyForConfig(missing)).toBe("");
     expect(resolveCredentialsEncryptionKeyCandidates(missing)).toEqual([""]);
+  });
+});
+
+describe("parseCredentialsConfig: too-short key without explicit enabled", () => {
+  it("warns and leaves the vault disabled when a short literal key is configured without enabled: true", () => {
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+    try {
+      const result = parseCredentialsConfig({ credentials: { encryptionKey: "too-short" } });
+      expect(result.enabled).toBe(false);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("shorter than 16 characters"));
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("warns and leaves the vault disabled when an unresolvable file: ref is configured without enabled: true", () => {
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+    try {
+      const missing = `file:${join(tmpdir(), "cred-key-missing-no-enable", "vault.key")}`;
+      const result = parseCredentialsConfig({ credentials: { encryptionKey: missing } });
+      expect(result.enabled).toBe(false);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("could not be resolved to a usable key"));
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("does not warn when credentials.enabled is explicitly false", () => {
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+    try {
+      const result = parseCredentialsConfig({ credentials: { enabled: false, encryptionKey: "too-short" } });
+      expect(result.enabled).toBe(false);
+      expect(warnSpy).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 
