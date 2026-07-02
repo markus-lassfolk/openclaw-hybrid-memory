@@ -347,7 +347,7 @@ function runGraphStrategy(
  * Minimal interface for fact lookup during orchestration.
  * Satisfied by FactsDB.
  */
-interface FactLookup {
+export interface FactLookup {
   getById(id: string, options?: { asOf?: number; scopeFilter?: unknown }): MemoryEntry | null;
   /** Optional: check whether a fact has an unresolved CONTRADICTS link targeting it. */
   isContradicted?(factId: string): boolean;
@@ -375,11 +375,23 @@ function hasGraphLookup(factsDb: FactLookup): factsDb is FactLookup & GraphFactL
   );
 }
 
-type ClusterCacheEntry = { clusters: Map<string, string>; timestamp: number; minClusterSize: number | undefined };
+type ClusterCacheEntry = {
+  clusters: Map<string, string>;
+  timestamp: number;
+  minClusterSize: number | undefined;
+  linkCount: number | null;
+};
 
-class ClusterCache {
-  private clusterCache: ClusterCacheEntry | null = null;
-  private clusterCacheLinkCount: number | null = null;
+/** Exported for direct unit testing of the per-FactsDB-instance caching behavior. */
+export class ClusterCache {
+  // Keyed by FactsDB instance identity (not just linksCount/minClusterSize): a module-level
+  // single-slot cache previously returned one FactsDB's cluster assignments to a *different*
+  // FactsDB instance whenever their linksCount() happened to coincide (e.g. two vaults both
+  // empty, or both mid-migration with the same link count) — silently corrupting cluster
+  // membership for the caller who didn't own that cached result. A WeakMap keyed by the FactsDB
+  // reference gives each instance its own cache slot and lets entries be garbage-collected
+  // automatically once their FactsDB is no longer referenced elsewhere.
+  private cache = new WeakMap<FactLookup & ClusterFactLookup, ClusterCacheEntry>();
   private readonly ttlMs: number;
 
   constructor(ttlMs = 5 * 60 * 1000) {
@@ -389,12 +401,10 @@ class ClusterCache {
   getClusterMap(factsDb: FactLookup & ClusterFactLookup, minClusterSize?: number): Map<string, string> {
     const now = Date.now();
     const linkCount = typeof factsDb.linksCount === "function" ? factsDb.linksCount() : null;
-    if (this.clusterCache && now - this.clusterCache.timestamp < this.ttlMs) {
-      if (
-        (linkCount == null || linkCount === this.clusterCacheLinkCount) &&
-        this.clusterCache.minClusterSize === minClusterSize
-      ) {
-        return this.clusterCache.clusters;
+    const existing = this.cache.get(factsDb);
+    if (existing && now - existing.timestamp < this.ttlMs) {
+      if ((linkCount == null || linkCount === existing.linkCount) && existing.minClusterSize === minClusterSize) {
+        return existing.clusters;
       }
     }
 
@@ -406,14 +416,12 @@ class ClusterCache {
       }
     }
 
-    this.clusterCache = { clusters: clusterByFact, timestamp: now, minClusterSize };
-    this.clusterCacheLinkCount = linkCount;
+    this.cache.set(factsDb, { clusters: clusterByFact, timestamp: now, minClusterSize, linkCount });
     return clusterByFact;
   }
 
   invalidate(): void {
-    this.clusterCache = null;
-    this.clusterCacheLinkCount = null;
+    this.cache = new WeakMap();
   }
 }
 
