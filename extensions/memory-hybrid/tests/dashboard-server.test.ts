@@ -31,7 +31,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseDashboardConfig } from "../config/parsers/features.js";
 import { _testing } from "../index.js";
-import { collectStatus, createDashboardServer, graphqlBodyIsMutation } from "../routes/dashboard-server.js";
+import { collectStatus, createDashboardServer, graphqlBodyIsMutation, parseLimitParam } from "../routes/dashboard-server.js";
+import * as workshopCollectors from "../routes/dashboard/workshop-collectors.js";
 import * as fsUtils from "../utils/fs.js";
 
 const { FactsDB, VectorDB } = _testing;
@@ -135,9 +136,74 @@ async function httpPost(port: number, path: string, body: string): Promise<{ sta
   });
 }
 
+async function httpPostWithHeaders(
+  port: number,
+  path: string,
+  body: string,
+  extraHeaders: Record<string, string> = {},
+): Promise<{ status: number; body: string; headers: Record<string, string | string[] | undefined> }> {
+  return new Promise((resolve, reject) => {
+    const req = request(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path,
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(body),
+          ...extraHeaders,
+        },
+      },
+      (res) => {
+        let responseBody = "";
+        res.on("data", (chunk: Buffer) => {
+          responseBody += chunk.toString();
+        });
+        res.on("end", () =>
+          resolve({ status: res.statusCode ?? 0, body: responseBody, headers: res.headers }),
+        );
+      },
+    );
+    req.on("error", reject);
+    req.setTimeout(3000, () => {
+      req.destroy(new Error("timeout"));
+    });
+    req.end(body);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+describe("parseLimitParam (#20)", () => {
+  it("returns the fallback for a missing param", () => {
+    expect(parseLimitParam(null, 50, 200)).toBe(50);
+    expect(parseLimitParam("", 50, 200)).toBe(50);
+  });
+
+  it("returns the fallback for a non-numeric param instead of NaN", () => {
+    // Regression: the old `Number.parseInt(raw ?? "50", 10)` (no `|| fallback`) let a
+    // non-numeric limit propagate as NaN into a SQL bind, which node:sqlite rejects with
+    // "datatype mismatch" — silently swallowed by the route's catch into an empty 200 response.
+    expect(parseLimitParam("abc", 50, 200)).toBe(50);
+    expect(Number.isNaN(parseLimitParam("abc", 50, 200))).toBe(false);
+  });
+
+  it("returns the fallback for zero or negative input", () => {
+    expect(parseLimitParam("0", 50, 200)).toBe(50);
+    expect(parseLimitParam("-5", 50, 200)).toBe(50);
+  });
+
+  it("clamps to max for an oversized value", () => {
+    expect(parseLimitParam("999999", 50, 200)).toBe(200);
+  });
+
+  it("passes through a valid in-range value", () => {
+    expect(parseLimitParam("75", 50, 200)).toBe(75);
+  });
+});
 
 describe("parseDashboardConfig", () => {
   it("defaults to enabled=true and port=7700", () => {
@@ -174,8 +240,32 @@ describe("parseDashboardConfig", () => {
   it("graphqlBodyIsMutation detects named and anonymous mutations", () => {
     expect(graphqlBodyIsMutation({ query: "{ __typename }" })).toBe(false);
     expect(graphqlBodyIsMutation({ query: "mutation { deleteFact(id: \"x\") }" })).toBe(true);
-    expect(graphqlBodyIsMutation({ query: '{ deleteFact(id: "x") }' })).toBe(true);
+    expect(graphqlBodyIsMutation({ query: "mutation DeleteIt { deleteFact(id: \"x\") }" })).toBe(true);
     expect(graphqlBodyIsMutation({ query: "query { facts { id } }" })).toBe(false);
+    // Anonymous shorthand `{ ... }` is unambiguously a query-type operation per the GraphQL
+    // spec — it can never actually invoke a Mutation-type field regardless of the field's name,
+    // so this is correctly NOT flagged (unlike the old regex heuristic, which over-matched this
+    // case defensively while still missing the real bypass below).
+    expect(graphqlBodyIsMutation({ query: '{ deleteFact(id: "x") }' })).toBe(false);
+  });
+
+  it("graphqlBodyIsMutation is not bypassable via a leading fragment definition", () => {
+    // Regression for the auth-bypass reported against the old regex-based detector: a document
+    // starting with `fragment` (not "mutation" or "{") followed by enough padding to push the
+    // `mutation` keyword past a fixed-length scan window matched none of the old heuristic's
+    // three checks, so a real mutation executed unauthenticated.
+    const padding = " ".repeat(600);
+    const query = `fragment F on Query { __typename }${padding}mutation Evil { deleteFact(id: "1") }`;
+    expect(graphqlBodyIsMutation({ query })).toBe(true);
+  });
+
+  it("graphqlBodyIsMutation flags a document containing any mutation operation, even mixed with queries", () => {
+    const query = `query Q { facts { id } } mutation M { deleteFact(id: "1") }`;
+    expect(graphqlBodyIsMutation({ query })).toBe(true);
+  });
+
+  it("graphqlBodyIsMutation fails closed (requires auth) on unparseable queries", () => {
+    expect(graphqlBodyIsMutation({ query: "{ this is not valid graphql (((" })).toBe(true);
   });
 });
 
@@ -434,6 +524,137 @@ describeCreateDashboardServer("createDashboardServer", () => {
     expect(JSON.parse(body).error).toBe("PayloadTooLarge");
   });
 
+  it("POST /graphql does not send a wildcard (or any) CORS origin header (#64)", async () => {
+    if (!server) return;
+    const { status, headers } = await httpPostWithHeaders(
+      port,
+      "/graphql",
+      JSON.stringify({ query: "query { stats { totalFacts } }" }),
+      { origin: "https://evil.example.com" },
+    );
+    expect(status).toBe(200);
+    expect(headers["access-control-allow-origin"]).toBeUndefined();
+  });
+
+  it("POST /graphql facts query does not leak a different tenant's scoped fact (#63)", async () => {
+    if (!server) return;
+    ctx.factsDb.store({
+      text: "victim's private note",
+      category: "fact",
+      source: "test",
+      scope: "user",
+      scopeTarget: "victim-user",
+    });
+    const query = JSON.stringify({ query: "query { facts(limit: 100) { text } }" });
+
+    // No identity headers at all — defaults to global-only visibility.
+    const anon = await httpPost(port, "/graphql", query);
+    expect(JSON.parse(anon.body).data.facts.map((f: { text: string }) => f.text)).not.toContain(
+      "victim's private note",
+    );
+
+    // A DIFFERENT tenant's identity headers — must not see the victim's scoped fact either.
+    const attacker = await httpPostWithHeaders(port, "/graphql", query, {
+      "x-openclaw-user-id": "attacker-user",
+    });
+    expect(JSON.parse(attacker.body).data.facts.map((f: { text: string }) => f.text)).not.toContain(
+      "victim's private note",
+    );
+
+    // The victim's own identity headers — must see their own scoped fact.
+    const victim = await httpPostWithHeaders(port, "/graphql", query, {
+      "x-openclaw-user-id": "victim-user",
+    });
+    expect(JSON.parse(victim.body).data.facts.map((f: { text: string }) => f.text)).toContain(
+      "victim's private note",
+    );
+  });
+
+  it("POST /graphql createFact ignores client-supplied scope/scopeTarget and derives it from caller identity (#69)", async () => {
+    if (!server) return;
+    const mutation = JSON.stringify({
+      query:
+        'mutation { createFact(input: { text: "planted note", scope: "user", scopeTarget: "victim-user" }) { id scope scopeTarget } }',
+    });
+
+    // Attacker has no special identity — tries to plant a fact directly into victim-user's scope.
+    const { status, body } = await httpPost(port, "/graphql", mutation);
+    expect(status).toBe(200);
+    const parsed = JSON.parse(body);
+    expect(parsed.errors).toBeUndefined();
+    // The fact must be stored under the CALLER's own resolved scope (global, since no identity
+    // headers were sent), not the client-requested "user/victim-user" — otherwise this fact would
+    // surface in victim-user's own legitimately-scoped reads.
+    expect(parsed.data.createFact.scope).toBe("global");
+    expect(parsed.data.createFact.scopeTarget).toBeNull();
+  });
+
+  it("POST /graphql updateFact/deleteFact cannot target a different tenant's scoped fact (#69)", async () => {
+    if (!server) return;
+    const victimFact = ctx.factsDb.store({
+      text: "victim's note",
+      category: "fact",
+      source: "test",
+      scope: "user",
+      scopeTarget: "victim-user",
+    });
+
+    const updateMutation = JSON.stringify({
+      query: `mutation { updateFact(input: { id: "${victimFact.id}", text: "tampered" }) { id } }`,
+    });
+    const updateResult = await httpPostWithHeaders(port, "/graphql", updateMutation, {
+      "x-openclaw-user-id": "attacker-user",
+    });
+    // Yoga masks the raw error message in the client response by default; the important
+    // assertion is that the mutation errored (didn't silently succeed) and left the fact untouched.
+    expect(JSON.parse(updateResult.body).errors?.[0]).toBeDefined();
+    expect(ctx.factsDb.getById(victimFact.id)?.text).toBe("victim's note");
+
+    const deleteMutation = JSON.stringify({
+      query: `mutation { deleteFact(id: "${victimFact.id}") }`,
+    });
+    const deleteResult = await httpPostWithHeaders(port, "/graphql", deleteMutation, {
+      "x-openclaw-user-id": "attacker-user",
+    });
+    expect(JSON.parse(deleteResult.body).data.deleteFact).toBe(false);
+    expect(ctx.factsDb.getById(victimFact.id)).not.toBeNull();
+  });
+
+  it("POST /graphql entityFacts/links/graph respect pagination limits (#66)", async () => {
+    if (!server) return;
+    for (let i = 0; i < 5; i++) {
+      ctx.factsDb.store({ text: `entity fact ${i}`, category: "fact", source: "test", entity: "widget" });
+    }
+    const entityResult = await httpPost(
+      port,
+      "/graphql",
+      JSON.stringify({ query: 'query { entityFacts(entity: "widget", limit: 2) { id } }' }),
+    );
+    expect(JSON.parse(entityResult.body).data.entityFacts).toHaveLength(2);
+
+    const a = ctx.factsDb.store({ text: "link a", category: "fact", source: "test" });
+    const b = ctx.factsDb.store({ text: "link b", category: "fact", source: "test" });
+    const c = ctx.factsDb.store({ text: "link c", category: "fact", source: "test" });
+    ctx.factsDb.createLink(a.id, b.id, "RELATED_TO", 1);
+    ctx.factsDb.createLink(a.id, c.id, "RELATED_TO", 1);
+    const linksResult = await httpPost(
+      port,
+      "/graphql",
+      JSON.stringify({ query: `query { links(sourceId: "${a.id}", limit: 1) { id } }` }),
+    );
+    expect(JSON.parse(linksResult.body).data.links).toHaveLength(1);
+
+    for (let i = 0; i < 25; i++) {
+      ctx.factsDb.store({ text: `graph fact ${i}`, category: "fact", source: "test" });
+    }
+    const graphResult = await httpPost(
+      port,
+      "/graphql",
+      JSON.stringify({ query: "query { graph(filter: { maxNodes: 20 }) { nodes { id } } }" }),
+    );
+    expect(JSON.parse(graphResult.body).data.graph.nodes.length).toBeLessThanOrEqual(20);
+  });
+
   it("exposes the port in the returned object", () => {
     if (!server) return;
     expect(server.port).toBeGreaterThan(0);
@@ -678,6 +899,18 @@ describe("Memory Viewer API (Issue #1023)", () => {
     });
   });
 
+  it("GET /api/viewer/facts clamps an absurdly large offset instead of passing it through unbounded (#67)", async () => {
+    await withServer(async (ctx, port) => {
+      const spy = vi.spyOn(ctx.factsDb, "listForDashboard");
+      const { status } = await apiGet(port, "/api/viewer/facts?search=x&offset=50000000&limit=50");
+      expect(status).toBe(200);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const passedOffset = spy.mock.calls[0]?.[0]?.offset;
+      expect(passedOffset).toBeLessThanOrEqual(1_000_000);
+      spy.mockRestore();
+    });
+  });
+
   it("GET /api/viewer/facts parses comma-separated tags into an array", async () => {
     await withServer(async (ctx, port) => {
       ctx.factsDb.store({ text: "Tag test", category: "fact", source: "test", tags: ["alpha", "beta"] });
@@ -773,6 +1006,44 @@ describe("Memory Viewer API (Issue #1023)", () => {
       const { status, body } = await apiGet(port, "/api/viewer/entities");
       expect(status).toBe(200);
       expect(Array.isArray(JSON.parse(body))).toBe(true);
+    });
+  });
+
+  it("GET /api/viewer/entities?limit=abc falls back to the default limit instead of silently returning empty (#20)", async () => {
+    await withServer(async (ctx, port) => {
+      ctx.factsDb.store({ text: "Entity test", category: "fact", source: "test", entity: "MyEntity" });
+      const { status, body } = await apiGet(port, "/api/viewer/entities?limit=abc");
+      expect(status).toBe(200);
+      const entities = JSON.parse(body);
+      expect(Array.isArray(entities)).toBe(true);
+      expect(entities.length).toBeGreaterThan(0);
+    });
+  });
+
+  it("GET /api/viewer/provenance/ (empty id) returns 400 instead of an unvalidated lookup (#20)", async () => {
+    await withServer(async (_ctx, port) => {
+      const { status } = await apiGet(port, "/api/viewer/provenance/");
+      expect(status).toBe(400);
+    });
+  });
+
+  it("error responses from viewer routes do not leak raw error text (#20)", async () => {
+    await withServer(async (ctx, port) => {
+      // Force a real internal error with a message that would be an obvious leak if surfaced
+      // verbatim (e.g. an internal path), then verify the response is a generic message instead.
+      const leakedDetail = "ENOENT: /home/user/.openclaw/secrets/private.db";
+      const spy = vi.spyOn(ctx.factsDb, "listForDashboard").mockImplementation(() => {
+        throw new Error(leakedDetail);
+      });
+      try {
+        const { status, body } = await apiGet(port, "/api/viewer/facts");
+        expect(status).toBe(500);
+        expect(body).not.toContain(leakedDetail);
+        const parsed = JSON.parse(body);
+        expect(parsed.error).toBe("InternalServerError");
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 
@@ -900,7 +1171,7 @@ describe("Memory Viewer API (Issue #1023)", () => {
     }
   });
 
-  it("POST /graphql anonymous deleteFact returns 401 when dashboard.token is set", async () => {
+  it("POST /graphql anonymous deleteFact mutation returns 401 when dashboard.token is set", async () => {
     const td = mkdtempSync(join(tmpdir(), "dashboard-auth-gql-mut-"));
     try {
       const ctx = await makeContextWithStores(td);
@@ -908,13 +1179,40 @@ describe("Memory Viewer API (Issue #1023)", () => {
       const srv = await createDashboardServer(ctx, 0);
       try {
         const entry = ctx.factsDb.store({ text: "GQL delete", category: "fact", source: "test" });
-        const query = JSON.stringify({ query: `{ deleteFact(id: "${entry.id}") }` });
+        // A real, executable mutation — the anonymous *shorthand* `{ deleteFact(...) }` form
+        // (tested separately below) is unambiguously a query-type operation per the GraphQL
+        // spec and can never actually invoke a Mutation-type field, so it isn't a valid probe
+        // for "does this endpoint gate real mutations."
+        const query = JSON.stringify({ query: `mutation { deleteFact(id: "${entry.id}") }` });
         const unauthorized = await apiPost(srv.port, "/graphql", query);
         expect(unauthorized.status).toBe(401);
         const authorized = await apiPost(srv.port, "/graphql", query, {
           Authorization: "Bearer test-secret",
         });
         expect(authorized.status).not.toBe(401);
+      } finally {
+        closeAll(ctx);
+        srv.close();
+      }
+    } finally {
+      rmSync(td, { recursive: true, force: true });
+    }
+  });
+
+  it("POST /graphql anonymous-shorthand deleteFact cannot actually delete (query-type operations can't invoke mutation fields)", async () => {
+    const td = mkdtempSync(join(tmpdir(), "dashboard-auth-gql-shorthand-"));
+    try {
+      const ctx = await makeContextWithStores(td);
+      ctx.hybridCfg = { dashboard: { enabled: true, port: 7700, token: "test-secret" } };
+      const srv = await createDashboardServer(ctx, 0);
+      try {
+        const entry = ctx.factsDb.store({ text: "GQL shorthand delete", category: "fact", source: "test" });
+        const query = JSON.stringify({ query: `{ deleteFact(id: "${entry.id}") }` });
+        const res = await apiPost(srv.port, "/graphql", query);
+        // Not gated by dashboard.token (it's not a mutation operation) — but the GraphQL executor
+        // rejects it (deleteFact isn't defined on the Query root type), so no deletion happens.
+        expect(res.status).not.toBe(401);
+        expect(ctx.factsDb.getById(entry.id)).not.toBeNull();
       } finally {
         closeAll(ctx);
         srv.close();
@@ -1156,6 +1454,33 @@ describeCreateDashboardServer("Workshop API", () => {
     });
   });
 
+  it("GET proposal detail returns 500 JSON instead of crashing when the collector throws (#65)", async () => {
+    await withWorkshopServer(async (ctx, port) => {
+      const { makeUnifiedKey } = await import("../services/unified-proposals.js");
+      const proposal = ctx.proposalsDb.create({
+        targetFile: "SOUL.md",
+        title: "Inspect me",
+        observation: "obs",
+        suggestedChange: "Guidance.",
+        confidence: 0.8,
+        evidenceSessions: [],
+      });
+      const key = makeUnifiedKey("persona", proposal.id);
+      const spy = vi
+        .spyOn(workshopCollectors, "collectWorkshopProposalDetail")
+        .mockImplementation(() => {
+          throw new Error("simulated corrupted proposal record");
+        });
+      try {
+        const { status, body } = await httpGet(port, `/api/workshop/proposals/${encodeURIComponent(key)}`);
+        expect(status).toBe(500);
+        expect(JSON.parse(body).error).toBeDefined();
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  });
+
   it("POST /api/workshop/changes/revert reverts by change event id", async () => {
     await withWorkshopServer(
       async (ctx, port) => {
@@ -1189,6 +1514,52 @@ describeCreateDashboardServer("Workshop API", () => {
       },
       { withChangeFeed: true },
     );
+  });
+
+  it("GET /api/workshop/changes clamps a negative limit instead of passing it through raw (#70)", async () => {
+    await withWorkshopServer(async (_ctx, port) => {
+      const spy = vi.spyOn(workshopCollectors, "collectWorkshopChanges");
+      try {
+        const { status } = await httpGet(port, "/api/workshop/changes?limit=-1");
+        expect(status).toBe(200);
+        const passedLimit = spy.mock.calls[0]?.[1];
+        expect(passedLimit).toBeGreaterThan(0);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  });
+
+  it("POST /api/workshop/changes/revert returns 413 (not 400) for an oversized body (#71)", async () => {
+    await withWorkshopServer(async (_ctx, port) => {
+      const big = JSON.stringify({ id: "x", filler: "a".repeat(70 * 1024) });
+      const { status, body } = await httpPost(port, "/api/workshop/changes/revert", big);
+      expect(status).toBe(413);
+      expect(JSON.parse(body).error).toBe("PayloadTooLarge");
+    });
+  });
+
+  it("POST /api/workshop/proposals/:id/reject returns 413 (not 400) for an oversized body (#71)", async () => {
+    await withWorkshopServer(async (ctx, port) => {
+      const proposal = ctx.proposalsDb.create({
+        targetFile: "SOUL.md",
+        title: "Oversized body test",
+        observation: "obs",
+        suggestedChange: "Guidance.",
+        confidence: 0.8,
+        evidenceSessions: [],
+      });
+      const { makeUnifiedKey } = await import("../services/unified-proposals.js");
+      const key = makeUnifiedKey("persona", proposal.id);
+      const big = JSON.stringify({ reason: "a".repeat(70 * 1024) });
+      const { status, body } = await httpPost(
+        port,
+        `/api/workshop/proposals/${encodeURIComponent(key)}/reject`,
+        big,
+      );
+      expect(status).toBe(413);
+      expect(JSON.parse(body).error).toBe("PayloadTooLarge");
+    });
   });
 
   it("returns 503 when workshop is explicitly disabled", async () => {

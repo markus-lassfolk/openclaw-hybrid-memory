@@ -33,7 +33,11 @@ export type Chainable = {
   command(name: string): Chainable;
   description(desc: string): Chainable;
   action(fn: (...args: any[]) => void | Promise<void>): Chainable;
-  option(flags: string, desc?: string, defaultValue?: unknown): Chainable;
+  /**
+   * `defaultValueOrFn` may be a Commander custom-processing/collector function (e.g. for
+   * repeatable flags like `-t, --tag <t>`), in which case `defaultValue` is its initial value.
+   */
+  option(flags: string, desc?: string, defaultValueOrFn?: unknown, defaultValue?: unknown): Chainable;
   requiredOption(flags: string, desc?: string, defaultValue?: unknown): Chainable;
   argument?(name: string, desc?: string): Chainable;
   alias?(name: string): Chainable;

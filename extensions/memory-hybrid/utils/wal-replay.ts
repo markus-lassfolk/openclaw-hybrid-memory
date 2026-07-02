@@ -35,6 +35,18 @@ function safeStringArray(v: unknown): string[] | null {
   return out.length > 0 ? out : null;
 }
 
+/**
+ * Reject the whole precomputed vector if any element is non-numeric or non-finite, rather than
+ * silently dropping the bad elements — filtering them out shrinks the array below the table's
+ * configured dimension, which vectorDb.store() now rejects outright, and previously risked
+ * writing a corrupt (wrong-width) vector. A partially-NaN vector is not safely replayable; fall
+ * back to re-embedding the fact's text instead.
+ */
+function safeVector(v: unknown): number[] | null {
+  if (!Array.isArray(v) || v.length === 0) return null;
+  return v.every((n) => typeof n === "number" && Number.isFinite(n)) ? (v as number[]) : null;
+}
+
 const VALID_WAL_SCOPES = new Set(["global", "user", "agent", "session"]);
 
 function safeScope(v: unknown): "global" | "user" | "agent" | "session" | null {
@@ -71,24 +83,45 @@ function invalidScopeMessage(
   return null;
 }
 
-function findExistingFactIdForWal(factsDb: FactsDB, text: string, source: string | null): string | null {
+function findExistingFactIdForWal(
+  factsDb: FactsDB,
+  text: string,
+  source: string | null,
+  scope: "global" | "user" | "agent" | "session" | null,
+  scopeTarget: string | null,
+): string | null {
   try {
     const src = source?.trim() || "conversation";
-    const row = factsDb
-      .getRawDb()
-      .prepare(
-        "SELECT id FROM facts WHERE text = ? AND source = ? AND superseded_at IS NULL ORDER BY created_at DESC LIMIT 1",
-      )
-      .get(text, src) as { id: string } | undefined;
+    const effectiveScope = scope ?? "global";
+    const row =
+      effectiveScope === "global"
+        ? (factsDb
+            .getRawDb()
+            .prepare(
+              "SELECT id FROM facts WHERE text = ? AND source = ? AND scope = 'global' AND superseded_at IS NULL ORDER BY created_at DESC LIMIT 1",
+            )
+            .get(text, src) as { id: string } | undefined)
+        : (factsDb
+            .getRawDb()
+            .prepare(
+              "SELECT id FROM facts WHERE text = ? AND source = ? AND scope = ? AND scope_target = ? AND superseded_at IS NULL ORDER BY created_at DESC LIMIT 1",
+            )
+            .get(text, src, effectiveScope, scopeTarget) as { id: string } | undefined);
     return row?.id ?? null;
   } catch {
     return null;
   }
 }
 
-function hasReplayDuplicateForWal(factsDb: FactsDB, text: string, source: string | null): boolean {
+function hasReplayDuplicateForWal(
+  factsDb: FactsDB,
+  text: string,
+  source: string | null,
+  scope: "global" | "user" | "agent" | "session" | null,
+  scopeTarget: string | null,
+): boolean {
   try {
-    return factsDb.hasDuplicate(text, source?.trim() || "conversation");
+    return factsDb.hasDuplicate(text, source?.trim() || "conversation", undefined, scope ?? "global", scopeTarget);
   } catch {
     return false;
   }
@@ -124,7 +157,15 @@ async function ensureVectorAndEmbeddingMeta(opts: {
         factsDb.storeEmbedding(factId, embeddings.modelName, "canonical", new Float32Array(v), v.length);
       }
       return Array.from(v);
-    } catch {
+    } catch (err) {
+      // Fact ends up with no vector for this replay pass — must be visible to operators,
+      // not just silently dropped (it will be caught by embedding-maintenance's vectorless
+      // fact scan eventually, but that lag is exactly what this report shortens).
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "wal-replay",
+        operation: "embed-and-store-fallback",
+        factId,
+      });
       return null;
     }
   };
@@ -153,8 +194,15 @@ async function ensureVectorAndEmbeddingMeta(opts: {
       }
       return;
     }
-  } catch {
-    // Non-fatal: fall back to re-embed if possible.
+  } catch (err) {
+    // Non-fatal: fall back to re-embed if possible, but the precomputed-vector store failure
+    // itself must still be reported — e.g. a dimension mismatch means this WAL entry's vector
+    // came from a different embedding model than the live table expects.
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "wal-replay",
+      operation: "store-precomputed-vector",
+      factId,
+    });
   }
 
   await embedAndStore();
@@ -215,9 +263,7 @@ export async function replayWalEntries(
         const provenanceJson = safeString(entry.data.provenanceJson);
         const sourceSessions = safeString(entry.data.sourceSessions);
 
-        const precomputedVector = Array.isArray(entry.data.vector)
-          ? (entry.data.vector as number[]).filter((n) => typeof n === "number" && Number.isFinite(n))
-          : null;
+        const precomputedVector = safeVector(entry.data.vector);
         const embeddingModelName = safeString(entry.data.embeddingModelName);
 
         // Guard: a non-global scope without a scopeTarget cannot be safely replayed — storing it
@@ -239,7 +285,7 @@ export async function replayWalEntries(
         }
 
         // Idempotent replay: if the fact already exists, still ensure vector/embedding metadata.
-        const existingId = findExistingFactIdForWal(factsDb, text, source);
+        const existingId = findExistingFactIdForWal(factsDb, text, source, scope, scopeTarget);
         if (existingId) {
           await ensureVectorAndEmbeddingMeta({
             factId: existingId,
@@ -261,7 +307,7 @@ export async function replayWalEntries(
         // without creating an exact text+source row. If that already happened before
         // a crash but before WAL removal, replay must not call store() again: boost
         // and merge dedupe actions are not idempotent.
-        if (hasReplayDuplicateForWal(factsDb, text, source)) {
+        if (hasReplayDuplicateForWal(factsDb, text, source, scope, scopeTarget)) {
           skipped++;
           await wal.remove(entry.id);
           continue;
@@ -365,9 +411,7 @@ export async function replayWalEntries(
         const provenanceJson = safeString(entry.data.provenanceJson);
         const sourceSessions = safeString(entry.data.sourceSessions);
 
-        const precomputedVector = Array.isArray(entry.data.vector)
-          ? (entry.data.vector as number[]).filter((n) => typeof n === "number" && Number.isFinite(n))
-          : null;
+        const precomputedVector = safeVector(entry.data.vector);
         const embeddingModelName = safeString(entry.data.embeddingModelName);
 
         // Guard: same as "store" path — do not replay a non-global scoped update without a scopeTarget.
@@ -395,7 +439,7 @@ export async function replayWalEntries(
         }
 
         // Idempotent replay: if the exact intended replacement already exists, ensure vector metadata.
-        const existingId = findExistingFactIdForWal(factsDb, text, source);
+        const existingId = findExistingFactIdForWal(factsDb, text, source, scope, scopeTarget);
         if (existingId && existingId !== targetId) {
           const existing = factsDb.getById(existingId);
           if (existing?.supersedesId === targetId) {
@@ -417,7 +461,7 @@ export async function replayWalEntries(
           }
         }
 
-        if (hasReplayDuplicateForWal(factsDb, text, source)) {
+        if (hasReplayDuplicateForWal(factsDb, text, source, scope, scopeTarget)) {
           skipped++;
           await wal.remove(entry.id);
           continue;

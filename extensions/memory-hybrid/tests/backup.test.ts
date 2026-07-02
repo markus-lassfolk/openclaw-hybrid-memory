@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -24,10 +24,13 @@ describe("backup", () => {
       CREATE TABLE IF NOT EXISTS facts (
         id INTEGER PRIMARY KEY,
         content TEXT NOT NULL,
-        superseded_by TEXT
+        superseded_by TEXT,
+        superseded_at INTEGER
       );
     `);
-    db.exec("INSERT INTO facts (content, superseded_by) VALUES ('test fact 1', NULL), ('test fact 2', NULL);");
+    db.exec(
+      "INSERT INTO facts (content, superseded_by, superseded_at) VALUES ('test fact 1', NULL, NULL), ('test fact 2', NULL, NULL);",
+    );
     db.close();
 
     // Create a test LanceDB directory with some dummy files
@@ -54,7 +57,7 @@ describe("backup", () => {
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.backupDir).toMatch(/[\\/]backups[\\/]\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/);
+        expect(result.backupDir).toMatch(/[\\/]backups[\\/]\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/);
         expect(existsSync(result.backupDir)).toBe(true);
       }
     });
@@ -159,6 +162,62 @@ describe("backup", () => {
       }
     });
 
+    it("writes a backup-manifest.json recording snapshot timestamps for drift detection (#81)", async () => {
+      const backupDir = join(testDir, "backups");
+      const before = Date.now();
+      const result = await runBackup({
+        resolvedSqlitePath: sqlitePath,
+        resolvedLancePath: lancePath,
+        backupDir,
+      });
+      const after = Date.now();
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      expect(result.sqliteSnapshotAt).toBeDefined();
+      expect(result.lancedbSnapshotAt).toBeDefined();
+      // SQLite is snapshotted first, then LanceDB — the two timestamps must be ordered and
+      // both fall within the call's wall-clock window.
+      expect(result.sqliteSnapshotAt).toBeGreaterThanOrEqual(before);
+      expect(result.lancedbSnapshotAt).toBeGreaterThanOrEqual(result.sqliteSnapshotAt as number);
+      expect(result.lancedbSnapshotAt).toBeLessThanOrEqual(after);
+      expect(result.snapshotSkewMs).toBeGreaterThanOrEqual(0);
+
+      const manifestPath = join(result.backupDir, "backup-manifest.json");
+      expect(existsSync(manifestPath)).toBe(true);
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+      expect(manifest).toMatchObject({
+        version: 1,
+        sqliteSnapshotAt: result.sqliteSnapshotAt,
+        lancedbSnapshotAt: result.lancedbSnapshotAt,
+        snapshotSkewMs: result.snapshotSkewMs,
+        sqliteSize: result.sqliteSize,
+        lancedbSize: result.lancedbSize,
+        integrityOk: result.integrityOk,
+      });
+    });
+
+    it("manifest records null snapshot timestamps for a half that doesn't exist", async () => {
+      const backupDir = join(testDir, "backups");
+      const missingLancePath = join(testDir, "does-not-exist-lancedb");
+      const result = await runBackup({
+        resolvedSqlitePath: sqlitePath,
+        resolvedLancePath: missingLancePath,
+        backupDir,
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      expect(result.sqliteSnapshotAt).toBeDefined();
+      expect(result.lancedbSnapshotAt).toBeUndefined();
+      expect(result.snapshotSkewMs).toBe(0);
+
+      const manifest = JSON.parse(readFileSync(join(result.backupDir, "backup-manifest.json"), "utf-8"));
+      expect(manifest.lancedbSnapshotAt).toBeNull();
+    });
+
     it("should handle missing SQLite file gracefully", async () => {
       const backupDir = join(testDir, "backups");
       const result = await runBackup({
@@ -172,6 +231,47 @@ describe("backup", () => {
       if (result.ok) {
         expect(result.sqliteSize).toBe(0);
         expect(result.lancedbSize).toBeGreaterThan(0);
+        // No integrity check ever ran (no SQLite file present), so integrityOk must not claim
+        // "checked and passed" — it previously defaulted to true here, falsely implying a
+        // check happened when a misconfigured/typo'd path (or a fresh vault with no DB yet)
+        // means nothing was actually verified.
+        expect(result.integrityOk).toBe(false);
+      }
+    });
+
+    it("creates distinct backup directories for two runs within the same second", async () => {
+      const backupDir = join(testDir, "backups");
+      const [first, second] = await Promise.all([
+        runBackup({ resolvedSqlitePath: sqlitePath, resolvedLancePath: lancePath, backupDir }),
+        runBackup({ resolvedSqlitePath: sqlitePath, resolvedLancePath: lancePath, backupDir }),
+      ]);
+      expect(first.ok).toBe(true);
+      expect(second.ok).toBe(true);
+      if (first.ok && second.ok) {
+        expect(first.backupDir).not.toBe(second.backupDir);
+      }
+    });
+
+    it("removes the half-written backup directory when LanceDB copy fails partway", async () => {
+      const backupDir = join(testDir, "backups");
+      // Force copyDirSync to fail: its source is a *file*, not a directory, so
+      // mkdirSync(dest, {recursive:true}) creates `dest` as a directory, then cpSync(file, dir)
+      // throws (can't copy a file onto an existing directory path). Avoids relying on chmod-based
+      // permission simulation, which doesn't work when tests run as root.
+      const brokenLancePath = join(testDir, "broken-lance-source");
+      writeFileSync(brokenLancePath, "not a directory");
+
+      const result = await runBackup({
+        resolvedSqlitePath: sqlitePath,
+        resolvedLancePath: brokenLancePath,
+        backupDir,
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        // The half-complete backup dir (valid memory.db already written, lancedb copy failed)
+        // must be cleaned up, not left behind looking like a legitimate backup.
+        const dirs = existsSync(backupDir) ? readdirSync(backupDir) : [];
+        expect(dirs.length).toBe(0);
       }
     });
 
@@ -246,7 +346,27 @@ describe("backup", () => {
     it("should count only non-superseded facts", () => {
       // Add a superseded fact
       const db = new DatabaseSync(sqlitePath);
-      db.exec("INSERT INTO facts (content, superseded_by) VALUES ('superseded fact', 'fact-123');");
+      db.exec(
+        "INSERT INTO facts (content, superseded_by, superseded_at) VALUES ('superseded fact', 'fact-123', 1700000000);",
+      );
+      db.close();
+
+      const result = runBackupVerify({ resolvedSqlitePath: sqlitePath });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.factCount).toBe(2); // Still 2, not 3
+      }
+    });
+
+    it("counts an evicted fact (superseded_at set, superseded_by NULL) as inactive (#82)", () => {
+      // The daily-quota eviction path and expiry/decay pruning only set superseded_at — there's
+      // no replacement fact, so superseded_by stays NULL. Filtering on superseded_by IS NULL
+      // (the pre-fix behavior) would have miscounted this as still active.
+      const db = new DatabaseSync(sqlitePath);
+      db.exec(
+        "INSERT INTO facts (content, superseded_by, superseded_at) VALUES ('evicted fact', NULL, 1700000000);",
+      );
       db.close();
 
       const result = runBackupVerify({ resolvedSqlitePath: sqlitePath });
@@ -301,7 +421,8 @@ describe("backup", () => {
         CREATE TABLE facts (
           id INTEGER PRIMARY KEY,
           content TEXT NOT NULL,
-          superseded_by TEXT
+          superseded_by TEXT,
+          superseded_at INTEGER
         );
       `);
       db.close();

@@ -145,6 +145,51 @@ describe("runConsolidate", () => {
     expect(result.deleted).toBe(2);
   });
 
+  it("does not delete source facts when the merged fact's embedding fails (#35)", async () => {
+    const v1 = [1, 0];
+    const v2 = [0.9, Math.sqrt(1 - 0.9 ** 2)];
+    const entries = [makeEntry({ id: "a", text: "Fact A" }), makeEntry({ id: "b", text: "Fact B" })];
+    const factsDb = makeFactsDb(entries);
+    const vectorDb = { store: vi.fn().mockResolvedValue(undefined) };
+    const embeddings = {
+      embed: vi.fn(async (text: string) => {
+        if (text === "Merged fact") throw new Error("embedding provider unavailable");
+        if (text === "Fact A") return v1;
+        if (text === "Fact B") return v2;
+        return [1, 0];
+      }),
+    };
+    const openai = {
+      chat: {
+        completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content: "Merged fact" } }] }) },
+      },
+    } as never;
+
+    const result = await runConsolidate(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai,
+      { threshold: 0.9, includeStructured: true, dryRun: false, limit: 10, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    // The merge WAS stored (storeWithResult succeeded before the embed attempt)...
+    expect(factsDb.storeWithResult).toHaveBeenCalled();
+    // ...but since it has no vector, the source facts must be preserved rather than deleted —
+    // deleting them would trade two searchable facts for one unsearchable one.
+    expect(factsDb.delete).not.toHaveBeenCalled();
+    // vectorDb.store is never called for the merged fact's own (missing) vector — any prior
+    // calls above are from the unrelated per-source-fact vector cache-fill in
+    // loadReflectionDedupeCorpusVectors, not the merged-fact store this fix guards.
+    expect(vectorDb.store).not.toHaveBeenCalledWith(expect.objectContaining({ text: "Merged fact" }));
+    expect(result.merged).toBe(0);
+    expect(result.deleted).toBe(0);
+    expect(result.clustersFailed).toBe(1);
+    expect(result.vectorFailures).toBe(1);
+    expect(result.semanticOutcome).toBe("partial");
+  });
+
   it("skips merging when LLM returns empty content", async () => {
     const entries = [makeEntry({ id: "a", text: "Fact A" }), makeEntry({ id: "b", text: "Fact B" })];
     const factsDb = makeFactsDb(entries);

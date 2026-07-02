@@ -4,11 +4,12 @@
 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
 import { getCurrentCostFeature } from "../services/cost-context.js";
 import { runReflection, runReflectionMeta, runReflectionRules } from "../services/reflection.js";
 import type { MemoryEntry } from "../types/memory.js";
+import { clearMaintenanceRunDeadline, setMaintenanceRunDeadlineMs } from "../utils/maintenance-run-deadline.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 
 const { parsePatternsFromReflectionResponse, dotProductSimilarity } = _testing;
@@ -162,6 +163,66 @@ describe("runReflection cost attribution", () => {
     );
 
     expect(capturedFeature).toBe("reflection");
+  });
+});
+
+describe("runReflection maintenance run deadline (#75)", () => {
+  afterEach(() => {
+    clearMaintenanceRunDeadline();
+  });
+
+  it("stops embedding candidate patterns once the maintenance run deadline is reached", async () => {
+    const fact = makeEntry();
+    const factsDb = {
+      sqlitePath: join(tmpdir(), "reflect-deadline-test.db"),
+      getRecentFacts: () => [fact],
+      getByCategory: () => [],
+      store: async () => ({ id: "pattern-1", text: fact.text, category: "pattern" }) as MemoryEntry,
+      setEmbeddingModel: () => undefined,
+      getMaintenanceState: () => null,
+      setMaintenanceState: () => undefined,
+    };
+    const vectorDb = {
+      store: async () => undefined,
+      getVectorDim: () => 2,
+      getVectorsByFactIds: async () => new Map(),
+    };
+    const embed = vi.fn(async () => [1, 0]);
+    const embeddings = { embed, modelName: "test-model" };
+    const openai = {
+      chat: {
+        completions: {
+          create: async () => {
+            // Simulate the deadline being crossed while the top-level LLM call was in flight —
+            // by the time the per-pattern embed loop starts, the run is already over budget.
+            setMaintenanceRunDeadlineMs(Date.now() - 1);
+            return {
+              choices: [
+                {
+                  message: {
+                    content:
+                      "PATTERN: User consistently favors functional composition over OOP\n" +
+                      "PATTERN: User values type safety and strict TypeScript settings",
+                  },
+                },
+              ],
+            };
+          },
+        },
+      },
+    };
+
+    await runReflection(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai as never,
+      { defaultWindow: 14, minObservations: 1, enabled: true },
+      { window: 7, dryRun: false, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(embed).not.toHaveBeenCalled();
   });
 });
 

@@ -32,8 +32,8 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
-import { basename, isAbsolute, join, resolve as pathResolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve as pathResolve } from "node:path";
+import { atomicWriteFile } from "../../utils/atomic-write.js";
 import { PLUGIN_ID } from "../../utils/constants.js";
 import { getEnv } from "../../utils/env-manager.js";
 import { findPluginRoot } from "../../utils/plugin-root.js";
@@ -403,8 +403,12 @@ export function reconcileLegacyInstallIndex(
     return { ok: true, verdict: detection.verdict, action };
   }
 
-  // Backup the original sidecar to a sibling path before mutating.
-  const backupDir = join(tmpdir(), "openclaw-hybrid-memory-install-index-backups");
+  // Backup the original sidecar to a sibling path before mutating. Colocated with the target
+  // file (not os.tmpdir()): systemd-tmpfiles-clean and similar periodic cleanup on most Linux
+  // distros deletes files under /tmp untouched for >10 days, which would silently make this
+  // backup disappear — undermining the "operator's state is never silently lost" guarantee this
+  // function documents.
+  const backupDir = join(dirname(detection.legacyPath), "openclaw-hybrid-memory-install-index-backups");
   mkdirSync(backupDir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const backupPath = join(backupDir, `${basename(detection.legacyPath)}.bak-${stamp}`);
@@ -429,9 +433,12 @@ export function reconcileLegacyInstallIndex(
     } catch {
       /* best-effort */
     }
-    // Restore from backup so we don't leave a half-written file.
+    // Restore from backup so we don't leave a half-written file. Uses the same
+    // write-to-temp-then-rename pattern as the primary write above (not a plain writeFileSync):
+    // if the original failure was disk exhaustion, a second non-atomic write here could itself
+    // fail partway and leave the file truncated even though a full backup still exists on disk.
     try {
-      writeFileSync(detection.legacyPath, originalSerialized, "utf-8");
+      atomicWriteFile(detection.legacyPath, originalSerialized);
     } catch {
       /* if restore fails the operator still has the backup at backupPath */
     }

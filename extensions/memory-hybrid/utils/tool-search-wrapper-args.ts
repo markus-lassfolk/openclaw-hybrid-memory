@@ -147,17 +147,17 @@ export const MEMORY_TOOL_EXPECTED_ARG_KEYS: Record<string, readonly string[]> = 
   memory_propose_tool: ["name", "description"],
   memory_tool_approve: ["id", "proposalId"],
   memory_tool_reject: ["id", "proposalId"],
-  memory_verify: ["id", "memoryId"],
-  memory_provenance: ["id", "memoryId"],
+  memory_verify: ["factId"],
+  memory_provenance: ["factId"],
   active_task_checkpoint: ["entity"],
-  goal_get: ["id", "label"],
+  goal_get: ["goal_id"],
   goal_register: ["description"],
-  goal_assess: ["id", "label"],
-  goal_update: ["id", "label"],
-  goal_complete: ["id", "label"],
-  goal_abandon: ["id", "label"],
-  active_task_get: ["entity"],
-  active_task_propose_goal: ["entity"],
+  goal_assess: ["goal_id"],
+  goal_update: ["goal_id"],
+  goal_complete: ["goal_id"],
+  goal_abandon: ["goal_id"],
+  active_task_get: ["task_label"],
+  active_task_propose_goal: ["task_label"],
 };
 
 const WRAPPER_ARG_TOOL_PREFIXES = ["memory_", "goal_", "active_task_"] as const;
@@ -199,13 +199,17 @@ function isMissingRequiredArgsToolResult(result: unknown): boolean {
 }
 
 /** Wrap a tool execute handler to detect wrapper argument loss. */
-export function wrapMemoryToolExecuteForWrapperArgs<T extends readonly unknown[]>(
+export function wrapMemoryToolExecuteForWrapperArgs<T extends readonly unknown[], R>(
   toolName: string,
-  execute: (...args: T) => Promise<unknown> | unknown,
+  execute: (...args: T) => Promise<R> | R,
   logger?: { warn?: (message: string, meta?: Record<string, unknown>) => void },
-): (...args: T) => Promise<unknown> | unknown {
+): (
+  ...args: T
+) => Promise<
+  R | { content: Array<{ type: "text"; text: string }>; details: ToolSearchWrapperDroppedArgsDetails }
+> {
   const mode = resolveWrapperDropMode(toolName);
-  if (!mode) return execute;
+  if (!mode) return async (...args: T) => execute(...args);
 
   return async (...args: T) => {
     const params = args[1] as unknown;
@@ -233,7 +237,10 @@ export function patchMemoryToolRegistrationApi(api: ClawdbotPluginApi): Clawdbot
   const registerTool = api.registerTool.bind(api);
   return {
     ...api,
-    registerTool(toolDef, options) {
+    registerTool(
+      toolDef: Parameters<typeof registerTool>[0],
+      options: Parameters<typeof registerTool>[1],
+    ) {
       if (typeof toolDef.name === "string" && typeof toolDef.execute === "function") {
         const toolName = toolDef.name;
         if (shouldWrapToolForWrapperArgs(toolName)) {

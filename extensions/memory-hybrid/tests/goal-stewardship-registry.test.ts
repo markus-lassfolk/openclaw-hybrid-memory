@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rename, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   appendGoalHistory,
   createGoal,
@@ -282,6 +282,34 @@ describe("goal registry", () => {
     expect(existsSync(join(dir, "broken.json"))).toBe(false);
     const listedAgain = await listGoals(dir);
     expect(listedAgain.map((g) => g.id)).toEqual([healthy.id]);
+  });
+
+  it("still reports telemetry for a corrupt goal file when quarantine (rename) fails (#42)", async () => {
+    dir = await makeTempDir();
+    const errorReporter = await import("../services/error-reporter.js");
+    const captureSpy = vi.spyOn(errorReporter, "capturePluginError").mockImplementation(() => undefined);
+    try {
+      await writeFile(join(dir, "broken.json"), "{bad", "utf-8");
+      // Pre-create the quarantine destination so quarantineCorruptGoalFile's
+      // `existsSync(destPath)` guard skips the rename entirely — deterministically simulating a
+      // failed quarantine (e.g. a permissions or disk-full error on the real rename) without
+      // needing to mock fs.rename.
+      await writeFile(join(dir, "broken.json.corrupt"), "already here", "utf-8");
+
+      await rebuildGoalIndex(dir);
+
+      // Quarantine really did not happen — the source file is still present.
+      expect(existsSync(join(dir, "broken.json"))).toBe(true);
+      // Telemetry must still fire even though quarantine failed — previously this branch
+      // returned before ever calling capturePluginError, so a persistently-corrupt file whose
+      // quarantine keeps failing produced zero operator-visible signal.
+      expect(captureSpy).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({ operation: "invalid_goal_registry_entry", filename: "broken.json" }),
+      );
+    } finally {
+      captureSpy.mockRestore();
+    }
   });
 
   it("repairQuarantinedGoalFile restores valid quarantined goal JSON", async () => {

@@ -632,6 +632,34 @@ describe("CredentialsDB.rekeyVaultSafe", () => {
     db2.close();
     rmSync(dir, { recursive: true, force: true });
   });
+
+  it("aborts before mutating anything when a row can't be decrypted with the current key", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cred-rekey-undecryptable-"));
+    const dbPath = join(dir, "creds.db");
+    const db2 = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+    db2.store({ service: "good-svc", type: "api_key", value: "readable-secret" });
+    db2.store({ service: "bad-svc", type: "api_key", value: "will-be-corrupted" });
+    const statusBefore = db2.getVaultStatus();
+
+    // Corrupt one row's ciphertext directly so it can no longer decrypt with the current key.
+    const rawDb = new DatabaseSync(dbPath);
+    rawDb
+      .prepare("UPDATE credentials SET value = ? WHERE service = ? AND type = 'api_key'")
+      .run(Buffer.from("not-valid-ciphertext-garbage-bytes"), "bad-svc");
+    rawDb.close();
+
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+    expect(() => db2.rekeyVaultSafe(TEST_REKEY_ENCRYPTION_KEY, { verify: true })).toThrow(/Rekey aborted/);
+    warnSpy.mockRestore();
+
+    // Nothing should have been mutated: kdf_version/salt unchanged, and the still-readable
+    // row must still be decryptable with the ORIGINAL key (not silently left half-migrated).
+    expect(db2.getVaultStatus().kdfVersion).toBe(statusBefore.kdfVersion);
+    expect(db2.get("good-svc", "api_key")?.value).toBe("readable-secret");
+
+    db2.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
 });
 
 // ---------------------------------------------------------------------------

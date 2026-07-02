@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +17,7 @@ const defaults = {
 function baseCfg(over: Partial<GoalStewardshipConfig> = {}): GoalStewardshipConfig {
   return {
     enabled: true,
+    autoEnableWhenGoalsPresent: true,
     goalsDir: "state/goals",
     model: null,
     heartbeatStewardship: true,
@@ -34,6 +35,9 @@ function baseCfg(over: Partial<GoalStewardshipConfig> = {}): GoalStewardshipConf
     multiGoalMaxChars: 12_000,
     multiGoalMaxGoals: 8,
     heartbeatRefreshActiveTask: true,
+    injectActiveGoalsEveryTurn: true,
+    everyTurnGoalMaxChars: 2500,
+    everyTurnGoalMaxGoals: 5,
     confirmationPolicy: { requireRegisterAckForPriorities: ["critical", "high"] },
     llmTriageOnHeartbeat: false,
     triageSuggestHeavyDirective: true,
@@ -246,6 +250,72 @@ describe("runGoalHealthCheck", () => {
       workspaceRoot,
       logger: {},
     });
+    expect(r.actions.some((a: { action: string }) => a.action === "verifying")).toBe(true);
+  });
+
+  it("blocks file_exists verification targets that escape the workspace via '..' (#40)", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    // A file that genuinely exists just outside workspaceRoot — proves the guard is a real
+    // containment check, not merely relying on the file being absent.
+    const outsideMarker = join(workspaceRoot, "..", `escape-marker-${Date.now()}.txt`);
+    await writeFile(outsideMarker, "secret", "utf-8");
+    try {
+      const g = await createGoal(
+        goalsDir,
+        {
+          label: "verify_escape",
+          description: "d",
+          acceptanceCriteria: ["a"],
+          verification: { type: "file_exists", target: `../${outsideMarker.split("/").pop()}` },
+        },
+        defaults,
+      );
+      const r = await runGoalHealthCheck({ goalsDir, cfg: baseCfg(), workspaceRoot, logger: {} });
+      expect(r.actions.some((a: { action: string }) => a.action === "verifying")).toBe(false);
+      const after = await readGoal(goalsDir, g.id);
+      expect(after?.lastMechanicalCheck?.detail).toContain("escapes workspace");
+    } finally {
+      await rm(outsideMarker, { force: true });
+    }
+  });
+
+  it("blocks file_exists verification targets that are absolute paths outside the workspace (#40)", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    const g = await createGoal(
+      goalsDir,
+      {
+        label: "verify_absolute_escape",
+        description: "d",
+        acceptanceCriteria: ["a"],
+        verification: { type: "file_exists", target: "/etc/hostname" },
+      },
+      defaults,
+    );
+    const r = await runGoalHealthCheck({ goalsDir, cfg: baseCfg(), workspaceRoot, logger: {} });
+    expect(r.actions.some((a: { action: string }) => a.action === "verifying")).toBe(false);
+    const after = await readGoal(goalsDir, g.id);
+    expect(after?.lastMechanicalCheck?.detail).toContain("escapes workspace");
+  });
+
+  it("allows file_exists verification targets that are absolute paths inside the workspace (#40)", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    const marker = join(workspaceRoot, "nested", "proof.txt");
+    await mkdir(join(workspaceRoot, "nested"), { recursive: true });
+    await writeFile(marker, "ok", "utf-8");
+    await createGoal(
+      goalsDir,
+      {
+        label: "verify_absolute_inside",
+        description: "d",
+        acceptanceCriteria: ["a"],
+        verification: { type: "file_exists", target: marker },
+      },
+      defaults,
+    );
+    const r = await runGoalHealthCheck({ goalsDir, cfg: baseCfg(), workspaceRoot, logger: {} });
     expect(r.actions.some((a: { action: string }) => a.action === "verifying")).toBe(true);
   });
 
@@ -619,5 +689,132 @@ describe("runGoalHealthCheck", () => {
     const pulse = [...(after?.history ?? [])].reverse().find((h) => h.action === "pulse-outcome");
     expect(pulse?.detail).toContain("outcome=blocked");
     expect(pulse?.detail).toContain("dispatch-attempt-1");
+  });
+
+  it("does not lose a concurrent currentBlockers update racing the dispatch-metadata-missing patch", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-race-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-race-"));
+    const g = await createGoal(
+      goalsDir,
+      { label: "race_dispatch_meta", description: "d", acceptanceCriteria: ["a"] },
+      defaults,
+    );
+    const now = new Date().toISOString();
+    await updateGoal(
+      goalsDir,
+      g.id,
+      {
+        linkedTasks: [
+          {
+            label: "dispatch-attempt-1",
+            sessionKey: null,
+            runId: null,
+            status: "in_progress",
+            linkedAt: now,
+            updatedAt: now,
+          },
+        ],
+      },
+      { timestamp: now, action: "test", detail: "simulate dispatch attempt", actor: "user" },
+    );
+
+    // Race the watchdog's dispatch-metadata-missing patch (which appends to currentBlockers and
+    // increments consecutiveFailures, derived from `fresh` after this fix) against a concurrent
+    // updateGoal call doing the same kind of derived update — both must land regardless of which
+    // commits first, because each is computed from the state the lock actually protects.
+    const goalsDirLocal = goalsDir;
+    const [r] = await Promise.all([
+      runGoalHealthCheck({ goalsDir: goalsDirLocal, cfg: baseCfg(), workspaceRoot, logger: {} }),
+      updateGoal(
+        goalsDirLocal,
+        g.id,
+        (fresh) => ({
+          consecutiveFailures: fresh.consecutiveFailures + 10,
+          currentBlockers: fresh.currentBlockers.includes("concurrent-blocker")
+            ? fresh.currentBlockers
+            : [...fresh.currentBlockers, "concurrent-blocker"],
+        }),
+        { timestamp: new Date().toISOString(), action: "assessed", detail: "concurrent update", actor: "steward" },
+      ),
+    ]);
+    expect(r.actions.some((a) => a.action === "dispatch-metadata-missing")).toBe(true);
+
+    const after = await readGoal(goalsDirLocal, g.id);
+    // The watchdog's own +1 plus the concurrent +10 must both land: total 11, not 1 or 10.
+    expect(after?.consecutiveFailures).toBe(11);
+    expect(after?.currentBlockers).toContain("concurrent-blocker");
+    expect(after?.currentBlockers.some((b) => b.includes("missing dispatch metadata"))).toBe(true);
+  });
+
+  it("does not lose a concurrent currentBlockers update racing the budget-exhausted patch (#36)", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-race-budget-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-race-budget-"));
+    const g = await createGoal(
+      goalsDir,
+      { label: "race_budget", description: "d", acceptanceCriteria: ["a"], maxDispatches: 1 },
+      { ...defaults, maxDispatches: 1 },
+    );
+    await updateGoal(
+      goalsDir,
+      g.id,
+      { dispatchCount: 1 },
+      { timestamp: new Date().toISOString(), action: "test", detail: "fill", actor: "user" },
+    );
+
+    const goalsDirLocal = goalsDir;
+    const [r] = await Promise.all([
+      runGoalHealthCheck({ goalsDir: goalsDirLocal, cfg: baseCfg(), workspaceRoot, logger: {} }),
+      updateGoal(
+        goalsDirLocal,
+        g.id,
+        (fresh) => ({
+          currentBlockers: fresh.currentBlockers.includes("concurrent-blocker")
+            ? fresh.currentBlockers
+            : [...fresh.currentBlockers, "concurrent-blocker"],
+        }),
+        { timestamp: new Date().toISOString(), action: "assessed", detail: "concurrent update", actor: "steward" },
+      ),
+    ]);
+    expect(r.actions.some((a) => a.action === "blocked")).toBe(true);
+
+    const after = await readGoal(goalsDirLocal, g.id);
+    expect(after?.currentBlockers).toContain("concurrent-blocker");
+    expect(after?.currentBlockers.some((b) => b.includes("Budget exhausted"))).toBe(true);
+  });
+
+  it("does not lose a concurrent currentBlockers update racing the escalation patch (#36)", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-race-escalate-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-race-escalate-"));
+    const g = await createGoal(
+      goalsDir,
+      { label: "race_escalate", description: "d", acceptanceCriteria: ["a"], escalateAfterFailures: 1 },
+      { ...defaults, escalateAfterFailures: 1 },
+    );
+    await updateGoal(
+      goalsDir,
+      g.id,
+      { consecutiveFailures: 1, status: "active" },
+      { timestamp: new Date().toISOString(), action: "test", detail: "fill", actor: "user" },
+    );
+
+    const goalsDirLocal = goalsDir;
+    const [r] = await Promise.all([
+      runGoalHealthCheck({ goalsDir: goalsDirLocal, cfg: baseCfg(), workspaceRoot, logger: {} }),
+      updateGoal(
+        goalsDirLocal,
+        g.id,
+        (fresh) => ({
+          currentBlockers: fresh.currentBlockers.includes("concurrent-blocker")
+            ? fresh.currentBlockers
+            : [...fresh.currentBlockers, "concurrent-blocker"],
+        }),
+        { timestamp: new Date().toISOString(), action: "assessed", detail: "concurrent update", actor: "steward" },
+      ),
+    ]);
+    expect(r.actions.some((a) => a.action === "escalated")).toBe(true);
+
+    const after = await readGoal(goalsDirLocal, g.id);
+    expect(after?.currentBlockers).toContain("concurrent-blocker");
+    expect(after?.currentBlockers.some((b) => b.includes("Escalated after"))).toBe(true);
   });
 });

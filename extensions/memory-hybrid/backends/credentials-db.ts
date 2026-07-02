@@ -357,10 +357,22 @@ export class CredentialsDB extends BaseSqliteStore {
           }
         }
 
-        // Drop any remaining unsupported types that were not handled above.
+        // Drop any remaining unsupported types that were not handled above ("url" is the only
+        // known legacy type with a defined migration path — anything else has no safe
+        // transformation and is dropped here rather than left permanently unreadable via
+        // assertValidCredentialType()).
+        const droppedRows = this.liveDb
+          .prepare(`SELECT service, type FROM credentials WHERE type NOT IN (${CREDENTIAL_TYPES.map(() => "?").join(", ")})`)
+          .all(...CREDENTIAL_TYPES) as Array<{ service: string; type: string }>;
         this.liveDb
           .prepare(`DELETE FROM credentials WHERE type NOT IN (${CREDENTIAL_TYPES.map(() => "?").join(", ")})`)
           .run(...CREDENTIAL_TYPES);
+        if (droppedRows.length > 0) {
+          pluginLogger.warn(
+            `memory-hybrid: dropped ${droppedRows.length} credential row(s) with an unrecognized type that has no known migration path: ` +
+              droppedRows.map((r) => `${r.service} (type="${r.type}")`).join(", "),
+          );
+        }
       },
       "IMMEDIATE",
     );
@@ -693,7 +705,18 @@ export class CredentialsDB extends BaseSqliteStore {
       throw new Error("Cannot rekey a plaintext vault. Run encrypt-vault first.");
     }
 
-    const plaintextRows = this.listAll().map((entry) => ({
+    const { entries: decryptedEntries, skippedCount } = this.listAllWithSkipped();
+    if (skippedCount > 0) {
+      // Aborting before the transaction starts (nothing has been mutated yet) is deliberate:
+      // rekeying only re-encrypts rows present in plaintextRows, then unconditionally bumps
+      // vault_meta's kdf_version/salt to the new key. Any row that failed to decrypt with the
+      // CURRENT key would silently stay on old ciphertext while the vault believes everything
+      // now uses the new key/salt — permanently undecryptable, with no error ever surfaced.
+      throw new Error(
+        `Rekey aborted: ${skippedCount} of ${skippedCount + decryptedEntries.length} credential row(s) could not be decrypted with the current key. Fix or remove those rows before rekeying — proceeding would silently leave them on the old key while the vault records the new one.`,
+      );
+    }
+    const plaintextRows = decryptedEntries.map((entry) => ({
       service: entry.service,
       type: entry.type as CredentialType,
       value: entry.value,
@@ -1071,11 +1094,21 @@ export class CredentialsDB extends BaseSqliteStore {
    * Use sparingly (decrypts every value). Primarily for audit operations.
    */
   listAll(): CredentialEntry[] {
+    return this.listAllWithSkipped().entries;
+  }
+
+  /**
+   * Like {@link listAll}, but also reports how many rows failed to decrypt/validate and were
+   * skipped, so callers can distinguish "vault is genuinely empty" from "the configured
+   * encryption key can't decrypt these rows" instead of both cases silently reporting as empty.
+   */
+  listAllWithSkipped(): { entries: CredentialEntry[]; skippedCount: number } {
     this.maybeMigrateLegacyCredentialTypes();
     const rows = this.liveDb.prepare("SELECT * FROM credentials ORDER BY service, type").all() as Array<
       Record<string, unknown>
     >;
     const out: CredentialEntry[] = [];
+    let skippedCount = 0;
     for (const row of rows) {
       try {
         const buf = toBuffer(row.value as Uint8Array | Buffer);
@@ -1093,6 +1126,7 @@ export class CredentialsDB extends BaseSqliteStore {
         assertValidCredentialRow(entry);
         out.push(entry);
       } catch (err) {
+        skippedCount++;
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           subsystem: "credentials",
           operation: "list-all-skip-row",
@@ -1100,7 +1134,7 @@ export class CredentialsDB extends BaseSqliteStore {
         });
       }
     }
-    return out;
+    return { entries: out, skippedCount };
   }
 
   list(): Array<{ service: string; type: string; url: string | null; expires: number | null }> {

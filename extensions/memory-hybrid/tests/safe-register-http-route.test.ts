@@ -173,4 +173,54 @@ describe("createSafeRegisterHttpRoute", () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0][0]).toMatch(/api\.registerHttpRoute is not available/);
   });
+
+  it("responds 413 (not 500) when the request body exceeds the size cap", async () => {
+    const { api, routes } = makeApi();
+    const register = createSafeRegisterHttpRoute(api, api.logger, "test");
+    register("/plugins/x", noopHandler, noopOpts);
+
+    // Oversized body: two 40KB chunks exceed the 64KB cap.
+    const oversizedChunk = Buffer.alloc(40 * 1024, "a");
+    const res = await invokeNodeHttpRoute(routes[0].handler, {
+      method: "POST",
+      url: "/plugins/x",
+      headers: {},
+      body: [oversizedChunk, oversizedChunk],
+    });
+
+    expect(res.status).toBe(413);
+    expect(res.body).toMatch(/Payload Too Large/i);
+  });
+
+  it("still responds 500 for a genuine handler error (not a too-large body)", async () => {
+    const { api, routes } = makeApi();
+    const throwingHandler: HttpRequestHandler = async () => {
+      throw new Error("boom");
+    };
+    const register = createSafeRegisterHttpRoute(api, api.logger, "test");
+    register("/plugins/y", throwingHandler, noopOpts);
+
+    const res = await invokeNodeHttpRoute(routes[0].handler, { method: "GET", url: "/plugins/y", headers: {} });
+
+    expect(res.status).toBe(500);
+    expect(res.body).toMatch(/Internal Server Error/);
+  });
+
+  it("accepts a body within the size cap normally", async () => {
+    const { api, routes } = makeApi();
+    const echoHandler: HttpRequestHandler = async (req) => ({ status: 200, body: `len:${req.body?.length ?? 0}` });
+    const register = createSafeRegisterHttpRoute(api, api.logger, "test");
+    register("/plugins/z", echoHandler, noopOpts);
+
+    const smallBody = "x".repeat(1024);
+    const res = await invokeNodeHttpRoute(routes[0].handler, {
+      method: "POST",
+      url: "/plugins/z",
+      headers: {},
+      body: smallBody,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toBe(`len:${smallBody.length}`);
+  });
 });

@@ -118,6 +118,7 @@ function makeSessionState(): SessionState {
     ambientLastEmbeddingMap: new Map(),
     frustrationStateMap: new Map(),
     frustrationThresholdBandMap: new Map(),
+    pendingCheckpointGuardBySession: new Map(),
     changeNotifyStateMap: new Map(),
     displayRevertMap: new Map(),
     recallInFlightBySession: new Map(),
@@ -582,7 +583,7 @@ describe("runCaptureStage", () => {
 
     expect(atomicWriteFileMock).toHaveBeenCalledOnce();
     const [calledPath, calledContent] = atomicWriteFileMock.mock.calls[0] as [string, string];
-    expect(calledPath).toMatch(/credentials-pending\.json$/);
+    expect(calledPath).toMatch(/credentials-pending-[0-9a-f]{32}\.json$/);
     const parsed = JSON.parse(calledContent) as { hints: string[]; at: number };
     expect(parsed.hints).toEqual(["OPENAI_API_KEY", "GITHUB_TOKEN"]);
     expect(typeof parsed.at).toBe("number");
@@ -750,6 +751,94 @@ describe("runCaptureStage", () => {
     );
     expect(credentialsDelete).not.toHaveBeenCalled();
     expect(vectorStore).toHaveBeenCalledOnce();
+  });
+
+  it("finds credentials nested inside object/array tool-call args, not just top-level string fields", async () => {
+    const token = `ghp_${"C".repeat(36)}`;
+    const store = vi.fn().mockReturnValue({ id: "pointer-fact-2", text: "pointer", category: "technical" });
+    const storeWithResult = vi.fn().mockImplementation((entry: Parameters<typeof store>[0]) => ({
+      entry: store(entry),
+      evictedFactId: null,
+      skipped: false,
+      newlyStored: true,
+      embeddingStale: false,
+    }));
+    const storeIfNew = vi.fn().mockReturnValue(true);
+    const credentialsDelete = vi.fn();
+    const setEmbeddingModel = vi.fn();
+    const vectorStore = vi.fn().mockResolvedValue(undefined);
+    const vectorHasDuplicate = vi.fn().mockResolvedValue(false);
+    const embed = vi.fn().mockResolvedValue([0.1, 0.2, 0.3]);
+
+    const api = makeApi("chat");
+    const { ctx } = makeContext({
+      credentialsDb: {
+        storeIfNew,
+        delete: credentialsDelete,
+      } as unknown as LifecycleContext["credentialsDb"],
+      factsDb: {
+        store,
+        storeWithResult,
+        hasDuplicate: vi.fn().mockReturnValue(false),
+        setEmbeddingModel,
+        storeEmbedding: vi.fn(),
+      } as unknown as LifecycleContext["factsDb"],
+      vectorDb: {
+        hasDuplicate: vectorHasDuplicate,
+        store: vectorStore,
+      } as unknown as LifecycleContext["vectorDb"],
+      embeddings: {
+        modelName: "test-model",
+        embed,
+      } as unknown as LifecycleContext["embeddings"],
+      cfg: {
+        autoCapture: false,
+        captureMaxChars: 5000,
+        autoRecall: { enabled: false, summaryThreshold: 0, summaryMaxChars: 200 },
+        retrieval: { strategies: ["semantic"] },
+        store: { classifyBeforeWrite: false },
+        memoryTiering: { enabled: false, compactionOnSessionEnd: false },
+        credentials: { enabled: true, autoCapture: { toolCalls: true, logCaptures: true } },
+        humanizer: { enabled: false },
+      } as unknown as LifecycleContext["cfg"],
+    });
+    const sessionState = makeSessionState();
+
+    await runCaptureStage(
+      {
+        success: true,
+        messages: [
+          {
+            role: "assistant",
+            tool_calls: [
+              {
+                function: {
+                  name: "run_steps",
+                  arguments: JSON.stringify({
+                    // Top-level string field: makes the old top-level-only flattening non-empty,
+                    // which previously suppressed the raw-args fallback and hid the nested secret.
+                    description: "set up repo access",
+                    steps: [{ cmd: `export GITHUB_TOKEN=${token}` }],
+                  }),
+                },
+              },
+            ],
+          },
+        ],
+      },
+      api as never,
+      ctx,
+      sessionState,
+    );
+
+    expect(storeIfNew).toHaveBeenCalledWith(
+      expect.objectContaining({
+        service: "github",
+        type: "token",
+        value: token,
+      }),
+    );
+    expect(credentialsDelete).not.toHaveBeenCalled();
   });
 
   it("skips tool-call credential capture when vault is unavailable (no plaintext in facts)", async () => {

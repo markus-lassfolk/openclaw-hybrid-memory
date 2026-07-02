@@ -6,8 +6,16 @@ export const BOOTSTRAP_DRAIN_MS = 3_000;
 /** Brief wait for in-flight auto-recall before permanentClose (directives can run 20s+). */
 export const RECALL_DRAIN_MS = 2_000;
 
-/** Max time register() blocks waiting for scheduled teardown before opening new DB handles. */
-const TEARDOWN_MIN_WAIT_MS = BOOTSTRAP_DRAIN_MS + RECALL_DRAIN_MS + 1_000;
+/**
+ * Max time register() blocks waiting for scheduled teardown before opening new DB handles.
+ *
+ * schedulePluginTeardown() serializes callbacks onto a single chain, so when a re-register has
+ * a vault registry (#87), register-plugin.ts chains TWO teardowns back-to-back: a vault-registry
+ * teardown (drainOldRecall, up to RECALL_DRAIN_MS) followed by the full-database teardown
+ * (drainOldBootstrap + drainOldRecall, up to BOOTSTRAP_DRAIN_MS + RECALL_DRAIN_MS). The budget
+ * must cover that worst-case sequential total, not just the full-database teardown alone.
+ */
+const TEARDOWN_MIN_WAIT_MS = RECALL_DRAIN_MS + BOOTSTRAP_DRAIN_MS + RECALL_DRAIN_MS + 1_000;
 export const TEARDOWN_WAIT_MS = Math.max(6_000, TEARDOWN_MIN_WAIT_MS);
 
 /** Serializes plugin teardown (bootstrap settle → close DBs) across hot reloads (#1550 / reload race). */

@@ -40,6 +40,38 @@ describe("maintenance-orchestrator", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  it("re-checks the step guard after the inter-LLM-step cooldown sleep, skipping a step a concurrent run just completed", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    let distillCalls = 0;
+    const runners = new Map<string, () => Promise<string>>([
+      ["extract-daily", async () => "ok"],
+      [
+        "distill",
+        async () => {
+          distillCalls++;
+          return "ok";
+        },
+      ],
+    ]);
+    const cfg = {
+      maintenance: { orchestrator: { rateLimitMaxRetries: 2, llmCooldownBetweenStepsMs: 150 } },
+    } as HybridMemoryConfig;
+
+    // Simulate a concurrent maintenance run (a manual CLI invocation, or a double-fired cron
+    // trigger) completing "distill" partway through this run's cooldown sleep before "distill".
+    const concurrentWrite = setTimeout(() => writeStepGuardTimestampMs("distill", Date.now(), openclawDir), 40);
+    try {
+      const result = await runMaintenanceOrchestrator(
+        { cfg, runners, openclawDir },
+        { tiers: ["nightly"], verbose: false, include: ["extract-daily", "distill"] },
+      );
+      expect(distillCalls).toBe(0);
+      expect(result.steps.find((s) => s.name === "distill")?.status).toBe("skipped_guard");
+    } finally {
+      clearTimeout(concurrentWrite);
+    }
+  });
+
   it("defers remaining LLM steps after consecutive rate limits", async () => {
     openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
     let distillCalls = 0;

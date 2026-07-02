@@ -141,13 +141,15 @@ export async function armWorkboardIntegration(ctx: WorkboardIntegrationContext):
       },
       shouldAbort: checkSuperseded,
       loadTasks: () => loadTaskLedgerFromFacts(factsDb),
+      // Deliberately does NOT catch listGoals() failures: workboard-adapter.ts's sync() has an
+      // outer try/catch that aborts the whole sync (before the stale-card deletion pass) on any
+      // thrown error, matching how loadTasks() (also unwrapped) is handled. Swallowing the error
+      // here and returning [] previously made a transient goals-directory read failure look
+      // identical to "there are genuinely zero goals" — sync() would then treat every existing
+      // Workboard goal card as stale and delete it, even though the goal data was intact.
       loadGoals: async () => {
         if (!goalsDir) return [];
-        try {
-          return await listGoals(goalsDir);
-        } catch {
-          return [];
-        }
+        return listGoals(goalsDir);
       },
       updateTaskStatus: (label, newStatus) =>
         applyWorkboardTaskStatusUpdate(

@@ -32,18 +32,29 @@ export function createOrStrengthenRelatedLink(
   if (factIdA === factIdB) return;
   const [source, target] = factIdA < factIdB ? [factIdA, factIdB] : [factIdB, factIdA];
 
-  const existing = db
-    .prepare(
-      `SELECT id, strength FROM memory_links WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'RELATED_TO'`,
-    )
-    .get(source, target) as { id: string; strength: number } | undefined;
+  // memory_links has no UNIQUE constraint on (source_fact_id, target_fact_id, link_type), so the
+  // read-then-write below must be atomic — otherwise two concurrent writers (e.g. an interactive
+  // store racing a background consolidation/enrichment pass) can both see "no existing row" and
+  // both INSERT, creating duplicate parallel edges that corrupt strength/degree accounting.
+  const tx = createTransaction(
+    db,
+    () => {
+      const existing = db
+        .prepare(
+          `SELECT id, strength FROM memory_links WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'RELATED_TO'`,
+        )
+        .get(source, target) as { id: string; strength: number } | undefined;
 
-  const newStrength = Math.min(1, (existing?.strength ?? 0) + deltaStrength);
-  if (existing) {
-    db.prepare("UPDATE memory_links SET strength = ? WHERE id = ?").run(newStrength, existing.id);
-  } else {
-    createLink(db, source, target, "RELATED_TO", newStrength);
-  }
+      const newStrength = Math.min(1, (existing?.strength ?? 0) + deltaStrength);
+      if (existing) {
+        db.prepare("UPDATE memory_links SET strength = ? WHERE id = ?").run(newStrength, existing.id);
+      } else {
+        createLink(db, source, target, "RELATED_TO", newStrength);
+      }
+    },
+    "IMMEDIATE",
+  );
+  tx();
 }
 
 export function strengthenRelatedLinksBatch(db: DatabaseSync, pairs: [string, string][], deltaStrength = 0.1): void {
@@ -276,31 +287,28 @@ export function expandGraphWithCTE(
   const asOf = options?.asOf ?? null;
   const scopeFilter = options?.scopeFilter;
   const hubDegreeCap = options?.hubDegreeCap === undefined ? 500 : options.hubDegreeCap;
-  let factJoinOut = "";
-  let factWhereOut = "";
-  let factJoinIn = "";
-  let factWhereIn = "";
+  // The facts join (and superseded_at check) must always apply, not just when asOf/scopeFilter
+  // are supplied — otherwise the recursive CTE traverses raw memory_links with zero regard for
+  // fact validity, letting a superseded (corrected/replaced) fact serve as an intermediate hop
+  // or be returned as an expansion result even though direct search correctly excludes it.
+  const factJoinOut = "JOIN facts f ON f.id = ml.target_fact_id";
+  const factJoinIn = "JOIN facts f ON f.id = ml.source_fact_id";
   const filterParamsOut: SQLInputValue[] = [];
   const filterParamsIn: SQLInputValue[] = [];
 
-  if (asOf != null || scopeFilter) {
-    factJoinOut = "JOIN facts f ON f.id = ml.target_fact_id";
-    factJoinIn = "JOIN facts f ON f.id = ml.source_fact_id";
-
-    let baseWhere = "";
-    if (asOf != null) {
-      baseWhere += " AND COALESCE(f.valid_from, f.created_at) <= ? AND (f.valid_until IS NULL OR f.valid_until > ?)";
-      filterParamsOut.push(asOf, asOf);
-      filterParamsIn.push(asOf, asOf);
-    }
-    if (scopeFilter && (scopeFilter.userId || scopeFilter.agentId || scopeFilter.sessionId)) {
-      baseWhere += ` AND (f.scope = 'global' OR (f.scope = 'user' AND f.scope_target = ?) OR (f.scope = 'agent' AND f.scope_target = ?) OR (f.scope = 'session' AND f.scope_target = ?))`;
-      filterParamsOut.push(scopeFilter.userId ?? null, scopeFilter.agentId ?? null, scopeFilter.sessionId ?? null);
-      filterParamsIn.push(scopeFilter.userId ?? null, scopeFilter.agentId ?? null, scopeFilter.sessionId ?? null);
-    }
-    factWhereOut = baseWhere;
-    factWhereIn = baseWhere;
+  let baseWhere = " AND f.superseded_at IS NULL";
+  if (asOf != null) {
+    baseWhere += " AND COALESCE(f.valid_from, f.created_at) <= ? AND (f.valid_until IS NULL OR f.valid_until > ?)";
+    filterParamsOut.push(asOf, asOf);
+    filterParamsIn.push(asOf, asOf);
   }
+  if (scopeFilter && (scopeFilter.userId || scopeFilter.agentId || scopeFilter.sessionId)) {
+    baseWhere += ` AND (f.scope = 'global' OR (f.scope = 'user' AND f.scope_target = ?) OR (f.scope = 'agent' AND f.scope_target = ?) OR (f.scope = 'session' AND f.scope_target = ?))`;
+    filterParamsOut.push(scopeFilter.userId ?? null, scopeFilter.agentId ?? null, scopeFilter.sessionId ?? null);
+    filterParamsIn.push(scopeFilter.userId ?? null, scopeFilter.agentId ?? null, scopeFilter.sessionId ?? null);
+  }
+  const factWhereOut = baseWhere;
+  const factWhereIn = baseWhere;
 
   // Use recursive CTE to traverse the graph in a single query.
   // We track: current node, seed that originated this path, hop count, and JSON path.

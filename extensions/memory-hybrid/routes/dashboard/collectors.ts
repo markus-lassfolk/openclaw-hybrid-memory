@@ -1266,7 +1266,7 @@ export async function performFactAction(
         await deleteVectorForFactId({
           vectorDb: ctx.vectorDb,
           factId,
-          logger: ctx.logger ?? pluginLogger,
+          logger: pluginLogger,
           context: "dashboard-forget",
         });
       }

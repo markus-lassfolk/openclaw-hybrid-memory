@@ -30,6 +30,12 @@ export function registerVaultCommands(program: Chainable, cfg: HybridMemoryConfi
     .command("vault-sync <name> <path>")
     .description("Validate a vault path and print merge snippet for openclaw.json")
     .action((name: string, path: string) => {
+      if (["default", "all"].includes(name.trim().toLowerCase())) {
+        console.error(
+          `Vault name "${name}" is reserved (used as a sentinel throughout vault resolution) and will be silently ignored if configured. Choose a different name.`,
+        );
+        process.exit(1);
+      }
       const v = validateVaultPath(path);
       if (!v.ok) {
         console.error(`Invalid vault path: ${v.reason}`);

@@ -210,8 +210,8 @@ export function runVaultStatusForCli(ctx: HandlerContext): VaultStatusResult | n
 export function runCredentialsAuditForCli(ctx: HandlerContext): CredentialsAuditResult {
   const { credentialsDb } = ctx;
   const entries: Array<{ service: string; type: string; url: string | null; flags: string[] }> = [];
-  if (!credentialsDb) return { entries, total: 0 };
-  const list = credentialsDb.listAll();
+  if (!credentialsDb) return { entries, total: 0, undecryptable: 0 };
+  const { entries: list, skippedCount } = credentialsDb.listAllWithSkipped();
   // Group entries by canonical value and by normalized service name so we can flag
   // older duplicates in each group. Each item carries its `updated` timestamp so we
   // can sort newest-first and keep only group[0] (the newest) un-flagged.
@@ -255,7 +255,7 @@ export function runCredentialsAuditForCli(ctx: HandlerContext): CredentialsAudit
       }
     }
   }
-  return { entries, total: entries.length };
+  return { entries, total: entries.length, undecryptable: skippedCount };
 }
 
 // ---------------------------------------------------------------------------
@@ -314,7 +314,7 @@ export function runCredentialsPruneForCli(
   const { credentialsDb } = ctx;
   const removed: Array<{ service: string; type: string }> = [];
   const apply = opts.yes === true && !opts.dryRun;
-  if (!credentialsDb) return { removed: 0, entries: [], dryRun: !apply };
+  if (!credentialsDb) return { removed: 0, entries: [], dryRun: !apply, undecryptable: 0 };
   const audit = runCredentialsAuditForCli(ctx);
   const flagsToPrune = opts.onlyFlags && opts.onlyFlags.length > 0 ? new Set(opts.onlyFlags) : null;
   for (const e of audit.entries) {
@@ -328,5 +328,5 @@ export function runCredentialsPruneForCli(
       removed.push({ service: e.service, type: e.type });
     }
   }
-  return { removed: removed.length, entries: removed, dryRun: !apply };
+  return { removed: removed.length, entries: removed, dryRun: !apply, undecryptable: audit.undecryptable };
 }

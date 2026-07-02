@@ -25,6 +25,8 @@ export type CorrectionIncident = {
 export type SelfCorrectionExtractResult = {
   incidents: CorrectionIncident[];
   sessionsScanned: number;
+  /** Count of session files that failed to read, or lines that failed to parse, this run. */
+  failures?: number;
 };
 
 const MAX_USER_MSG = 800;
@@ -61,9 +63,12 @@ type RunSelfCorrectionExtractOpts = {
 export function runSelfCorrectionExtract(opts: RunSelfCorrectionExtractOpts): SelfCorrectionExtractResult {
   const { filePaths, correctionRegex } = opts;
   const incidents: CorrectionIncident[] = [];
+  let failures = 0;
 
   for (const filePath of filePaths) {
-    const messages = parseSessionMessagesSync(filePath, "self-correction-extract");
+    const messages = parseSessionMessagesSync(filePath, "self-correction-extract", () => {
+      failures++;
+    });
     if (messages.length === 0) continue;
 
     const sessionName = basename(filePath);
@@ -92,7 +97,7 @@ export function runSelfCorrectionExtract(opts: RunSelfCorrectionExtractOpts): Se
     }
   }
 
-  return { incidents, sessionsScanned: filePaths.length };
+  return { incidents, sessionsScanned: filePaths.length, ...(failures > 0 ? { failures } : {}) };
 }
 
 /**

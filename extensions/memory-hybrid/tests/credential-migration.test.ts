@@ -541,7 +541,17 @@ describe("migrateCredentialsToVault", () => {
           throw new Error("sqlite delete failed");
         }),
       });
-      const credentialsDb = makeCredentialsDB();
+      // No prior vault entry for this service/type — this represents a fresh migration of a
+      // plaintext credential fact, so rollback should delete the newly-inserted row rather than
+      // restore a (nonexistent) prior value. The first get() call is the pre-store "capture
+      // prior entry" check (returns null: nothing existed yet); subsequent calls are the
+      // migration's own post-store verification read, which must see the newly stored value.
+      const credentialsDb = makeCredentialsDB({
+        get: vi
+          .fn()
+          .mockReturnValueOnce(null)
+          .mockReturnValue({ service: "github", type: "api_key", value: TOKEN_VALUE }),
+      });
 
       const result = await migrateCredentialsToVault(makeOpts({ factsDb, credentialsDb }));
 
@@ -568,7 +578,16 @@ describe("migrateCredentialsToVault", () => {
           entry: { id: "", text: "" },
         }),
       });
-      const credentialsDb = makeCredentialsDB();
+      // No prior vault entry for this service/type — a fresh migration, so rollback should
+      // delete the newly-inserted row rather than restore a (nonexistent) prior value. The first
+      // get() call is the pre-store "capture prior entry" check (returns null); subsequent calls
+      // are the migration's own post-store verification read.
+      const credentialsDb = makeCredentialsDB({
+        get: vi
+          .fn()
+          .mockReturnValueOnce(null)
+          .mockReturnValue({ service: "github", type: "api_key", value: TOKEN_VALUE }),
+      });
 
       const result = await migrateCredentialsToVault(makeOpts({ factsDb, credentialsDb }));
 

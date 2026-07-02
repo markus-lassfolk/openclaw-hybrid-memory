@@ -7,6 +7,7 @@
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { FactsDB } from "../backends/facts-db.js";
+import { isValidCategory } from "../config.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { pluginLogger } from "../utils/logger.js";
 import { resolveGatewayScopeFilter, scopeFieldsFromEntry, scopeFieldsFromFilter } from "../utils/scope-filter.js";
@@ -177,7 +178,11 @@ export function registerFactMutationGatewayMethods(ctx: FactMutationGatewayConte
       const text = typeof params.text === "string" ? params.text?.trim() : "";
       if (!text) return respond(false, undefined, { message: "missing text" });
 
-      const category = typeof params.category === "string" ? params.category : "general";
+      const categoryParam = typeof params.category === "string" ? params.category.trim() : "";
+      const category = categoryParam || "other";
+      if (!isValidCategory(category)) {
+        return respond(false, undefined, { message: `invalid category "${category}"` });
+      }
       const importance = typeof params.importance === "number" ? params.importance : 0.5;
       const entity = typeof params.entity === "string" ? params.entity : null;
       const key = typeof params.key === "string" ? params.key : null;

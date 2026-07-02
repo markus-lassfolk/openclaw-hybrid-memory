@@ -202,15 +202,24 @@ export function registerBackfillMaintenanceCommands(
           let dailyLogs = 0;
           let sessionLanguages = 0;
           let recallEvents = 0;
+          const failedFiles: string[] = [];
           const paths = resolveExtractSessionFilePaths(cfg, days);
           for (const filePath of paths) {
-            if (synthesizeDailyLogFromSessionFile(filePath)) dailyLogs++;
-            if (scanSessionFileForMetadata(factsDb.getRawDb(), filePath)) sessionLanguages++;
-            recallEvents += backfillRecallEventsFromSessionFile(factsDb.getRawDb(), filePath);
+            try {
+              if (synthesizeDailyLogFromSessionFile(filePath)) dailyLogs++;
+              if (scanSessionFileForMetadata(factsDb.getRawDb(), filePath)) sessionLanguages++;
+              recallEvents += backfillRecallEventsFromSessionFile(factsDb.getRawDb(), filePath);
+            } catch (err) {
+              failedFiles.push(`${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+            }
           }
           console.log(
-            `maintenance backfill --all: scanned ${paths.length} session(s); daily-logs=${dailyLogs}, session-languages=${sessionLanguages}, recall-events=${recallEvents}`,
+            `maintenance backfill --all: scanned ${paths.length} session(s); daily-logs=${dailyLogs}, session-languages=${sessionLanguages}, recall-events=${recallEvents}, failed=${failedFiles.length}`,
           );
+          if (failedFiles.length > 0) {
+            for (const line of failedFiles.slice(0, 10)) console.error(`  - ${line}`);
+            process.exitCode = 1;
+          }
         }),
       );
   }
@@ -224,13 +233,25 @@ export function registerBackfillMaintenanceCommands(
       withExit(async (opts?: { days?: string; json?: boolean }) => {
         const days = Number.parseInt(opts?.days ?? "60", 10);
         let inserted = 0;
+        const failedFiles: string[] = [];
         const paths = resolveExtractSessionFilePaths(cfg, days);
         for (const filePath of paths) {
-          inserted += backfillRecallEventsFromSessionFile(factsDb.getRawDb(), filePath);
+          try {
+            inserted += backfillRecallEventsFromSessionFile(factsDb.getRawDb(), filePath);
+          } catch (err) {
+            failedFiles.push(`${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+          }
         }
-        const report = { files: paths.length, recallEventsInserted: inserted, days };
+        const report = { files: paths.length, recallEventsInserted: inserted, failed: failedFiles.length, days };
         if (opts?.json) console.log(JSON.stringify(report, null, 2));
-        else console.log(`backfill-recall-events: scanned ${report.files} file(s), inserted ${inserted} event(s)`);
+        else
+          console.log(
+            `backfill-recall-events: scanned ${report.files} file(s), inserted ${inserted} event(s), failed=${failedFiles.length}`,
+          );
+        if (failedFiles.length > 0) {
+          for (const line of failedFiles.slice(0, 10)) console.error(`  - ${line}`);
+          process.exitCode = 1;
+        }
       }),
     );
 
@@ -256,16 +277,25 @@ export function registerBackfillMaintenanceCommands(
       withExit(async (opts?: { days?: string; json?: boolean }) => {
         const days = Number.parseInt(opts?.days ?? "60", 10);
         let written = 0;
+        const failedFiles: string[] = [];
         const paths = resolveExtractSessionFilePaths(cfg, days);
         for (const filePath of paths) {
-          if (synthesizeDailyLogFromSessionFile(filePath)) written++;
+          try {
+            if (synthesizeDailyLogFromSessionFile(filePath)) written++;
+          } catch (err) {
+            failedFiles.push(`${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+          }
         }
-        const report = { files: paths.length, dailyLogsWritten: written, days };
+        const report = { files: paths.length, dailyLogsWritten: written, failed: failedFiles.length, days };
         if (opts?.json) console.log(JSON.stringify(report, null, 2));
         else
           console.log(
-            `backfill-daily-logs: wrote/updated ${written} daily log section(s) from ${paths.length} session(s)`,
+            `backfill-daily-logs: wrote/updated ${written} daily log section(s) from ${paths.length} session(s), failed=${failedFiles.length}`,
           );
+        if (failedFiles.length > 0) {
+          for (const line of failedFiles.slice(0, 10)) console.error(`  - ${line}`);
+          process.exitCode = 1;
+        }
       }),
     );
 
@@ -278,13 +308,25 @@ export function registerBackfillMaintenanceCommands(
       withExit(async (opts?: { days?: string; json?: boolean }) => {
         const days = Number.parseInt(opts?.days ?? "60", 10);
         let rows = 0;
+        const failedFiles: string[] = [];
         const paths = resolveExtractSessionFilePaths(cfg, days);
         for (const filePath of paths) {
-          if (scanSessionFileForMetadata(factsDb.getRawDb(), filePath)) rows++;
+          try {
+            if (scanSessionFileForMetadata(factsDb.getRawDb(), filePath)) rows++;
+          } catch (err) {
+            failedFiles.push(`${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+          }
         }
-        const report = { files: paths.length, sessionMetadataRows: rows, days };
+        const report = { files: paths.length, sessionMetadataRows: rows, failed: failedFiles.length, days };
         if (opts?.json) console.log(JSON.stringify(report, null, 2));
-        else console.log(`backfill-session-languages: upserted ${rows} session_metadata row(s)`);
+        else
+          console.log(
+            `backfill-session-languages: upserted ${rows} session_metadata row(s), failed=${failedFiles.length}`,
+          );
+        if (failedFiles.length > 0) {
+          for (const line of failedFiles.slice(0, 10)) console.error(`  - ${line}`);
+          process.exitCode = 1;
+        }
       }),
     );
 
@@ -299,13 +341,25 @@ export function registerBackfillMaintenanceCommands(
         const workflowStore = new WorkflowStore(defaultWorkflowDbPath());
         try {
           let traces = 0;
+          const failedFiles: string[] = [];
           const paths = resolveExtractSessionFilePaths(cfg, days);
           for (const filePath of paths) {
-            traces += backfillWorkflowTracesFromFile(factsDb, workflowStore, filePath, cfg);
+            try {
+              traces += backfillWorkflowTracesFromFile(factsDb, workflowStore, filePath, cfg);
+            } catch (err) {
+              failedFiles.push(`${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+            }
           }
-          const report = { files: paths.length, workflowTraces: traces, days };
+          const report = { files: paths.length, workflowTraces: traces, failed: failedFiles.length, days };
           if (opts?.json) console.log(JSON.stringify(report, null, 2));
-          else console.log(`backfill-workflow-traces: recorded ${traces} trace(s) from ${paths.length} session(s)`);
+          else
+            console.log(
+              `backfill-workflow-traces: recorded ${traces} trace(s) from ${paths.length} session(s), failed=${failedFiles.length}`,
+            );
+          if (failedFiles.length > 0) {
+            for (const line of failedFiles.slice(0, 10)) console.error(`  - ${line}`);
+            process.exitCode = 1;
+          }
         } finally {
           workflowStore.close();
         }

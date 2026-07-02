@@ -1,7 +1,17 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { registerGoalCommands } from "../cli/goals.js";
 import { hybridConfigSchema } from "../config.js";
+import {
+  createGoal,
+  GOAL_CORRUPT_SUFFIX,
+  readGoal,
+  resolveGoalsDir,
+  updateGoal,
+} from "../services/goal-registry.js";
 import { setEnv } from "../utils/env-manager.js";
 
 function makeCfg() {
@@ -95,6 +105,102 @@ describe("goals config CLI", () => {
       log.mockRestore();
       exitSpy.mockRestore();
       setEnv("OPENCLAW_WORKSPACE", prevWorkspace);
+    }
+  });
+
+  it("reset-budget clears circuit-breaker state, not just dispatch/assessment counters", async () => {
+    const prevWorkspace = process.env.OPENCLAW_WORKSPACE;
+    const workspace = await mkdtemp(join(tmpdir(), "goals-reset-budget-"));
+    setEnv("OPENCLAW_WORKSPACE", workspace);
+    try {
+      const cfg = makeCfg();
+      const dir = resolveGoalsDir(workspace, cfg.goalStewardship.goalsDir);
+      const created = await createGoal(
+        dir,
+        { label: "tripped_goal", description: "d", acceptanceCriteria: ["a"] },
+        {
+          maxDispatches: 5,
+          maxAssessments: 10,
+          cooldownMinutes: 5,
+          escalateAfterFailures: 3,
+          priority: "normal",
+        },
+      );
+      // Simulate a tripped circuit breaker: blocked, streak at/over the repeat limit, with a
+      // fingerprint that would still match the next assessment if the blocker is unchanged.
+      await updateGoal(
+        dir,
+        created.id,
+        {
+          status: "blocked",
+          currentBlockers: ["still stuck"],
+          dispatchCount: 3,
+          assessmentCount: 4,
+          consecutiveFailures: 2,
+          lastBlockerFingerprint: "fp-still-stuck",
+          sameBlockerStreak: 3,
+          circuitBreakerLastProgressAssessmentCount: 1,
+          escalationKind: "circuit_breaker",
+          humanEscalationSummary: "Circuit breaker tripped after 3 repeats.",
+        },
+        { timestamp: new Date().toISOString(), action: "circuit-breaker-tripped", detail: "test setup", actor: "agent" },
+      );
+
+      const program = new Command("hybrid-mem");
+      program.exitOverride();
+      registerGoalCommands(program, { cfg });
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        await program.parseAsync(["goals", "reset-budget", created.id], { from: "user" });
+      } finally {
+        log.mockRestore();
+      }
+
+      const after = await readGoal(dir, created.id);
+      expect(after?.status).toBe("active");
+      expect(after?.dispatchCount).toBe(0);
+      expect(after?.assessmentCount).toBe(0);
+      expect(after?.consecutiveFailures).toBe(0);
+      expect(after?.lastBlockerFingerprint).toBeNull();
+      expect(after?.sameBlockerStreak).toBe(0);
+      expect(after?.circuitBreakerLastProgressAssessmentCount).toBe(0);
+      expect(after?.escalationKind).toBeNull();
+      expect(after?.humanEscalationSummary).toBeNull();
+    } finally {
+      setEnv("OPENCLAW_WORKSPACE", prevWorkspace);
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("doctor --json --repair-corrupt sets a nonzero exit code when a repair fails (#60)", async () => {
+    const prevWorkspace = process.env.OPENCLAW_WORKSPACE;
+    const workspace = await mkdtemp(join(tmpdir(), "goals-doctor-repair-fail-"));
+    setEnv("OPENCLAW_WORKSPACE", workspace);
+    try {
+      const cfg = makeCfg();
+      const dir = resolveGoalsDir(workspace, cfg.goalStewardship.goalsDir);
+      await mkdir(dir, { recursive: true });
+      // Quarantined file whose JSON parses but doesn't satisfy the Goal schema — repair fails.
+      await writeFile(join(dir, `unrepairable${GOAL_CORRUPT_SUFFIX}`), JSON.stringify({ notAGoal: true }), "utf-8");
+
+      const program = new Command("hybrid-mem");
+      program.exitOverride();
+      registerGoalCommands(program, { cfg });
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      let payload: { repairResults: Array<{ action: string }> } | undefined;
+      try {
+        await program.parseAsync(["goals", "doctor", "--json", "--repair-corrupt"], { from: "user" });
+        payload = JSON.parse(String(log.mock.calls[0]?.[0]));
+      } finally {
+        log.mockRestore();
+      }
+
+      expect(payload?.repairResults.some((r) => r.action === "failed")).toBe(true);
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = 0;
+      setEnv("OPENCLAW_WORKSPACE", prevWorkspace);
+      await rm(workspace, { recursive: true, force: true });
     }
   });
 });

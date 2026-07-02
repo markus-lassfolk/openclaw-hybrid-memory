@@ -69,3 +69,33 @@ describe("hybrid-mem upgrade-only fast path does not shadow subcommand flags", (
     expect(runUpgradeForCli).toHaveBeenCalledWith(expect.anything(), "2026.6.999", { skipPostUpgradeCron: true });
   });
 });
+
+describe("hybrid-mem upgrade-only fast path — config parse guard (#62)", () => {
+  afterEach(() => {
+    vi.doUnmock("../config.js");
+    vi.resetModules();
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+  });
+
+  it("does not throw when both the primary and fallback config shapes fail to parse", async () => {
+    vi.doMock("../config.js", () => ({
+      hybridConfigSchema: {
+        parse: vi.fn(() => {
+          throw new Error("config schema is broken");
+        }),
+      },
+    }));
+    vi.resetModules();
+    const { registerHybridMemCliUpgradeOnlyWithApi: registerWithBrokenSchema } = await import(
+      "../setup/cli-context/register-upgrade-only.js"
+    );
+
+    const api = makeApi();
+    expect(() => registerWithBrokenSchema(api as never)).not.toThrow();
+    expect(api.registerCli).not.toHaveBeenCalled();
+    expect(api.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("upgrade-only CLI registration skipped"),
+    );
+  });
+});

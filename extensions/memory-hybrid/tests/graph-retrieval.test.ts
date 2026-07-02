@@ -959,4 +959,80 @@ describe("Integration: expandGraph with real FactsDB", () => {
     expect(result.some((r) => r.entry.text === "session_start" || r.entry.text === "session_end")).toBe(false);
     expect(elapsedMs).toBeLessThan(5000);
   }, 30_000);
+
+  it("excludes a superseded fact from CTE-based expansion results with no asOf/scopeFilter (#31)", () => {
+    // Regression: expandGraphWithCTE previously only joined `facts` (and thus could only apply any
+    // validity check) when asOf or scopeFilter was supplied. With neither passed here — the common
+    // recall case — the raw CTE used to traverse memory_links with zero regard for superseded_at.
+    const factA = storeFact("Alpha");
+    const factBOld = storeFact("Beta (old)");
+    const factBNew = storeFact("Beta (corrected)");
+    db.createLink(factA.id, factBOld.id, "RELATED_TO", 1.0);
+    db.supersede(factBOld.id, factBNew.id);
+
+    const aEntry = db.getById(factA.id)!;
+    const { results: result } = expandGraph(db, [{ factId: factA.id, score: 1.0, entry: aEntry }], {
+      maxDepth: 2,
+    });
+
+    expect(result.map((r) => r.factId)).not.toContain(factBOld.id);
+  });
+
+  it("does not traverse through a superseded intermediate fact via CTE expansion (#31)", () => {
+    const factA = storeFact("Alpha");
+    const factBOld = storeFact("Beta (old)");
+    const factBNew = storeFact("Beta (corrected)");
+    const factC = storeFact("Gamma");
+    db.createLink(factA.id, factBOld.id, "RELATED_TO", 1.0);
+    db.createLink(factBOld.id, factC.id, "RELATED_TO", 1.0);
+    db.supersede(factBOld.id, factBNew.id);
+
+    const aEntry = db.getById(factA.id)!;
+    const { results: result } = expandGraph(db, [{ factId: factA.id, score: 1.0, entry: aEntry }], {
+      maxDepth: 2,
+    });
+
+    // C was only reachable through the now-superseded B; no other path exists.
+    expect(result.map((r) => r.factId)).not.toContain(factC.id);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// expandGraph — superseded facts excluded (mock-based, #31)
+// ---------------------------------------------------------------------------
+
+describe("expandGraph: excludes superseded facts (mock DB)", () => {
+  it("CTE path: drops a superseded fact from expansion results", () => {
+    const a = makeEntry("a");
+    const b = makeEntry("b", { supersededAt: 1_700_000_500 });
+    const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
+    const { results: result } = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
+    expect(result.map((r) => r.factId)).not.toContain("b");
+  });
+
+  it("iterative-BFS path (no expandGraphWithCTE): drops a superseded fact from expansion results", () => {
+    const a = makeEntry("a");
+    const b = makeEntry("b", { supersededAt: 1_700_000_500 });
+    const mockDb = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
+    const { expandGraphWithCTE: _unused, ...dbWithoutCTE } = mockDb;
+    const { results: result } = expandGraph(dbWithoutCTE, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
+    expect(result.map((r) => r.factId)).not.toContain("b");
+  });
+
+  it("iterative-BFS path: does not traverse through a superseded intermediate fact", () => {
+    const a = makeEntry("a");
+    const b = makeEntry("b", { supersededAt: 1_700_000_500 });
+    const c = makeEntry("c");
+    const mockDb = buildMockDb(
+      [a, b, c],
+      {
+        a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }],
+        b: [{ id: "l2", targetFactId: "c", linkType: "RELATED_TO", strength: 1.0 }],
+      },
+      {},
+    );
+    const { expandGraphWithCTE: _unused, ...dbWithoutCTE } = mockDb;
+    const { results: result } = expandGraph(dbWithoutCTE, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 2 });
+    expect(result.map((r) => r.factId)).not.toContain("c");
+  });
 });

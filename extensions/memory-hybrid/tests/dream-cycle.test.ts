@@ -34,6 +34,12 @@ import {
 } from "../services/dream-cycle.js";
 import * as reflection from "../services/reflection.js";
 
+vi.mock("../services/error-reporter.js", async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, capturePluginError: vi.fn() };
+});
+import { capturePluginError } from "../services/error-reporter.js";
+
 const { FactsDB, EventLog } = _testing;
 
 // ---------------------------------------------------------------------------
@@ -1220,6 +1226,25 @@ describe("runDreamCycle", () => {
     expect(vectorDb.delete).toHaveBeenCalledWith("22222222-2222-4222-8222-222222222222");
     expect(result.orphanVectorsRemoved).toBe(2);
     expect(result.digestSummary).toContain("2 orphaned vectors reconciled");
+  });
+
+  it("reports a vector reconciliation failure to capturePluginError exactly once (#76)", async () => {
+    capturePluginError.mockClear();
+    const openaiStub = {
+      chat: { completions: { create: vi.fn().mockRejectedValue(new Error("no key")) } },
+    } as never;
+    const embeddingsStub = { embed: vi.fn().mockRejectedValue(new Error("no key")) } as never;
+    const vectorDb = {
+      getAllIds: vi.fn().mockRejectedValue(new Error("lance db unavailable")),
+      delete: vi.fn().mockResolvedValue(true),
+    };
+
+    await runDreamCycle(factsDb, vectorDb as never, embeddingsStub, openaiStub, null, baseConfig, silentLogger);
+
+    const reconcileCalls = capturePluginError.mock.calls.filter(
+      ([, ctx]) => ctx?.operation === "dream-cycle-orphan-vector-reconcile",
+    );
+    expect(reconcileCalls).toHaveLength(1);
   });
 
   it("warns when active SQLite facts remain vectorless after reconciliation", async () => {

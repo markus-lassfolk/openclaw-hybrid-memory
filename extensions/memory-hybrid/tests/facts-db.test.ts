@@ -2,8 +2,9 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
+import * as errorReporter from "../services/error-reporter.js";
 
 const { FactsDB, isIsoUtcTimestamp } = _testing;
 
@@ -267,6 +268,56 @@ describe("FactsDB.getByIds", () => {
     expect(found.size).toBe(storedIds.length);
     expect(found.get(storedIds[0])?.text).toBe("Batch fact 0");
     expect(found.get(storedIds[1099])?.text).toBe("Batch fact 1099");
+  });
+});
+
+describe("FactsDB.getBatch", () => {
+  it("orders by created_at DESC with id ASC as a stable tiebreaker", () => {
+    // created_at has 1-second resolution, so a bursty ingestion window routinely produces ties;
+    // ORDER BY created_at DESC alone gives SQLite no deterministic order among tied rows, which
+    // can skip or double-count rows across separate paginated getBatch() calls made while the
+    // table is being written to concurrently (embedding-migration.ts, storage maintenance loops).
+    const raw = db.getRawDb();
+    const prepareSpy = vi.spyOn(raw, "prepare");
+
+    db.getBatch(0, 10);
+
+    const batchCalls = prepareSpy.mock.calls.filter(
+      ([sql]) => typeof sql === "string" && sql.includes("FROM facts") && sql.includes("OFFSET"),
+    );
+    expect(batchCalls).toHaveLength(1);
+    expect(String(batchCalls[0]?.[0])).toMatch(/ORDER BY created_at DESC, id ASC/);
+  });
+
+  it("returns every row exactly once across pages when several facts share the same created_at", () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      const entry = db.store({
+        text: `Tied-timestamp fact ${i}`,
+        category: "fact",
+        importance: 0.7,
+        entity: null,
+        key: null,
+        value: null,
+        source: "test",
+      });
+      ids.push(entry.id);
+    }
+    // Force every row onto the exact same created_at second to simulate a bursty write window.
+    const raw = db.getRawDb();
+    const tiedSec = Math.floor(Date.now() / 1000);
+    raw.prepare(`UPDATE facts SET created_at = ? WHERE id IN (${ids.map(() => "?").join(",")})`).run(
+      tiedSec,
+      ...ids,
+    );
+
+    const seen = new Set<string>();
+    for (let offset = 0; offset < ids.length; offset += 2) {
+      const page = db.getBatch(offset, 2);
+      for (const entry of page) seen.add(entry.id);
+    }
+    expect(seen.size).toBe(ids.length);
+    for (const id of ids) expect(seen.has(id)).toBe(true);
   });
 });
 
@@ -1311,6 +1362,57 @@ describe("FactsDB fuzzy deduplication", () => {
       mergeDb.close();
     }
   });
+
+  it("reports dedupe-merge truncation via capturePluginError instead of raw stderr (#78)", () => {
+    const mergeDb = new FactsDB(join(tmpDir, "dedupe-merge-truncate.db"), {
+      // fuzzyDedupe must be set at the top level (not just inside storeConfig) — StoreFactContext
+      // reads options.fuzzyDedupe directly, which is what gates the hash-based dedupe check
+      // needed here (a same-length case-only difference doesn't satisfy the raw-text exact match).
+      fuzzyDedupe: true,
+      storeConfig: {
+        fuzzyDedupe: true,
+        defaultProfile: {
+          onDuplicate: "merge",
+        },
+      },
+    });
+    const captureSpy = vi.spyOn(errorReporter, "capturePluginError").mockImplementation(() => undefined);
+    try {
+      // normalizedHash() lowercases before hashing, so an all-lowercase and an all-uppercase
+      // string of the same length hash-dedupe against each other (triggering "merge") while
+      // still failing the raw-text `existing.text.includes(entry.text)` short-circuit (case
+      // differs), forcing the append+truncate path below. Combined length (3000 + 1 + 3000 =
+      // 6001) exceeds the 4000-char merge cap.
+      const first = mergeDb.store({
+        text: "a".repeat(3000),
+        category: "fact",
+        importance: 0.8,
+        entity: null,
+        key: null,
+        value: null,
+        source: "merge-source",
+      });
+      mergeDb.store({
+        text: "A".repeat(3000),
+        category: "fact",
+        importance: 0.8,
+        entity: null,
+        key: null,
+        value: null,
+        source: "merge-source",
+      });
+
+      expect(mergeDb.getById(first.id)?.text.length).toBe(4000);
+      const truncateCalls = captureSpy.mock.calls.filter(
+        ([, ctx]) => ctx?.operation === "dedupe-merge-truncate",
+      );
+      expect(truncateCalls).toHaveLength(1);
+      expect(truncateCalls[0][1]).toMatchObject({ subsystem: "facts-db", severity: "warning" });
+    } finally {
+      captureSpy.mockRestore();
+      mergeDb.close();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1770,6 +1872,44 @@ describe("FactsDB.pruneExpired", () => {
       .get().c;
     expect(linksLeft).toBe(0);
   });
+
+  it("pruneExpiredWithDetails cleans contradictions referencing the expired fact (#84)", () => {
+    const expired = db.store({
+      text: "Expiring fact with contradiction",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "session",
+    });
+    const survivor = db.store({
+      text: "Contradiction survivor",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "permanent",
+    });
+    const raw = db.getRawDb();
+    raw
+      .prepare("UPDATE facts SET expires_at = strftime('%s','now') - 100 WHERE id = ?")
+      .run(expired.id);
+    raw
+      .prepare("INSERT INTO contradictions (id, fact_id_new, fact_id_old, detected_at) VALUES (?, ?, ?, ?)")
+      .run("c-expired-1", expired.id, survivor.id, new Date().toISOString());
+
+    const details = db.pruneExpiredWithDetails();
+    expect(details.deletedFactIds).toContain(expired.id);
+
+    const contradictionsLeft = raw
+      .prepare("SELECT COUNT(*) AS c FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ?")
+      .get(expired.id, expired.id) as { c: number };
+    expect(contradictionsLeft.c).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1925,6 +2065,43 @@ describe("FactsDB.decayConfidence", () => {
       .prepare("SELECT COUNT(*) AS c FROM memory_links")
       .get().c;
     expect(linksLeft).toBe(0);
+  });
+
+  it("decayConfidenceWithDetails cleans contradictions referencing the decayed fact (#84)", () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const low = db.store({
+      text: "Low confidence fact with contradiction",
+      category: "fact",
+      importance: 0.4,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "active",
+      confidence: 0.05,
+    });
+    const survivor = db.store({
+      text: "Contradiction survivor (decay)",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "permanent",
+    });
+    const raw = db.getRawDb();
+    raw
+      .prepare("INSERT INTO contradictions (id, fact_id_new, fact_id_old, detected_at) VALUES (?, ?, ?, ?)")
+      .run("c-decay-1", low.id, survivor.id, new Date().toISOString());
+
+    const details = db.decayConfidenceWithDetails(nowSec);
+    expect(details.deletedFactIds).toContain(low.id);
+
+    const contradictionsLeft = raw
+      .prepare("SELECT COUNT(*) AS c FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ?")
+      .get(low.id, low.id) as { c: number };
+    expect(contradictionsLeft.c).toBe(0);
   });
 });
 
@@ -2905,6 +3082,62 @@ describe("FactsDB.createOrStrengthenRelatedLink", () => {
     const links = db.getLinksFrom(a.id);
     expect(links.length).toBe(0);
   });
+
+  it("runs its existence check and write inside a single transaction", () => {
+    // memory_links has no UNIQUE constraint on (source_fact_id, target_fact_id, link_type), so
+    // the "does a RELATED_TO link already exist" check and the UPDATE-or-INSERT that follows it
+    // must be atomic — otherwise two concurrent writers can both see "no existing row" and both
+    // INSERT, creating duplicate parallel edges. Assert the whole sequence is wrapped in one
+    // BEGIN IMMEDIATE ... COMMIT rather than unguarded statements.
+    const a = db.store({
+      text: "Fact A for tx test",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const b = db.store({
+      text: "Fact B for tx test",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    const raw = db.getRawDb();
+    const callLog: Array<{ kind: "exec" | "prepare"; sql: string }> = [];
+    const originalExec = raw.exec.bind(raw);
+    const originalPrepare = raw.prepare.bind(raw);
+    vi.spyOn(raw, "exec").mockImplementation((sql: string) => {
+      callLog.push({ kind: "exec", sql });
+      return originalExec(sql);
+    });
+    vi.spyOn(raw, "prepare").mockImplementation((sql: string) => {
+      callLog.push({ kind: "prepare", sql });
+      return originalPrepare(sql);
+    });
+
+    db.createOrStrengthenRelatedLink(a.id, b.id);
+
+    const beginIndex = callLog.findIndex((c) => c.kind === "exec" && c.sql.startsWith("BEGIN"));
+    const commitIndex = callLog.findIndex((c) => c.kind === "exec" && c.sql === "COMMIT");
+    expect(beginIndex).toBeGreaterThanOrEqual(0);
+    expect(commitIndex).toBeGreaterThan(beginIndex);
+
+    const linkStatementIndexes = callLog
+      .map((c, i) => ({ ...c, i }))
+      .filter((c) => c.kind === "prepare" && c.sql.includes("memory_links"))
+      .map((c) => c.i);
+    expect(linkStatementIndexes.length).toBeGreaterThan(0);
+    for (const i of linkStatementIndexes) {
+      expect(i).toBeGreaterThan(beginIndex);
+      expect(i).toBeLessThan(commitIndex);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -3186,6 +3419,41 @@ describe("FactsDB scoping", () => {
     expect(db.getLinksFrom(globalFact.id).length).toBe(0);
   });
 
+  it("pruneSessionScope cleans contradictions referencing deleted session facts (#84)", () => {
+    const sessionFact = db.store({
+      text: "Session fact with contradiction",
+      category: "other",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "session",
+      scopeTarget: "sess-contradiction",
+    });
+    const globalFact = db.store({
+      text: "Global contradiction survivor",
+      category: "other",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    const raw = db.getRawDb();
+    raw
+      .prepare("INSERT INTO contradictions (id, fact_id_new, fact_id_old, detected_at) VALUES (?, ?, ?, ?)")
+      .run("c-session-1", sessionFact.id, globalFact.id, new Date().toISOString());
+
+    const count = db.pruneSessionScope("sess-contradiction");
+    expect(count).toBe(1);
+
+    const contradictionsLeft = raw
+      .prepare("SELECT COUNT(*) AS c FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ?")
+      .get(sessionFact.id, sessionFact.id) as { c: number };
+    expect(contradictionsLeft.c).toBe(0);
+  });
+
   it("pruneScopedFacts supports global scope filter", () => {
     const g1 = db.store({
       text: "Global note A",
@@ -3225,10 +3493,114 @@ describe("FactsDB scoping", () => {
     expect(pending.has(session.id)).toBe(false);
 
     const deleted = db.pruneScopedFacts({ global: true });
-    expect(deleted).toBe(2);
+    expect(deleted).toHaveLength(2);
+    expect(new Set(deleted)).toEqual(new Set([g1.id, g2.id]));
     expect(db.getById(g1.id)).toBeNull();
     expect(db.getById(g2.id)).toBeNull();
     expect(db.getById(session.id)).not.toBeNull();
+  });
+
+  it("pruneScopedFacts runs its id-select and deletes inside a single transaction", () => {
+    // The returned ids are only trustworthy for downstream vector cleanup if nothing else can
+    // run between the SELECT and the DELETEs — otherwise a fact inserted into the scope mid-call
+    // gets swept up by the unconditional DELETE but never appears in the returned ids, orphaning
+    // its vector. Assert the whole sequence is wrapped in one BEGIN IMMEDIATE ... COMMIT rather
+    // than three unguarded statements.
+    db.store({
+      text: "Global note for tx test",
+      category: "other",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "global",
+    });
+
+    const raw = db.getRawDb();
+    const callLog: Array<{ kind: "exec" | "prepare"; sql: string }> = [];
+    const originalExec = raw.exec.bind(raw);
+    const originalPrepare = raw.prepare.bind(raw);
+    vi.spyOn(raw, "exec").mockImplementation((sql: string) => {
+      callLog.push({ kind: "exec", sql });
+      return originalExec(sql);
+    });
+    vi.spyOn(raw, "prepare").mockImplementation((sql: string) => {
+      callLog.push({ kind: "prepare", sql });
+      return originalPrepare(sql);
+    });
+
+    db.pruneScopedFacts({ global: true });
+
+    const beginIndex = callLog.findIndex((c) => c.kind === "exec" && c.sql.startsWith("BEGIN"));
+    const commitIndex = callLog.findIndex((c) => c.kind === "exec" && c.sql === "COMMIT");
+    expect(beginIndex).toBeGreaterThanOrEqual(0);
+    expect(commitIndex).toBeGreaterThan(beginIndex);
+
+    // Every SELECT/DELETE that pruneScopedFacts issues against facts/memory_links must fall
+    // strictly between BEGIN and COMMIT — proving the id-select and the deletes share one
+    // transaction, with no gap where a concurrent writer could slip in an unaccounted-for row.
+    const pruneStatementIndexes = callLog
+      .map((c, i) => ({ ...c, i }))
+      .filter((c) => c.kind === "prepare" && (c.sql.includes("FROM facts") || c.sql.includes("memory_links")))
+      .map((c) => c.i);
+    expect(pruneStatementIndexes.length).toBeGreaterThan(0);
+    for (const i of pruneStatementIndexes) {
+      expect(i).toBeGreaterThan(beginIndex);
+      expect(i).toBeLessThan(commitIndex);
+    }
+  });
+
+  it("pruneScopedFacts cleans DERIVED_FROM memory_links and contradictions referencing a purged fact (#83)", () => {
+    const purged = db.store({
+      text: "Global fact to be purged",
+      category: "other",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "global",
+    });
+    const survivor = db.store({
+      text: "Survivor session fact",
+      category: "other",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "session",
+      scopeTarget: "sess-keep",
+    });
+
+    const raw = db.getRawDb();
+    // DERIVED_FROM rows can't be created via createLink() (it throws for that link type — see
+    // links.ts), but the pre-fix cleanup query explicitly excluded them, implying they can exist
+    // via another path (e.g. legacy data); insert one directly to exercise that gap.
+    raw
+      .prepare(
+        "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?, ?, ?, 'DERIVED_FROM', 1.0, ?)",
+      )
+      .run("link-derived-1", survivor.id, purged.id, Math.floor(Date.now() / 1000));
+    raw
+      .prepare("INSERT INTO contradictions (id, fact_id_new, fact_id_old, detected_at) VALUES (?, ?, ?, ?)")
+      .run("contradiction-1", purged.id, survivor.id, new Date().toISOString());
+
+    db.pruneScopedFacts({ global: true });
+
+    const remainingLinks = raw.prepare("SELECT COUNT(*) AS n FROM memory_links WHERE target_fact_id = ?").get(
+      purged.id,
+    ) as { n: number };
+    expect(remainingLinks.n).toBe(0);
+
+    const remainingContradictions = raw
+      .prepare("SELECT COUNT(*) AS n FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ?")
+      .get(purged.id, purged.id) as { n: number };
+    expect(remainingContradictions.n).toBe(0);
+
+    // The survivor fact and its unrelated data are untouched.
+    expect(db.getById(survivor.id)).not.toBeNull();
   });
 
   it("promoteScope changes scope from session to global", () => {

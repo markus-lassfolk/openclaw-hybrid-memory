@@ -492,6 +492,26 @@ describe("resolve-contradictions CLI contract mode", () => {
     expect(lines.some((l) => l.includes("applied=1 kept_new=0 kept_old=1 manual_review=1 rejected=2"))).toBe(true);
     expect(lines).toContain("  - Contradiction c-2: already resolved.");
     expect(lines).toContain("  - Contradiction c-3: row not found.");
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("leaves process.exitCode unset when --apply-review has no errors", async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "resolve-contradictions-cli-"));
+    const reviewPath = join(tmpDir, "review-clean.jsonl");
+    const runApplyContradictionReviewDecisions = vi
+      .fn()
+      .mockResolvedValue({ applied: 1, keptNew: 1, keptOld: 0, manualReview: 0, rejected: 0, errors: [] });
+    const mem = makeProgram(makeBindings({ runApplyContradictionReviewDecisions }));
+    writeFileSync(
+      reviewPath,
+      `${JSON.stringify({ contradictionId: "c-1", decision: "keep_new", reason: "Latest fact is correct." })}\n`,
+      "utf-8",
+    );
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await mem.parseAsync(["resolve-contradictions", "--apply-review", reviewPath], { from: "user" });
+
+    expect(process.exitCode ?? 0).toBe(0);
   });
 
   it("prints unresolved ambiguity buckets with deterministic actionable count", async () => {
@@ -846,6 +866,80 @@ describe("resolve-contradictions CLI contract mode", () => {
       });
       expect(process.exitCode).toBe(2);
       expect(lines.some((l) => l.includes("contradiction-auto summary total=222"))).toBe(false);
+    } finally {
+      if (originalHome !== undefined) process.env.OPENCLAW_HOME = originalHome;
+      else Reflect.deleteProperty(process.env, "OPENCLAW_HOME");
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("does not persist the shared no-progress counter for an ad-hoc --auto dry-run preview", async () => {
+    const tmpHome = mkdtempSync(join(tmpdir(), "openclaw-test-"));
+    const originalHome = process.env.OPENCLAW_HOME;
+    try {
+      process.env.OPENCLAW_HOME = tmpHome;
+      const { readConsecutiveNoProgressRuns } = await import("../services/contradiction-progress-summary.js");
+      const runResolveContradictionsAuto = vi.fn().mockResolvedValue({
+        total: 5,
+        deterministic: 0,
+        llm: 0,
+        merged: 0,
+        manualReview: 5,
+        applied: false,
+        decisionsApplied: 0,
+        targetRate: 0.8,
+        achievedRate: 0,
+        targetMet: false,
+        reviewItems: [],
+      });
+      const mem = makeProgram(makeBindings({ runResolveContradictionsAuto }));
+      vi.spyOn(console, "log").mockImplementation(() => {});
+
+      // Two dry-run previews in a row — this must not build up (or reset) the counter that the
+      // real nightly `--auto --apply` orchestrator step relies on for its degraded-alert streak.
+      await mem.parseAsync(["resolve-contradictions", "--auto", "--degraded-ambiguous-threshold", "1"], {
+        from: "user",
+      });
+      await mem.parseAsync(["resolve-contradictions", "--auto", "--degraded-ambiguous-threshold", "1"], {
+        from: "user",
+      });
+
+      expect(readConsecutiveNoProgressRuns(tmpHome)).toBe(0);
+    } finally {
+      if (originalHome !== undefined) process.env.OPENCLAW_HOME = originalHome;
+      else Reflect.deleteProperty(process.env, "OPENCLAW_HOME");
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("persists the shared no-progress counter for a real --auto --apply run", async () => {
+    const tmpHome = mkdtempSync(join(tmpdir(), "openclaw-test-"));
+    const originalHome = process.env.OPENCLAW_HOME;
+    try {
+      process.env.OPENCLAW_HOME = tmpHome;
+      const { readConsecutiveNoProgressRuns } = await import("../services/contradiction-progress-summary.js");
+      const runResolveContradictionsAuto = vi.fn().mockResolvedValue({
+        total: 5,
+        deterministic: 0,
+        llm: 0,
+        merged: 0,
+        manualReview: 5,
+        applied: false,
+        decisionsApplied: 0,
+        targetRate: 0.8,
+        achievedRate: 0,
+        targetMet: false,
+        reviewItems: [],
+      });
+      const mem = makeProgram(makeBindings({ runResolveContradictionsAuto }));
+      vi.spyOn(console, "log").mockImplementation(() => {});
+
+      await mem.parseAsync(
+        ["resolve-contradictions", "--auto", "--apply", "--degraded-ambiguous-threshold", "1"],
+        { from: "user" },
+      );
+
+      expect(readConsecutiveNoProgressRuns(tmpHome)).toBe(1);
     } finally {
       if (originalHome !== undefined) process.env.OPENCLAW_HOME = originalHome;
       else Reflect.deleteProperty(process.env, "OPENCLAW_HOME");

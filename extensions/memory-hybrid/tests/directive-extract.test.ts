@@ -480,4 +480,56 @@ describe("directive-extract", () => {
 
     rmSync(tmpDir, { recursive: true, force: true });
   });
+
+  it("reports failures when a session file cannot be read (#26)", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
+    const result = runDirectiveExtract({
+      filePaths: [join(tmpDir, "does-not-exist.jsonl")],
+      directiveRegex: /\bremember\b/i,
+    });
+    expect(result.failures).toBe(1);
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("reports failures when a session file has malformed JSONL lines (#26)", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
+    const sessionFile = join(tmpDir, "2026-02-19-malformed.jsonl");
+    const jsonl = [
+      "{not valid json",
+      `{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Remember that I prefer dark mode"}]}}`,
+    ].join("\n");
+    writeFileSync(sessionFile, jsonl, "utf-8");
+
+    const result = runDirectiveExtract({
+      filePaths: [sessionFile],
+      directiveRegex:
+        /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
+    });
+
+    expect(result.failures).toBe(1);
+    expect(result.incidents.length).toBeGreaterThan(0);
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("does not set failures when every file reads and parses cleanly (#26)", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
+    const sessionFile = join(tmpDir, "2026-02-19-clean.jsonl");
+    writeFileSync(
+      sessionFile,
+      `{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Remember that I prefer dark mode"}]}}`,
+      "utf-8",
+    );
+
+    const result = runDirectiveExtract({
+      filePaths: [sessionFile],
+      directiveRegex:
+        /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
+    });
+
+    expect(result.failures).toBeUndefined();
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
 });

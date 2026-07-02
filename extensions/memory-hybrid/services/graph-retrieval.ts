@@ -102,7 +102,18 @@ export interface GraphFactLookup {
 
 type GetByIdOpts = { asOf?: number; scopeFilter?: unknown };
 
-/** Keep only links whose far endpoint is visible under the same scope/asOf as graph expansion. */
+/**
+ * A fact is only a valid graph-traversal/result node if it still exists and hasn't been
+ * superseded. applyLookupFilters() (backing getById/getByIds) never checks supersededAt, so
+ * every getById/getByIds call site in this file must filter it explicitly — otherwise a
+ * corrected fact (autoSupersede marks the old fact superseded and links the new one) can
+ * resurface via 1-/2-hop graph expansion even though direct search correctly excludes it.
+ */
+function isActiveEntry(entry: MemoryEntry | null | undefined): entry is MemoryEntry {
+  return entry != null && entry.supersededAt == null;
+}
+
+/** Keep only links whose far endpoint is active (not superseded) and visible under the same scope/asOf as graph expansion. */
 function filterLinksByEndpointScope(
   factsDb: GraphFactLookup,
   fromLinks: ReturnType<GraphFactLookup["getLinksFrom"]>,
@@ -112,12 +123,9 @@ function filterLinksByEndpointScope(
   from: ReturnType<GraphFactLookup["getLinksFrom"]>;
   to: ReturnType<GraphFactLookup["getLinksTo"]>;
 } {
-  if (!scopeOpts || (scopeOpts.scopeFilter == null && scopeOpts.asOf == null)) {
-    return { from: fromLinks, to: toLinks };
-  }
   return {
-    from: fromLinks.filter((l) => factsDb.getById(l.targetFactId, scopeOpts) != null),
-    to: toLinks.filter((l) => factsDb.getById(l.sourceFactId, scopeOpts) != null),
+    from: fromLinks.filter((l) => isActiveEntry(factsDb.getById(l.targetFactId, scopeOpts))),
+    to: toLinks.filter((l) => isActiveEntry(factsDb.getById(l.sourceFactId, scopeOpts))),
   };
 }
 
@@ -358,7 +366,7 @@ export function expandGraph(
       }
 
       const entry = factsDb.getById(row.factId, getByIdOpts);
-      if (!entry) continue;
+      if (!isActiveEntry(entry)) continue;
 
       const seedScore = seedScoreMap.get(row.seedId) ?? maxSeedScore;
       const decay = HOP_SCORE_DECAY[row.hopCount] ?? HOP_SCORE_DECAY[HOP_SCORE_DECAY.length - 1];
@@ -488,7 +496,7 @@ export function expandGraph(
 
         const candidateIds = Array.from(new Set(candidateMoves.map((m) => m.candidateId)));
         const visible = factsDb.getByIds(candidateIds, getByIdOpts);
-        const visibleIds = new Set(visible.keys());
+        const visibleIds = new Set([...visible].filter(([, entry]) => isActiveEntry(entry)).map(([id]) => id));
         for (const move of candidateMoves) {
           tryAddNode(move.candidateId, hop, move.steps, move.seedId, move.hubAttenuation, nextFrontier, visibleIds);
         }
@@ -500,7 +508,7 @@ export function expandGraph(
         if (meta.hopCount === 0) continue; // already in directResults
 
         const entry = factsDb.getById(factId, getByIdOpts);
-        if (!entry) continue;
+        if (!isActiveEntry(entry)) continue;
 
         const seedScore = seedScoreMap.get(meta.seedId) ?? maxSeedScore;
         const decay = HOP_SCORE_DECAY[meta.hopCount] ?? HOP_SCORE_DECAY[HOP_SCORE_DECAY.length - 1];

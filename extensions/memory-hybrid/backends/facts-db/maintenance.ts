@@ -41,6 +41,24 @@ function deleteLinksForFactIds(db: DatabaseSync, factIds: readonly string[]): vo
   }
 }
 
+/**
+ * Matches deleteFact()'s contradictions cleanup (crud.ts) — without this, a hard-deleted fact
+ * leaves orphaned contradictions rows that silently vanish from queryContradictionSurface's
+ * INNER JOIN listings, and applyContradictionDecisionsFromReview fails with a confusing "could
+ * not persist decision" error when it later tries to act on a decision referencing the
+ * already-deleted fact (#84).
+ */
+function deleteContradictionsForFactIds(db: DatabaseSync, factIds: readonly string[]): void {
+  if (factIds.length === 0) return;
+  for (const batch of batchedInClauseBinds(factIds, LINK_DELETE_BATCH_SIZE)) {
+    const placeholders = batch.map(() => "?").join(",");
+    db.prepare(
+      `DELETE FROM contradictions
+       WHERE fact_id_new IN (${placeholders}) OR fact_id_old IN (${placeholders})`,
+    ).run(...batch, ...batch);
+  }
+}
+
 function deleteFactsByIds(db: DatabaseSync, factIds: readonly string[]): number {
   if (factIds.length === 0) return 0;
   let deleted = 0;
@@ -677,6 +695,7 @@ export function pruneExpiredWithDetails(
         .all({ "@now": nowSec }) as Array<{ id: string }>;
       const deletedFactIds = extractFactIds(rows);
       if (deletedFactIds.length === 0) return { factsPruned: 0, deletedFactIds };
+      deleteContradictionsForFactIds(db, deletedFactIds);
       deleteLinksForFactIds(db, deletedFactIds);
       const factsPruned = deleteFactsByIds(db, deletedFactIds);
       return { factsPruned, deletedFactIds };
@@ -713,6 +732,7 @@ export function pruneSessionScope(db: DatabaseSync, sessionId: string): number {
         .all(sessionId) as Array<{ id: string }>;
       const factIds = extractFactIds(rows);
       if (factIds.length === 0) return 0;
+      deleteContradictionsForFactIds(db, factIds);
       deleteLinksForFactIds(db, factIds);
       return deleteFactsByIds(db, factIds);
     },
@@ -780,6 +800,7 @@ export function decayConfidenceWithDetails(
       )
       .all({ "@now": nowSec }) as Array<{ id: string }>;
     const deletedFactIds = extractFactIds(rows);
+    deleteContradictionsForFactIds(db, deletedFactIds);
     deleteLinksForFactIds(db, deletedFactIds);
     deleteFactsByIds(db, deletedFactIds);
     return { factsDecayed: Number(updateResult.changes ?? 0), deletedFactIds };

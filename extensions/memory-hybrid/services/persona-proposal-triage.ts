@@ -12,7 +12,12 @@ import { existsSync, lstatSync, readFileSync, realpathSync, renameSync, rmSync, 
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { ProposalEntry, ProposalsDB } from "../backends/proposals-db.js";
-import { buildAppliedContent, buildUnifiedDiff, parseSuggestedChange, assessPersonaProposalRoutingSync } from "../cli/proposals.js";
+import {
+  buildAppliedContent,
+  buildUnifiedDiff,
+  parseSuggestedChange,
+  assessPersonaProposalRoutingSync,
+} from "../cli/proposals.js";
 import { resolvePersonaRuleRoutingConfig } from "./persona-rule-router.js";
 import type { HybridMemoryConfig } from "../config.js";
 import {
@@ -652,7 +657,7 @@ function analyzePersonaProposal(
     if (routingAssessment.contradiction || routingAssessment.contradictionCandidates.length > 0) {
       return {
         risk: "medium",
-        action: "deferred",
+        action: "deferred-for-human",
         reasonCode: "policy-requires-human",
         actionClass: "observe",
         capabilityClass: "read-only",
@@ -673,8 +678,13 @@ function analyzePersonaProposal(
     for (const entry of routingAssessment.evidence) {
       evidence.push({ type: entry.type, id: entry.id, summary: entry.summary });
     }
-    routingHumanReviewRequired =
-      routingAssessment.humanReviewRequired && routingAssessment.routingScore >= 0.7;
+    // Don't re-gate this on routingScore: humanReviewRequired is already true either because
+    // routing disagreed with high confidence (routingScore >= 0.7 baked in), or because a
+    // blockReason (low-support, duplicate-rule, near-duplicate-rule, enforce-routing) fired —
+    // none of which are about file-bucket classification confidence. Gating on routingScore
+    // here let low-routing-confidence proposals with a real block reason slip through to
+    // auto-apply.
+    routingHumanReviewRequired = routingAssessment.humanReviewRequired;
   }
   if (isStaleTarget(item)) {
     return rejectOrDefer(
@@ -764,126 +774,40 @@ function applyPersonaDecisionWithLock(input: {
         "Proposal changed between classification and apply.",
       );
     }
-    let preparedApply:
-      | {
-          targetPath: string;
-          backupPath: string;
-          original: string;
-          appliedContent: string;
-          preHash: string;
-          postHash: string;
-          auditDiff: string;
-        }
-      | undefined;
-    if (input.decision.action === "applied") {
-      const currentTarget = resolveAllowedPersonaTarget(
-        input.workspace,
-        current.targetFile,
-        input.cfg.personaProposals.allowedFiles,
-      );
-      if (!currentTarget.ok || !existsSync(currentTarget.path)) {
-        return validationFailure(
-          input.decision,
-          "stale-target-context",
-          "Target file unavailable during apply revalidation.",
-        );
-      }
-      const currentSnapshot = getFileSnapshot(currentTarget.path);
-      if (!currentSnapshot) {
-        return validationFailure(
-          input.decision,
-          "stale-target-context",
-          "Target file unreadable during apply revalidation.",
-        );
-      }
-      if (!hasReliableTargetSnapshot(current)) {
-        return validationFailure(
-          input.decision,
-          "stale-target-context",
-          "Auto-apply requires target hash or mtime snapshot.",
-        );
-      }
-      if (current.targetHash && current.targetHash !== currentSnapshot.hash) {
-        return validationFailure(input.decision, "input-hash-mismatch", "Target file changed before apply.");
-      }
-      if (!current.targetHash && current.targetMtimeMs != null && current.targetMtimeMs !== currentSnapshot.mtimeMs) {
-        return validationFailure(input.decision, "input-hash-mismatch", "Target mtime changed before apply.");
-      }
-      const original = readFileSync(currentTarget.path, "utf-8");
-      const applied = buildAppliedContent(original, current, nowIso());
-      if (!applied.content.trim()) {
-        return validationFailure(
-          input.decision,
-          "validation-failed",
-          `Proposal ${input.item.id} does not contain replacement content to apply.`,
-        );
-      }
-      if (!isAllowedSensitivePersonaApply(current.targetFile, original, applied.content, current.suggestedChange)) {
-        return validationFailure(
-          input.decision,
-          "identity-boundary-change",
-          "Sensitive persona files require mechanically verified formatting-only diffs for apply-safe auto-apply.",
-        );
-      }
-      const auditDiff = redactedAuditDiff(original, applied.content, current.targetFile);
-      preparedApply = {
-        targetPath: currentTarget.path,
-        backupPath: `${currentTarget.path}.backup-${Date.now()}`,
-        original,
-        appliedContent: applied.content,
-        preHash: currentSnapshot.hash,
-        postHash: hashText(applied.content),
-        auditDiff,
-      };
-    }
 
-    const decisionForMutation = preparedApply ? withPersonaApplyAudit(input.decision, preparedApply) : input.decision;
-    let wroteRollback = false;
-    const ok = input.store.mutateWithLockAndAudit({
-      decision: decisionForMutation,
+    // The per-proposal lock above (keyed by input.item.id) only prevents the same proposal from
+    // being applied twice concurrently — it does NOT serialize two *different* pending proposals
+    // that both target the same file. Without this second, file-scoped lock, two proposals for
+    // e.g. SOUL.md could both pass the stale-hash checks below (each reading the same
+    // not-yet-modified file), then both write: the second write silently clobbers the first's
+    // applied change even though the first proposal was already marked applied.
+    const fileLockKey = `apply-target:${current.targetFile}`;
+    const fileLocked = input.store.acquireLock({
+      queue: "persona",
+      itemId: fileLockKey,
+      inputHash: fileLockKey,
       owner,
-      actualInputHash: actualHash,
-      audit: () => {},
-      mutate: () => {
-        if (decisionForMutation.action === "rejected") {
-          input.proposalsDb.updateStatus(input.item.id, "rejected", "persona-triage", decisionForMutation.reasonCode);
-        } else if (decisionForMutation.action === "applied" && preparedApply) {
-          if (input.resolvedSqlitePath) {
-            writeProposalRollback(input.resolvedSqlitePath, {
-              proposalId: input.item.id,
-              proposalType: "persona",
-              targetPath: preparedApply.targetPath,
-              originalHash: preparedApply.preHash,
-              originalContent: preparedApply.original,
-              appliedHash: preparedApply.postHash,
-              appliedAt: nowIso(),
-            });
-            wroteRollback = true;
-          }
-          applyPreparedPersonaChange(preparedApply, () => input.proposalsDb.markApplied(input.item.id));
-        }
-      },
+      ttlSeconds: 120,
+      mode: input.decision.mode,
     });
-    if (!ok) return validationFailure(input.decision, "input-hash-mismatch", "Lock/CAS/audit mutation rejected.");
-    if (decisionForMutation.action === "rejected") {
-      syncProposalWithdrawnInChangeFeed(
-        input.changeFeed,
-        input.cfg as HybridMemoryConfig,
-        `persona:${input.item.id}`,
-        decisionForMutation.reasonCode ?? "Rejected via autopilot triage",
+    if (!fileLocked) {
+      return validationFailure(
+        input.decision,
+        "lock-conflict",
+        `Could not acquire target-file lock for ${current.targetFile} (concurrent apply in progress).`,
       );
-    } else if (decisionForMutation.action === "applied" && preparedApply) {
-      const current = input.proposalsDb.get(input.item.id);
-      emitPersonaApplied(input.changeFeed, input.cfg as HybridMemoryConfig, {
-        sessionKey: input.sessionKey ?? "autopilot",
-        proposalId: input.item.id,
-        targetFile: current?.targetFile ?? "unknown",
-        title: current?.title,
-        rollbackAvailable: wroteRollback,
-      });
-      supersedeActiveProposedEvent(input.changeFeed, `persona:${input.item.id}`);
     }
-    return decisionForMutation;
+    try {
+      return applyPersonaDecisionForLockedTarget(input, current, actualHash, owner);
+    } finally {
+      input.store.releaseLock({
+        queue: "persona",
+        itemId: fileLockKey,
+        inputHash: fileLockKey,
+        owner,
+        mode: input.decision.mode,
+      });
+    }
   } finally {
     input.store.releaseLock({
       queue: "persona",
@@ -893,6 +817,144 @@ function applyPersonaDecisionWithLock(input: {
       mode: input.decision.mode,
     });
   }
+}
+
+function applyPersonaDecisionForLockedTarget(
+  input: {
+    store: PendingAutopilotStore;
+    proposalsDb: ProposalsDB;
+    item: PersonaProposalPendingItem;
+    decision: PendingDecision;
+    workspace: string;
+    cfg: Pick<HybridMemoryConfig, "personaProposals" | "liveChangeFeed">;
+    changeFeed?: ChangeFeed | null;
+    sessionKey?: string;
+    resolvedSqlitePath?: string;
+  },
+  current: ProposalEntry,
+  actualHash: string,
+  owner: string,
+): PendingDecision {
+  let preparedApply:
+    | {
+        targetPath: string;
+        backupPath: string;
+        original: string;
+        appliedContent: string;
+        preHash: string;
+        postHash: string;
+        auditDiff: string;
+      }
+    | undefined;
+  if (input.decision.action === "applied") {
+    const currentTarget = resolveAllowedPersonaTarget(
+      input.workspace,
+      current.targetFile,
+      input.cfg.personaProposals.allowedFiles,
+    );
+    if (!currentTarget.ok || !existsSync(currentTarget.path)) {
+      return validationFailure(
+        input.decision,
+        "stale-target-context",
+        "Target file unavailable during apply revalidation.",
+      );
+    }
+    const currentSnapshot = getFileSnapshot(currentTarget.path);
+    if (!currentSnapshot) {
+      return validationFailure(
+        input.decision,
+        "stale-target-context",
+        "Target file unreadable during apply revalidation.",
+      );
+    }
+    if (!hasReliableTargetSnapshot(current)) {
+      return validationFailure(
+        input.decision,
+        "stale-target-context",
+        "Auto-apply requires target hash or mtime snapshot.",
+      );
+    }
+    if (current.targetHash && current.targetHash !== currentSnapshot.hash) {
+      return validationFailure(input.decision, "input-hash-mismatch", "Target file changed before apply.");
+    }
+    if (!current.targetHash && current.targetMtimeMs != null && current.targetMtimeMs !== currentSnapshot.mtimeMs) {
+      return validationFailure(input.decision, "input-hash-mismatch", "Target mtime changed before apply.");
+    }
+    const original = readFileSync(currentTarget.path, "utf-8");
+    const applied = buildAppliedContent(original, current, nowIso());
+    if (!applied.content.trim()) {
+      return validationFailure(
+        input.decision,
+        "validation-failed",
+        `Proposal ${input.item.id} does not contain replacement content to apply.`,
+      );
+    }
+    if (!isAllowedSensitivePersonaApply(current.targetFile, original, applied.content, current.suggestedChange)) {
+      return validationFailure(
+        input.decision,
+        "identity-boundary-change",
+        "Sensitive persona files require mechanically verified formatting-only diffs for apply-safe auto-apply.",
+      );
+    }
+    const auditDiff = redactedAuditDiff(original, applied.content, current.targetFile);
+    preparedApply = {
+      targetPath: currentTarget.path,
+      backupPath: `${currentTarget.path}.backup-${Date.now()}`,
+      original,
+      appliedContent: applied.content,
+      preHash: currentSnapshot.hash,
+      postHash: hashText(applied.content),
+      auditDiff,
+    };
+  }
+
+  const decisionForMutation = preparedApply ? withPersonaApplyAudit(input.decision, preparedApply) : input.decision;
+  let wroteRollback = false;
+  const ok = input.store.mutateWithLockAndAudit({
+    decision: decisionForMutation,
+    owner,
+    actualInputHash: actualHash,
+    audit: () => {},
+    mutate: () => {
+      if (decisionForMutation.action === "rejected") {
+        input.proposalsDb.updateStatus(input.item.id, "rejected", "persona-triage", decisionForMutation.reasonCode);
+      } else if (decisionForMutation.action === "applied" && preparedApply) {
+        if (input.resolvedSqlitePath) {
+          writeProposalRollback(input.resolvedSqlitePath, {
+            proposalId: input.item.id,
+            proposalType: "persona",
+            targetPath: preparedApply.targetPath,
+            originalHash: preparedApply.preHash,
+            originalContent: preparedApply.original,
+            appliedHash: preparedApply.postHash,
+            appliedAt: nowIso(),
+          });
+          wroteRollback = true;
+        }
+        applyPreparedPersonaChange(preparedApply, () => input.proposalsDb.markApplied(input.item.id));
+      }
+    },
+  });
+  if (!ok) return validationFailure(input.decision, "input-hash-mismatch", "Lock/CAS/audit mutation rejected.");
+  if (decisionForMutation.action === "rejected") {
+    syncProposalWithdrawnInChangeFeed(
+      input.changeFeed,
+      input.cfg as HybridMemoryConfig,
+      `persona:${input.item.id}`,
+      decisionForMutation.reasonCode ?? "Rejected via autopilot triage",
+    );
+  } else if (decisionForMutation.action === "applied" && preparedApply) {
+    const current = input.proposalsDb.get(input.item.id);
+    emitPersonaApplied(input.changeFeed, input.cfg as HybridMemoryConfig, {
+      sessionKey: input.sessionKey ?? "autopilot",
+      proposalId: input.item.id,
+      targetFile: current?.targetFile ?? "unknown",
+      title: current?.title,
+      rollbackAvailable: wroteRollback,
+    });
+    supersedeActiveProposedEvent(input.changeFeed, `persona:${input.item.id}`);
+  }
+  return decisionForMutation;
 }
 
 function validationFailure(

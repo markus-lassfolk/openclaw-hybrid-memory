@@ -11,6 +11,7 @@ import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
+import { parse as parseGraphQL } from "graphql";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { getRecallStatsSnapshot } from "../../services/recall-timing-stats.js";
 import { getRecallSignalsSnapshot } from "../../services/recall-signals.js";
@@ -67,6 +68,19 @@ import {
   type WorkshopDashboardContext,
 } from "./workshop-collectors.js";
 
+/**
+ * Parse a `?limit=` query param, clamped to [1, max]. Falls back to `fallback` for missing,
+ * non-numeric (NaN), or out-of-range input instead of letting NaN silently propagate into a SQL
+ * bind/array-slice call, which node:sqlite rejects with "datatype mismatch" — an error the
+ * collectors' blanket try/catch below swallows into an empty 200 response instead of a clear 400.
+ */
+export function parseLimitParam(raw: string | null, fallback: number, max: number): number {
+  if (raw == null || raw.trim() === "") return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return Math.min(parsed, max);
+}
+
 function workshopClientError(err: unknown, route: string): string {
   pluginLogger.error(`[dashboard-server] ${route}: ${err instanceof Error ? err.message : String(err)}`);
   if (err instanceof Error && err.message === "Request body too large") return err.message;
@@ -112,32 +126,34 @@ function rejectUnauthorizedDashboardWrite(res: ServerResponse): void {
   res.end(JSON.stringify({ error: "Unauthorized" }));
 }
 
-const GRAPHQL_MUTATION_ROOT_FIELDS = [
-  "createFact",
-  "updateFact",
-  "deleteFact",
-  "supersedeFact",
-  "createLink",
-  "deleteLink",
-  "importFacts",
-  "pruneFacts",
-  "consolidateFacts",
-  "recomputeEmbeddings",
-] as const;
-
-/** Detect named and anonymous GraphQL mutations for dashboard.token auth. */
+/**
+ * Detect GraphQL mutations for dashboard.token auth by parsing the query with the real GraphQL
+ * parser rather than regex heuristics on raw text.
+ *
+ * The previous regex-based approach (starts-with-"mutation" / "mutation" keyword within the
+ * first 500 chars / root-field name scan gated on starts-with-"{") was bypassable: a document
+ * starting with a `fragment` definition, followed by enough whitespace to push the `mutation`
+ * keyword past the 500-char scan window, matched none of the three checks and executed
+ * unauthenticated even though it contained a real mutation. GraphQL documents can lead with
+ * fragment definitions before their sole operation, so "starts with mutation/{" is not a valid
+ * proxy for "is this a mutation."
+ *
+ * Fails closed: any parse error, or any document containing so much as one mutation operation
+ * (even alongside query operations), is treated as requiring auth.
+ */
 export function graphqlBodyIsMutation(body: unknown): boolean {
   if (typeof body !== "object" || body == null) return false;
   const query = (body as { query?: unknown }).query;
   if (typeof query !== "string") return false;
-  const trimmed = query.replace(/^\s*(#[^\n]*\n)*/m, "").trimStart();
-  if (trimmed.startsWith("mutation") || /\bmutation\b/.test(trimmed.slice(0, 500))) return true;
-  if (trimmed.startsWith("{")) {
-    for (const field of GRAPHQL_MUTATION_ROOT_FIELDS) {
-      if (new RegExp(`\\b${field}\\s*\\(`).test(trimmed)) return true;
-    }
+  try {
+    const doc = parseGraphQL(query);
+    return doc.definitions.some(
+      (def) => def.kind === "OperationDefinition" && def.operation === "mutation",
+    );
+  } catch {
+    // Malformed/unparseable query — can't prove it's read-only, so require auth.
+    return true;
   }
-  return false;
 }
 
 export interface DashboardServer {
@@ -332,7 +348,11 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     if (pathname === "/api/viewer/facts") {
       try {
         const limit = Math.min(500, Math.max(1, Number.parseInt(searchParams.get("limit") ?? "50", 10) || 50));
-        const offset = Math.max(0, Number.parseInt(searchParams.get("offset") ?? "0", 10) || 0);
+        // Capped (not just floored) — when `search` is also supplied, `offset` flows into
+        // listForDashboard's searchLimit (Math.max(2000, offset + limit)), which seeds the FIRST
+        // FTS query's LIMIT before any internal cap applies. An unbounded offset (e.g. 50,000,000)
+        // would force that first query to request on the order of 10^8 rows.
+        const offset = Math.min(1_000_000, Math.max(0, Number.parseInt(searchParams.get("offset") ?? "0", 10) || 0));
         const categoryFilter = searchParams.get("category") || undefined;
         const entityFilter = searchParams.get("entity") || undefined;
         // #1187: honor `?tier=hot|warm|cold|structural` so operators can drill into a single tier
@@ -378,8 +398,9 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(JSON.stringify({ facts, total }));
       } catch (err: unknown) {
+        pluginLogger.error(`[dashboard-server] /api/viewer/facts: ${err instanceof Error ? err.message : String(err)}`);
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: String(err) }));
+        res.end(JSON.stringify({ error: "InternalServerError" }));
       }
       return;
     }
@@ -427,8 +448,11 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(JSON.stringify(f));
       } catch (err: unknown) {
+        pluginLogger.error(
+          `[dashboard-server] /api/viewer/facts/:id: ${err instanceof Error ? err.message : String(err)}`,
+        );
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: String(err) }));
+        res.end(JSON.stringify({ error: "InternalServerError" }));
       }
       return;
     }
@@ -502,8 +526,11 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           }),
         );
       } catch (err: unknown) {
+        pluginLogger.error(
+          `[dashboard-server] /api/viewer/facts/:id/provenance: ${err instanceof Error ? err.message : String(err)}`,
+        );
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: String(err) }));
+        res.end(JSON.stringify({ error: "InternalServerError" }));
       }
       return;
     }
@@ -511,13 +538,16 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     // GET /api/viewer/entities
     if (pathname === "/api/viewer/entities") {
       try {
-        const limit = Math.min(200, Math.max(1, Number.parseInt(searchParams.get("limit") ?? "50", 10)));
+        const limit = parseLimitParam(searchParams.get("limit"), 50, 200);
         const entities = collectMemoryViewerEntities(ctx, limit);
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(JSON.stringify(entities));
       } catch (err: unknown) {
+        pluginLogger.error(
+          `[dashboard-server] /api/viewer/entities: ${err instanceof Error ? err.message : String(err)}`,
+        );
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: String(err) }));
+        res.end(JSON.stringify({ error: "InternalServerError" }));
       }
       return;
     }
@@ -525,13 +555,16 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     // GET /api/viewer/episodes
     if (pathname === "/api/viewer/episodes") {
       try {
-        const limit = Math.min(500, Math.max(1, Number.parseInt(searchParams.get("limit") ?? "50", 10)));
+        const limit = parseLimitParam(searchParams.get("limit"), 50, 500);
         const episodes = collectMemoryViewerEpisodes(ctx, limit);
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(JSON.stringify(episodes));
       } catch (err: unknown) {
+        pluginLogger.error(
+          `[dashboard-server] /api/viewer/episodes: ${err instanceof Error ? err.message : String(err)}`,
+        );
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: String(err) }));
+        res.end(JSON.stringify({ error: "InternalServerError" }));
       }
       return;
     }
@@ -539,13 +572,16 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     // GET /api/viewer/narratives
     if (pathname === "/api/viewer/narratives") {
       try {
-        const limit = Math.min(100, Math.max(1, Number.parseInt(searchParams.get("limit") ?? "20", 10)));
+        const limit = parseLimitParam(searchParams.get("limit"), 20, 100);
         const narratives = collectMemoryViewerNarratives(ctx, limit);
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(JSON.stringify(narratives));
       } catch (err: unknown) {
+        pluginLogger.error(
+          `[dashboard-server] /api/viewer/narratives: ${err instanceof Error ? err.message : String(err)}`,
+        );
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: String(err) }));
+        res.end(JSON.stringify({ error: "InternalServerError" }));
       }
       return;
     }
@@ -557,8 +593,9 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(JSON.stringify(issues));
       } catch (err: unknown) {
+        pluginLogger.error(`[dashboard-server] /api/viewer/issues: ${err instanceof Error ? err.message : String(err)}`);
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: String(err) }));
+        res.end(JSON.stringify({ error: "InternalServerError" }));
       }
       return;
     }
@@ -566,13 +603,16 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     // GET /api/viewer/workflows
     if (pathname === "/api/viewer/workflows") {
       try {
-        const limit = Math.min(500, Math.max(1, Number.parseInt(searchParams.get("limit") ?? "100", 10)));
+        const limit = parseLimitParam(searchParams.get("limit"), 100, 500);
         const workflows = collectMemoryViewerWorkflows(ctx, limit);
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(JSON.stringify(workflows));
       } catch (err: unknown) {
+        pluginLogger.error(
+          `[dashboard-server] /api/viewer/workflows: ${err instanceof Error ? err.message : String(err)}`,
+        );
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: String(err) }));
+        res.end(JSON.stringify({ error: "InternalServerError" }));
       }
       return;
     }
@@ -584,8 +624,9 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(JSON.stringify(edicts));
       } catch (err: unknown) {
+        pluginLogger.error(`[dashboard-server] /api/viewer/edicts: ${err instanceof Error ? err.message : String(err)}`);
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: String(err) }));
+        res.end(JSON.stringify({ error: "InternalServerError" }));
       }
       return;
     }
@@ -593,13 +634,16 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     // GET /api/viewer/verified
     if (pathname === "/api/viewer/verified") {
       try {
-        const limit = Math.min(500, Math.max(1, Number.parseInt(searchParams.get("limit") ?? "100", 10)));
+        const limit = parseLimitParam(searchParams.get("limit"), 100, 500);
         const verified = collectMemoryViewerVerified(ctx, limit);
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(JSON.stringify(verified));
       } catch (err: unknown) {
+        pluginLogger.error(
+          `[dashboard-server] /api/viewer/verified: ${err instanceof Error ? err.message : String(err)}`,
+        );
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: String(err) }));
+        res.end(JSON.stringify({ error: "InternalServerError" }));
       }
       return;
     }
@@ -607,13 +651,14 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     // GET /api/viewer/links
     if (pathname === "/api/viewer/links") {
       try {
-        const limit = Math.min(10000, Math.max(1, Number.parseInt(searchParams.get("limit") ?? "5000", 10)));
+        const limit = parseLimitParam(searchParams.get("limit"), 5000, 10000);
         const links = collectMemoryViewerLinks(ctx, limit);
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(JSON.stringify(links));
       } catch (err: unknown) {
+        pluginLogger.error(`[dashboard-server] /api/viewer/links: ${err instanceof Error ? err.message : String(err)}`);
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: String(err) }));
+        res.end(JSON.stringify({ error: "InternalServerError" }));
       }
       return;
     }
@@ -642,7 +687,12 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
 
     // GET /api/viewer/provenance/:factId
     if (pathname.startsWith("/api/viewer/provenance/")) {
-      const factId = pathname.replace("/api/viewer/provenance/", "");
+      const factId = parseUrlPathSegment(pathname.slice("/api/viewer/provenance/".length));
+      if (!factId) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing fact id" }));
+        return;
+      }
       try {
         const prov = collectMemoryViewerProvenance(ctx, factId);
         if (!prov) {
@@ -653,8 +703,11 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(JSON.stringify(prov));
       } catch (err: unknown) {
+        pluginLogger.error(
+          `[dashboard-server] /api/viewer/provenance: ${err instanceof Error ? err.message : String(err)}`,
+        );
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: String(err) }));
+        res.end(JSON.stringify({ error: "InternalServerError" }));
       }
       return;
     }
@@ -769,14 +822,14 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     if (pathname === "/api/workshop/changes" && wctx) {
       try {
         const u = new URL(req.url ?? "", "http://127.0.0.1");
-        const limitRaw = u.searchParams.get("limit");
-        const limit = limitRaw ? Number(limitRaw) : DEFAULT_WORKSHOP_LIST_LIMIT;
+        // Use the shared clamp (like every other route) instead of a bare Number.isFinite check —
+        // a negative limit (e.g. ?limit=-1) passed Number.isFinite and propagated into
+        // collectWorkshopChanges' internal Math.min/Math.max/slice(0, limit) calls, where a
+        // negative slice(0, limit) uses JS's "slice from end" semantics and returns a wrong,
+        // non-empty result instead of an empty set or a 400.
+        const limit = parseLimitParam(u.searchParams.get("limit"), DEFAULT_WORKSHOP_LIST_LIMIT, 200);
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
-        res.end(
-          JSON.stringify({
-            changes: collectWorkshopChanges(wctx, Number.isFinite(limit) ? limit : DEFAULT_WORKSHOP_LIST_LIMIT),
-          }),
-        );
+        res.end(JSON.stringify({ changes: collectWorkshopChanges(wctx, limit) }));
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: workshopClientError(err, "/api/workshop/changes") }));
@@ -835,6 +888,11 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           res.end(JSON.stringify(result));
         })
         .catch((err: unknown) => {
+          if (err instanceof Error && err.message === "Request body too large") {
+            res.writeHead(413, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "PayloadTooLarge" }));
+            return;
+          }
           res.writeHead(400, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: workshopClientError(err, "/api/workshop/changes/revert") }));
         });
@@ -851,14 +909,19 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           res.end(JSON.stringify({ error: "missing id" }));
           return;
         }
-        const detail = collectWorkshopProposalDetail(wctx, id);
-        if (!detail) {
-          res.writeHead(404, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "not found" }));
-          return;
+        try {
+          const detail = collectWorkshopProposalDetail(wctx, id);
+          if (!detail) {
+            res.writeHead(404, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "not found" }));
+            return;
+          }
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(detail));
+        } catch (err) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: workshopClientError(err, "/api/workshop/proposals/:id") }));
         }
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(detail));
         return;
       }
       if (req.method === "POST" && actionMatch) {
@@ -910,6 +973,11 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
             res.end(JSON.stringify(result));
           })
           .catch((err: unknown) => {
+            if (err instanceof Error && err.message === "Request body too large") {
+              res.writeHead(413, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ error: "PayloadTooLarge" }));
+              return;
+            }
             res.writeHead(400, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ error: workshopClientError(err, "/api/workshop/proposals/*") }));
           });

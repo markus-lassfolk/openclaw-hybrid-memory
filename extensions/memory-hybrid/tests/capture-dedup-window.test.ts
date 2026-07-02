@@ -7,10 +7,8 @@ describe("runCaptureStoreWithDedupWindow", () => {
       skipped: false,
       entry: { id: "fact-1" },
     });
-    const factsDb = { storeWithResult };
-
     const result = runCaptureStoreWithDedupWindow(
-      factsDb,
+      {},
       30,
       { text: "hello", scope: "global", scopeTarget: null },
       () => storeWithResult({ text: "hello" }),

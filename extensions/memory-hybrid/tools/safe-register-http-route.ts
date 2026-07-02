@@ -46,6 +46,15 @@ function incomingHeadersToRecord(headers: IncomingMessage["headers"]): Record<st
 
 const MAX_HTTP_ROUTE_BODY_BYTES = 64 * 1024;
 
+/** Thrown by readRequestBody when the body exceeds MAX_HTTP_ROUTE_BODY_BYTES, so the handler can
+ * respond 413 instead of the generic 500 it uses for unexpected errors. */
+class RequestBodyTooLargeError extends Error {
+  constructor(maxBytes: number) {
+    super(`request body exceeds ${maxBytes} bytes`);
+    this.name = "RequestBodyTooLargeError";
+  }
+}
+
 async function readRequestBody(req: IncomingMessage): Promise<string> {
   const method = req.method?.toUpperCase() ?? "GET";
   if (method !== "POST" && method !== "PUT" && method !== "PATCH") return "";
@@ -55,7 +64,7 @@ async function readRequestBody(req: IncomingMessage): Promise<string> {
     const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += buf.length;
     if (size > MAX_HTTP_ROUTE_BODY_BYTES) {
-      throw new Error(`request body exceeds ${MAX_HTTP_ROUTE_BODY_BYTES} bytes`);
+      throw new RequestBodyTooLargeError(MAX_HTTP_ROUTE_BODY_BYTES);
     }
     chunks.push(buf);
   }
@@ -81,16 +90,21 @@ function adaptLegacyHandlerToNode(
       res.end(result.body);
     } catch (err) {
       const e = err instanceof Error ? err : new Error(String(err));
-      capturePluginError(e, {
-        operation: "http-legacy-route-handler",
-        subsystem: "memory-hybrid-http",
-        metadata: { source },
-      });
+      const isTooLarge = e instanceof RequestBodyTooLargeError;
+      // A too-large body is a client error (413), not a server bug — reporting/logging it as an
+      // unexpected 500 would misclassify routine oversized-request traffic as an application fault.
+      if (!isTooLarge) {
+        capturePluginError(e, {
+          operation: "http-legacy-route-handler",
+          subsystem: "memory-hybrid-http",
+          metadata: { source },
+        });
+      }
       (logger.error ?? logger.warn).call(logger, `${source}: HTTP route handler error: ${e.message}`);
       if (!res.headersSent) {
-        res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+        res.writeHead(isTooLarge ? 413 : 500, { "Content-Type": "text/plain; charset=utf-8" });
       }
-      res.end("Internal Server Error");
+      res.end(isTooLarge ? "Payload Too Large" : "Internal Server Error");
     }
   };
 }

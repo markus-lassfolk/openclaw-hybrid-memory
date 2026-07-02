@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import type { ScopeFilter } from "../../types/memory.js";
 
 export type FactProvenanceJson = Record<string, unknown> & {
   sourceFactIds?: string[];
@@ -79,7 +80,10 @@ export type ProvenanceSourceFactSummary = {
 };
 
 type ProvenanceFactLookup = {
-  getById(id: string): {
+  getById(
+    id: string,
+    opts?: { scopeFilter?: ScopeFilter },
+  ): {
     id: string;
     text: string;
     category?: string;
@@ -91,15 +95,22 @@ type ProvenanceFactLookup = {
 
 /**
  * Resolve source facts for consolidated/derived facts (for recall hydration).
+ *
+ * `scopeFilter` must be the caller's own recall scope filter: a source fact outside that
+ * scope (e.g. another agent's private fact referenced by a consolidated/derived fact) must
+ * not be hydrated into this preview, or its text leaks to a caller who couldn't otherwise
+ * see it.
  */
 export function resolveProvenanceSourceFacts(
   factsDb: ProvenanceFactLookup,
   provenance: FactProvenanceJson,
   limit = 5,
+  scopeFilter?: ScopeFilter,
 ): ProvenanceSourceFactSummary[] {
   const out: ProvenanceSourceFactSummary[] = [];
   const seen = new Set<string>();
   const nowSec = Math.floor(Date.now() / 1000);
+  const getByIdOpts = scopeFilter ? { scopeFilter } : undefined;
 
   function isLiveFact(entry: { supersededAt?: number | null; expiresAt?: number | null }): boolean {
     return entry.supersededAt == null && (entry.expiresAt == null || entry.expiresAt > nowSec);
@@ -109,7 +120,7 @@ export function resolveProvenanceSourceFacts(
     for (const row of provenance.sourceFacts) {
       if (!row?.id || seen.has(row.id)) continue;
       seen.add(row.id);
-      const entry = factsDb.getById(row.id);
+      const entry = factsDb.getById(row.id, getByIdOpts);
       if (!entry || !isLiveFact(entry)) continue;
       out.push({
         id: row.id,
@@ -124,7 +135,7 @@ export function resolveProvenanceSourceFacts(
   for (const id of provenance.sourceFactIds ?? []) {
     if (!id || seen.has(id)) continue;
     seen.add(id);
-    const entry = factsDb.getById(id);
+    const entry = factsDb.getById(id, getByIdOpts);
     if (!entry || !isLiveFact(entry)) continue;
     out.push({ id: entry.id, text: entry.text, category: entry.category, source: entry.source });
     if (out.length >= limit) return out;

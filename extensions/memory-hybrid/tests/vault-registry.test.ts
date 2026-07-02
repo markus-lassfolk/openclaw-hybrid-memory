@@ -2,7 +2,7 @@
  * Vault registry and injection attribution tests (#1917, #1916).
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -12,6 +12,7 @@ import { createVaultRegistry } from "../services/vault-registry.js";
 import { resolveVaultWalPath } from "../config/vaults.js";
 import { WriteAheadLog } from "../backends/wal.js";
 import { recordInjectionAttribution } from "../services/injection-attribution-store.js";
+import * as errorReporter from "../services/error-reporter.js";
 
 describe("vault registry (#1917)", () => {
   it("resolves default vault without opening extra handles", () => {
@@ -106,6 +107,47 @@ describe("vault registry (#1917)", () => {
     }
   });
 
+  it("reports (instead of silently swallowing) a close failure during closeAll (#55)", () => {
+    const dir = mkdtempSync(join(homedir(), ".hm-vault-close-err-"));
+    try {
+      const sqlitePath = join(dir, "facts.db");
+      const lancePath = join(dir, "facts.lance");
+      const factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false, storeConfig: { fuzzyDedupe: false } });
+      const vectorDb = new VectorDB(lancePath, 8, false);
+      const projectDbPath = join(dir, "project.db");
+      const registry = createVaultRegistry({
+        cfg: {
+          vaults: { project: projectDbPath },
+          wal: { enabled: true, maxAge: 60_000 },
+          store: { fuzzyDedupe: false },
+          vector: { autoRepair: false },
+        } as never,
+        api: { resolvePath: (p: string) => p, logger: { warn: () => {}, info: () => {} } } as never,
+        defaultFactsDb: factsDb,
+        defaultVectorDb: vectorDb,
+        defaultSqlitePath: sqlitePath,
+        defaultLancePath: lancePath,
+        defaultWal: null,
+        vectorDim: 8,
+      });
+      const named = registry.resolve("project");
+      const captureSpy = vi.spyOn(errorReporter, "capturePluginError").mockImplementation(() => undefined);
+      vi.spyOn(named.vectorDb, "close").mockImplementation(() => {
+        throw new Error("close boom");
+      });
+
+      registry.closeAll();
+
+      const vectorCloseCalls = captureSpy.mock.calls.filter(
+        ([, ctx]) => (ctx as { operation?: string })?.operation === "close-vector-db",
+      );
+      expect(vectorCloseCalls.length).toBeGreaterThan(0);
+      captureSpy.mockRestore();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("resolveWal returns vault-specific WAL path", () => {
     const dir = mkdtempSync(join(homedir(), ".hm-vault-wal-"));
     try {
@@ -132,6 +174,112 @@ describe("vault registry (#1917)", () => {
       const wal = registry.resolveWal("project");
       expect(wal).toBeInstanceOf(WriteAheadLog);
       expect(wal?.getPath()).toBe(resolveVaultWalPath(projectDbPath));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects two vaults resolving to the same sqlite path", () => {
+    const dir = mkdtempSync(join(homedir(), ".hm-vault-collide-sqlite-"));
+    try {
+      const sqlitePath = join(dir, "facts.db");
+      const lancePath = join(dir, "facts.lance");
+      const factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false, storeConfig: { fuzzyDedupe: false } });
+      const vectorDb = new VectorDB(lancePath, 8, false);
+      const sharedPath = join(dir, "shared.db");
+      expect(() =>
+        createVaultRegistry({
+          cfg: {
+            vaults: { alpha: sharedPath, beta: sharedPath },
+            wal: { enabled: false, maxAge: 60_000 },
+            store: { fuzzyDedupe: false },
+            vector: { autoRepair: false },
+          } as never,
+          api: { resolvePath: (p: string) => p, logger: { warn: () => {}, info: () => {} } } as never,
+          defaultFactsDb: factsDb,
+          defaultVectorDb: vectorDb,
+          defaultSqlitePath: sqlitePath,
+          defaultLancePath: lancePath,
+          defaultWal: null,
+          vectorDim: 8,
+        }),
+      ).toThrow(/same sqlite path/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects two vaults whose sqlite paths differ only by a .db suffix (same derived lance path)", () => {
+    const dir = mkdtempSync(join(homedir(), ".hm-vault-collide-lance-"));
+    try {
+      const sqlitePath = join(dir, "facts.db");
+      const lancePath = join(dir, "facts.lance");
+      const factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false, storeConfig: { fuzzyDedupe: false } });
+      const vectorDb = new VectorDB(lancePath, 8, false);
+      // "personal.db" and "personal" are distinct sqlite paths, but resolveVaultLancePath()
+      // strips a trailing ".db" before appending ".lance" — both derive "personal.lance".
+      const withExt = join(dir, "personal.db");
+      const withoutExt = join(dir, "personal");
+      expect(() =>
+        createVaultRegistry({
+          cfg: {
+            vaults: { personal: withExt, "personal-noext": withoutExt },
+            wal: { enabled: false, maxAge: 60_000 },
+            store: { fuzzyDedupe: false },
+            vector: { autoRepair: false },
+          } as never,
+          api: { resolvePath: (p: string) => p, logger: { warn: () => {}, info: () => {} } } as never,
+          defaultFactsDb: factsDb,
+          defaultVectorDb: vectorDb,
+          defaultSqlitePath: sqlitePath,
+          defaultLancePath: lancePath,
+          defaultWal: null,
+          vectorDim: 8,
+        }),
+      ).toThrow(/same LanceDB path/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolveAll skips a vault that fails to open instead of throwing for the whole fan-out", () => {
+    const dir = mkdtempSync(join(homedir(), ".hm-vault-broken-"));
+    try {
+      const sqlitePath = join(dir, "facts.db");
+      const lancePath = join(dir, "facts.lance");
+      const factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false, storeConfig: { fuzzyDedupe: false } });
+      const vectorDb = new VectorDB(lancePath, 8, false);
+      const healthyPath = join(dir, "healthy.db");
+      // Outside $HOME → validateVaultPath() rejects it, so resolve("broken") throws inside
+      // resolveAll()'s per-vault loop, exercising the same failure mode as a missing/corrupted
+      // sqlite file (both throw synchronously from openNamedVault before any handle is cached).
+      const outsideHomePath = "/tmp/hm-vault-registry-outside-home-test.db";
+      const warnCalls: string[] = [];
+      const registry = createVaultRegistry({
+        cfg: {
+          vaults: { healthy: healthyPath, broken: outsideHomePath },
+          wal: { enabled: false, maxAge: 60_000 },
+          store: { fuzzyDedupe: false },
+          vector: { autoRepair: false },
+        } as never,
+        api: {
+          resolvePath: (p: string) => p,
+          logger: { warn: (msg: string) => warnCalls.push(msg), info: () => {} },
+        } as never,
+        defaultFactsDb: factsDb,
+        defaultVectorDb: vectorDb,
+        defaultSqlitePath: sqlitePath,
+        defaultLancePath: lancePath,
+        defaultWal: null,
+        vectorDim: 8,
+      });
+
+      let all: ReturnType<typeof registry.resolveAll> = [];
+      expect(() => {
+        all = registry.resolveAll();
+      }).not.toThrow();
+      expect(all.map((h) => h.name).sort()).toEqual(["default", "healthy"]);
+      expect(warnCalls.some((m) => m.includes("broken") && m.includes("excluded"))).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

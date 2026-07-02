@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import type { DigestWeeklyDeliveryConfig } from "../../config.js";
 import { type CronModelConfig, getDefaultCronModel } from "../../config.js";
-import { buildGuardPrefix } from "../../services/cron-guard.js";
+import { acquireStepLock, buildGuardPrefix, releaseStepLock } from "../../services/cron-guard.js";
 import {
   HYBRID_MEM_CRON_ENV_SANITIZER_MARKER,
   buildHybridMemCronTaskMessage,
@@ -25,7 +25,32 @@ import {
   selectGoalStewardshipHeartbeatMessage,
 } from "./workspace.js";
 
+/** Cross-process lock name shared by every read-modify-write cycle against the cron job store
+ * (~/.openclaw/cron/jobs.json or its SQLite equivalent) — install, upgrade, and `verify --fix`
+ * can all trigger these functions independently, and without a lock two overlapping runs each
+ * read the same pre-write snapshot and silently discard each other's job additions/normalizations
+ * when both write back. */
+const CRON_STORE_LOCK_NAME = "install-cron-jobs-sync";
+
 export function ensureGoalStewardshipHeartbeatCronJob(
+  openclawDir: string,
+  options: { heartbeatPatterns: string[] },
+): { added: boolean; normalized: boolean; skippedReason?: string } {
+  if (!acquireStepLock(CRON_STORE_LOCK_NAME, openclawDir)) {
+    return {
+      added: false,
+      normalized: false,
+      skippedReason: "cron store update already in progress in another process — will be retried on next run",
+    };
+  }
+  try {
+    return ensureGoalStewardshipHeartbeatCronJobLocked(openclawDir, options);
+  } finally {
+    releaseStepLock(CRON_STORE_LOCK_NAME, openclawDir);
+  }
+}
+
+function ensureGoalStewardshipHeartbeatCronJobLocked(
   openclawDir: string,
   options: { heartbeatPatterns: string[] },
 ): { added: boolean; normalized: boolean; skippedReason?: string } {
@@ -819,6 +844,32 @@ export function ensureMaintenanceCronJobs(
     /** When true (default), install single consolidated maintenance-nightly job. */
     consolidatedCronJobs?: boolean;
   } = {},
+): { added: string[]; normalized: string[] } {
+  if (!acquireStepLock(CRON_STORE_LOCK_NAME, openclawDir)) {
+    // Another process (install/upgrade/verify --fix) is concurrently updating the same cron
+    // store — skip rather than racing a read-modify-write that would silently discard whichever
+    // side loses. Safe no-op: callers already treat this as best-effort and will retry later.
+    return { added: [], normalized: [] };
+  }
+  try {
+    return ensureMaintenanceCronJobsLocked(openclawDir, pluginConfig, options);
+  } finally {
+    releaseStepLock(CRON_STORE_LOCK_NAME, openclawDir);
+  }
+}
+
+function ensureMaintenanceCronJobsLocked(
+  openclawDir: string,
+  pluginConfig: CronModelConfig | undefined,
+  options: {
+    normalizeExisting?: boolean;
+    reEnableDisabled?: boolean;
+    scheduleOverrides?: Record<string, string>;
+    messageOverrides?: Record<string, string>;
+    featureGates?: Record<string, boolean>;
+    digestWeeklyDelivery?: DigestWeeklyDeliveryConfig;
+    consolidatedCronJobs?: boolean;
+  },
 ): { added: string[]; normalized: string[] } {
   const {
     normalizeExisting = false,

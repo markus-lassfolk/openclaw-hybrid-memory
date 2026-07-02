@@ -30,6 +30,23 @@ afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
+/**
+ * RELATED_TO links are stored undirected: createOrStrengthenRelatedLink() canonicalizes
+ * source/target by lexical id order, so a given RELATED_TO edge may land as either
+ * `getLinksFrom(factId)` or `getLinksTo(factId)` depending on random UUID ordering.
+ * Production call sites always combine both (see graph-retrieval.ts, knowledge-gaps.ts,
+ * shortest-path.ts) — mirror that here instead of asserting on getLinksFrom() alone.
+ */
+function relatedLinksFrom(
+  factId: string,
+): Array<{ id: string; targetFactId: string; linkType: string; strength: number }> {
+  const outgoing = db.getLinksFrom(factId);
+  const incoming = db
+    .getLinksTo(factId)
+    .map((l) => ({ id: l.id, targetFactId: l.sourceFactId, linkType: l.linkType, strength: l.strength }));
+  return [...outgoing, ...incoming];
+}
+
 // ---------------------------------------------------------------------------
 // getKnownEntities
 // ---------------------------------------------------------------------------
@@ -181,12 +198,26 @@ describe("FactsDB.extractEntitiesFromText", () => {
     expect(result[0].weight).toBe(1.0);
   });
 
-  it("substring match (no word boundary) returns weight 0.7", () => {
-    // "MyProject" is a substring of "MyProjectFoo" — no word boundary at end
+  it("substring match (no word boundary) is not recorded as a mention", () => {
+    // "MyProject" is a substring of "MyProjectFoo" — no word boundary at end. A bare substring
+    // match is not evidence of a real mention (e.g. "art" inside "smart"/"chart"/"artist"), so it
+    // must not feed autoLinkEntities() and create a spurious RELATED_TO edge.
     const result = db.extractEntitiesFromText("Working on MyProjectFoo code", ["MyProject"]);
+    expect(result).toEqual([]);
+  });
+
+  it("does not match a short known entity that is only a substring of unrelated words", () => {
+    // A known entity "art" must not match inside "smart", "chart", or "artist" — those are
+    // unrelated words that merely contain the same letters, not mentions of "art".
+    const result = db.extractEntitiesFromText("We need a smart chart for the artist's exhibit", ["art"]);
+    expect(result).toEqual([]);
+  });
+
+  it("still matches a short known entity when it appears as its own word", () => {
+    const result = db.extractEntitiesFromText("The art exhibit opens Friday", ["art"]);
     expect(result).toHaveLength(1);
-    expect(result[0].entity).toBe("MyProject");
-    expect(result[0].weight).toBe(0.7);
+    expect(result[0].entity).toBe("art");
+    expect(result[0].weight).toBe(1.0);
   });
 
   it("exact word-boundary match returns 1.0 not 0.7", () => {
@@ -230,7 +261,9 @@ describe("FactsDB.extractEntitiesFromText", () => {
 
   it("results sorted by descending weight", () => {
     const result = db.extractEntitiesFromText("alice leads MyProjectFoo and 10.0.0.1", ["alice", "MyProject"]);
-    // alice → 1.0, MyProject → 0.7 (substring in MyProjectFoo), IP → 0.5
+    // alice → 1.0 (word-boundary match), MyProject → not recorded (substring-only in
+    // MyProjectFoo), IP → 0.5
+    expect(result.map((r) => r.entity)).not.toContain("MyProject");
     for (let i = 0; i < result.length - 1; i++) {
       expect(result[i].weight).toBeGreaterThanOrEqual(result[i + 1].weight);
     }
@@ -335,7 +368,7 @@ describe("FactsDB.autoLinkEntities — entity-based RELATED_TO links", () => {
     const result = db.autoLinkEntities(newFact.id, newFact.text, null, null, null, cfg);
     expect(result.linkedCount).toBeGreaterThan(0);
 
-    const links = db.getLinksFrom(newFact.id);
+    const links = relatedLinksFrom(newFact.id);
     const toAnchor = links.find((l) => l.targetFactId === anchor.id && l.linkType === "RELATED_TO");
     expect(toAnchor).toBeDefined();
     expect(toAnchor?.strength).toBe(1.0); // exact word-boundary match
@@ -364,7 +397,7 @@ describe("FactsDB.autoLinkEntities — entity-based RELATED_TO links", () => {
     const result = db.autoLinkEntities(newFact.id, newFact.text, null, null, null, cfg);
     expect(result.linkedCount).toBeGreaterThan(0);
 
-    const links = db.getLinksFrom(newFact.id);
+    const links = relatedLinksFrom(newFact.id);
     const toAnchor = links.find((l) => l.targetFactId === anchor.id && l.linkType === "RELATED_TO");
     expect(toAnchor).toBeDefined();
     // The IP "10.0.0.5" is a known entity and gets exact word-boundary match (weight 1.0);
@@ -422,9 +455,9 @@ describe("FactsDB.autoLinkEntities — entity-based RELATED_TO links", () => {
     db.autoLinkEntities(newFact.id, newFact.text, null, null, null, cfg);
     db.autoLinkEntities(newFact.id, newFact.text, null, null, null, cfg);
 
-    const links = db
-      .getLinksFrom(newFact.id)
-      .filter((l) => l.targetFactId === anchor.id && l.linkType === "RELATED_TO");
+    const links = relatedLinksFrom(newFact.id).filter(
+      (l) => l.targetFactId === anchor.id && l.linkType === "RELATED_TO",
+    );
     expect(links).toHaveLength(1);
   });
 
@@ -486,7 +519,7 @@ describe("FactsDB.autoLinkEntities — temporal co-occurrence", () => {
     });
     db.autoLinkEntities(factB.id, factB.text, null, null, sessionId, cfg);
 
-    const links = db.getLinksFrom(factB.id);
+    const links = relatedLinksFrom(factB.id);
     const coLink = links.find((l) => l.targetFactId === factA.id && l.linkType === "RELATED_TO");
     expect(coLink).toBeDefined();
     expect(coLink?.strength).toBeCloseTo(0.3);
@@ -520,7 +553,7 @@ describe("FactsDB.autoLinkEntities — temporal co-occurrence", () => {
 
     // Same session + same entity → co-occurrence query picks up factA
     db.autoLinkEntities(factB.id, factB.text, entity, null, sessionId, cfg);
-    const links = db.getLinksFrom(factB.id);
+    const links = relatedLinksFrom(factB.id);
     const coLink = links.find((l) => l.targetFactId === factA.id);
     expect(coLink).toBeDefined();
   });
@@ -801,7 +834,7 @@ describe("autoLinkEntities — config variants", () => {
 
     db.autoLinkEntities(factB.id, factB.text, null, null, sessionId, { coOccurrenceWeight: 0, autoSupersede: false });
     // With weight 0 the link is still created (createLink inserts the row with strength=0)
-    const links = db.getLinksFrom(factB.id);
+    const links = relatedLinksFrom(factB.id);
     const coLink = links.find((l) => l.targetFactId === factA.id);
     expect(coLink).toBeDefined();
     expect(coLink?.strength).toBe(0);

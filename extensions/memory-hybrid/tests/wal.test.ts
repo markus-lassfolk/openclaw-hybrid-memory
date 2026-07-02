@@ -357,7 +357,7 @@ describe("WriteAheadLog", () => {
       readAllSpy.mockRestore();
     });
 
-    it("batch removals do not trigger any readAll() call", async () => {
+    it("only the final drain-to-empty removal triggers a readAll() disk-verification call (#79)", async () => {
       const ids: string[] = [];
       for (let i = 0; i < 10; i++) {
         const entry = {
@@ -375,7 +375,9 @@ describe("WriteAheadLog", () => {
         await wal.remove(id);
       }
 
-      expect(readAllSpy).not.toHaveBeenCalled();
+      // Every remove() that leaves other entries active stays O(1) (no disk read); only the
+      // single removal that drains activeIds to 0 verifies against disk before clearing (#79).
+      expect(readAllSpy).toHaveBeenCalledTimes(1);
       readAllSpy.mockRestore();
     });
 
@@ -414,6 +416,40 @@ describe("WriteAheadLog", () => {
       const entries = await wal.readAll();
       expect(entries).toHaveLength(1);
       expect(entries[0].id).toBe(entry.id);
+    });
+
+    it("does not wipe another process's concurrently-appended entry when this instance's own activeIds drains to 0 (#79)", async () => {
+      // Simulates cmd-doctor's WAL durability probe racing the long-running gateway process:
+      // a second WriteAheadLog instance pointed at the same walPath, whose init() resolves
+      // against an empty/pre-gateway-write file (so ensureInitialized() is a no-op for the
+      // rest of its lifetime — it never re-reads disk), then the gateway appends its own real
+      // entry that the probe instance's in-memory activeIds never learns about.
+      const probeWal = new WriteAheadLog(walPath, DEFAULT_MAX_AGE_MS);
+      await probeWal.init(); // resolves against the still-empty walPath
+
+      const gatewayEntry = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "Gateway's pending entry", category: "general", importance: 0.7, source: "test" },
+      };
+      await wal.write(gatewayEntry); // a different WriteAheadLog instance, same walPath
+
+      // Matches cmd-doctor.ts's `wal.write(probeEntry); wal.remove(probeId);` round-trip.
+      const probeId = randomUUID();
+      const probeEntry = {
+        id: probeId,
+        timestamp: Date.now(),
+        operation: "update" as const,
+        data: { text: "doctor-wal-durability-probe", probe: "doctor-wal-durability" },
+      };
+      await probeWal.write(probeEntry);
+      await probeWal.remove(probeId);
+
+      // The probe's own activeIds is now empty, but the gateway's entry must survive on disk.
+      expect(existsSync(walPath)).toBe(true);
+      const survivingEntries = await wal.readAll();
+      expect(survivingEntries.map((e) => e.id)).toEqual([gatewayEntry.id]);
     });
   });
 
@@ -523,6 +559,50 @@ describe("WriteAheadLog", () => {
       expect((await wal.readAll())[0].id).toBe(recentEntry.id);
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("WAL pruneStale detected corruption"));
       warnSpy.mockRestore();
+    });
+
+    it("skips pruning rather than clobbering a concurrent rewrite already in progress (#80)", async () => {
+      const oldEntry = {
+        id: randomUUID(),
+        timestamp: Date.now() - 5000,
+        operation: "store" as const,
+        data: { text: "Old memory", category: "general", importance: 0.7, source: "test" },
+      };
+      await wal.write(oldEntry);
+
+      // Simulate a second process's pruneStale/compactIfOversized already holding the
+      // cross-process rewrite lock for this walPath.
+      writeFileSync(`${walPath}.rewrite.lock`, String(Date.now()), "utf-8");
+
+      const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+      const pruned = await wal.pruneStale();
+
+      expect(pruned).toBe(0);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("WAL pruneStale skipped"));
+      // The old entry is untouched — a naive stale-snapshot rewrite would have removed it.
+      const entries = await wal.readAll();
+      expect(entries).toHaveLength(1);
+      expect(entries[0].id).toBe(oldEntry.id);
+      warnSpy.mockRestore();
+      rmSync(`${walPath}.rewrite.lock`, { force: true });
+    });
+
+    it("reclaims a stale rewrite lock abandoned by a crashed process", async () => {
+      const oldEntry = {
+        id: randomUUID(),
+        timestamp: Date.now() - 5000,
+        operation: "store" as const,
+        data: { text: "Old memory", category: "general", importance: 0.7, source: "test" },
+      };
+      await wal.write(oldEntry);
+
+      // A lock file far older than WAL_REWRITE_LOCK_STALE_MS (5 min) — abandoned, not live.
+      writeFileSync(`${walPath}.rewrite.lock`, String(Date.now() - 10 * 60 * 1000), "utf-8");
+
+      const pruned = await wal.pruneStale();
+
+      expect(pruned).toBe(1);
+      expect(existsSync(walPath)).toBe(false);
     });
   });
 
@@ -640,6 +720,29 @@ describe("WriteAheadLog", () => {
       const entries = await localWal.readAll();
       expect(entries).toHaveLength(2);
       expect(entries.map((entry) => entry.id).sort()).toEqual([oldEntry.id, recentEntry.id].sort());
+    });
+
+    it("skips compaction rather than clobbering a concurrent rewrite already in progress (#80)", async () => {
+      const entry = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "Pending entry", category: "general", importance: 0.7, source: "test" },
+      };
+      await wal.write(entry);
+
+      writeFileSync(`${walPath}.rewrite.lock`, String(Date.now()), "utf-8");
+
+      const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+      const compacted = await wal.compactIfOversized(0);
+
+      expect(compacted).toBe(0);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("WAL compactIfOversized skipped"));
+      const entries = await wal.readAll();
+      expect(entries).toHaveLength(1);
+      expect(entries[0].id).toBe(entry.id);
+      warnSpy.mockRestore();
+      rmSync(`${walPath}.rewrite.lock`, { force: true });
     });
   });
 

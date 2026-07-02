@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { VectorDB } from "../backends/vector-db.js";
 import { _testing } from "../index.js";
+import * as errorReporter from "../services/error-reporter.js";
 import { replayWalEntries, replayWalEntriesWithRepair } from "../utils/wal-replay.js";
 
 const { FactsDB, WriteAheadLog } = _testing;
@@ -297,6 +298,67 @@ describe("replayWalEntries", () => {
         embedding: new Float32Array([0.4, 0.5, 0.6]),
       },
     ]);
+  });
+
+  it("rejects the whole precomputed vector (not just the NaN elements) and falls back to re-embedding (#52)", async () => {
+    const vectorDb = {
+      store: vi.fn().mockResolvedValue(undefined),
+    } as unknown as VectorDB;
+    const embeddings = {
+      modelName: "fallback-model",
+      embed: vi.fn().mockResolvedValue([0.7, 0.8, 0.9]),
+    };
+    await wal.write(
+      walEntry({
+        data: {
+          text: "NaN-corrupted vector fact",
+          category: "fact",
+          source: "test",
+          // A partially-NaN vector must not be silently shrunk below the table's dimension —
+          // it must be treated as fully invalid and trigger a re-embed instead.
+          vector: [0.1, Number.NaN, 0.3],
+        },
+      }),
+    );
+
+    await replayWalEntries(wal, factsDb, vectorDb, embeddings as never);
+
+    expect(embeddings.embed).toHaveBeenCalledWith("NaN-corrupted vector fact");
+    expect(vectorDb.store).toHaveBeenCalledWith(expect.objectContaining({ vector: [0.7, 0.8, 0.9] }));
+    expect(vectorDb.store).not.toHaveBeenCalledWith(expect.objectContaining({ vector: [0.1, 0.3] }));
+  });
+
+  it("reports a precomputed-vector store failure instead of silently dropping it (#52)", async () => {
+    const captureSpy = vi.spyOn(errorReporter, "capturePluginError").mockImplementation(() => undefined);
+    const vectorDb = {
+      store: vi.fn().mockRejectedValue(new Error("dim mismatch")),
+    } as unknown as VectorDB;
+    const embeddings = {
+      modelName: "fallback-model",
+      embed: vi.fn().mockRejectedValue(new Error("embed also failed")),
+    };
+    await wal.write(
+      walEntry({
+        data: {
+          text: "Store-failure vector fact",
+          category: "fact",
+          source: "test",
+          vector: [0.1, 0.2, 0.3],
+        },
+      }),
+    );
+
+    await replayWalEntries(wal, factsDb, vectorDb, embeddings as never);
+
+    const storeFailureCalls = captureSpy.mock.calls.filter(
+      ([, ctx]) => (ctx as { operation?: string })?.operation === "store-precomputed-vector",
+    );
+    expect(storeFailureCalls.length).toBeGreaterThan(0);
+    const fallbackFailureCalls = captureSpy.mock.calls.filter(
+      ([, ctx]) => (ctx as { operation?: string })?.operation === "embed-and-store-fallback",
+    );
+    expect(fallbackFailureCalls.length).toBeGreaterThan(0);
+    captureSpy.mockRestore();
   });
 
   it("removes store entries when store-side dedupe already handled the write", async () => {

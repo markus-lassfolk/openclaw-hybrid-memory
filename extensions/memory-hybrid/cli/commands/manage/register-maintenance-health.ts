@@ -168,6 +168,10 @@ export function registerMaintenanceHealthCommands(maintenance: Chainable, cfg: H
 
         const issues = results.filter((r) => r.issue);
 
+        if (issues.length > 0) {
+          process.exitCode = 1;
+        }
+
         if (opts?.json) {
           console.log(
             JSON.stringify(
@@ -235,6 +239,7 @@ export function registerMaintenanceHealthCommands(maintenance: Chainable, cfg: H
           cronStore = snapshot.store;
         } catch {
           console.warn("⚠ Could not read cron store — skipping health check.");
+          process.exitCode = 1;
           return;
         }
 
@@ -261,6 +266,8 @@ export function registerMaintenanceHealthCommands(maintenance: Chainable, cfg: H
 
         if (healthy) {
           console.log("✓ Maintenance cron jobs healthy.");
+        } else {
+          process.exitCode = 1;
         }
       }),
     );

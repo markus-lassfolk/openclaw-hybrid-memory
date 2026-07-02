@@ -7,6 +7,7 @@ import {
   extractRecalledMemoryIds,
   extractToolCallSequence,
   parseSessionMessagesFromLines,
+  parseSessionMessagesSync,
   testSignalRegex,
 } from "../services/session-signal-context.js";
 import { runSelfCorrectionExtract } from "../services/self-correction-extract.js";
@@ -118,5 +119,62 @@ describe("self-correction-extract tool context", () => {
     expect(result.incidents[0].precedingAssistant).toContain("deploy");
     expect(result.incidents[0].toolCallSequence).toEqual(["memory_recall"]);
     expect(result.incidents[0].precedingUserMessage).toContain("deploy the app");
+  });
+});
+
+describe("parseSessionMessagesFromLines/parseSessionMessagesSync failure callbacks (#26)", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "sc-context-failures-"));
+  });
+
+  afterEach(() => {
+    try {
+      if (tmpDir) rmSync(tmpDir, { recursive: true });
+    } catch {
+      // ignore
+    }
+  });
+
+  it("parseSessionMessagesFromLines invokes onParseFailure once per malformed line", () => {
+    let failures = 0;
+    const messages = parseSessionMessagesFromLines(
+      [msg("user", [{ type: "text", text: "valid line" }]), "{not valid json", "also { not valid"],
+      "test",
+      () => {
+        failures++;
+      },
+    );
+    expect(messages).toHaveLength(1);
+    expect(failures).toBe(2);
+  });
+
+  it("parseSessionMessagesFromLines does not invoke onParseFailure when all lines parse", () => {
+    let failures = 0;
+    parseSessionMessagesFromLines([msg("user", [{ type: "text", text: "fine" }])], "test", () => {
+      failures++;
+    });
+    expect(failures).toBe(0);
+  });
+
+  it("parseSessionMessagesSync invokes onFailure when the file cannot be read", () => {
+    let failures = 0;
+    const messages = parseSessionMessagesSync(join(tmpDir, "does-not-exist.jsonl"), "test", () => {
+      failures++;
+    });
+    expect(messages).toEqual([]);
+    expect(failures).toBe(1);
+  });
+
+  it("parseSessionMessagesSync forwards onFailure into per-line parsing", () => {
+    const path = join(tmpDir, "malformed.jsonl");
+    writeFileSync(path, [msg("user", [{ type: "text", text: "ok" }]), "{broken"].join("\n"), "utf-8");
+    let failures = 0;
+    const messages = parseSessionMessagesSync(path, "test", () => {
+      failures++;
+    });
+    expect(messages).toHaveLength(1);
+    expect(failures).toBe(1);
   });
 });

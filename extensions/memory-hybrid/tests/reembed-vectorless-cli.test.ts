@@ -238,6 +238,75 @@ describe("reembed-vectorless CLI partial success reporting", () => {
     expect(embeddings.embedBatch).toHaveBeenCalledTimes(EMBED_CALL_MAX_ATTEMPTS);
   });
 
+  it("reports embedFailures and exits with code 2 even when failures are non-consecutive", async () => {
+    process.argv = ["node", "/usr/bin/openclaw", "hybrid-mem"];
+    const mem = new Command("hybrid-mem");
+
+    const facts = [
+      { id: "fact-ok-1", text: "ok fact 1", category: "fact", source: "manual" },
+      { id: "fact-fail", text: "fail fact", category: "fact", source: "manual" },
+      { id: "fact-ok-2", text: "ok fact 2", category: "fact", source: "manual" },
+    ];
+
+    const factsDb = {
+      getCount: vi.fn().mockReturnValue(10),
+      countVectorlessActiveFacts: vi.fn().mockReturnValue(facts.length),
+      listVectorlessActiveFacts: vi.fn().mockReturnValue(facts),
+      storeEmbedding: vi.fn(),
+      setEmbeddingModel: vi.fn(),
+    };
+    const vectorDb = {
+      runWithAutoOptimizePaused: vi.fn(async (fn: () => Promise<void>) => await fn()),
+      delete: vi.fn().mockResolvedValue(false),
+      store: vi.fn().mockResolvedValue(undefined),
+    };
+    const embeddings = {
+      modelName: "test-embedding-model",
+      // embedBatch fails with a plain (non-5xx, non-rate-limit) error to trigger per-fact fallback.
+      embedBatch: vi.fn().mockRejectedValue(new Error("batch embed transient error")),
+      embed: vi.fn((text: string) =>
+        text === "fail fact" ? Promise.reject(new Error("single embed failed")) : Promise.resolve([0.1, 0.2, 0.3]),
+      ),
+    };
+
+    registerManageStorageMaintenance(mem, {
+      factsDb,
+      vectorDb,
+      aliasDb: {},
+      versionInfo: { version: "test" },
+      embeddings,
+      mergeResults: vi.fn(),
+      getMemoryCategories: () => ["fact"],
+      cfg: { memory: { categories: ["fact"] } },
+      runCompaction: vi.fn(),
+      tieringEnabled: false,
+      ctx: { resolvedSqlitePath: null },
+      listCommands: () => [],
+      auditStore: null,
+      merge: vi.fn(),
+      BACKFILL_DECAY_MARKER: ".backfill-decay-done",
+    } as any);
+
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await mem.parseAsync(
+      ["reembed-vectorless", "--apply", "--limit", "3", "--batch-size", "3", "--json"],
+      { from: "user" },
+    );
+
+    await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(2));
+    const payload = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
+      embedFailures?: number;
+      storeFailures?: number;
+      embedded?: number;
+    };
+    expect(payload.embedFailures).toBe(1);
+    expect(payload.storeFailures).toBe(0);
+    expect(payload.embedded).toBe(2);
+  });
+
   it("preserves Retry-After from AllEmbeddingProvidersFailed causes during adaptive backoff", async () => {
     process.argv = ["node", "/usr/bin/openclaw", "hybrid-mem"];
     const mem = new Command("hybrid-mem");

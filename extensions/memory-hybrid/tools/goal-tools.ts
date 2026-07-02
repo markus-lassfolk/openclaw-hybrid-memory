@@ -16,8 +16,9 @@ import {
   computeCircuitBreakerStateAfterAssess,
   evaluateCircuitBreakerTrip,
 } from "../services/goal-circuit-breaker.js";
-import type { GoalHistoryEntry } from "../services/goal-stewardship-types.js";
+import type { Goal, GoalHistoryEntry } from "../services/goal-stewardship-types.js";
 import {
+  type GoalUpdatePatch,
   type GoalVerification,
   createGoal,
   goalStewardshipDefaultsFromConfig,
@@ -394,91 +395,159 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           if (isTerminalStatus(goal.status)) {
             return { content: [{ type: "text", text: `Goal already ${goal.status}` }], details: { error: "terminal" } };
           }
-          if (goal.assessmentCount >= goal.maxAssessments) {
-            await updateGoal(
-              goalsDir,
-              goal.id,
-              { status: "blocked", currentBlockers: ["Assessment budget exhausted"] },
-              { timestamp: nowIso(), action: "blocked", detail: "assessments", actor: "steward" },
-            );
-            return { content: [{ type: "text", text: "Assessment budget exhausted." }], details: { error: "budget" } };
-          }
           const ts = nowIso();
-          let dispatchCount = goal.dispatchCount;
-          let lastDispatchedAt = goal.lastDispatchedAt;
-          if (p.dispatched) {
-            if (isGlobalRateLimited(gs.globalLimits.maxDispatchesPerHour, goalsDir)) {
-              return {
-                content: [{ type: "text", text: "Global dispatch rate limit reached." }],
-                details: { error: "rate_limited" },
-              };
-            }
-            if (goal.dispatchCount >= goal.maxDispatches) {
-              return {
-                content: [{ type: "text", text: "Dispatch budget exhausted." }],
-                details: { error: "dispatch_budget" },
-              };
-            }
-            recordGoalDispatch(goalsDir);
-            dispatchCount += 1;
-            lastDispatchedAt = ts;
+          // The assessmentCount/dispatchCount budget checks are intentionally NOT evaluated here
+          // against this pre-lock `goal` snapshot. Two overlapping goal_assess calls could both
+          // read the same one-below-cap count and both pass a pre-lock check; the authoritative
+          // budget checks are re-evaluated against `fresh` inside computeAssessDecision below,
+          // atomically with the increment (see the comment there), so a call can no longer push
+          // assessmentCount/dispatchCount past their configured caps. Only isGlobalRateLimited is
+          // still checked as a pre-lock fast path — it has its own independent file-based lock
+          // and isn't derived from this goal's state, so it isn't subject to the same race.
+          if (p.dispatched && isGlobalRateLimited(gs.globalLimits.maxDispatchesPerHour, goalsDir)) {
+            return {
+              content: [{ type: "text", text: "Global dispatch rate limit reached." }],
+              details: { error: "rate_limited" },
+            };
           }
           const blockersExplicitlyProvided = p.blockers !== undefined;
-          const newBlockers = blockersExplicitlyProvided
+          const requestedBlockers = blockersExplicitlyProvided
             ? (p.blockers ?? [])
                 .filter((b): b is string => typeof b === "string")
                 .map((b) => b.trim())
                 .filter(Boolean)
-            : goal.currentBlockers;
-          const newAssessmentCount = goal.assessmentCount + 1;
-          const cbState = blockersExplicitlyProvided
-            ? computeCircuitBreakerStateAfterAssess(goal, newBlockers, newAssessmentCount)
-            : {
-                lastBlockerFingerprint: goal.lastBlockerFingerprint,
-                sameBlockerStreak: goal.sameBlockerStreak,
-                circuitBreakerLastProgressAssessmentCount: goal.circuitBreakerLastProgressAssessmentCount,
+            : null;
+
+          // Recompute everything derived from goal state (assessmentCount, blockers, circuit
+          // breaker state, the trip decision, and the resulting patch) from `fresh` — the goal
+          // as re-read *inside* updateGoal's lock — rather than from the pre-lock `goal` snapshot
+          // above. A plain-object patch built from that snapshot would silently clobber a
+          // concurrent writer's fresh state on commit: the lock only serializes *when* each
+          // update lands, not what data drove its contents, so a concurrent goal_assess for the
+          // same goal_id could otherwise let assessmentCount/dispatchCount undercount relative to
+          // the number of assessments actually recorded to history, defeating the very budget
+          // and circuit-breaker checks this mechanism exists to enforce.
+          type AssessDecision = {
+            patch: GoalUpdatePatch;
+            historyEntries: GoalHistoryEntry[];
+            outcome: "normal" | "circuit_breaker" | "assessment_budget" | "dispatch_budget";
+            tripReason?: string;
+          };
+          const decisionRef: { current: AssessDecision | null } = { current: null };
+
+          const computeAssessDecision = (fresh: Goal): AssessDecision => {
+            // Re-check both budgets against `fresh` (read inside updateGoal's lock), not the
+            // pre-lock `goal` snapshot: this makes the budget check and the increment atomic
+            // under a single lock acquisition, closing the race where two overlapping calls both
+            // pass a stale pre-lock check and both proceed to increment past the cap.
+            if (fresh.assessmentCount >= fresh.maxAssessments) {
+              const budgetReason = "Assessment budget exhausted";
+              return {
+                patch: {
+                  status: "blocked",
+                  currentBlockers: fresh.currentBlockers.includes(budgetReason)
+                    ? fresh.currentBlockers
+                    : [...fresh.currentBlockers, budgetReason],
+                },
+                historyEntries: [{ timestamp: ts, action: "blocked", detail: "assessments", actor: "steward" }],
+                outcome: "assessment_budget",
               };
-          const tripEval = evaluateCircuitBreakerTrip(gs.circuitBreaker, cbState, newAssessmentCount);
+            }
+            if (p.dispatched && fresh.dispatchCount >= fresh.maxDispatches) {
+              // No-op patch/history: matches the pre-fix behavior of rejecting the whole call
+              // (including the assessment text) rather than partially recording it.
+              return { patch: {}, historyEntries: [], outcome: "dispatch_budget" };
+            }
+            if (p.dispatched) recordGoalDispatch(goalsDir);
+            const newBlockers = requestedBlockers ?? fresh.currentBlockers;
+            const newAssessmentCount = fresh.assessmentCount + 1;
+            const cbState = blockersExplicitlyProvided
+              ? computeCircuitBreakerStateAfterAssess(fresh, newBlockers, newAssessmentCount)
+              : {
+                  lastBlockerFingerprint: fresh.lastBlockerFingerprint,
+                  sameBlockerStreak: fresh.sameBlockerStreak,
+                  circuitBreakerLastProgressAssessmentCount: fresh.circuitBreakerLastProgressAssessmentCount,
+                };
+            // Only evaluate a trip when this call actually provided fresh blocker evidence.
+            // When blockers is omitted, cbState reuses the goal's frozen prior circuit-breaker
+            // state while newAssessmentCount still advances — evaluating the trip here would let
+            // the "assessments without progress" counter grow purely from call volume (an agent
+            // simply not re-passing the optional blockers field) rather than genuine repeated-
+            // blocker evidence, tripping the breaker "too early" relative to its documented intent
+            // (stop retrying when blockers do not change).
+            const tripEval = blockersExplicitlyProvided
+              ? evaluateCircuitBreakerTrip(gs.circuitBreaker, cbState, newAssessmentCount)
+              : ({ trip: false } as const);
 
-          const basePatch = {
-            assessmentCount: newAssessmentCount,
-            lastAssessedAt: ts,
-            dispatchCount,
-            lastDispatchedAt,
-            lastOutcome: `${assessment.slice(0, 400)} | next: ${nextAction.slice(0, 200)}`,
-            currentBlockers: newBlockers,
-            ...cbState,
-          };
-
-          const assessEntry: GoalHistoryEntry = {
-            timestamp: ts,
-            action: "assessed",
-            detail: `${assessment.slice(0, 400)} | next: ${nextAction.slice(0, 100)}`,
-            actor: "steward",
-          };
-
-          if (tripEval.trip) {
-            const goalPreview = {
-              ...goal,
-              ...basePatch,
+            const basePatch = {
+              assessmentCount: newAssessmentCount,
+              lastAssessedAt: ts,
+              dispatchCount: fresh.dispatchCount + (p.dispatched ? 1 : 0),
+              lastDispatchedAt: p.dispatched ? ts : fresh.lastDispatchedAt,
+              lastOutcome: `${assessment.slice(0, 400)} | next: ${nextAction.slice(0, 200)}`,
               currentBlockers: newBlockers,
+              ...cbState,
             };
-            const summary = composeCircuitBreakerHumanSummary(goalPreview, tripEval.reason, gs.circuitBreaker);
-            const blockedPatch = {
-              ...basePatch,
-              status: "blocked" as const,
-              currentBlockers: [circuitBreakerShortBlocker(tripEval.reason)],
-              humanEscalationSummary: summary,
-              escalationKind: "circuit_breaker" as const,
-              lastOutcome: circuitBreakerShortBlocker(tripEval.reason),
-            };
-            const cbEntry: GoalHistoryEntry = {
+
+            const assessEntry: GoalHistoryEntry = {
               timestamp: ts,
-              action: "circuit_breaker",
-              detail: summary.slice(0, 8000),
-              actor: "watchdog",
+              action: "assessed",
+              detail: `${assessment.slice(0, 400)} | next: ${nextAction.slice(0, 100)}`,
+              actor: "steward",
             };
-            const updated = await updateGoal(goalsDir, goal.id, blockedPatch, [assessEntry, cbEntry]);
+
+            if (tripEval.trip) {
+              const goalPreview = { ...fresh, ...basePatch, currentBlockers: newBlockers };
+              const summary = composeCircuitBreakerHumanSummary(goalPreview, tripEval.reason, gs.circuitBreaker);
+              const blockedPatch = {
+                ...basePatch,
+                status: "blocked" as const,
+                currentBlockers: [circuitBreakerShortBlocker(tripEval.reason)],
+                humanEscalationSummary: summary,
+                escalationKind: "circuit_breaker" as const,
+                lastOutcome: circuitBreakerShortBlocker(tripEval.reason),
+              };
+              const cbEntry: GoalHistoryEntry = {
+                timestamp: ts,
+                action: "circuit_breaker",
+                detail: summary.slice(0, 8000),
+                actor: "watchdog",
+              };
+              return {
+                patch: blockedPatch,
+                historyEntries: [assessEntry, cbEntry],
+                outcome: "circuit_breaker",
+                tripReason: tripEval.reason,
+              };
+            }
+            return { patch: basePatch, historyEntries: [assessEntry], outcome: "normal" };
+          };
+
+          const updated = await updateGoal(
+            goalsDir,
+            goal.id,
+            (fresh) => {
+              decisionRef.current = computeAssessDecision(fresh);
+              return decisionRef.current.patch;
+            },
+            () => decisionRef.current?.historyEntries ?? [],
+          );
+          const decision = decisionRef.current;
+          if (!decision) {
+            throw new Error("memory-hybrid: goal_assess decision missing after updateGoal");
+          }
+
+          if (decision.outcome === "assessment_budget") {
+            return { content: [{ type: "text", text: "Assessment budget exhausted." }], details: { error: "budget" } };
+          }
+          if (decision.outcome === "dispatch_budget") {
+            return {
+              content: [{ type: "text", text: "Dispatch budget exhausted." }],
+              details: { error: "dispatch_budget" },
+            };
+          }
+
+          if (decision.outcome === "circuit_breaker") {
             try {
               eventLog?.append({
                 sessionId: "goal-stewardship",
@@ -488,17 +557,17 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
                   kind: "goal.circuit_breaker",
                   goalId: updated.id,
                   label: updated.label,
-                  reason: tripEval.reason,
+                  reason: decision.tripReason,
                 },
               });
             } catch {
               /* */
             }
-            if (gs.circuitBreaker.appendMemoryEscalation) {
+            if (gs.circuitBreaker.appendMemoryEscalation && updated.humanEscalationSummary) {
               await flushGoalOutcomeToMemory(memoryDir, `Circuit breaker: ${updated.label}`, [
                 "**Summary:**",
                 "",
-                ...summary.split("\n"),
+                ...updated.humanEscalationSummary.split("\n"),
               ]);
             }
             return {
@@ -508,11 +577,10 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
                   text: `Circuit breaker: ${updated.label} is blocked — human escalation required. See goal JSON (humanEscalationSummary) or workspace memory/.`,
                 },
               ],
-              details: { goal: updated, circuitBreaker: tripEval.reason },
+              details: { goal: updated, circuitBreaker: decision.tripReason },
             };
           }
 
-          const updated = await updateGoal(goalsDir, goal.id, basePatch, assessEntry);
           try {
             eventLog?.append({
               sessionId: "goal-stewardship",
@@ -557,41 +625,49 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
         if (!gs.enabled) return notEnabled();
         const dropped = guardArgs("goal_update", params);
         if (dropped) return dropped;
-        const p = params as {
-          goal_id: string;
-          description?: string;
-          acceptance_criteria?: string[];
-          priority?: (typeof PRIORITIES)[number];
-          note?: string;
-          confirmed?: boolean;
-        };
-        const goal = await resolveGoalId(goalsDir, p.goal_id);
-        if (!goal) return { content: [{ type: "text", text: "Goal not found." }], details: { error: "not_found" } };
-        if (p.acceptance_criteria !== undefined) {
-          const clarity = validateGoalRegisterClarity({
-            label: goal.label,
-            description: p.description ?? goal.description,
-            acceptance_criteria: p.acceptance_criteria,
-            priority: p.priority ?? goal.priority,
-          });
-          if (!clarity.ok && p.confirmed !== true) {
-            return {
-              content: [{ type: "text", text: formatGoalClarityRejection(clarity) }],
-              details: { error: "goal_criteria_unclear", ...clarity },
-            };
+        try {
+          const p = params as {
+            goal_id: string;
+            description?: string;
+            acceptance_criteria?: string[];
+            priority?: (typeof PRIORITIES)[number];
+            note?: string;
+            confirmed?: boolean;
+          };
+          const goal = await resolveGoalId(goalsDir, p.goal_id);
+          if (!goal) return { content: [{ type: "text", text: "Goal not found." }], details: { error: "not_found" } };
+          if (p.acceptance_criteria !== undefined) {
+            const clarity = validateGoalRegisterClarity({
+              label: goal.label,
+              description: p.description ?? goal.description,
+              acceptance_criteria: p.acceptance_criteria,
+              priority: p.priority ?? goal.priority,
+            });
+            if (!clarity.ok && p.confirmed !== true) {
+              return {
+                content: [{ type: "text", text: formatGoalClarityRejection(clarity) }],
+                details: { error: "goal_criteria_unclear", ...clarity },
+              };
+            }
           }
+          const patch: Parameters<typeof updateGoal>[2] = {};
+          if (p.description !== undefined) patch.description = p.description;
+          if (p.acceptance_criteria !== undefined) patch.acceptanceCriteria = p.acceptance_criteria;
+          if (p.priority !== undefined) patch.priority = p.priority;
+          const updated = await updateGoal(goalsDir, goal.id, patch, {
+            timestamp: nowIso(),
+            action: "updated",
+            detail: p.note ?? "update",
+            actor: "agent",
+          });
+          return { content: [{ type: "text", text: `Updated ${updated.label}` }], details: { goal: updated } };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "goal-tools",
+            operation: "goal_update",
+          });
+          return { content: [{ type: "text", text: String(err) }], details: { error: String(err) } };
         }
-        const patch: Parameters<typeof updateGoal>[2] = {};
-        if (p.description !== undefined) patch.description = p.description;
-        if (p.acceptance_criteria !== undefined) patch.acceptanceCriteria = p.acceptance_criteria;
-        if (p.priority !== undefined) patch.priority = p.priority;
-        const updated = await updateGoal(goalsDir, goal.id, patch, {
-          timestamp: nowIso(),
-          action: "updated",
-          detail: p.note ?? "update",
-          actor: "agent",
-        });
-        return { content: [{ type: "text", text: `Updated ${updated.label}` }], details: { goal: updated } };
       },
     },
     { name: "goal_update" },
@@ -617,55 +693,65 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
         if (!gs.enabled) return notEnabled();
         const dropped = guardArgs("goal_complete", params);
         if (dropped) return dropped;
-        const p = params as { goal_id: string; reason: string; confirmed?: boolean };
-        const goal = await resolveGoalId(goalsDir, p.goal_id);
-        if (!goal) return { content: [{ type: "text", text: "Goal not found." }], details: { error: "not_found" } };
-        if (isTerminalStatus(goal.status)) {
-          return {
-            content: [{ type: "text", text: `Goal ${goal.label} is already ${goal.status}.` }],
-            details: { error: "terminal" },
-          };
-        }
-        if (goal.verification && goal.verification.type !== "manual" && p.confirmed !== true) {
-          const mech = await verifyGoalMechanically(goal, workspaceRoot, gs);
-          if (mech.detail !== "skip" && !mech.ok) {
+        try {
+          const p = params as { goal_id: string; reason: string; confirmed?: boolean };
+          const goal = await resolveGoalId(goalsDir, p.goal_id);
+          if (!goal) return { content: [{ type: "text", text: "Goal not found." }], details: { error: "not_found" } };
+          if (isTerminalStatus(goal.status)) {
+            return {
+              content: [{ type: "text", text: `Goal ${goal.label} is already ${goal.status}.` }],
+              details: { error: "terminal" },
+            };
+          }
+          if (goal.verification && goal.verification.type !== "manual" && p.confirmed !== true) {
+            const mech = await verifyGoalMechanically(goal, workspaceRoot, gs);
+            if (mech.detail !== "skip" && !mech.ok) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Cannot complete: mechanical verification failed (${mech.detail}). Fix criteria, run goal_assess, or retry with confirmed:true and a reason documenting manual acceptance.`,
+                  },
+                ],
+                details: { error: "verification_failed", verification: mech },
+              };
+            }
+          }
+          if (goal.acceptanceCriteria.length > 0 && p.confirmed !== true && !goal.lastAssessedAt) {
             return {
               content: [
                 {
                   type: "text",
-                  text: `Cannot complete: mechanical verification failed (${mech.detail}). Fix criteria, run goal_assess, or retry with confirmed:true and a reason documenting manual acceptance.`,
+                  text: "Goal has acceptance criteria but no assessment recorded. Call goal_assess first, or complete with confirmed:true after user accepts outcome.",
                 },
               ],
-              details: { error: "verification_failed", verification: mech },
+              details: { error: "no_assessment" },
             };
           }
-        }
-        if (goal.acceptanceCriteria.length > 0 && p.confirmed !== true && !goal.lastAssessedAt) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Goal has acceptance criteria but no assessment recorded. Call goal_assess first, or complete with confirmed:true after user accepts outcome.",
-              },
-            ],
-            details: { error: "no_assessment" },
-          };
-        }
-        const completed = await terminateGoal(goalsDir, goal.id, "completed", p.reason, "agent", eventLog);
-        if (cfg.activeTask.flushOnComplete !== false) {
-          await flushGoalOutcomeToMemory(memoryDir, `Goal completed: ${completed.label}`, [`**Outcome:** ${p.reason}`]);
-        }
-        try {
-          factsDb?.recordEpisode?.({
-            event: `Goal completed: ${completed.label}`,
-            outcome: "success",
-            context: p.reason,
-            importance: 0.7,
+          const completed = await terminateGoal(goalsDir, goal.id, "completed", p.reason, "agent", eventLog);
+          if (cfg.activeTask.flushOnComplete !== false) {
+            await flushGoalOutcomeToMemory(memoryDir, `Goal completed: ${completed.label}`, [
+              `**Outcome:** ${p.reason}`,
+            ]);
+          }
+          try {
+            factsDb?.recordEpisode?.({
+              event: `Goal completed: ${completed.label}`,
+              outcome: "success",
+              context: p.reason,
+              importance: 0.7,
+            });
+          } catch {
+            /* */
+          }
+          return { content: [{ type: "text", text: `Completed ${completed.label}` }], details: { goal: completed } };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "goal-tools",
+            operation: "goal_complete",
           });
-        } catch {
-          /* */
+          return { content: [{ type: "text", text: String(err) }], details: { error: String(err) } };
         }
-        return { content: [{ type: "text", text: `Completed ${completed.label}` }], details: { goal: completed } };
       },
     },
     { name: "goal_complete" },
@@ -680,30 +766,40 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
         if (!gs.enabled) return notEnabled();
         const dropped = guardArgs("goal_abandon", params);
         if (dropped) return dropped;
-        const p = params as { goal_id: string; reason: string };
-        const goal = await resolveGoalId(goalsDir, p.goal_id);
-        if (!goal) return { content: [{ type: "text", text: "Goal not found." }], details: { error: "not_found" } };
-        if (isTerminalStatus(goal.status)) {
-          return {
-            content: [{ type: "text", text: `Goal ${goal.label} is already ${goal.status}.` }],
-            details: { error: "terminal" },
-          };
-        }
-        const abandoned = await terminateGoal(goalsDir, goal.id, "abandoned", p.reason, "agent", eventLog);
-        if (cfg.activeTask.flushOnComplete !== false) {
-          await flushGoalOutcomeToMemory(memoryDir, `Goal abandoned: ${abandoned.label}`, [`**Reason:** ${p.reason}`]);
-        }
         try {
-          factsDb?.recordEpisode?.({
-            event: `Goal abandoned: ${abandoned.label}`,
-            outcome: "failure",
-            context: p.reason,
-            importance: 0.5,
+          const p = params as { goal_id: string; reason: string };
+          const goal = await resolveGoalId(goalsDir, p.goal_id);
+          if (!goal) return { content: [{ type: "text", text: "Goal not found." }], details: { error: "not_found" } };
+          if (isTerminalStatus(goal.status)) {
+            return {
+              content: [{ type: "text", text: `Goal ${goal.label} is already ${goal.status}.` }],
+              details: { error: "terminal" },
+            };
+          }
+          const abandoned = await terminateGoal(goalsDir, goal.id, "abandoned", p.reason, "agent", eventLog);
+          if (cfg.activeTask.flushOnComplete !== false) {
+            await flushGoalOutcomeToMemory(memoryDir, `Goal abandoned: ${abandoned.label}`, [
+              `**Reason:** ${p.reason}`,
+            ]);
+          }
+          try {
+            factsDb?.recordEpisode?.({
+              event: `Goal abandoned: ${abandoned.label}`,
+              outcome: "failure",
+              context: p.reason,
+              importance: 0.5,
+            });
+          } catch {
+            /* */
+          }
+          return { content: [{ type: "text", text: `Abandoned ${abandoned.label}` }], details: { goal: abandoned } };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "goal-tools",
+            operation: "goal_abandon",
           });
-        } catch {
-          /* */
+          return { content: [{ type: "text", text: String(err) }], details: { error: String(err) } };
         }
-        return { content: [{ type: "text", text: `Abandoned ${abandoned.label}` }], details: { goal: abandoned } };
       },
     },
     { name: "goal_abandon" },

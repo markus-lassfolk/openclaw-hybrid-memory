@@ -27,9 +27,9 @@ describe("maintenance writeFileSync imports (#1963)", () => {
   }
 
   it("maintenance modules load without ReferenceError", async () => {
-    await import("../services/cron-guard.ts");
-    await import("../services/maintenance-timestamp.ts");
-    await import("../utils/atomic-write.ts");
-    await import("../cli/commands/manage/maintenance-step-runners.ts");
+    await import("../services/cron-guard.js");
+    await import("../services/maintenance-timestamp.js");
+    await import("../utils/atomic-write.js");
+    await import("../cli/commands/manage/maintenance-step-runners.js");
   });
 });

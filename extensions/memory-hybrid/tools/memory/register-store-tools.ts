@@ -33,7 +33,8 @@ import { guardAgainstWrapperArgsDropped } from "../../services/tool-args-guard.j
 import { emitFeatureTelemetry } from "../../services/feature-telemetry.js";
 import { extractStructuredFields } from "../../services/fact-extraction.js";
 import { storeAliases } from "../../services/retrieval-aliases.js";
-import { validateScopedClassificationTarget } from "../../services/classification-scope.js";
+import { classifyMemoryOperation } from "../../services/classification.js";
+import { matchesExactScope, validateScopedClassificationTarget } from "../../services/classification-scope.js";
 import { shouldAutoVerify } from "../../services/verification-store.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../../services/vector-maintenance.js";
 import { mirrorMemoryStoreToActiveTaskLedger } from "../../services/task-ledger-facts.js";
@@ -350,20 +351,6 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
           const key = prepareMemoryMetadataForStorage(paramKey) ?? prepareMemoryMetadataForStorage(extracted.key);
           const value = prepareMemoryMetadataForStorage(paramValue) ?? prepareMemoryMetadataForStorage(extracted.value);
 
-          if (storeFactsDb.hasDuplicate(textToStore, "conversation", { category, entity, key, value })) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text:
-                    "Similar memory already exists. Do not retry memory_store with the same text. " +
-                    "Use memory_recall to verify what is stored, or memory_forget to remove an incorrect fact before storing a correction.",
-                },
-              ],
-              details: { action: "duplicate" },
-            };
-          }
-
           // FR-006: Compute scope early so it's available for classify-before-write UPDATE path; normal path may overwrite with multiAgent logic below
           let scope: "global" | "user" | "agent" | "session" = paramScope ?? "global";
           let scopeTarget: string | null = scope === "global" ? null : (paramScopeTarget?.trim() ?? null);
@@ -426,6 +413,24 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             }
             scope = "global";
             scopeTarget = null;
+          }
+
+          // Scope-aware duplicate pre-check (must run after scope resolution above): dedupe state
+          // must never be shared across scopes, or an agent/user-scoped store can be wrongly
+          // rejected as "duplicate" against an unrelated global fact with the same text (or vice
+          // versa) — see the scope guard in services/dedupe-policy.ts's applyDedupe().
+          if (storeFactsDb.hasDuplicate(textToStore, "conversation", { category, entity, key, value }, scope, scopeTarget)) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text:
+                    "Similar memory already exists. Do not retry memory_store with the same text. " +
+                    "Use memory_recall to verify what is stored, or memory_forget to remove an incorrect fact before storing a correction.",
+                },
+              ],
+              details: { action: "duplicate" },
+            };
           }
 
           const explicitVerificationTier = (verificationTier ?? "").trim().toLowerCase();
@@ -1084,16 +1089,37 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             if (storeResult.newlyStored) {
               recordActiveStoreProvenance(entry.id, textToStore);
             }
+            // Only set once the write actually superseded the requested fact. When the write
+            // dedupe-merged into a different existing fact (newlyStored === false), the caller's
+            // `supersedes` request was never applied — the message/details below must reflect
+            // that instead of unconditionally claiming success from `supersedes?.trim()` alone.
+            let supersededAppliedId: string | null = null;
             if (supersedes?.trim() && storeResult.newlyStored) {
               const supersededId = supersedes.trim();
-              storeFactsDb.supersede(supersededId, entry.id);
-              aliasDb?.deleteByFactId(supersededId);
-              await deleteVectorForFactId({
-                vectorDb: storeVectorDb,
-                factId: supersededId,
-                logger: api.logger,
-                context: "store-manual-supersede",
-              });
+              // The `supersedes` id is caller-supplied and unrelated to the classifier's own
+              // candidate set, so unlike the auto-classification DELETE/UPDATE paths above it
+              // can't reuse validateScopedClassificationTarget's candidate check — but it must
+              // still be blocked from touching a fact outside the current write's scope.
+              const supersedeTarget = storeFactsDb.getById(supersededId);
+              if (supersedeTarget && matchesExactScope(supersedeTarget, scope, scopeTarget)) {
+                supersededAppliedId = supersededId;
+                const applied = storeFactsDb.supersede(supersededId, entry.id);
+                if (applied) {
+                  aliasDb?.deleteByFactId(supersededId);
+                  await deleteVectorForFactId({
+                    vectorDb: storeVectorDb,
+                    factId: supersededId,
+                    logger: api.logger,
+                    context: "store-manual-supersede",
+                  });
+                } else {
+                  supersededAppliedId = null;
+                }
+              } else {
+                api.logger.warn?.(
+                  `memory-hybrid: blocked cross-scope or unknown memory_store supersedes target ${supersededId}`,
+                );
+              }
             }
 
             try {
@@ -1352,7 +1378,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               }`;
             } else {
               // normal / verbose: full details (verbose adds scope/category info)
-              storedMsg = `Stored: "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${entry.decayClass}]${supersedes?.trim() ? " (supersedes previous fact)" : ""}${totalLinked > 0 ? ` (linked to ${totalLinked} related fact${totalLinked === 1 ? "" : "s"})` : ""}${
+              storedMsg = `Stored: "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${entry.decayClass}]${supersededAppliedId ? " (supersedes previous fact)" : supersedes?.trim() ? " (dedupe-merged — requested supersede was NOT applied)" : ""}${totalLinked > 0 ? ` (linked to ${totalLinked} related fact${totalLinked === 1 ? "" : "s"})` : ""}${
                 autoSupersededIds.length > 0
                   ? ` (auto-superseded ${autoSupersededIds.length} fact${autoSupersededIds.length === 1 ? "" : "s"})`
                   : ""
@@ -1389,12 +1415,16 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 },
               ],
               details: {
-                action: supersedes?.trim() ? "updated" : "created",
+                action: supersededAppliedId ? "updated" : "created",
                 id: entry.id,
                 why: whyStored ?? undefined,
                 backend: "both",
                 decayClass: entry.decayClass,
-                ...(supersedes?.trim() ? { superseded: supersedes.trim() } : {}),
+                ...(supersededAppliedId
+                  ? { superseded: supersededAppliedId }
+                  : supersedes?.trim()
+                    ? { supersedeRequested: supersedes.trim(), supersedeApplied: false, reason: "dedupe-merge" }
+                    : {}),
                 ...(totalLinked > 0 ? { autoLinked: totalLinked } : {}),
                 ...(autoSupersededIds.length > 0 ? { autoSuperseded: autoSupersededIds } : {}),
                 ...(contradictions.length > 0

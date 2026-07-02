@@ -321,12 +321,19 @@ export type CredentialsAuditEntry = {
 export type CredentialsAuditResult = {
   entries: CredentialsAuditEntry[];
   total: number;
+  /** Rows present in the vault that could not be decrypted with the current key (wrong/rotated
+   * key, corrupted row) and were excluded from `entries`/`total` — distinguishes "vault is
+   * genuinely empty" from "some rows are unreadable with this key." */
+  undecryptable: number;
 };
 
 export type CredentialsPruneResult = {
   removed: number;
   entries: Array<{ service: string; type: string }>;
   dryRun: boolean;
+  /** Rows excluded from consideration because they couldn't be decrypted with the current key —
+   * see {@link CredentialsAuditResult.undecryptable}. */
+  undecryptable: number;
 };
 
 export type UpgradeCliResult =

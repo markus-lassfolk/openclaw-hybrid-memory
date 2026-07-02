@@ -41,6 +41,11 @@ describe("clearRuntimeTimers", () => {
     timers.watchdogTimer.value = setInterval(() => {
       fired += 1;
     }, 100);
+    timers.wikiWorkspaceExport = {
+      value: setInterval(() => {
+        fired += 1;
+      }, 100),
+    };
 
     clearRuntimeTimers(timers);
     await vi.advanceTimersByTimeAsync(160);
@@ -55,6 +60,7 @@ describe("clearRuntimeTimers", () => {
     expect(timers.postUpgradeTimeout.value).toBeNull();
     expect(timers.passiveObserverTimer.value).toBeNull();
     expect(timers.watchdogTimer.value).toBeNull();
+    expect(timers.wikiWorkspaceExport?.value).toBeNull();
   });
 
   it("is safe when all timer refs are already null", () => {

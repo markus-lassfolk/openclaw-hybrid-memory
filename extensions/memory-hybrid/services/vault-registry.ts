@@ -34,8 +34,13 @@ export type VaultRegistry = {
 function closeNamedVaultHandle(handle: VaultHandle): void {
   try {
     handle.vectorDb.close?.();
-  } catch {
-    /* non-fatal */
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "vault-registry",
+      operation: "close-vector-db",
+      severity: "warning",
+      vault: handle.name,
+    });
   }
   try {
     if (typeof handle.factsDb.permanentClose === "function") {
@@ -43,8 +48,13 @@ function closeNamedVaultHandle(handle: VaultHandle): void {
     } else {
       handle.factsDb.close?.();
     }
-  } catch {
-    /* non-fatal */
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "vault-registry",
+      operation: "close-facts-db",
+      severity: "warning",
+      vault: handle.name,
+    });
   }
 }
 
@@ -71,6 +81,58 @@ export function createVaultRegistry(opts: {
     sqlitePath: defaultSqlitePath,
     lancePath: defaultLancePath,
   };
+
+  // Vaults are meant to be isolated silos — dedupe, contradiction checks, and multi-vault fan-out
+  // merge all assume distinct underlying storage per vault name. Two vault names pointing at the
+  // same resolved sqlite file would silently share state while every consumer treats them as
+  // independent, so this must be caught eagerly (at registry creation) rather than left to
+  // whichever vault happens to be opened first lazily.
+  //
+  // Distinct sqlite paths are not sufficient: resolveVaultLancePath/resolveVaultWalPath only
+  // strip a trailing ".db" before appending ".lance"/".wal", so e.g. "personal.db" and
+  // "personal" (no extension) resolve to distinct sqlite paths but the SAME derived lance/WAL
+  // path — the fact stores stay isolated but the two vaults' VectorDB instances would silently
+  // share one LanceDB dataset. Check the derived paths too.
+  {
+    const seenPaths = new Map<string, string>([[defaultSqlitePath, "default"]]);
+    const seenLancePaths = new Map<string, string>([[defaultLancePath, "default"]]);
+    const seenWalPaths = new Map<string, string>([[resolveVaultWalPath(defaultSqlitePath), "default"]]);
+    for (const name of listConfiguredVaultNames(cfg.vaults)) {
+      const rawPath = cfg.vaults?.[name];
+      if (!rawPath) continue;
+      const resolvedPath = api.resolvePath(rawPath);
+      const collidesWith = seenPaths.get(resolvedPath);
+      if (collidesWith) {
+        throw new Error(
+          `Vault "${name}" resolves to the same sqlite path as vault "${collidesWith}" (${resolvedPath}). ` +
+            "Each vault must use a distinct path — sharing a path would silently merge state that other vault code assumes is isolated.",
+        );
+      }
+      seenPaths.set(resolvedPath, name);
+
+      const resolvedLancePath = api.resolvePath(resolveVaultLancePath(rawPath));
+      const lanceCollidesWith = seenLancePaths.get(resolvedLancePath);
+      if (lanceCollidesWith) {
+        throw new Error(
+          `Vault "${name}" resolves to the same LanceDB path as vault "${lanceCollidesWith}" (${resolvedLancePath}), ` +
+            `even though their sqlite paths differ. Vault sqlite paths must not differ only by a ".db" suffix ` +
+            "(e.g. \"personal.db\" and \"personal\" both derive lance path \"personal.lance\") — " +
+            "sharing a LanceDB dataset would silently merge embeddings that other vault code assumes is isolated.",
+        );
+      }
+      seenLancePaths.set(resolvedLancePath, name);
+
+      const resolvedWalPath = resolveVaultWalPath(resolvedPath);
+      const walCollidesWith = seenWalPaths.get(resolvedWalPath);
+      if (walCollidesWith) {
+        throw new Error(
+          `Vault "${name}" resolves to the same WAL path as vault "${walCollidesWith}" (${resolvedWalPath}), ` +
+            "even though their sqlite paths differ. Vault sqlite paths must not differ only by a \".db\" suffix.",
+        );
+      }
+      seenWalPaths.set(resolvedWalPath, name);
+    }
+  }
 
   function openNamedVault(name: string): VaultHandle {
     const path = cfg.vaults?.[name];
@@ -129,7 +191,28 @@ export function createVaultRegistry(opts: {
     resolveAll() {
       const names = listConfiguredVaultNames(cfg.vaults);
       if (names.length === 0) return [defaultHandle];
-      return [defaultHandle, ...names.map((name) => resolve(name))];
+      const handles: VaultHandle[] = [defaultHandle];
+      for (const name of names) {
+        try {
+          handles.push(resolve(name));
+        } catch (err) {
+          // A single unopenable named vault (missing/corrupted sqlite file, schema-incompatible,
+          // etc.) must not take down multi-vault fan-out for every other — including the
+          // default — vault. resolveAll() is the hot interactive-recall/injection path
+          // (stage-recall/run-recall.ts, stage-injection.ts have no try/catch around it), so a
+          // thrown error here previously broke auto-recall for the whole session on every turn
+          // until the broken vault was fixed. Skip it and keep serving the healthy vaults.
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "vault-registry",
+            operation: "resolve-all-skip-broken-vault",
+            severity: "warning",
+          });
+          api.logger.warn(
+            `memory-hybrid: vault "${name}" failed to open and was excluded from this fan-out: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+      return handles;
     },
     resolveWal,
     listNames: () => listConfiguredVaultNames(cfg.vaults),

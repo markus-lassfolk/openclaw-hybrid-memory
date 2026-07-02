@@ -138,6 +138,12 @@ export async function runExtractDirectivesForCli(
       logRejection: opts.verbose ? (line) => logger.info?.(line) : undefined,
     });
 
+    if (result.failures && result.failures > 0) {
+      logger.warn?.(
+        `memory-hybrid: ${SCAN_TYPE} — ${result.failures} session file(s)/line(s) failed to read or parse this run`,
+      );
+    }
+
     if (opts.verbose && result.rejectionReasons && Object.keys(result.rejectionReasons).length > 0) {
       const parts = Object.entries(result.rejectionReasons)
         .sort((a, b) => b[1] - a[1])

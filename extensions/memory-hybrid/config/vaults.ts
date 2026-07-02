@@ -9,11 +9,24 @@ export type VaultsConfig = Record<string, string>;
 
 const RESTRICTED_PREFIXES = ["/etc", "/var", "/usr", "/bin", "/sbin", "/proc", "/sys"];
 
+/**
+ * "default" and "all" are reserved sentinels throughout vault resolution
+ * (VaultRegistry.resolve, listToolVaultHandles, shouldFanOutVaultRecall):
+ * "default" always short-circuits to the plugin's primary DB before a configured
+ * vault of that name is ever consulted, and "all" always triggers multi-vault
+ * fan-out on the recall path (while the store path treats it as a literal vault
+ * name) — so a configured vault under either name is unreachable via one path and
+ * silently double-counted or misrouted via the other. Reject both at parse time.
+ */
+const RESERVED_VAULT_NAMES = new Set(["default", "all"]);
+
 export function parseVaultsConfig(raw: unknown): VaultsConfig | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const out: VaultsConfig = {};
   for (const [name, path] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof path === "string" && path.trim()) out[name] = path.trim();
+    const trimmedName = name.trim();
+    if (RESERVED_VAULT_NAMES.has(trimmedName.toLowerCase())) continue;
+    if (typeof path === "string" && path.trim()) out[trimmedName] = path.trim();
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }

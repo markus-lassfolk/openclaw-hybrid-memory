@@ -182,7 +182,7 @@ export function registerMaintenanceOrchestratorCommands(maintenance: Chainable, 
           console.log(JSON.stringify(rows, null, 2));
           return;
         }
-        console.log("Maintenance steps (48 registered):");
+        console.log(`Maintenance steps (${rows.length} registered):`);
         for (const row of rows) {
           const gate = row.featureGate ? "" : " [gate:off]";
           console.log(

@@ -47,6 +47,7 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
         }
         if (res.errors.length > 0) {
           console.error(`Errors during migration: ${res.errors.join(", ")}`);
+          process.exitCode = 1;
         }
         console.log(`Migrated ${res.migrated} credentials (${res.skipped} skipped).`);
       }),
@@ -263,11 +264,18 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
       withExit(async (opts?: { json?: boolean }) => {
         const audit = runCredentialsAudit();
         if (opts?.json) {
-          console.log(JSON.stringify({ total: audit.total, entries: audit.entries }, null, 2));
+          console.log(
+            JSON.stringify({ total: audit.total, entries: audit.entries, undecryptable: audit.undecryptable }, null, 2),
+          );
           return;
         }
+        if (audit.undecryptable > 0) {
+          console.log(
+            `WARNING: ${audit.undecryptable} credential row(s) could not be decrypted with the current key and are excluded below — this usually means the wrong/rotated encryption key is configured, not that the vault is empty.`,
+          );
+        }
         if (audit.total === 0) {
-          console.log("No credentials in vault.");
+          console.log(audit.undecryptable > 0 ? "No decryptable credentials in vault." : "No credentials in vault.");
           return;
         }
         const suspicious = audit.entries.filter((e) => e.flags.length > 0);
@@ -296,6 +304,11 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
               .filter(Boolean)
           : undefined;
         const res = runCredentialsPrune({ dryRun, yes, onlyFlags });
+        if (res.undecryptable > 0) {
+          console.log(
+            `WARNING: ${res.undecryptable} credential row(s) could not be decrypted with the current key and were skipped — not evaluated for pruning.`,
+          );
+        }
         if (res.removed === 0) {
           console.log(res.dryRun ? "No suspicious entries to prune (dry-run)." : "No entries removed.");
           return;
@@ -374,9 +387,10 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
 
         const scopeLabel = `${scope}${scopeTarget ? ` (target=${scopeTarget})` : ""}`;
 
-        // Dry-run: show what would be deleted without touching the DB.
-        const pendingIds = factsDb.listScopedFactIdsPendingPrune(scopeFilter);
         if (opts.dryRun) {
+          // Dry-run preview only — not used for the actual delete below, since a fact could
+          // enter or leave the scope between this preview and a later confirmed run.
+          const pendingIds = factsDb.listScopedFactIdsPendingPrune(scopeFilter);
           console.log(`Dry-run: would delete ${pendingIds.length} fact(s) from scope ${scopeLabel}.`);
           const previewIds = pendingIds.slice(0, 20);
           const previewFacts = factsDb.getByIds(previewIds);
@@ -397,13 +411,14 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
           return;
         }
 
-        const deleted = factsDb.pruneScopedFacts(scopeFilter);
-        console.log(`Pruned ${deleted} facts from scope ${scopeLabel}.`);
+        const deletedIds = factsDb.pruneScopedFacts(scopeFilter);
+        console.log(`Pruned ${deletedIds.length} facts from scope ${scopeLabel}.`);
 
-        // Clean up orphaned LanceDB vectors for the deleted facts.
-        if (pendingIds.length > 0) {
+        // Clean up orphaned LanceDB vectors for the facts actually deleted above (not a
+        // pre-delete snapshot, which can drift and leave a deleted fact's vector orphaned).
+        if (deletedIds.length > 0) {
           try {
-            const vectorCleanup = await deleteVectorsForFactIds(vectorDb, pendingIds, {
+            const vectorCleanup = await deleteVectorsForFactIds(vectorDb, deletedIds, {
               operation: "scope-prune-vector-cleanup",
             });
             if (vectorCleanup.attempted > 0) {
@@ -411,6 +426,7 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
                 console.error(
                   `Warning: vector cleanup partial — deleted ${vectorCleanup.deleted}/${vectorCleanup.attempted}, failed ${vectorCleanup.failed}. Run 'hybrid-mem repair-vectors' to reconcile.`,
                 );
+                process.exitCode = 2;
               } else {
                 console.log(`Cleaned up ${vectorCleanup.deleted} vector(s) from LanceDB.`);
               }
@@ -421,6 +437,7 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
               operation: "scope-prune-vector-cleanup",
             });
             console.error(`Warning: vector cleanup failed: ${err}. Run 'hybrid-mem repair-vectors' to reconcile.`);
+            process.exitCode = 2;
           }
         }
       }),

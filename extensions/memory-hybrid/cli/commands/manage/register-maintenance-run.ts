@@ -176,11 +176,35 @@ export function registerMaintenanceRunCommands(maintenance: Chainable): void {
         console.log(`Resuming: ${argv.join(" ")}`);
         const result = spawnSync(argv[0], argv.slice(1), { stdio: "inherit" });
         if (result.error) throw result.error;
-        if (result.status != null && result.status !== 0) {
-          process.exitCode = result.status;
+        const outcome = resolveMaintenanceResumeOutcome(result);
+        if (outcome.signalKilled) {
+          console.error(`Resume subprocess was killed by signal ${outcome.signalKilled}.`);
+        }
+        if (outcome.exitCode !== undefined) {
+          process.exitCode = outcome.exitCode;
         }
       }),
     );
+}
+
+/**
+ * Decide the CLI exit code for a resumed subprocess result.
+ *
+ * spawnSync only reports a spawn-level failure via `error`; a subprocess terminated by a signal
+ * (OOM kill, external SIGTERM/SIGKILL) instead leaves `status: null` with no `error` set, which
+ * previously fell through every check and silently reported success (exit 0).
+ */
+export function resolveMaintenanceResumeOutcome(result: {
+  status: number | null;
+  signal: NodeJS.Signals | null;
+}): { exitCode?: number; signalKilled?: NodeJS.Signals } {
+  if (result.signal != null) {
+    return { exitCode: 1, signalKilled: result.signal };
+  }
+  if (result.status != null && result.status !== 0) {
+    return { exitCode: result.status };
+  }
+  return {};
 }
 
 const MAINTENANCE_RESUME_TOKEN = /^(?:[a-z][a-z0-9-]*|--[a-z][a-z0-9-]+(?:=\S+)?)$/;

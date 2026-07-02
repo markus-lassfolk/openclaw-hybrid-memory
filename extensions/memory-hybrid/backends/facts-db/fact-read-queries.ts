@@ -213,7 +213,7 @@ export function getByIds(
 export function getRecentFacts(
   db: DatabaseSync,
   days: number,
-  options?: { excludeCategories?: string[]; excludeTags?: string[] },
+  options?: { excludeCategories?: string[]; excludeTags?: string[]; globalOnly?: boolean },
 ): MemoryEntry[] {
   const nowSec = Math.floor(Date.now() / 1000);
   const windowStartSec = nowSec - Math.max(1, Math.min(90, days)) * 86400;
@@ -226,11 +226,17 @@ export function getRecentFacts(
   const tagPredicates = excludeTags.map(() => "(',' || COALESCE(tags,'') || ',') NOT LIKE ?").join(" AND ");
   const tagClause = excludeTags.length > 0 ? ` AND ${tagPredicates}` : "";
   const tagParams = excludeTags.map((t) => `%,${t},%`);
+  // globalOnly: reflection synthesizes its output as scope='global' (visible to every
+  // agent/user/session), so its *input* must not read agent/user/session-scoped facts —
+  // otherwise a private observation becomes a globally-visible pattern/rule. Deliberate
+  // cross-scope generalization is cross-agent-learning.ts's job (explicit opt-in, provenance
+  // tracked); reflection's default input must stay scope-consistent with its output.
+  const scopeClause = options?.globalOnly ? " AND scope = 'global'" : "";
   const rows = db
     .prepare(
       `SELECT * FROM facts WHERE (expires_at IS NULL OR expires_at > ?) AND superseded_at IS NULL
          AND (COALESCE(source_date, created_at) >= ?)
-         AND category NOT IN (${placeholders})${tagClause}
+         AND category NOT IN (${placeholders})${tagClause}${scopeClause}
          ORDER BY COALESCE(source_date, created_at) DESC`,
     )
     .all(nowSec, windowStartSec, ...exclude, ...tagParams) as Array<Record<string, unknown>>;
@@ -315,9 +321,15 @@ export function getBatch(
   const nowSec = Math.floor(Date.now() / 1000);
   const { includeSuperseded = false } = options ?? {};
   const temporalFilter = includeSuperseded ? "" : " AND superseded_at IS NULL";
+  // `created_at` has 1-second resolution, so a bursty ingestion window can put many rows on the
+  // same tick — ORDER BY created_at alone gives ties no stable order. Callers page through this
+  // (embedding-migration.ts, storage maintenance loops) with an increasing OFFSET while the table
+  // can receive concurrent writes, so an unstable tiebreak can skip or double-count rows straddling
+  // a page boundary. `id` is a UUID with no ordering relationship to insertion time, but it only
+  // needs to be *stable*, not meaningful, to fix the pagination — add it as a secondary sort key.
   const rows = db
     .prepare(
-      `SELECT * FROM facts WHERE (expires_at IS NULL OR expires_at > ?)${temporalFilter} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      `SELECT * FROM facts WHERE (expires_at IS NULL OR expires_at > ?)${temporalFilter} ORDER BY created_at DESC, id ASC LIMIT ? OFFSET ?`,
     )
     .all(nowSec, limit, offset) as Array<Record<string, unknown>>;
   return rows.map((row) => rowToMemoryEntry(row));
@@ -457,10 +469,11 @@ export function getHotFacts(db: DatabaseSync, maxTokens: number, scopeFilter?: S
   return results;
 }
 
-export function getByCategory(db: DatabaseSync, category: string): MemoryEntry[] {
-  const rows = db.prepare("SELECT * FROM facts WHERE category = ? ORDER BY created_at DESC").all(category) as Array<
-    Record<string, unknown>
-  >;
+export function getByCategory(db: DatabaseSync, category: string, globalOnly?: boolean): MemoryEntry[] {
+  const scopeClause = globalOnly ? " AND scope = 'global'" : "";
+  const rows = db
+    .prepare(`SELECT * FROM facts WHERE category = ?${scopeClause} ORDER BY created_at DESC`)
+    .all(category) as Array<Record<string, unknown>>;
   return rows.map((row) => rowToMemoryEntry(row));
 }
 

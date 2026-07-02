@@ -1111,6 +1111,37 @@ describe("runActiveTaskComplete", () => {
     const ok = result as { ok: true; label: string; flushedTo?: string };
     expect(ok.flushedTo).toBeUndefined();
   });
+
+  it("does not clobber a concurrent writer's change (optimistic write with retry)", async () => {
+    await writeActiveTaskFile(
+      ctx.activeTaskFilePath,
+      [makeEntry({ label: "target-task" }), makeEntry({ label: "other-task" })],
+      [],
+    );
+    const activeTaskModule = await import("../services/active-task.js");
+    const readSpy = vi.spyOn(activeTaskModule, "readActiveTaskFileWithMtime");
+    // Simulate a concurrent writer completing between this command's initial read and its write:
+    // its own read returns a stale mtime, but the file on disk has already moved on by the time
+    // writeActiveTaskFileOptimistic does its own internal pre-write read.
+    readSpy.mockImplementationOnce(async (...args) => {
+      const stale = await activeTaskModule.readActiveTaskFileWithMtime(...args);
+      await writeActiveTaskFile(
+        ctx.activeTaskFilePath,
+        [makeEntry({ label: "target-task" }), makeEntry({ label: "other-task" }), makeEntry({ label: "concurrent-task" })],
+        [],
+      );
+      return stale;
+    });
+
+    const result = await runActiveTaskComplete(ctx, "target-task");
+    expect(result.ok).toBe(true);
+
+    const final = await readActiveTaskFile(ctx.activeTaskFilePath, 1440);
+    // The concurrent writer's task must survive, not be silently overwritten by this command's
+    // stale full-list write.
+    expect(final?.active.map((t) => t.label).sort()).toEqual(["concurrent-task", "other-task"]);
+    expect(final?.completed.map((t) => t.label)).toEqual(["target-task"]);
+  });
 });
 
 describe("runActiveTaskAdd", () => {
@@ -1296,6 +1327,27 @@ describe("runActiveTaskAdd", () => {
     expect(taskFile?.completed).toHaveLength(1);
     expect(taskFile?.completed[0].label).toBe("done-task");
     expect(taskFile?.completed[0].description).toBe("Updated done entry");
+  });
+
+  it("does not clobber a concurrent writer's new task (optimistic write with retry)", async () => {
+    await writeActiveTaskFile(ctx.activeTaskFilePath, [makeEntry({ label: "existing-task" })], []);
+    const activeTaskModule = await import("../services/active-task.js");
+    const readSpy = vi.spyOn(activeTaskModule, "readActiveTaskFileWithMtime");
+    readSpy.mockImplementationOnce(async (...args) => {
+      const stale = await activeTaskModule.readActiveTaskFileWithMtime(...args);
+      await writeActiveTaskFile(
+        ctx.activeTaskFilePath,
+        [makeEntry({ label: "existing-task" }), makeEntry({ label: "concurrent-task" })],
+        [],
+      );
+      return stale;
+    });
+
+    const result = await runActiveTaskAdd(ctx, { label: "new-task", description: "Added while racing" });
+    expect(result.ok).toBe(true);
+
+    const final = await readActiveTaskFile(ctx.activeTaskFilePath, 1440);
+    expect(final?.active.map((t) => t.label).sort()).toEqual(["concurrent-task", "existing-task", "new-task"]);
   });
 });
 

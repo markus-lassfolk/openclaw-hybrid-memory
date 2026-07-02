@@ -72,6 +72,7 @@ import {
   writeVersionCheckCache,
 } from "../utils/plugin-update-check.js";
 import { checkOpenClawVersion } from "../utils/version-check.js";
+import { stopEventLoopLagMonitor } from "../utils/event-loop-health.js";
 import { versionInfo } from "../versionInfo.js";
 
 export interface PluginServiceContext {
@@ -104,21 +105,48 @@ export interface PluginServiceContext {
   toolProposalStore?: import("../backends/tool-proposal-store.js").ToolProposalStore | null;
   changeFeed?: import("../services/change-feed.js").ChangeFeed | null;
   eventBus?: import("../backends/event-bus.js").EventBus | null;
+  // #90: previously threaded into the runtime but never passed to the plugin service, so
+  // stop() had no way to close them.
+  identityReflectionStore?: import("../backends/identity-reflection-store.js").IdentityReflectionStore | null;
+  personaStateStore?: import("../backends/persona-state-store.js").PersonaStateStore | null;
+  learningsDb?: import("../backends/learnings-db.js").LearningsDB | null;
+  apitapStore?: import("../backends/apitap-store.js").ApitapStore | null;
+  aliasDb?: import("../services/retrieval-aliases.js").AliasDB | null;
+  vaultRegistry?: import("../services/vault-registry.js").VaultRegistry | null;
   // Mutable timer refs that will be updated by the start handler
-  timers: {
-    pruneTimer: { value: ReturnType<typeof setInterval> | null };
-    classifyTimer: { value: ReturnType<typeof setInterval> | null };
-    classifyStartupTimeout: { value: ReturnType<typeof setTimeout> | null };
-    proposalsPruneTimer: { value: ReturnType<typeof setInterval> | null };
-    languageKeywordsTimer: { value: ReturnType<typeof setInterval> | null };
-    languageKeywordsStartupTimeout: { value: ReturnType<typeof setTimeout> | null };
-    postUpgradeTimeout: { value: ReturnType<typeof setTimeout> | null };
-    passiveObserverTimer: { value: ReturnType<typeof setInterval> | null };
-    watchdogTimer: { value: ReturnType<typeof setInterval> | null };
-    maintenanceTick: { value: ReturnType<typeof setInterval> | null };
-    maintenanceStartupTimeout: { value: ReturnType<typeof setTimeout> | null };
-    shuttingDownRef: { value: boolean };
-  };
+  timers: PluginRuntime["timers"];
+}
+
+/**
+ * Terminally close a store during plugin stop(), preferring permanentClose() (which transitions
+ * BaseSqliteStore's internal phase to "shutdown" so `liveDb` throws on any later access) over the
+ * non-terminal close() every BaseSqliteStore subclass also exposes. close() alone is designed for
+ * background maintenance and deliberately allows the store to auto-reopen a new native handle on
+ * next access — exactly what a stale tool/hook closure invoked after "shutdown" would trigger,
+ * accumulating duplicate SQLite connections (issue #1550). Falls back to close() for stores that
+ * don't implement permanentClose() (e.g. VerificationStore, and VectorDB whose close() is already
+ * terminal), matching bootstrap-databases.ts's closeOldDatabases() convention.
+ */
+function closeStorePermanently(
+  store: { permanentClose?: () => void; close?: () => void } | null | undefined,
+  subsystem: string,
+  logger: { warn: (msg: string) => void },
+): void {
+  if (!store) return;
+  try {
+    if (typeof store.permanentClose === "function") {
+      store.permanentClose();
+    } else if (typeof store.close === "function") {
+      store.close();
+    }
+  } catch (err) {
+    logger.warn(`memory-hybrid: failed to close ${subsystem} during shutdown: ${err}`);
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "plugin-service",
+      operation: `close-${subsystem}`,
+      severity: "warning",
+    });
+  }
 }
 
 /**
@@ -161,10 +189,17 @@ export function createPluginService(ctx: PluginServiceContext) {
     toolProposalStore,
     changeFeed,
     eventBus,
+    identityReflectionStore,
+    personaStateStore,
+    learningsDb,
+    apitapStore,
+    aliasDb,
+    vaultRegistry,
   } = ctx;
 
   let watchdogRunning = false;
   let watchdogRunPromise: Promise<void> | null = null;
+  let maintenanceTickPromise: Promise<void> | null = null;
   let shuttingDown = false;
   let dashboardServer: DashboardServer | null = null;
   let versionCheckPromise: Promise<void> | null = null;
@@ -554,13 +589,19 @@ export function createPluginService(ctx: PluginServiceContext) {
           };
 
           runWikiWorkspaceExport();
-          const wikiExportIntervalMs = cfg.wikiIntegration.workspaceExportIntervalMinutes * 60 * 1000;
-          (timers as Record<string, unknown>).wikiWorkspaceExport = {
-            value: setInterval(runWikiWorkspaceExport, wikiExportIntervalMs),
-          };
-          api.logger.info(
-            `memory-hybrid: wiki workspace mirror enabled — syncing to memory/hybrid-wiki/ every ${cfg.wikiIntegration.workspaceExportIntervalMinutes} min`,
-          );
+          // #88: a concurrent stop() may have run during the dynamic import above; arming a fresh
+          // interval after that would leak forever since clearRuntimeTimers already ran and won't run again.
+          if (timers.shuttingDownRef.value) {
+            api.logger.debug?.("memory-hybrid: skipping wiki workspace export timer — shutdown in progress");
+          } else {
+            const wikiExportIntervalMs = cfg.wikiIntegration.workspaceExportIntervalMinutes * 60 * 1000;
+            timers.wikiWorkspaceExport = {
+              value: setInterval(runWikiWorkspaceExport, wikiExportIntervalMs),
+            };
+            api.logger.info(
+              `memory-hybrid: wiki workspace mirror enabled — syncing to memory/hybrid-wiki/ every ${cfg.wikiIntegration.workspaceExportIntervalMinutes} min`,
+            );
+          }
         } catch (err) {
           api.logger.warn?.(
             `memory-hybrid: wiki workspace export startup failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
@@ -579,17 +620,23 @@ export function createPluginService(ctx: PluginServiceContext) {
           captureWorkboardBootRegistrationGeneration,
           createWorkboardStartupShouldAbort,
         } = await import("./workboard-integration.js");
-        const bootRegistrationGeneration = captureWorkboardBootRegistrationGeneration();
-        scheduleWorkboardStartupIntegration({
-          factsDb,
-          vectorDb,
-          embeddings,
-          cfg,
-          api,
-          timers: timers as PluginRuntime["timers"],
-          shouldAbort: createWorkboardStartupShouldAbort(bootRegistrationGeneration, timers.shuttingDownRef),
-          connectLabel: "startup",
-        });
+        // #88: a concurrent stop() may have run during the dynamic import above; scheduling a fresh
+        // deferred timer after that would leak until it self-aborts, and races clearRuntimeTimers.
+        if (timers.shuttingDownRef.value) {
+          api.logger.debug?.("memory-hybrid: skipping workboard integration setup — shutdown in progress");
+        } else {
+          const bootRegistrationGeneration = captureWorkboardBootRegistrationGeneration();
+          scheduleWorkboardStartupIntegration({
+            factsDb,
+            vectorDb,
+            embeddings,
+            cfg,
+            api,
+            timers,
+            shouldAbort: createWorkboardStartupShouldAbort(bootRegistrationGeneration, timers.shuttingDownRef),
+            connectLabel: "startup",
+          });
+        }
       }
 
       // Issue #309: Mission Control dashboard HTTP server
@@ -626,7 +673,16 @@ export function createPluginService(ctx: PluginServiceContext) {
             },
             cfg.dashboard.port,
           );
-          api.logger.info(`memory-hybrid: dashboard started on http://127.0.0.1:${dashboardServer.port}`);
+          // #88: a concurrent stop() may have run while createDashboardServer() was awaiting startup;
+          // stop()'s dashboard-close block already ran and won't run again, so close it here instead
+          // of leaking a live HTTP server past shutdown.
+          if (timers.shuttingDownRef.value) {
+            dashboardServer.close();
+            dashboardServer = null;
+            api.logger.debug?.("memory-hybrid: dashboard server closed immediately — shutdown occurred during startup");
+          } else {
+            api.logger.info(`memory-hybrid: dashboard started on http://127.0.0.1:${dashboardServer.port}`);
+          }
         } catch (err) {
           api.logger.warn(`memory-hybrid: dashboard server failed to start (non-fatal): ${err}`);
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -814,15 +870,27 @@ export function createPluginService(ctx: PluginServiceContext) {
         }
       };
 
-      timers.maintenanceStartupTimeout.value = setTimeout(() => {
-        void runMaintenanceCycleTick("startup");
-        timers.maintenanceStartupTimeout.value = null;
-      }, 5 * 60_000);
+      const runTrackedMaintenanceCycleTick = (label: string) => {
+        maintenanceTickPromise = runMaintenanceCycleTick(label).finally(() => {
+          maintenanceTickPromise = null;
+        });
+      };
 
-      timers.maintenanceTick.value = setInterval(() => {
-        void runMaintenanceCycleTick("interval");
-      }, 60 * 60_000);
-      api.logger.info("memory-hybrid: unified maintenance tick enabled (cycle tier, 60m interval)");
+      // #88: guard against arming timers after a concurrent stop() already ran clearRuntimeTimers —
+      // those handles would never be cleared and would keep firing past shutdown.
+      if (timers.shuttingDownRef.value) {
+        api.logger.debug?.("memory-hybrid: skipping maintenance tick timers — shutdown in progress");
+      } else {
+        timers.maintenanceStartupTimeout.value = setTimeout(() => {
+          runTrackedMaintenanceCycleTick("startup");
+          timers.maintenanceStartupTimeout.value = null;
+        }, 5 * 60_000);
+
+        timers.maintenanceTick.value = setInterval(() => {
+          runTrackedMaintenanceCycleTick("interval");
+        }, 60 * 60_000);
+        api.logger.info("memory-hybrid: unified maintenance tick enabled (cycle tier, 60m interval)");
+      }
 
       // Task queue watchdog: periodically detect stale/broken autonomous queue runs and self-heal
       const WATCHDOG_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -940,17 +1008,22 @@ export function createPluginService(ctx: PluginServiceContext) {
           }
         }
       };
-      timers.watchdogTimer.value = setInterval(() => {
-        if (shuttingDown) return;
-        if (typeof factsDb.isOpen === "function" && !factsDb.isOpen()) return;
-        if (watchdogRunning) return;
-        watchdogRunning = true;
-        watchdogRunPromise = watchdogRun().finally(() => {
-          watchdogRunning = false;
-          watchdogRunPromise = null;
-        });
-      }, WATCHDOG_INTERVAL_MS);
-      api.logger.info("memory-hybrid: task-queue-watchdog enabled (interval: 5m)");
+      // #88: guard against arming this timer after a concurrent stop() already ran clearRuntimeTimers.
+      if (timers.shuttingDownRef.value) {
+        api.logger.debug?.("memory-hybrid: skipping task-queue-watchdog timer — shutdown in progress");
+      } else {
+        timers.watchdogTimer.value = setInterval(() => {
+          if (shuttingDown) return;
+          if (typeof factsDb.isOpen === "function" && !factsDb.isOpen()) return;
+          if (watchdogRunning) return;
+          watchdogRunning = true;
+          watchdogRunPromise = watchdogRun().finally(() => {
+            watchdogRunning = false;
+            watchdogRunPromise = null;
+          });
+        }, WATCHDOG_INTERVAL_MS);
+        api.logger.info("memory-hybrid: task-queue-watchdog enabled (interval: 5m)");
+      }
 
       // Post-upgrade pipeline: once per version bump, run build-languages, self-correction, reflection, procedures (via CLI)
       const rawVersionFilePath = join(dirname(resolvedSqlitePath), ".last-post-upgrade-version");
@@ -960,6 +1033,7 @@ export function createPluginService(ctx: PluginServiceContext) {
       const versionFile = rawVersionFilePath.replace(/\$HOME/g, _home).replace(/^~(?=\/|$)/, _home);
       timers.postUpgradeTimeout.value = setTimeout(() => {
         timers.postUpgradeTimeout.value = null;
+        if (timers.shuttingDownRef.value) return;
         let lastVer = "";
         try {
           lastVer = readFileSync(versionFile, "utf-8").trim();
@@ -1037,15 +1111,33 @@ export function createPluginService(ctx: PluginServiceContext) {
               });
             };
 
+            // #89: this pipeline is fire-and-forget from start()'s perspective and can run for
+            // several minutes across sequential subprocess spawns; check for a concurrent stop()
+            // before each step so a shutdown mid-pipeline stops spawning new CLI subprocesses
+            // instead of continuing to mutate the databases after the plugin was asked to stop.
+            const abortIfShuttingDown = (): boolean => {
+              if (!timers.shuttingDownRef.value) return false;
+              api.logger.info?.("memory-hybrid: post-upgrade pipeline aborted — shutdown in progress");
+              return true;
+            };
+
             const langPath = getLanguageKeywordsFilePath();
+            if (abortIfShuttingDown()) return;
             if (langPath && !existsSync(langPath)) await runCli(["build-languages"]);
+            if (abortIfShuttingDown()) return;
             await runCli(["self-correction-run", "--force"]);
             if (cfg.reflection.enabled) {
+              if (abortIfShuttingDown()) return;
               await runCli(["reflect", "--window", String(cfg.reflection.defaultWindow), "--force"]);
+              if (abortIfShuttingDown()) return;
               await runCli(["reflect-rules", "--force"]);
             }
+            if (abortIfShuttingDown()) return;
             await runCli(["extract-procedures", "--force"]);
+            if (abortIfShuttingDown()) return;
             await runCli(["generate-auto-skills"]);
+            // Only mark the pipeline complete once every step above actually ran to completion.
+            if (abortIfShuttingDown()) return;
             writeFileSync(versionFile, versionInfo.pluginVersion, "utf-8");
             api.logger.info("memory-hybrid: post-upgrade pipeline done.");
           } catch (e) {
@@ -1062,6 +1154,10 @@ export function createPluginService(ctx: PluginServiceContext) {
       shuttingDown = true;
       timers.shuttingDownRef.value = true;
       clearRuntimeTimers(timers);
+      // #91: startEventLoopLagMonitor() is armed during registration (register-plugin.ts) but was
+      // never paired with a stop() here — only the CLI one-shot teardown path called this,
+      // leaving the perf_hooks histogram sampling indefinitely after a real plugin shutdown.
+      stopEventLoopLagMonitor();
       // Flush pending error reports with adaptive timeout so persisted queue replay can drain.
       if (isErrorReporterActive()) {
         const flushed = await flushErrorReporter().catch(() => false);
@@ -1072,8 +1168,12 @@ export function createPluginService(ctx: PluginServiceContext) {
       if (dashboardServer) {
         try {
           dashboardServer.close();
-        } catch {
-          /* non-fatal */
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "plugin-service",
+            operation: "dashboard-close",
+            severity: "warning",
+          });
         }
         dashboardServer = null;
       }
@@ -1086,6 +1186,18 @@ export function createPluginService(ctx: PluginServiceContext) {
         ]);
         if (!completed) {
           api.logger.warn("memory-hybrid: task-queue-watchdog shutdown timed out; continuing shutdown anyway");
+        }
+      }
+      if (maintenanceTickPromise) {
+        // A tick still holding factsDb/vectorDb handles when they're closed below can throw
+        // "database is closed" mid-operation, or (worse) race a write against handle teardown.
+        const timeoutMs = 5000;
+        const completed = await Promise.race([
+          maintenanceTickPromise.then(() => true).catch(() => true),
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+        ]);
+        if (!completed) {
+          api.logger.warn("memory-hybrid: maintenance-tick shutdown timed out; continuing shutdown anyway");
         }
       }
       if (versionCheckPromise) {
@@ -1101,19 +1213,44 @@ export function createPluginService(ctx: PluginServiceContext) {
       if (ctx.pythonBridge) {
         await ctx.pythonBridge.shutdown();
       }
-      factsDb.close();
+      closeStorePermanently(factsDb, "factsDb", api.logger);
+      // VectorDB is LanceDB-based (not a BaseSqliteStore); its close() is already terminal.
       vectorDb.close();
-      if (credentialsDb) {
-        credentialsDb.close();
-      }
-      if (proposalsDb) {
-        proposalsDb.close();
-      }
-      if (auditStore) {
-        auditStore.close();
-      }
-      if (agentHealthStore) {
-        agentHealthStore.close();
+      closeStorePermanently(credentialsDb, "credentialsDb", api.logger);
+      closeStorePermanently(proposalsDb, "proposalsDb", api.logger);
+      closeStorePermanently(auditStore, "auditStore", api.logger);
+      closeStorePermanently(agentHealthStore, "agentHealthStore", api.logger);
+      closeStorePermanently(edictStore, "edictStore", api.logger);
+      closeStorePermanently(eventLog, "eventLog", api.logger);
+      closeStorePermanently(narrativesDb, "narrativesDb", api.logger);
+      closeStorePermanently(issueStore, "issueStore", api.logger);
+      closeStorePermanently(workflowStore, "workflowStore", api.logger);
+      closeStorePermanently(crystallizationStore, "crystallizationStore", api.logger);
+      closeStorePermanently(toolProposalStore, "toolProposalStore", api.logger);
+      // VerificationStore doesn't extend BaseSqliteStore / doesn't implement permanentClose();
+      // closeStorePermanently() falls back to its plain close().
+      closeStorePermanently(verificationStore, "verificationStore", api.logger);
+      closeStorePermanently(eventBus, "eventBus", api.logger);
+      // #90: these were threaded through PluginRuntime but never reached plugin-service's stop(),
+      // so they leaked open SQLite handles on shutdown (only closed on re-register, not a plain stop()).
+      closeStorePermanently(identityReflectionStore, "identityReflectionStore", api.logger);
+      closeStorePermanently(personaStateStore, "personaStateStore", api.logger);
+      closeStorePermanently(learningsDb, "learningsDb", api.logger);
+      closeStorePermanently(apitapStore, "apitapStore", api.logger);
+      // AliasDB doesn't extend BaseSqliteStore / doesn't implement permanentClose();
+      // closeStorePermanently() falls back to its plain close().
+      closeStorePermanently(aliasDb, "aliasDb", api.logger);
+      if (vaultRegistry) {
+        try {
+          vaultRegistry.closeAll();
+        } catch (err) {
+          api.logger.warn(`memory-hybrid: failed to close vaultRegistry during shutdown: ${err}`);
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "plugin-service",
+            operation: "close-vaultRegistry",
+            severity: "warning",
+          });
+        }
       }
     },
   };

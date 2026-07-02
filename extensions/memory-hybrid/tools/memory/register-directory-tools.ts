@@ -15,6 +15,7 @@ import type { SearchResult } from "../../types/memory.js";
 import { UUID_REGEX } from "../../utils/constants.js";
 import { embedCallWithTimeoutAndRetry } from "../../utils/embed-call.js";
 import type { MemoryToolRuntime } from "./runtime.js";
+import { resolveToolVaultBackends } from "./vault-resolve.js";
 
 export function registerDirectoryTools(runtime: MemoryToolRuntime): void {
   const {
@@ -206,15 +207,22 @@ export function registerDirectoryTools(runtime: MemoryToolRuntime): void {
             description: "Required when scope is agent: agent identifier.",
           }),
         ),
+        vault: Type.Optional(Type.String({ description: "Named vault from plugin config vaults map" })),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         try {
-          const { memoryId, scope, scopeTarget } = params as {
+          const { memoryId, scope, scopeTarget, vault } = params as {
             memoryId: string;
             scope: "global" | "agent";
             scopeTarget?: string;
+            vault?: string;
           };
-          const entry = factsDb.getById(memoryId);
+          const { factsDb: promoteFactsDb } = resolveToolVaultBackends(
+            runtime,
+            typeof vault === "string" ? vault : undefined,
+          );
+          const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
+          const entry = promoteFactsDb.getById(memoryId, { scopeFilter });
           if (!entry) {
             return {
               content: [{ type: "text", text: `No memory found with id: ${memoryId}.` }],
@@ -228,7 +236,7 @@ export function registerDirectoryTools(runtime: MemoryToolRuntime): void {
             };
           }
           const scopeTargetValue = scope === "agent" ? (scopeTarget?.trim() ?? null) : null;
-          const ok = factsDb.promoteScope(memoryId, scope, scopeTargetValue);
+          const ok = promoteFactsDb.promoteScope(memoryId, scope, scopeTargetValue);
           if (!ok) {
             return {
               content: [{ type: "text", text: `Could not promote memory ${memoryId}.` }],
@@ -270,20 +278,27 @@ export function registerDirectoryTools(runtime: MemoryToolRuntime): void {
       parameters: Type.Object({
         query: Type.Optional(Type.String({ description: "Search to find memory" })),
         memoryId: Type.Optional(Type.String({ description: "Specific memory ID" })),
+        vault: Type.Optional(Type.String({ description: "Named vault from plugin config vaults map" })),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         try {
-          const { query, memoryId } = params as {
+          const { query, memoryId, vault } = params as {
             query?: string;
             memoryId?: string;
+            vault?: string;
           };
+          const { factsDb: forgetFactsDb, vectorDb: forgetVectorDb } = resolveToolVaultBackends(
+            runtime,
+            typeof vault === "string" ? vault : undefined,
+          );
+          const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
 
           if (memoryId) {
             // Support prefix matching: if the ID looks truncated (not a full UUID),
             // try to resolve the full ID via prefix search
             let resolvedId = memoryId;
             if (memoryId.length < 36 && !memoryId.includes("-")) {
-              const prefixResult = factsDb.findByIdPrefix(memoryId);
+              const prefixResult = forgetFactsDb.findByIdPrefixScoped(memoryId, scopeFilter);
               if (prefixResult && "ambiguous" in prefixResult) {
                 const countText = prefixResult.count >= 3 ? `${prefixResult.count}+` : `${prefixResult.count}`;
                 return {
@@ -296,7 +311,7 @@ export function registerDirectoryTools(runtime: MemoryToolRuntime): void {
                   details: { action: "ambiguous", prefix: memoryId, matchCount: prefixResult.count },
                 };
               }
-              if (prefixResult && "id" in prefixResult) {
+              if (prefixResult && "id" in prefixResult && prefixResult.id) {
                 resolvedId = prefixResult.id;
               }
             }
@@ -315,11 +330,26 @@ export function registerDirectoryTools(runtime: MemoryToolRuntime): void {
               };
             }
 
-            const sqlDeleted = factsDb.delete(resolvedId);
+            // Re-verify the resolved id is visible under the caller's scope before mutating —
+            // findByIdPrefixScoped already scopes prefix lookups, but a caller-supplied full
+            // UUID skips prefix resolution entirely, so it must be scope-checked here too.
+            if (!forgetFactsDb.getById(resolvedId, { scopeFilter })) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Failed to delete memory "${memoryId}" — not found in either backend. Use the full UUID from memory_recall.`,
+                  },
+                ],
+                details: { action: "not_found", originalId: memoryId, resolvedId },
+              };
+            }
+
+            const sqlDeleted = forgetFactsDb.delete(resolvedId);
             let lanceDeleted = false;
             let lanceError: string | null = null;
             try {
-              lanceDeleted = await vectorDb.delete(resolvedId);
+              lanceDeleted = await forgetVectorDb.delete(resolvedId);
             } catch (err) {
               lanceError = err instanceof Error ? err.message : String(err);
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -368,14 +398,14 @@ export function registerDirectoryTools(runtime: MemoryToolRuntime): void {
           }
 
           if (query) {
-            const sqlResults = factsDb.search(query, 5);
+            const sqlResults = forgetFactsDb.search(query, 5, { scopeFilter });
             let lanceResults: SearchResult[] = [];
             try {
               const vector = await embedCallWithTimeoutAndRetry(
                 () => embeddings.embed(query),
                 "memory-tools:forget-vector-search",
               );
-              lanceResults = await vectorDb.search(vector, 5, 0.7);
+              lanceResults = await forgetVectorDb.search(vector, 5, 0.7);
             } catch (err) {
               // AllEmbeddingProvidersFailed is expected when no providers are configured — don't report to Sentry.
               if (!(err instanceof AllEmbeddingProvidersFailed)) {
@@ -389,7 +419,11 @@ export function registerDirectoryTools(runtime: MemoryToolRuntime): void {
               api.logger.warn(`memory-hybrid: vector search failed: ${err}`);
             }
 
-            const results = mergeResults(sqlResults, lanceResults, 5, factsDb);
+            // vectorDb has no scope awareness, so lanceResults may include out-of-scope facts —
+            // re-check every candidate against the caller's scope before it can be surfaced or deleted.
+            const results = mergeResults(sqlResults, lanceResults, 5, forgetFactsDb).filter((r) =>
+              forgetFactsDb.getById(r.entry.id, { scopeFilter }),
+            );
 
             if (results.length === 0) {
               return {
@@ -400,9 +434,9 @@ export function registerDirectoryTools(runtime: MemoryToolRuntime): void {
 
             if (results.length === 1 && results[0].score > 0.9) {
               const id = results[0].entry.id;
-              factsDb.delete(id);
+              forgetFactsDb.delete(id);
               try {
-                await vectorDb.delete(id);
+                await forgetVectorDb.delete(id);
               } catch (err) {
                 capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                   subsystem: "vector",

@@ -17,25 +17,37 @@ import { resetPluginLogger, restoreDefaultLogger } from "../../utils/logger.js";
  */
 export function registerHybridMemCliUpgradeOnlyWithApi(api: ClawdbotPluginApi): void {
   resetPluginLogger();
-  let cfg: HandlerContext["cfg"];
+  let cfg: HandlerContext["cfg"] | undefined;
   try {
-    cfg = hybridConfigSchema.parse({
-      embedding: {
-        provider: "openai",
-        apiKey: "sk-upgrade-key-that-is-long-enough-to-pass",
-        model: "text-embedding-3-small",
-      },
-    });
-  } catch {
-    cfg = hybridConfigSchema.parse({
-      embedding: {
-        provider: "ollama",
-        model: "nomic-embed-text",
-      },
-    });
-  } finally {
+    try {
+      cfg = hybridConfigSchema.parse({
+        embedding: {
+          provider: "openai",
+          apiKey: "sk-upgrade-key-that-is-long-enough-to-pass",
+          model: "text-embedding-3-small",
+        },
+      });
+    } catch {
+      cfg = hybridConfigSchema.parse({
+        embedding: {
+          provider: "ollama",
+          model: "nomic-embed-text",
+        },
+      });
+    }
+  } catch (err) {
+    // Both the primary and fallback shapes failed to parse — config validation itself is
+    // broken in a way unrelated to embedding provider choice. This fast path exists so
+    // `upgrade` still works when full registration fails on config parse; crashing CLI
+    // registration entirely here would defeat that purpose, so skip registering this
+    // command rather than propagate.
+    api.logger.warn(
+      `memory-hybrid: upgrade-only CLI registration skipped — config parse failed for both openai and ollama fallback shapes: ${err instanceof Error ? err.message : String(err)}`,
+    );
     restoreDefaultLogger();
+    return;
   }
+  restoreDefaultLogger();
 
   const handlerCtx: HandlerContext = {
     cfg,
@@ -53,9 +65,6 @@ export function registerHybridMemCliUpgradeOnlyWithApi(api: ClawdbotPluginApi): 
     personaStateStore: null,
     crystallizationStore: null,
     toolProposalStore: null,
-    eventLog: null,
-    verificationStore: null,
-    provenanceService: null,
     resolvedSqlitePath: api.resolvePath(cfg.sqlitePath),
     resolvedLancePath: api.resolvePath(cfg.lanceDbPath),
     pluginId: "openclaw-hybrid-memory",

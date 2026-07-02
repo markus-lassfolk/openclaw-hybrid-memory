@@ -242,8 +242,8 @@ export function wrapChainableWithRenames(
         node.action(fn);
         return wrapped;
       },
-      option(flags: string, desc?: string, defaultValue?: unknown) {
-        node.option(flags, desc, defaultValue);
+      option(flags: string, desc?: string, defaultValueOrFn?: unknown, defaultValue?: unknown) {
+        node.option(flags, desc, defaultValueOrFn, defaultValue);
         return wrapped;
       },
       requiredOption(flags: string, desc?: string, defaultValue?: unknown) {
@@ -269,7 +269,11 @@ export function wrapChainableWithDeprecated(base: Chainable, flatToGrouped: Reco
   const wrap = (node: Chainable, currentFlat?: string): Chainable => {
     const wrapped: Chainable = {
       command(name: string) {
-        return wrap(node.command(name), name);
+        // Preserve the top-level flat name through nested .command() calls (e.g.
+        // `mem.command("entity-mentions").command("audit")`) instead of overwriting it with the
+        // nested subcommand's own name, which is never itself a key in flatToGrouped — doing so
+        // silently dropped the deprecation warning for any command registered via nesting.
+        return wrap(node.command(name), currentFlat ?? name);
       },
       description(desc: string) {
         node.description(desc);
@@ -280,8 +284,8 @@ export function wrapChainableWithDeprecated(base: Chainable, flatToGrouped: Reco
         node.action(grouped ? deprecatedAction(currentFlat!, grouped, fn) : fn);
         return wrapped;
       },
-      option(flags: string, desc?: string, defaultValue?: unknown) {
-        node.option(flags, desc, defaultValue);
+      option(flags: string, desc?: string, defaultValueOrFn?: unknown, defaultValue?: unknown) {
+        node.option(flags, desc, defaultValueOrFn, defaultValue);
         return wrapped;
       },
       requiredOption(flags: string, desc?: string, defaultValue?: unknown) {

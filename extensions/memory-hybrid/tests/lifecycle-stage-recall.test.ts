@@ -142,6 +142,26 @@ describe("runRecallStage", () => {
     expect(ctx.recallInFlightRef.value).toBe(0);
   });
 
+  it("does not leak recallInFlightRef when setup code before the pipeline call throws", async () => {
+    const timingModule = await import("../services/recall-timing.js");
+    const timingSpy = vi.spyOn(timingModule, "createRecallTimingLogger").mockImplementation(() => {
+      throw new Error("timing setup boom");
+    });
+    try {
+      const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
+      const sessionState = makeRecallSessionState();
+      const api = makeMockStageApi();
+
+      await expect(
+        runRecallStage({ prompt: "find credentials for github api" }, api as never, ctx, sessionState),
+      ).rejects.toThrow("timing setup boom");
+      expect(ctx.recallInFlightRef.value).toBe(0);
+      expect(sessionState.recallInFlightBySession.size).toBe(0);
+    } finally {
+      timingSpy.mockRestore();
+    }
+  });
+
   it("surfaces DB-close errors when recall generation is still current", async () => {
     const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
     vi.mocked(recallPipeline.runRecallPipelineQuery).mockRejectedValue(

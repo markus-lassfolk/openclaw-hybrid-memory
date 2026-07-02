@@ -32,7 +32,7 @@ export function registerGoalStewardshipInjection(
   resolvedActiveTaskPath: string | undefined,
 ): void {
   const gs = ctx.cfg.goalStewardship;
-  if (!gs.heartbeatStewardship) return;
+  if (!gs.heartbeatStewardship || ctx.cfg.verbosity === "silent") return;
 
   api.on("before_agent_start", async (event: unknown, hookCtx: unknown) =>
     runOptionalBeforeAgentStartStage(

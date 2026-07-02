@@ -6,7 +6,13 @@
 import { EventEmitter } from "node:events";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-export type LegacyRouteRequest = { method: string; url: string; headers: Record<string, string> };
+export type LegacyRouteRequest = {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  /** Request body chunks, consumed via `for await (const chunk of req)` like a real IncomingMessage. */
+  body?: string | Buffer[];
+};
 
 export async function invokeNodeHttpRoute(
   handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>,
@@ -16,6 +22,15 @@ export async function invokeNodeHttpRoute(
   req.method = legacy.method;
   req.url = legacy.url;
   req.headers = legacy.headers;
+
+  // A real IncomingMessage is an async-iterable Readable stream; a plain EventEmitter is not.
+  // Handlers that read the request body via `for await (const chunk of req)` need this shim.
+  const bodyChunks: Buffer[] =
+    legacy.body == null ? [] : Array.isArray(legacy.body) ? legacy.body : [Buffer.from(legacy.body)];
+  (req as unknown as { [Symbol.asyncIterator]: () => AsyncIterableIterator<Buffer> })[Symbol.asyncIterator] =
+    async function* () {
+      for (const chunk of bodyChunks) yield chunk;
+    };
 
   let statusCode = 200;
   const headersOut: Record<string, string> = {};

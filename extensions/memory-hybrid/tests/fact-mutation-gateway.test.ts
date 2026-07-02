@@ -243,7 +243,7 @@ describe("fact-mutation-gateway", () => {
       await handlers.get("hybrid-mem.facts.create")!({
         params: {
           text: "New discovery",
-          category: "technical",
+          category: "fact",
           importance: 0.7,
           entity: "Testing",
           key: "insight",
@@ -256,7 +256,7 @@ describe("fact-mutation-gateway", () => {
       expect(factsDb.store).toHaveBeenCalledWith(
         expect.objectContaining({
           text: "New discovery",
-          category: "technical",
+          category: "fact",
           importance: 0.7,
           entity: "Testing",
           key: "insight",
@@ -276,6 +276,18 @@ describe("fact-mutation-gateway", () => {
       expect(respond).toHaveBeenCalledWith(false, undefined, { message: "missing text" });
     });
 
+    it("rejects an unknown category instead of storing it verbatim", async () => {
+      const { handlers, factsDb } = captureHandlers();
+      const respond = vi.fn();
+      await handlers.get("hybrid-mem.facts.create")!({
+        params: { text: "Bogus category fact", category: "not_a_real_category" },
+        respond,
+      });
+
+      expect(respond).toHaveBeenCalledWith(false, undefined, { message: 'invalid category "not_a_real_category"' });
+      expect(factsDb.store).not.toHaveBeenCalled();
+    });
+
     it("uses defaults for optional parameters", async () => {
       const stored = makeFact({ id: "aabb0011-0000-0000-0000-000000000005" });
       const { handlers, factsDb } = captureHandlers();
@@ -290,7 +302,7 @@ describe("fact-mutation-gateway", () => {
       expect(factsDb.store).toHaveBeenCalledWith(
         expect.objectContaining({
           text: "Minimal fact",
-          category: "general",
+          category: "other",
           importance: 0.5,
           confidence: 0.8,
         }),

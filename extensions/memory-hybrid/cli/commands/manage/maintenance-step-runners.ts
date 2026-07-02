@@ -47,6 +47,7 @@ import { extractImplicitSemanticOutcome, isGracefulExtractImplicitPartial } from
 import { cleanupImplicitFeedbackDuplicates } from "../../cmd-feedback.js";
 import { resolveScanMaintenanceOverrides, type ScanMaintenanceOverrideInput } from "../../maintenance-overrides.js";
 import { nowIso } from "../../../utils/dates.js";
+import { maintenanceRunDeadlineReached } from "../../../utils/maintenance-run-deadline.js";
 import {
   parseSemanticTokenFromSummary,
   semanticOutcomeBlocksOrchestratorGuard,
@@ -666,6 +667,7 @@ export function buildCliMaintenanceRunners(
         dryRun: false,
         afterRowid: afterRowid > 0 ? afterRowid : undefined,
         seedCanonical: carryCanonical,
+        wallClockCheck: () => maintenanceRunDeadlineReached(),
       });
       scanned += res.scanned;
       collapsed += res.collapsed;
@@ -849,13 +851,16 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
     let health = 0;
     try {
       audit = deps.auditStore?.prune(90) ?? 0;
-    } catch {
-      /* non-fatal */
+    } catch (err) {
+      // Non-fatal (the step still succeeds), but silent — log so a persistent failure here
+      // isn't indistinguishable from "nothing due for pruning" and the audit table can grow
+      // unbounded with no operator-visible signal.
+      deps.logger.warn(`memory-hybrid: prune step — audit store prune failed: ${err}`);
     }
     try {
       health = deps.agentHealthStore?.prune(30) ?? 0;
-    } catch {
-      /* non-fatal */
+    } catch (err) {
+      deps.logger.warn(`memory-hybrid: prune step — agent health store prune failed: ${err}`);
     }
     const vectorFailures = expiredCleanup.failed + decayCleanup.failed;
     const summary = `expired=${hardPruned} decayed=${softPruned} edicts=${edicts} audit=${audit} health=${health} vector_failures=${vectorFailures} semantic=${vectorFailures > 0 ? "partial" : "success"}`;

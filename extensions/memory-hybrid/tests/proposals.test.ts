@@ -7,7 +7,7 @@ import { getEnv, setEnv } from "../utils/env-manager.js";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProposalsDB } from "../backends/proposals-db.js";
 import { _testing } from "../index.js";
 import {
@@ -221,6 +221,51 @@ describe("applyApprovedProposal (non-git workspace — issue #90)", () => {
       expect(result.error).toMatch(/no target snapshot/i);
     }
     expect(proposalsDb.get(replaceProposal.id)?.status).toBe("approved");
+  });
+
+  it("restores an originally-empty target file on late failure, not just non-empty files", async () => {
+    // Overwrite the beforeEach-created file with empty content — `original` (captured before
+    // the write) is then the empty string, which the old `if (wroteFile && original)` guard
+    // treated as falsy and skipped restoration entirely, permanently leaving the applied content
+    // in place (while still deleting the rollback record) even though the function reports
+    // ok: false.
+    const targetPath = join(tmpDir, "SOUL.md");
+    writeFileSync(targetPath, "", "utf-8");
+
+    const proposal = proposalsDb.create({
+      targetFile: "SOUL.md",
+      title: "Add content",
+      observation: "Test observation",
+      suggestedChange: "## New\nSome content.",
+      confidence: 0.8,
+      evidenceSessions: ["test"],
+      expiresAt: null,
+    });
+    proposalsDb.updateStatus(proposal.id, "approved");
+
+    const changeFeedEmit = await import("../services/change-feed-emit.js");
+    const emitSpy = vi
+      .spyOn(changeFeedEmit, "emitPersonaApplied")
+      .mockImplementation(() => {
+        throw new Error("simulated late failure after write");
+      });
+    try {
+      const ctx = {
+        proposalsDb,
+        cfg: {
+          personaProposals: { allowedFiles: ["SOUL.md", "USER.md", "IDENTITY.md"] },
+        },
+        resolvedSqlitePath: join(tmpDir, "memory.db"),
+        api: { logger: { warn: () => {} } },
+      } as unknown as Parameters<typeof applyApprovedProposal>[0];
+
+      const result = await applyApprovedProposal(ctx, proposal.id);
+      expect(result.ok).toBe(false);
+      // Must be restored to the original empty content, not left with the applied content stuck.
+      expect(readFileSync(targetPath, "utf-8")).toBe("");
+    } finally {
+      emitSpy.mockRestore();
+    }
   });
 });
 

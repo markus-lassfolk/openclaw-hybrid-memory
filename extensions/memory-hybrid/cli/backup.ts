@@ -21,7 +21,18 @@
  * Cron automation for scheduled backups should be managed via openclaw.yaml.
  */
 
-import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readlinkSync, statSync, symlinkSync } from "node:fs";
+import {
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readlinkSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -39,8 +50,34 @@ export type BackupCliResult =
       lancedbSize: number;
       durationMs: number;
       integrityOk: boolean;
+      /** Epoch ms when the SQLite VACUUM INTO snapshot completed (undefined if no SQLite db existed). */
+      sqliteSnapshotAt?: number;
+      /** Epoch ms when the LanceDB directory copy completed (undefined if no LanceDB dir existed). */
+      lancedbSnapshotAt?: number;
+      /**
+       * Gap in ms between the two snapshots — the window during which a live write could have
+       * landed in one half but not the other, since the two stores are copied sequentially with
+       * no write-quiesce between them (#81). 0 when either half is missing.
+       */
+      snapshotSkewMs: number;
     }
   | { ok: false; error: string };
+
+/**
+ * Written to the backup directory alongside the copied data so downstream verify/restore
+ * tooling can detect (not prevent) SQLite/LanceDB drift caused by a write landing in the gap
+ * between the two sequential snapshots (#81).
+ */
+export type BackupManifest = {
+  version: 1;
+  createdAt: number;
+  sqliteSnapshotAt: number | null;
+  lancedbSnapshotAt: number | null;
+  snapshotSkewMs: number;
+  sqliteSize: number;
+  lancedbSize: number;
+  integrityOk: boolean;
+};
 
 export type BackupVerifyResult =
   | { ok: true; integrityOk: boolean; sqlitePath: string; factCount: number; message: string }
@@ -67,7 +104,12 @@ function defaultBackupRoot(): string {
 
 function timestampedDir(root: string): string {
   const now = new Date();
-  const ts = now.toISOString().replace(/[:.]/g, "-").slice(0, 19); // YYYY-MM-DDTHH-mm-ss
+  // Keep millisecond resolution (drop the old .slice(0, 19) truncation to whole seconds) — two
+  // backups triggered within the same second (a scripted retry, or a manual run racing a cron
+  // tick) previously resolved to the identical directory name. VACUUM INTO then failed on the
+  // second run because SQLite refuses to write into an already-existing destination file,
+  // reporting a misleading "SQLite backup failed" for what was really a naming collision.
+  const ts = now.toISOString().replace(/[:.]/g, "-"); // YYYY-MM-DDTHH-mm-ss-SSSZ
   return join(root, ts);
 }
 
@@ -145,9 +187,31 @@ export async function runBackup(ctx: BackupContext): Promise<BackupCliResult> {
     return { ok: false, error: `Failed to create backup directory ${dest}: ${err}` };
   }
 
+  /** Remove the half-written backup directory before reporting a failure — otherwise a stale,
+   * incomplete backup (e.g. valid memory.db but missing/partial lancedb) is left on disk looking
+   * like a legitimate timestamped backup, with no marker that it's incomplete. */
+  const cleanupAndFail = (error: string): { ok: false; error: string } => {
+    try {
+      rmSync(dest, { recursive: true, force: true });
+    } catch {
+      // Best-effort cleanup only — the original error is what matters to the caller.
+    }
+    return { ok: false, error };
+  };
+
   // -- SQLite backup --
   let sqliteSize = 0;
-  let integrityOk = true;
+  // Defaults to false (not true): if resolvedSqlitePath doesn't exist, no integrity check ever
+  // ran, and reporting `integrityOk: true` in that case falsely implied a check passed. Failing
+  // closed means a caller relying on this flag can't mistake "never checked" for "verified ok."
+  let integrityOk = false;
+  // The two stores are copied sequentially (SQLite via VACUUM INTO, then LanceDB via directory
+  // copy) with no write-quiesce between them — a store()/evict() landing in that gap makes the
+  // two halves disagree. There is no cheap way to make the pair atomic without pausing all
+  // writes, so instead we record when each snapshot completed; verify/restore tooling can use
+  // the gap to reason about how much drift is possible (#81).
+  let sqliteSnapshotAt: number | null = null;
+  let lancedbSnapshotAt: number | null = null;
 
   if (existsSync(ctx.resolvedSqlitePath)) {
     const destSqlite = join(dest, basename(ctx.resolvedSqlitePath));
@@ -167,12 +231,13 @@ export async function runBackup(ctx: BackupContext): Promise<BackupCliResult> {
         db.close();
       }
       sqliteSize = statSync(destSqlite).size;
+      sqliteSnapshotAt = Date.now();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "backup",
         operation: "sqlite-backup",
       });
-      return { ok: false, error: `SQLite backup failed: ${err}` };
+      return cleanupAndFail(`SQLite backup failed: ${err}`);
     }
   }
 
@@ -183,13 +248,41 @@ export async function runBackup(ctx: BackupContext): Promise<BackupCliResult> {
     try {
       copyDirSync(ctx.resolvedLancePath, destLance);
       lancedbSize = dirSizeSync(destLance);
+      lancedbSnapshotAt = Date.now();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "backup",
         operation: "lancedb-backup",
       });
-      return { ok: false, error: `LanceDB backup failed: ${err}` };
+      return cleanupAndFail(`LanceDB backup failed: ${err}`);
     }
+  }
+
+  const snapshotSkewMs =
+    sqliteSnapshotAt !== null && lancedbSnapshotAt !== null
+      ? Math.abs(lancedbSnapshotAt - sqliteSnapshotAt)
+      : 0;
+
+  const manifest: BackupManifest = {
+    version: 1,
+    createdAt: start,
+    sqliteSnapshotAt,
+    lancedbSnapshotAt,
+    snapshotSkewMs,
+    sqliteSize,
+    lancedbSize,
+    integrityOk,
+  };
+  try {
+    writeFileSync(join(dest, "backup-manifest.json"), JSON.stringify(manifest, null, 2), "utf-8");
+  } catch (err) {
+    // Non-fatal — the data itself backed up successfully; only the drift-detection metadata
+    // failed to write.
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "backup",
+      operation: "write-manifest",
+      severity: "warning",
+    });
   }
 
   const durationMs = Date.now() - start;
@@ -200,6 +293,9 @@ export async function runBackup(ctx: BackupContext): Promise<BackupCliResult> {
     lancedbSize,
     durationMs,
     integrityOk,
+    sqliteSnapshotAt: sqliteSnapshotAt ?? undefined,
+    lancedbSnapshotAt: lancedbSnapshotAt ?? undefined,
+    snapshotSkewMs,
   };
 }
 
@@ -224,8 +320,12 @@ export function runBackupVerify(ctx: { resolvedSqlitePath: string }): BackupVeri
     const row = db.prepare("PRAGMA integrity_check").get() as { integrity_check?: string } | undefined;
     const integrityOk = row?.integrity_check === "ok";
 
-    // Count facts
-    const countRow = db.prepare("SELECT COUNT(*) as n FROM facts WHERE superseded_by IS NULL").get() as
+    // Count active facts. superseded_at (not superseded_by) is the "is this fact still active"
+    // marker — the daily-quota eviction path and expiry/decay pruning only set superseded_at,
+    // never superseded_by (that column is only populated when a fact is replaced by a specific
+    // newer fact), so filtering on superseded_by IS NULL would miscount evicted/expired facts
+    // as still active (#82).
+    const countRow = db.prepare("SELECT COUNT(*) as n FROM facts WHERE superseded_at IS NULL").get() as
       | { n: number }
       | undefined;
     const factCount = countRow?.n ?? 0;

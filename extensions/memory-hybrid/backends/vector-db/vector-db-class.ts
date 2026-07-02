@@ -1420,6 +1420,15 @@ export class VectorDB {
         const rawId = entry.id ?? randomUUID();
         return entry.id !== undefined && UUID_REGEX.test(entry.id) ? entry.id.toLowerCase() : rawId;
       }
+      // Reject dimension-mismatched vectors before they reach LanceDB. Unlike search()/hasDuplicate(),
+      // which can safely degrade to "no results" on a dim mismatch, a store() write has no safe
+      // degraded behavior — writing a wrong-width vector risks a confusing LanceDB schema error deep
+      // in add(), or (worse) succeeding and corrupting the fixed-width vector column.
+      if (entry.vector.length !== this.vectorDim) {
+        throw new Error(
+          `memory-hybrid: cannot store vector with dim=${entry.vector.length}, table expects dim=${this.vectorDim}. Check embedding.preferredProviders/embedding.dimensions or re-index with a matching embedding provider.`,
+        );
+      }
       // Wait for any in-progress optimization to complete before writing
       if (this.optimizePromise) {
         await this.optimizePromise;
@@ -1660,7 +1669,7 @@ export class VectorDB {
     }
   }
 
-  async hasDuplicate(vector: number[], threshold = 0.95): Promise<boolean> {
+  async hasDuplicate(vector: number[], threshold = 0.95, excludeId?: string): Promise<boolean> {
     try {
       if (!this.lanceDbAvailable && this.lanceInitFailed) return false;
       await this.ensureInitialized();
@@ -1673,9 +1682,13 @@ export class VectorDB {
       if (vector.length !== this.vectorDim) return false;
       const acquired = this.acquireReader();
       try {
-        const results = await this.getTable().vectorSearch(vector).limit(1).toArray();
-        if (results.length === 0) return false;
-        const score = 1 / (1 + (results[0]._distance ?? 0));
+        // Fetch one extra result when excluding an id, so a self-match against the
+        // caller's own (not-yet-deleted) vector doesn't hide a genuine duplicate.
+        const limit = excludeId ? 2 : 1;
+        const results = await this.getTable().vectorSearch(vector).limit(limit).toArray();
+        const match = excludeId ? results.find((row) => String(row.id) !== excludeId) : results[0];
+        if (!match) return false;
+        const score = 1 / (1 + (match._distance ?? 0));
         return score >= threshold;
       } finally {
         this.releaseReader(acquired);
@@ -2002,7 +2015,10 @@ export class VectorDB {
             );
             // The Lance query is not cancellable. Keep the reader slot until it settles so
             // optimize/read-drain accounting remains correct even after returning partial results.
-            queryPromise.finally(() => this.releaseReader(acquired)).catch(() => this.releaseReader(acquired));
+            // `.finally()` alone runs exactly once regardless of outcome — do not also chain
+            // `.catch()` calling releaseReader, which would double-release this slot when the
+            // query later rejects.
+            queryPromise.finally(() => this.releaseReader(acquired)).catch(() => {});
             break;
           }
 

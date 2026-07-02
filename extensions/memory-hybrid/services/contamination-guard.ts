@@ -71,8 +71,17 @@ export async function validateAttributionsWithLlm(
       return { allowed: true, layer: "llm" };
     }
     return { allowed: false, reason: "LLM rejected attributions", layer: "llm" };
-  } catch {
-    return { allowed: true, layer: "llm" };
+  } catch (err) {
+    // Fail closed: a timeout/network/provider error means attribution was never actually
+    // verified, not that it passed. Silently returning allowed:true here let an unverified
+    // deductively-synthesized fact through "enforce" mode's supposed hard block on every
+    // transient LLM hiccup — matching persona-rule-router.ts's fail-closed handling of the
+    // same class of failure (humanReviewRequired/applyAllowed=false on adjudication error).
+    return {
+      allowed: false,
+      reason: `LLM attribution check failed: ${err instanceof Error ? err.message : String(err)}`,
+      layer: "llm",
+    };
   }
 }
 

@@ -167,14 +167,14 @@ export function inferFinishReasonFromLlmContent(content: string): "stop" | "leng
 
   let depth = 0;
   let inString = false;
-  let escape = false;
+  let escaping = false;
   for (const ch of body) {
-    if (escape) {
-      escape = false;
+    if (escaping) {
+      escaping = false;
       continue;
     }
     if (ch === "\\") {
-      escape = true;
+      escaping = true;
       continue;
     }
     if (ch === '"') {

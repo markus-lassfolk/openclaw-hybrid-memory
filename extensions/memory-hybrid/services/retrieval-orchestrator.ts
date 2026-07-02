@@ -16,7 +16,7 @@ import { getCandidateIdsByStructuredFilters, hasActiveFilters } from "../backend
 import type { IssueStore } from "../backends/issue-store.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ClustersConfig, RerankingConfig, RetrievalConfig } from "../config.js";
-import type { MemoryEntry, SearchResult } from "../types/memory.js";
+import type { MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
 import { formatDateUtc } from "../utils/dates.js";
 import { pluginLogger } from "../utils/logger.js";
 import { stableStringify } from "../utils/stable-stringify.js";
@@ -347,7 +347,7 @@ function runGraphStrategy(
  * Minimal interface for fact lookup during orchestration.
  * Satisfied by FactsDB.
  */
-interface FactLookup {
+export interface FactLookup {
   getById(id: string, options?: { asOf?: number; scopeFilter?: unknown }): MemoryEntry | null;
   /** Optional: check whether a fact has an unresolved CONTRADICTS link targeting it. */
   isContradicted?(factId: string): boolean;
@@ -375,11 +375,23 @@ function hasGraphLookup(factsDb: FactLookup): factsDb is FactLookup & GraphFactL
   );
 }
 
-type ClusterCacheEntry = { clusters: Map<string, string>; timestamp: number; minClusterSize: number | undefined };
+type ClusterCacheEntry = {
+  clusters: Map<string, string>;
+  timestamp: number;
+  minClusterSize: number | undefined;
+  linkCount: number | null;
+};
 
-class ClusterCache {
-  private clusterCache: ClusterCacheEntry | null = null;
-  private clusterCacheLinkCount: number | null = null;
+/** Exported for direct unit testing of the per-FactsDB-instance caching behavior. */
+export class ClusterCache {
+  // Keyed by FactsDB instance identity (not just linksCount/minClusterSize): a module-level
+  // single-slot cache previously returned one FactsDB's cluster assignments to a *different*
+  // FactsDB instance whenever their linksCount() happened to coincide (e.g. two vaults both
+  // empty, or both mid-migration with the same link count) — silently corrupting cluster
+  // membership for the caller who didn't own that cached result. A WeakMap keyed by the FactsDB
+  // reference gives each instance its own cache slot and lets entries be garbage-collected
+  // automatically once their FactsDB is no longer referenced elsewhere.
+  private cache = new WeakMap<FactLookup & ClusterFactLookup, ClusterCacheEntry>();
   private readonly ttlMs: number;
 
   constructor(ttlMs = 5 * 60 * 1000) {
@@ -389,12 +401,10 @@ class ClusterCache {
   getClusterMap(factsDb: FactLookup & ClusterFactLookup, minClusterSize?: number): Map<string, string> {
     const now = Date.now();
     const linkCount = typeof factsDb.linksCount === "function" ? factsDb.linksCount() : null;
-    if (this.clusterCache && now - this.clusterCache.timestamp < this.ttlMs) {
-      if (
-        (linkCount == null || linkCount === this.clusterCacheLinkCount) &&
-        this.clusterCache.minClusterSize === minClusterSize
-      ) {
-        return this.clusterCache.clusters;
+    const existing = this.cache.get(factsDb);
+    if (existing && now - existing.timestamp < this.ttlMs) {
+      if ((linkCount == null || linkCount === existing.linkCount) && existing.minClusterSize === minClusterSize) {
+        return existing.clusters;
       }
     }
 
@@ -406,14 +416,12 @@ class ClusterCache {
       }
     }
 
-    this.clusterCache = { clusters: clusterByFact, timestamp: now, minClusterSize };
-    this.clusterCacheLinkCount = linkCount;
+    this.cache.set(factsDb, { clusters: clusterByFact, timestamp: now, minClusterSize, linkCount });
     return clusterByFact;
   }
 
   invalidate(): void {
-    this.clusterCache = null;
-    this.clusterCacheLinkCount = null;
+    this.cache = new WeakMap();
   }
 }
 
@@ -452,7 +460,11 @@ function describeEmbeddingRegistry(registry: EmbeddingRegistry | null | undefine
   };
 }
 
-function buildSemanticCacheFilterKey(config: RetrievalConfig, options: RetrievalPipelineOptions): string {
+function buildSemanticCacheFilterKey(
+  config: RetrievalConfig,
+  options: RetrievalPipelineOptions,
+  policy: ExplicitDeepRetrievalPolicy | InteractiveRecallPolicy | ConstrainedRetrievalPolicy,
+): string {
   const expanderMode =
     options.queryExpander && typeof (options.queryExpander as QueryExpander).getMode === "function"
       ? options.queryExpander.getMode()
@@ -465,6 +477,20 @@ function buildSemanticCacheFilterKey(config: RetrievalConfig, options: Retrieval
       : null;
 
   return stableStringify({
+    // Distinct retrieval modes/policies (interactive-recall vs. explicit-deep vs.
+    // constrained-recall) enable different sets of RRF fusion/graph/alias/query expansion — a
+    // cached result computed under one policy must never be served for a request resolved under
+    // a different one (#storage-recall-review).
+    policyMode: policy.mode,
+    policyFlags: {
+      allowRrfFusion: "allowRrfFusion" in policy ? policy.allowRrfFusion : null,
+      allowGraphExpansion: "allowGraphExpansion" in policy ? policy.allowGraphExpansion : null,
+      allowAliasExpansion: "allowAliasExpansion" in policy ? policy.allowAliasExpansion : null,
+      allowQueryExpansion: "allowQueryExpansion" in policy ? policy.allowQueryExpansion : null,
+      allowMultiModelSemantic: "allowMultiModelSemantic" in policy ? policy.allowMultiModelSemantic : null,
+      allowHyde: "allowHyde" in policy ? policy.allowHyde : null,
+      allowReranking: "allowReranking" in policy ? policy.allowReranking : null,
+    },
     strategies: [...config.strategies].sort(),
     rrfK: config.rrf_k,
     semanticTopK: config.semanticTopK,
@@ -541,12 +567,17 @@ function buildOrchestratorResult(
   fused: FusedResult[],
   orderedEntries: Array<{ factId: string; entry: MemoryEntry }>,
   budgetTokens: number,
+  scopeFilter?: ScopeFilter,
 ): OrchestratorResult {
   const contradictedIds = collectContradictedIds(factsDb, orderedEntries);
   const provenanceByFactId = new Map<string, string>();
   for (const { factId, entry } of orderedEntries) {
     const provenance = parseFactProvenanceJson(entry.provenanceJson);
-    const sourceFacts = resolveProvenanceSourceFacts(factsDb, provenance, 3);
+    // Source facts referenced by provenance must be re-checked against the caller's own scope —
+    // a consolidated/derived fact can legitimately reference source facts from another
+    // scope, and previewing their text here would leak them to a caller who couldn't
+    // otherwise see them.
+    const sourceFacts = resolveProvenanceSourceFacts(factsDb, provenance, 3, scopeFilter);
     if (sourceFacts.length === 0) continue;
     const preview = sourceFacts.map((s) => sanitizePromptInjection(s.text).slice(0, 40)).join("; ");
     provenanceByFactId.set(factId, `${sourceFacts.length} src: ${preview}`.slice(0, 120));
@@ -605,7 +636,7 @@ function buildCachedResult(
     acceptedCount++;
   }
 
-  return buildOrchestratorResult(factsDb, fused, orderedEntries, budgetTokens);
+  return buildOrchestratorResult(factsDb, fused, orderedEntries, budgetTokens, options.scopeFilter as ScopeFilter | undefined);
 }
 
 /**
@@ -764,7 +795,7 @@ export async function runExplicitDeepRetrieval(
 
   const validator = queryValidator ?? validateQueryForMemoryLookup;
   const vectorDbWithCache = vectorDb as SemanticCacheCapableVectorDB;
-  const semanticCacheFilterKey = buildSemanticCacheFilterKey(config, options);
+  const semanticCacheFilterKey = buildSemanticCacheFilterKey(config, options, policy);
   const activeDocumentGrader =
     documentGrader ??
     (adaptiveOpenai && documentGradingConfig?.enabled
@@ -856,7 +887,13 @@ export async function runExplicitDeepRetrieval(
             (rerankedOrder.get(a.factId) ?? Number.POSITIVE_INFINITY) -
             (rerankedOrder.get(b.factId) ?? Number.POSITIVE_INFINITY),
         );
-      return buildOrchestratorResult(factsDb, fusedReranked, orderedEntriesReranked, budgetTokens);
+      return buildOrchestratorResult(
+        factsDb,
+        fusedReranked,
+        orderedEntriesReranked,
+        budgetTokens,
+        options.scopeFilter as ScopeFilter | undefined,
+      );
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "retrieval",
@@ -1082,12 +1119,14 @@ export async function runExplicitDeepRetrieval(
         } else {
           const existing = deduped.get(res.factId)!;
           existing.sources.push({ strategy: res.source || "unknown", rank: res.rank });
-          if (res.source === "semantic" || res.source?.startsWith("semantic:")) {
-            const semanticScore = 1 / (k + res.rank);
-            if (semanticScore > existing.finalScore) {
-              existing.finalScore = semanticScore;
-              existing.rrfScore = semanticScore;
-            }
+          // The 1/(k+rank) score formula is the same regardless of which strategy produced the
+          // hit — keep the best score across ALL strategies that found this fact, not just
+          // "semantic" ones. A fact ranked #1 by fts5/issues/aliases must not lose to a worse
+          // score kept only because the first-seen strategy happened to run first.
+          const candidateScore = 1 / (k + res.rank);
+          if (candidateScore > existing.finalScore) {
+            existing.finalScore = candidateScore;
+            existing.rrfScore = candidateScore;
           }
         }
       }
@@ -1179,7 +1218,13 @@ export async function runExplicitDeepRetrieval(
       if (grades.length > 0) {
         if (grades.every((grade) => !grade.relevant)) {
           return {
-            result: buildOrchestratorResult(factsDb, scopedFused, [], budgetTokens),
+            result: buildOrchestratorResult(
+              factsDb,
+              scopedFused,
+              [],
+              budgetTokens,
+              options.scopeFilter as ScopeFilter | undefined,
+            ),
             shouldRewrite: true,
             fromCache: false,
           };
@@ -1242,7 +1287,13 @@ export async function runExplicitDeepRetrieval(
     }
 
     return {
-      result: buildOrchestratorResult(factsDb, scopedFused, orderedEntries, budgetTokens),
+      result: buildOrchestratorResult(
+        factsDb,
+        scopedFused,
+        orderedEntries,
+        budgetTokens,
+        options.scopeFilter as ScopeFilter | undefined,
+      ),
       shouldRewrite: false,
       fromCache: false,
     };

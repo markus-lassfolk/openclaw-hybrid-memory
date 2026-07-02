@@ -640,6 +640,85 @@ describe("resolve-contradictions auto mode", () => {
     expect(result.reviewItems[0]?.possibleOverloadedEntity).toBe(true);
   });
 
+  it("does not let LLM adjudication override possible entity reuse", async () => {
+    const older = storeProjectFact({
+      entity: "hybrid-memory-issue-1272-pr",
+      key: "status",
+      value: "done — PR #1284 merged",
+      text: "PR #1284 for issue #1272 merged",
+      confidence: 1.0,
+    });
+    const newer = storeProjectFact({
+      entity: "hybrid-memory-issue-1272-pr",
+      key: "status",
+      value: "in_progress — PR #1288 open",
+      text: "Follow-up PR #1288 for issue #1272 in progress, related to issue #999",
+      confidence: 1.0,
+      createdAtOffset: 30,
+    });
+    db.recordContradiction(newer.id, older.id);
+
+    let adjudicateCalled = false;
+    const result = await db.resolveContradictionsAuto({
+      dryRun: false,
+      llm: true,
+      adjudicate: async () => {
+        adjudicateCalled = true;
+        return { decision: "keep_new", confidence: 1, reason: "Confidently wrong." };
+      },
+    });
+    expect(adjudicateCalled).toBe(false);
+    expect(result.llm).toBe(0);
+    expect(result.decisionsApplied).toBe(0);
+    expect(result.manualReview).toBe(1);
+    expect(result.reviewItems[0]?.suggestedReason).toContain("entity reuse");
+  });
+
+  it("does not let LLM adjudication override a verified older fact", async () => {
+    const older = storeProjectFact({
+      entity: "issue-1692",
+      key: "status",
+      value: "blocked",
+      text: "Issue #1692 is blocked",
+      confidence: 1,
+    });
+    const newer = storeProjectFact({
+      entity: "issue-1692",
+      key: "status",
+      value: "done",
+      text: "Issue #1692 is done",
+      confidence: 0.7,
+      createdAtOffset: 60,
+    });
+    db.recordContradiction(newer.id, older.id);
+
+    const nowIso = new Date().toISOString();
+    // @ts-expect-error accessing internal liveDb for test setup only
+    db.liveDb
+      .prepare(
+        `INSERT INTO verified_facts (
+           id, fact_id, canonical_text, checksum, verified_at, verified_by, next_verification, version, previous_version_id, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, NULL, 1, NULL, ?)`,
+      )
+      .run(`vf-${older.id}`, older.id, older.text, "test-checksum", nowIso, "agent", nowIso);
+
+    let adjudicateCalled = false;
+    const result = await db.resolveContradictionsAuto({
+      dryRun: false,
+      llm: true,
+      adjudicate: async () => {
+        adjudicateCalled = true;
+        return { decision: "keep_new", confidence: 1, reason: "Confidently wrong." };
+      },
+    });
+    expect(adjudicateCalled).toBe(false);
+    expect(result.llm).toBe(0);
+    expect(result.decisionsApplied).toBe(0);
+    expect(result.manualReview).toBe(1);
+    expect(result.reviewItems[0]?.suggestedReason).toContain("verified");
+    expect(db.getById(older.id)?.supersededAt).toBeNull();
+  });
+
   it("keeps low-confidence LLM adjudication in manual review", async () => {
     const older = db.store({
       text: "The current preferred deploy strategy is blue-green",

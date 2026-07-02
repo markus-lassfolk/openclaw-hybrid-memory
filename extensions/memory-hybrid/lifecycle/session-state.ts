@@ -9,10 +9,31 @@
 import type { SessionSeenFacts } from "../services/ambient-retrieval.js";
 import type { FrustrationConversationTurn } from "../services/frustration-detector.js";
 import { clearIntentSessionCache } from "../services/intent-classifier.js";
-import { clearNudgeSessionState } from "../services/memory-nudge.js";
 import type { SessionState } from "./types.js";
 
 const MAX_TRACKED_SESSIONS = 200;
+
+/** Insertion-order eviction fallback: trims a Map down to `limit` entries, oldest-inserted first. */
+function pruneMapToLimit<K, V>(map: Map<K, V>, limit: number): void {
+  if (map.size <= limit) return;
+  const excess = map.size - limit;
+  const keys = map.keys();
+  for (let i = 0; i < excess; i++) {
+    const { value } = keys.next();
+    if (value !== undefined) map.delete(value);
+  }
+}
+
+/** Insertion-order eviction fallback: trims a Set down to `limit` entries, oldest-inserted first. */
+function pruneSetToLimit<T>(set: Set<T>, limit: number): void {
+  if (set.size <= limit) return;
+  const excess = set.size - limit;
+  const values = set.values();
+  for (let i = 0; i < excess; i++) {
+    const { value } = values.next();
+    if (value !== undefined) set.delete(value);
+  }
+}
 
 /** API slice used when resolving the current session key from a hook event (#990). */
 export type SessionKeyHookApi = { context?: { sessionId?: string; sessionKey?: string } };
@@ -82,6 +103,13 @@ export function createSessionState(
     sessionLastActivity.delete(sessionKey);
     // Do NOT clear capabilityHintsSessionsSeen here — that set persists across agent turns
     // within the same chat session so "session" mode injects once per chat, not once per turn.
+    // Do NOT clear memory-nudge state here either, for the same reason: clearSessionState runs
+    // at the end of EVERY agent turn (see run-capture.ts), not once per session, but
+    // recordNudgeEmission's timestamp is meant to persist across turns to enforce
+    // nudge.throttleHours — clearing it here would reset the throttle every turn, so the nudge
+    // would re-fire on every single turn instead of at most once per throttle window.
+    // services/memory-nudge.ts's own sweepStaleNudgeSessionState (TTL-based) and
+    // disposeMemoryNudge (plugin shutdown) handle cleanup of this state instead.
     const prefix = `${sessionKey}:`;
     for (const key of authFailureRecallsThisSession.keys()) {
       if (key.startsWith(prefix)) authFailureRecallsThisSession.delete(key);
@@ -91,7 +119,6 @@ export function createSessionState(
     progressiveIndexBySession?.delete(sessionKey);
     lastAutoRecallPromptBySession?.delete(sessionKey);
     clearIntentSessionCache(sessionKey);
-    clearNudgeSessionState(sessionKey);
   }
 
   function clearInjectedFactIdsForSession(
@@ -102,41 +129,52 @@ export function createSessionState(
   }
 
   function pruneSessionMaps(injectedFactIdsBySession?: Map<string, Set<string>>): void {
-    if (ambientSeenFactsMap.size > MAX_TRACKED_SESSIONS) {
-      const excess = ambientSeenFactsMap.size - MAX_TRACKED_SESSIONS;
-      const keys = ambientSeenFactsMap.keys();
-      for (let i = 0; i < excess; i++) {
-        const { value } = keys.next();
-        if (value) {
-          ambientSeenFactsMap.delete(value);
-          ambientLastEmbeddingMap.delete(value);
+    // Recency-based, single-decision eviction for every session-keyed map declared in this
+    // closure. touchSession() does `sessionLastActivity.set(key, Date.now())`, which updates the
+    // value on an existing key WITHOUT moving it in Map iteration order (insertion order is
+    // unaffected by re-setting an existing key, per the JS Map spec) — pruning each map
+    // independently by its own `.keys()` iteration order therefore evicted oldest-INSERTED
+    // sessions, not least-recently-ACTIVE ones, letting a still-hot session be evicted ahead of
+    // an idle one. touchSession is called once per turn (stage-setup.ts, the first stage in the
+    // pipeline) for every session that reaches any of these maps, so sessionLastActivity's
+    // timestamps are the correct source of recency truth for all of them. Sorting by that value
+    // once and applying the same eviction set everywhere also fixes a separate bug: several maps
+    // (frustrationThresholdBandMap, changeNotifyStateMap, displayRevertMap,
+    // recallInFlightBySession, pendingCheckpointGuardBySession) were never pruned at all here —
+    // only clearSessionState()/clearAll() ever touched them — so a session whose
+    // sessionLastActivity entry got evicted by the old logic became permanently invisible to
+    // sweepStaleSessions (which iterates sessionLastActivity to find stale keys), leaking those
+    // maps' entries for that session forever in a long-running gateway.
+    if (sessionLastActivity.size > MAX_TRACKED_SESSIONS) {
+      const excess = sessionLastActivity.size - MAX_TRACKED_SESSIONS;
+      const staleKeys = [...sessionLastActivity.entries()]
+        .sort((a, b) => a[1] - b[1])
+        .slice(0, excess)
+        .map(([key]) => key);
+      for (const key of staleKeys) {
+        sessionLastActivity.delete(key);
+        ambientSeenFactsMap.delete(key);
+        ambientLastEmbeddingMap.delete(key);
+        frustrationStateMap.delete(key);
+        frustrationThresholdBandMap.delete(key);
+        changeNotifyStateMap.delete(key);
+        displayRevertMap.delete(key);
+        sessionStartSeen.delete(key);
+        capabilityHintsSessionsSeen.delete(key);
+        recallInFlightBySession.delete(key);
+        pendingCheckpointGuardBySession.delete(key);
+        const prefix = `${key}:`;
+        for (const k of authFailureRecallsThisSession.keys()) {
+          if (k.startsWith(prefix)) authFailureRecallsThisSession.delete(k);
         }
+        progressiveIndexBySession?.delete(key);
+        lastAutoRecallPromptBySession?.delete(key);
+        injectedFactIdsBySession?.delete(key);
       }
     }
-    if (frustrationStateMap.size > MAX_TRACKED_SESSIONS) {
-      const excess = frustrationStateMap.size - MAX_TRACKED_SESSIONS;
-      const keys = frustrationStateMap.keys();
-      for (let i = 0; i < excess; i++) {
-        const { value } = keys.next();
-        if (value) frustrationStateMap.delete(value);
-      }
-    }
-    if (sessionStartSeen.size > MAX_TRACKED_SESSIONS) {
-      const excess = sessionStartSeen.size - MAX_TRACKED_SESSIONS;
-      const keys = sessionStartSeen.keys();
-      for (let i = 0; i < excess; i++) {
-        const { value } = keys.next();
-        if (value) sessionStartSeen.delete(value);
-      }
-    }
-    if (capabilityHintsSessionsSeen.size > MAX_TRACKED_SESSIONS) {
-      const excess = capabilityHintsSessionsSeen.size - MAX_TRACKED_SESSIONS;
-      const keys = capabilityHintsSessionsSeen.keys();
-      for (let i = 0; i < excess; i++) {
-        const { value } = keys.next();
-        if (value) capabilityHintsSessionsSeen.delete(value);
-      }
-    }
+    // Independent safety net: authFailureRecallsThisSession uses composite `${sessionKey}:...`
+    // keys that aren't 1:1 with sessionLastActivity entries, so a single session could still
+    // accumulate many of them; keep its own higher cap as a backstop.
     if (authFailureRecallsThisSession.size > MAX_TRACKED_SESSIONS * 3) {
       const excess = authFailureRecallsThisSession.size - MAX_TRACKED_SESSIONS * 3;
       const keys = authFailureRecallsThisSession.keys();
@@ -145,38 +183,24 @@ export function createSessionState(
         if (value) authFailureRecallsThisSession.delete(value);
       }
     }
-    if (sessionLastActivity.size > MAX_TRACKED_SESSIONS) {
-      const excess = sessionLastActivity.size - MAX_TRACKED_SESSIONS;
-      const keys = sessionLastActivity.keys();
-      for (let i = 0; i < excess; i++) {
-        const { value } = keys.next();
-        if (value) sessionLastActivity.delete(value);
-      }
-    }
-    if (progressiveIndexBySession && progressiveIndexBySession.size > MAX_TRACKED_SESSIONS) {
-      const excess = progressiveIndexBySession.size - MAX_TRACKED_SESSIONS;
-      const keys = progressiveIndexBySession.keys();
-      for (let i = 0; i < excess; i++) {
-        const { value } = keys.next();
-        if (value) progressiveIndexBySession.delete(value);
-      }
-    }
-    if (lastAutoRecallPromptBySession && lastAutoRecallPromptBySession.size > MAX_TRACKED_SESSIONS) {
-      const excess = lastAutoRecallPromptBySession.size - MAX_TRACKED_SESSIONS;
-      const keys = lastAutoRecallPromptBySession.keys();
-      for (let i = 0; i < excess; i++) {
-        const { value } = keys.next();
-        if (value) lastAutoRecallPromptBySession.delete(value);
-      }
-    }
-    if (injectedFactIdsBySession && injectedFactIdsBySession.size > MAX_TRACKED_SESSIONS) {
-      const excess = injectedFactIdsBySession.size - MAX_TRACKED_SESSIONS;
-      const keys = injectedFactIdsBySession.keys();
-      for (let i = 0; i < excess; i++) {
-        const { value } = keys.next();
-        if (value) injectedFactIdsBySession.delete(value);
-      }
-    }
+    // Independent per-map fallbacks: the coordinated eviction above only fires once
+    // sessionLastActivity itself exceeds the cap, so a map populated without a matching
+    // touchSession() call (or driven past the limit faster than sessionLastActivity) would
+    // otherwise grow unbounded. Every session-keyed map gets its own insertion-order cap as a
+    // defensive backstop, in addition to the recency-correct coordinated eviction above.
+    pruneMapToLimit(ambientSeenFactsMap, MAX_TRACKED_SESSIONS);
+    pruneMapToLimit(ambientLastEmbeddingMap, MAX_TRACKED_SESSIONS);
+    pruneMapToLimit(frustrationStateMap, MAX_TRACKED_SESSIONS);
+    pruneMapToLimit(frustrationThresholdBandMap, MAX_TRACKED_SESSIONS);
+    pruneMapToLimit(changeNotifyStateMap, MAX_TRACKED_SESSIONS);
+    pruneMapToLimit(displayRevertMap, MAX_TRACKED_SESSIONS);
+    pruneSetToLimit(sessionStartSeen, MAX_TRACKED_SESSIONS);
+    pruneSetToLimit(capabilityHintsSessionsSeen, MAX_TRACKED_SESSIONS);
+    pruneMapToLimit(recallInFlightBySession, MAX_TRACKED_SESSIONS);
+    pruneMapToLimit(pendingCheckpointGuardBySession, MAX_TRACKED_SESSIONS);
+    if (progressiveIndexBySession) pruneMapToLimit(progressiveIndexBySession, MAX_TRACKED_SESSIONS);
+    if (lastAutoRecallPromptBySession) pruneMapToLimit(lastAutoRecallPromptBySession, MAX_TRACKED_SESSIONS);
+    if (injectedFactIdsBySession) pruneMapToLimit(injectedFactIdsBySession, MAX_TRACKED_SESSIONS);
   }
 
   function resolveSessionKey(event: unknown, api?: SessionKeyHookApi): string | null {

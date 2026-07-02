@@ -13,6 +13,7 @@ import type { MemoryEntry } from "../types/memory.js";
 import { normalizeProposalText } from "../cli/proposals.js";
 import type { PersonaRuleRoutingConfig } from "../config/types/agents.js";
 import { cosineSimilarity } from "./ambient-retrieval.js";
+import { capturePluginError } from "./error-reporter.js";
 
 export type AuthorityTarget =
   | "SOUL.md"
@@ -142,6 +143,36 @@ const OPERATIONAL_FAMILY = new Set<string>(["AGENTS.md", "TOOLS.md"]);
 const IDENTITY_FAMILY = new Set<string>(["SOUL.md", "IDENTITY.md"]);
 
 const embeddingCache = new Map<string, { vector: number[]; expiresAt: number }>();
+/** Hard cap on cached embeddings — this is a module-level, process-lifetime Map with no other
+ * eviction beyond lazy TTL-checks-on-read, so without a cap it grows unbounded across the life
+ * of the process (proposal triage/routing runs keep hashing new text into new cache keys). */
+export const EMBEDDING_CACHE_MAX_ENTRIES_FOR_TESTS = 2000;
+const EMBEDDING_CACHE_MAX_ENTRIES = EMBEDDING_CACHE_MAX_ENTRIES_FOR_TESTS;
+
+/** Test-only accessors for the module-level embedding cache; not part of the public API. */
+export function embeddingCacheSizeForTests(): number {
+  return embeddingCache.size;
+}
+export async function primeEmbeddingCacheForTests(
+  text: string,
+  embedText: (text: string) => Promise<number[]>,
+  ttlSeconds: number,
+): Promise<number[] | null> {
+  return cachedEmbed(text, embedText, ttlSeconds);
+}
+
+/** Evict expired entries first, then oldest-inserted entries, until back under the cap. */
+function pruneEmbeddingCache(now: number): void {
+  if (embeddingCache.size <= EMBEDDING_CACHE_MAX_ENTRIES) return;
+  for (const [key, entry] of embeddingCache) {
+    if (entry.expiresAt <= now) embeddingCache.delete(key);
+  }
+  while (embeddingCache.size > EMBEDDING_CACHE_MAX_ENTRIES) {
+    const oldestKey = embeddingCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    embeddingCache.delete(oldestKey);
+  }
+}
 
 export const personaRuleRoutingMetrics = {
   routingSuggestions: 0,
@@ -278,8 +309,16 @@ async function cachedEmbed(
   try {
     const vector = await embedText(text);
     embeddingCache.set(key, { vector, expiresAt: now + ttlSeconds * 1000 });
+    pruneEmbeddingCache(now);
     return vector;
-  } catch {
+  } catch (err) {
+    // Log so a persistently-failing embedding provider is visible instead of looking identical
+    // to "no embedText configured" — both silently degrade routing to text-pattern heuristics.
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "persona-rule-router",
+      operation: "cachedEmbed",
+      severity: "warning",
+    });
     return null;
   }
 }
@@ -337,7 +376,14 @@ function listRuleFacts(factsDb: FactsDB | null | undefined, limit: number): Memo
   if (!factsDb) return [];
   try {
     return factsDb.listFactsByCategory("rule", limit);
-  } catch {
+  } catch (err) {
+    // Log so a genuine DB read failure is distinguishable from "no rule facts exist yet" —
+    // both currently degrade routing/dedup the same way (proceeding with zero rule facts).
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "persona-rule-router",
+      operation: "listRuleFacts",
+      severity: "warning",
+    });
     return [];
   }
 }
@@ -694,7 +740,7 @@ export async function routePersonaProposal(input: RoutePersonaProposalInput): Pr
 }
 
 export function resolvePersonaRuleRoutingConfig(
-  cfg: { personaRuleRouting?: PersonaRuleRoutingConfig },
+  cfg: { personaRuleRouting?: Partial<PersonaRuleRoutingConfig> },
 ): PersonaRuleRoutingConfig {
   return { ...DEFAULT_PERSONA_RULE_ROUTING, ...cfg.personaRuleRouting };
 }

@@ -40,16 +40,15 @@ export function extractEntitiesFromText(
 
     if (!lowerText.includes(lowerEntity)) continue;
 
+    // A substring match alone is not evidence of a real mention — "art" matching inside "smart",
+    // "chart", or "artist" would otherwise feed autoLinkEntities() and create a spurious
+    // RELATED_TO edge between unrelated facts. Only a word-boundary match counts.
     const escapedForRegex = lowerEntity.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const wordBoundaryRe = new RegExp(`\\b${escapedForRegex}\\b`);
     if (wordBoundaryRe.test(lowerText)) {
       const current = seen.get(entity) ?? 0;
       if (current < 1.0) seen.set(entity, 1.0);
-      continue;
     }
-
-    const current = seen.get(entity) ?? 0;
-    if (current < 0.7) seen.set(entity, 0.7);
   }
 
   const ipRe = /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g;

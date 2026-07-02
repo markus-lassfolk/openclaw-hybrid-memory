@@ -263,9 +263,16 @@ export class EventLog extends BaseSqliteStore {
     return rows.map((r) => this.rowToEntry(r));
   }
 
-  /** Mark a set of events as consolidated into the given fact id. Returns rows updated. */
+  /**
+   * Mark a set of events as consolidated into the given fact id. Returns rows updated.
+   * Guarded by `AND consolidated_into IS NULL` so a race against a concurrent consolidation
+   * run can't clobber an event's existing consolidated_into with a different fact id — the
+   * first writer wins and later writers simply see 0 changes for that id.
+   */
   markConsolidated(eventIds: string[], factId: string): number {
-    const stmt = this.liveDb.prepare("UPDATE event_log SET consolidated_into = ? WHERE id = ?");
+    const stmt = this.liveDb.prepare(
+      "UPDATE event_log SET consolidated_into = ? WHERE id = ? AND consolidated_into IS NULL",
+    );
     const updateAll = createTransaction(this.liveDb, (ids: string[]) => {
       let updated = 0;
       for (const id of ids) {

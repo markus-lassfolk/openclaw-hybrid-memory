@@ -9,6 +9,7 @@ import { join } from "node:path";
 
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { getEnv } from "../../../utils/env-manager.js";
+import { createTransaction } from "../../../utils/sqlite-transaction.js";
 import { formatTimestampUtc, nowIso } from "../../../utils/dates.js";
 import { stablePersonaProposalTriageJson } from "../../../services/persona-proposal-triage.js";
 import { buildAppliedContent, buildUnifiedDiff } from "../../proposals.js";
@@ -117,9 +118,14 @@ Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
     .command("preserve <id>")
     .description("Force-preserve a fact from tiered trimming. Run without options to show current preserve status.")
     .option("--until <epoch>", "Preserve until epoch seconds, 'never' to clear, or shorthand like '1y' (default: 1y)")
-    .option("-t, --tag <tag>", "Add a preserve tag (can be repeated)")
+    .option(
+      "-t, --tag <tag>",
+      "Add a preserve tag (can be repeated)",
+      (val: string, prev: string[]) => [...prev, val],
+      [] as string[],
+    )
     .action(
-      withExit(async (id: string, opts?: { until?: string; tag?: string | null }) => {
+      withExit(async (id: string, opts?: { until?: string; tag?: string[] }) => {
         try {
           const fact = factsDb.get(id);
           if (!fact) {
@@ -157,20 +163,18 @@ Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
             untilSec = nowSec + YEAR_SEC;
           }
 
-          const addedTags: string[] = [];
-          if (opts?.tag) {
-            const tagVal = opts.tag;
-            if (Array.isArray(tagVal)) {
-              addedTags.push(...tagVal.map(String));
-            } else {
-              addedTags.push(String(tagVal));
-            }
-          }
+          const addedTags = (opts?.tag ?? []).map(String);
 
-          factsDb.setPreserveUntil(id, untilSec);
-          if (addedTags.length > 0) {
-            factsDb.setPreserveTags(id, addedTags, "add");
-          }
+          // Both mutations run in one transaction: if setPreserveTags throws after
+          // setPreserveUntil already succeeded, the whole command would otherwise report failure
+          // while silently leaving preserveUntil changed and preserveTags untouched.
+          const runPreserveMutation = createTransaction(factsDb.getRawDb(), () => {
+            factsDb.setPreserveUntil(id, untilSec);
+            if (addedTags.length > 0) {
+              factsDb.setPreserveTags(id, addedTags, "add");
+            }
+          });
+          runPreserveMutation();
           const final = factsDb.getById(id);
           const preview = fact.text.length > 80 ? `${fact.text.slice(0, 80)}…` : fact.text;
           console.log(`Preserved: "${preview}"`);

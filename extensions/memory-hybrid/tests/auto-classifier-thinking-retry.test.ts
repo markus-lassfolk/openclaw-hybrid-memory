@@ -52,6 +52,11 @@ function makeFactsDb(dir: string, otherCount: number): InstanceType<typeof Facts
 
 const noop = { info: () => {}, warn: () => {} };
 
+/** Build a classify-batch response in the current {n, category} format (see #77). */
+function classifyResponse(categories: string[]): string {
+  return JSON.stringify(categories.map((category, i) => ({ n: i + 1, category })));
+}
+
 /**
  * Mock that returns thinking-only content on the first attempt (truncated,
  * no JSON) and a valid JSON array on the retry. Asserts the retry happens
@@ -183,7 +188,18 @@ describe("auto-classify MiniMax thinking-only retry (#2006)", () => {
 
     const openai = mockThinkingThenJson({
       firstResponse: "<redacted_thinking>truncated mid-reasoning no JSON here at all",
-      secondResponse: '["fact","entity","preference","fact","entity","preference","fact","entity","preference","fact"]',
+      secondResponse: classifyResponse([
+        "fact",
+        "entity",
+        "preference",
+        "fact",
+        "entity",
+        "preference",
+        "fact",
+        "entity",
+        "preference",
+        "fact",
+      ]),
       requestLog,
     });
 
@@ -292,7 +308,7 @@ describe("auto-classify MiniMax thinking-only retry (#2006)", () => {
 
     const openai = mockThinkingThenJson({
       firstResponse: "<redacted_thinking>truncated mid-reasoning",
-      secondResponse: '<redacted_thinking>reasoning</redacted_thinking>["fact","entity","preference","fact"]',
+      secondResponse: `<redacted_thinking>reasoning</redacted_thinking>${classifyResponse(["fact", "entity", "preference", "fact"])}`,
       requestLog,
     });
 
@@ -338,7 +354,7 @@ describe("auto-classify MiniMax thinking-only retry (#2006)", () => {
 
     const openai = mockThinkingThenJson({
       firstResponse: '["fact", "entity"]',
-      secondResponse: '["fact", "entity", "preference", "fact", "entity"]',
+      secondResponse: classifyResponse(["fact", "entity", "preference", "fact", "entity"]),
       requestLog,
     });
 

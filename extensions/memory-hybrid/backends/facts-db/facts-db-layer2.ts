@@ -126,7 +126,10 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
    * so trajectory paraphrases (#1186) do not pollute reflection input.
    * More efficient than getAll+filter.
    */
-  getRecentFacts(days: number, options?: { excludeCategories?: string[]; excludeTags?: string[] }): MemoryEntry[] {
+  getRecentFacts(
+    days: number,
+    options?: { excludeCategories?: string[]; excludeTags?: string[]; globalOnly?: boolean },
+  ): MemoryEntry[] {
     return getRecentFactsImpl(this.liveDb, days, options);
   }
 
@@ -497,8 +500,8 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     return expireBySourcePatternImpl(this.liveDb, options);
   }
 
-  getByCategory(category: string): MemoryEntry[] {
-    return getByCategoryImpl(this.liveDb, category);
+  getByCategory(category: string, globalOnly?: boolean): MemoryEntry[] {
+    return getByCategoryImpl(this.liveDb, category, globalOnly);
   }
 
   /** List non-superseded facts by category (for CLI list command). */

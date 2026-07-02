@@ -303,12 +303,22 @@ export function recordStorageGrowthSample(
   }
   const d = new Date();
   const startOfDayUtc = Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / 1000);
-  const alreadyToday =
-    !opts?.force &&
-    (raw.prepare("SELECT 1 AS ok FROM storage_growth_history WHERE recorded_at >= ? LIMIT 1").get(startOfDayUtc) as
-      | { ok: number }
-      | undefined);
-  if (alreadyToday) {
+  // The not-yet-sampled-today check and the insert are combined into one statement so a
+  // concurrent process (e.g. a cron audit-health run overlapping a manual invocation) can't
+  // interleave between a separate SELECT and INSERT and create two rows for the same day.
+  const insertSql = opts?.force
+    ? "INSERT INTO storage_growth_history (recorded_at, sqlite_bytes, lance_bytes, link_count, fact_count) VALUES (?, ?, ?, ?, ?)"
+    : `INSERT INTO storage_growth_history (recorded_at, sqlite_bytes, lance_bytes, link_count, fact_count)
+       SELECT ?, ?, ?, ?, ?
+       WHERE NOT EXISTS (SELECT 1 FROM storage_growth_history WHERE recorded_at >= ?)`;
+  const insertParams = opts?.force
+    ? [sample.recordedAt, sample.sqliteBytes, sample.lanceBytes, sample.linkCount, sample.factCount]
+    : [sample.recordedAt, sample.sqliteBytes, sample.lanceBytes, sample.linkCount, sample.factCount, startOfDayUtc];
+  const insertResult = raw.prepare(insertSql).run(...insertParams) as {
+    changes?: number | bigint;
+    lastInsertRowid?: number | bigint;
+  };
+  if (Number(insertResult.changes ?? 0) === 0) {
     return {
       inserted: false,
       recordedAt: nowSecReport,
@@ -318,13 +328,6 @@ export function recordStorageGrowthSample(
       sample,
     };
   }
-  const insertResult = raw
-    .prepare(
-      "INSERT INTO storage_growth_history (recorded_at, sqlite_bytes, lance_bytes, link_count, fact_count) VALUES (?, ?, ?, ?, ?)",
-    )
-    .run(sample.recordedAt, sample.sqliteBytes, sample.lanceBytes, sample.linkCount, sample.factCount) as {
-    lastInsertRowid?: number | bigint;
-  };
   const sampleId = insertResult.lastInsertRowid ? Number(insertResult.lastInsertRowid) : null;
   return {
     inserted: true,
@@ -957,8 +960,14 @@ export function buildAuditHealthReport(
           `Run \`openclaw hybrid-mem enrich-entities --limit ${ENTITY_ENRICHMENT_DEFAULT_LIMIT} --adaptive-catch-up\` or increase the limit to clear the backlog faster.`,
         );
       }
-    } catch {
-      // Non-fatal: backlog query failure does not block the audit report.
+    } catch (err) {
+      // Non-fatal: backlog query failure does not block the audit report, but --strict-errors
+      // still needs to see it — a silently-swallowed error here previously made the report
+      // look clean even though a section failed to run.
+      errors.push({
+        section: "entityEnrichmentBacklog",
+        message: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 

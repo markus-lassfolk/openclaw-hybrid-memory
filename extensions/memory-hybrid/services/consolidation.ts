@@ -375,6 +375,19 @@ export async function runConsolidate(
         }
       }
     }
+    if (vector === undefined) {
+      // The merged fact was stored without a vector (embedding failed above). The source facts
+      // still have working vectors and are still semantically searchable; the merged fact is not
+      // (until a later re-embed pass fixes it). Deleting the sources here would trade searchable
+      // facts for an unsearchable one — net data loss with no compensating benefit. Keep both the
+      // new (lexical-only) merged fact and the sources intact; a future consolidation run can
+      // retry the merge once embeddings are available again.
+      logger.warn(
+        `memory-hybrid: consolidate — merged fact ${entry.id.slice(0, 8)} has no vector (embed failed); keeping ${clusterIds.length} source fact(s) instead of deleting them`,
+      );
+      clustersFailed++;
+      continue;
+    }
     // Delete source vectors before removing SQLite rows: if we deleted SQLite first and then
     // crashed, the vectors would be permanent orphans (no matching SQL row, unreachable by
     // reconciliation).  Deleting vectors first is safe — if we crash after vector delete but

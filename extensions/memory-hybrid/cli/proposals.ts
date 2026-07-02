@@ -633,7 +633,10 @@ export async function applyApprovedProposal(
       if (!commitResult.ok) {
         atomicWriteFile(targetPath, original);
         if (wroteRollback) deleteProposalRollback(ctx.resolvedSqlitePath, proposalId);
-        const repoRoot = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" });
+        const repoRoot = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+          cwd: dirname(targetPath),
+          encoding: "utf-8",
+        });
         if (repoRoot.status === 0 && repoRoot.stdout.trim()) {
           const cwd = repoRoot.stdout.trim();
           const relPath = relative(cwd, targetPath);
@@ -679,7 +682,12 @@ export async function applyApprovedProposal(
       suggestedChange: proposal.suggestedChange,
     };
   } catch (err) {
-    if (wroteFile && original) {
+    // `original` may legitimately be an empty string (target was an empty file) — `original`
+    // alone as the guard treated that as falsy and skipped restoration, silently leaving the
+    // applied content in place while still deleting the rollback record below, with no way to
+    // recover despite the function reporting `ok: false`. `wroteFile` on its own is the correct
+    // guard: it's only ever set true after the write that this restore is meant to undo.
+    if (wroteFile) {
       try {
         atomicWriteFile(targetPath, original);
       } catch {

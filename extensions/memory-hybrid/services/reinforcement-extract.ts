@@ -88,6 +88,15 @@ export type ReinforcementExtractResult = {
   /** Maintenance JobRun id when JobRun framework is active (#1877). */
   jobRunId?: string;
   semanticOutcome?: string;
+  /**
+   * Names of session files that exceeded MAX_JSONL_BYTES_PER_RUN and were read from the tail
+   * only (oldest content in the file was not scanned this run). Unlike passive-observer, this
+   * extractor has no byte-offset resume cursor — a session file above the cap will hit this same
+   * truncation on every future run, so callers should surface this rather than let it pass silently.
+   */
+  truncatedSessions?: string[];
+  /** Count of session files that failed to read, or lines that failed to parse, this run. */
+  failures?: number;
 };
 
 /** Hard cap on bytes read per file per run to avoid unbounded JSONL reads (matches passive observer). */
@@ -194,10 +203,19 @@ type RunReinforcementExtractOpts = {
  *
  * Reads files asynchronously with a 2MB byte cap per file to avoid blocking the
  * event loop and prevent OOM on large session files (matching passive observer pattern).
+ *
+ * Unlike passive-observer, this extractor has no persistent byte-offset resume cursor (the
+ * caller's scan cursor operates at the whole-session-file level, via mtime watermarking) — so a
+ * session file above the cap would, if always read from byte 0, have its post-cap content
+ * silently and *permanently* unreachable across every future run. Instead, a file above the cap
+ * is read from its tail (the most recent MAX_JSONL_BYTES_PER_RUN bytes), and its name is recorded
+ * in the returned `truncatedSessions` so callers can surface that older content was skipped.
  */
 export async function runReinforcementExtract(opts: RunReinforcementExtractOpts): Promise<ReinforcementExtractResult> {
   const { filePaths, reinforcementRegex } = opts;
   const incidents: ReinforcementIncident[] = [];
+  const truncatedSessions: string[] = [];
+  let failures = 0;
 
   for (const filePath of filePaths) {
     let lines: string[];
@@ -205,6 +223,7 @@ export async function runReinforcementExtract(opts: RunReinforcementExtractOpts)
       const handle = await open(filePath, "r");
       let rawBuf: Buffer;
       let fileBytelen: number;
+      let readFromTail = false;
       try {
         const stats = await handle.stat();
         fileBytelen = stats.size;
@@ -212,18 +231,25 @@ export async function runReinforcementExtract(opts: RunReinforcementExtractOpts)
         if (length <= 0) {
           continue;
         }
+        readFromTail = fileBytelen > MAX_JSONL_BYTES_PER_RUN;
+        const startOffset = readFromTail ? fileBytelen - MAX_JSONL_BYTES_PER_RUN : 0;
         rawBuf = Buffer.alloc(length);
-        const { bytesRead } = await handle.read(rawBuf, 0, length, 0);
+        const { bytesRead } = await handle.read(rawBuf, 0, length, startOffset);
         if (bytesRead < length) {
           rawBuf = rawBuf.subarray(0, bytesRead);
         }
       } finally {
         await handle.close();
       }
-      // When we hit the byte cap the last read may end mid-line; trim to the
-      // last complete newline so we never parse a partial JSONL record.
-      // When reading the full file (no cap hit) there is no partial line risk.
-      if (rawBuf.length >= MAX_JSONL_BYTES_PER_RUN && rawBuf.length < fileBytelen) {
+      if (readFromTail) {
+        // The read started mid-file, so the first line is very likely a partial JSONL record —
+        // drop everything up to and including the first newline.
+        const firstNewlineIdx = rawBuf.indexOf(0x0a);
+        rawBuf = firstNewlineIdx === -1 ? rawBuf.subarray(0, 0) : rawBuf.subarray(firstNewlineIdx + 1);
+        truncatedSessions.push(basename(filePath));
+      } else if (rawBuf.length >= MAX_JSONL_BYTES_PER_RUN && rawBuf.length < fileBytelen) {
+        // Race: the file grew past the cap between stat() and read() completing. The read
+        // still started at byte 0 here, so trim to the last complete newline as before.
         const lastNewlineIdx = rawBuf.lastIndexOf(0x0a);
         if (lastNewlineIdx !== -1) {
           rawBuf = rawBuf.subarray(0, lastNewlineIdx + 1);
@@ -231,6 +257,7 @@ export async function runReinforcementExtract(opts: RunReinforcementExtractOpts)
       }
       lines = rawBuf.toString("utf-8").split("\n");
     } catch (err) {
+      failures++;
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "read-session-file",
         severity: "info",
@@ -239,7 +266,9 @@ export async function runReinforcementExtract(opts: RunReinforcementExtractOpts)
       continue;
     }
 
-    const messages = parseSessionMessagesFromLines(lines, "reinforcement-extract");
+    const messages = parseSessionMessagesFromLines(lines, "reinforcement-extract", () => {
+      failures++;
+    });
 
     const sessionName = basename(filePath);
     const ts = timestampFromFilename(sessionName);
@@ -273,5 +302,10 @@ export async function runReinforcementExtract(opts: RunReinforcementExtractOpts)
     }
   }
 
-  return { incidents, sessionsScanned: filePaths.length };
+  return {
+    incidents,
+    sessionsScanned: filePaths.length,
+    ...(truncatedSessions.length > 0 ? { truncatedSessions } : {}),
+    ...(failures > 0 ? { failures } : {}),
+  };
 }

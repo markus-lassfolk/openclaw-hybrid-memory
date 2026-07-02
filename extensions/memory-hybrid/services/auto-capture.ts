@@ -157,11 +157,19 @@ export function tryParseCredentialForVault(
   const serviceSlug = validateAndNormalizeServiceName(service);
   if (serviceSlug === null) return null;
 
+  // credentials-db.ts stores `notes` in plaintext (only `value` is encrypted-at-rest), so the
+  // secret itself must never survive into `notes` — `text` is the same source text the secret
+  // was extracted from and would otherwise echo it verbatim into an unencrypted column.
+  const redactedText = text.split(secretValue).join("[redacted]");
+
   return {
     service: serviceSlug,
     type: typeFromPattern,
     secretValue,
-    notes: text.length <= CREDENTIAL_NOTES_MAX_CHARS ? text : truncateText(text, CREDENTIAL_NOTES_MAX_CHARS - 3, "..."),
+    notes:
+      redactedText.length <= CREDENTIAL_NOTES_MAX_CHARS
+        ? redactedText
+        : truncateText(redactedText, CREDENTIAL_NOTES_MAX_CHARS - 3, "..."),
   };
 }
 

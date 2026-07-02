@@ -263,10 +263,21 @@ export function parseCredentialsConfig(cfg: Record<string, unknown>): Credential
   if (shouldEnable) {
     const opts = parseCredentialOptions(credRaw);
     if (!hasValidKey) {
-      pluginLogger.warn(
-        "memory-hybrid: credentials vault is enabled without encryption at rest (set credentials.encryptionKey with 16+ characters, or OPENCLAW_CRED_KEY / env:VAR for a strong key). " +
-          "Until then, stored secrets are written as plaintext in the vault database — restrict filesystem access to that path, or add a key when you are ready.",
-      );
+      if (encKeyRaw.startsWith("file:")) {
+        // A key WAS configured (a file: ref) but couldn't be resolved to 16+ chars — distinct
+        // from "no key configured at all" so an admin doesn't mistake a broken ref (missing
+        // file, bad permissions, empty contents) for an intentional plaintext vault. On a new
+        // install this silently bootstraps as plaintext with no other signal (#storage-recall-review).
+        pluginLogger.warn(
+          `memory-hybrid: credentials.encryptionKey is set to "${encKeyRaw}" but could not be resolved to a usable key (16+ characters) — the referenced file may be missing, unreadable, or empty. ` +
+            "The vault will bootstrap as plaintext until this is fixed. Verify the file exists and is readable, then restart.",
+        );
+      } else {
+        pluginLogger.warn(
+          "memory-hybrid: credentials vault is enabled without encryption at rest (set credentials.encryptionKey with 16+ characters, or OPENCLAW_CRED_KEY / env:VAR for a strong key). " +
+            "Until then, stored secrets are written as plaintext in the vault database — restrict filesystem access to that path, or add a key when you are ready.",
+        );
+      }
     }
     credentials = {
       enabled: true,
@@ -275,6 +286,22 @@ export function parseCredentialsConfig(cfg: Record<string, unknown>): Credential
       ...opts,
     };
   } else {
+    // A key was configured but rejected (too short / unresolvable) and `enabled` was never set
+    // to `true` — without this warning, providing a key silently leaves the vault fully disabled
+    // (no credential_* tools registered) with no indication the key was the reason.
+    if (!explicitlyDisabled && encKeyRaw && !hasValidKey) {
+      if (encKeyRaw.startsWith("file:")) {
+        pluginLogger.warn(
+          `memory-hybrid: credentials.encryptionKey is set to "${encKeyRaw}" but could not be resolved to a usable key (16+ characters) — the referenced file may be missing, unreadable, or empty. ` +
+            "The credentials vault remains disabled until this is fixed (set credentials.enabled: true to enable it as plaintext instead, or fix the key reference).",
+        );
+      } else {
+        pluginLogger.warn(
+          "memory-hybrid: credentials.encryptionKey is set but is shorter than 16 characters, so it was rejected — the credentials vault remains disabled. " +
+            "Use a 16+ character key, or set credentials.enabled: true to enable the vault as plaintext without it.",
+        );
+      }
+    }
     credentials = {
       enabled: false,
       store: "sqlite",

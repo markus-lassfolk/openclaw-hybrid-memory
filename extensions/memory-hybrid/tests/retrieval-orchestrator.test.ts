@@ -10,7 +10,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
 import { IssueStore } from "../backends/issue-store.js";
 import { RETRIEVAL_MODE } from "../services/retrieval-mode-policy.js";
-import { DEFAULT_RETRIEVAL_CONFIG, runRetrievalPipeline } from "../services/retrieval-orchestrator.js";
+import {
+  ClusterCache,
+  DEFAULT_RETRIEVAL_CONFIG,
+  type FactLookup,
+  runRetrievalPipeline,
+} from "../services/retrieval-orchestrator.js";
+import type { ClusterFactLookup } from "../services/topic-clusters.js";
 
 const { FactsDB } = _testing;
 
@@ -298,5 +304,48 @@ describe("runRetrievalPipeline graph strategy", () => {
     const ids = result.fused.map((r) => r.factId);
     expect(ids).toContain(apple.id);
     expect(ids).not.toContain(banana.id);
+  });
+});
+
+describe("ClusterCache", () => {
+  function fakeFactsDb(
+    linksCount: number,
+    factIds: string[],
+    links: Array<{ sourceFactId: string; targetFactId: string }>,
+  ): FactLookup & ClusterFactLookup {
+    return {
+      getById: () => null,
+      getAllLinkedFactIds: () => factIds,
+      getAllLinks: () => links,
+      linksCount: () => linksCount,
+    };
+  }
+
+  it("does not leak cluster assignments between different FactsDB instances sharing the same linksCount (#47)", () => {
+    const cache = new ClusterCache();
+    // Two distinct FactsDB-like instances with the SAME linksCount() and minClusterSize — the
+    // exact collision condition the old single-slot module cache keyed on, which would return
+    // one instance's cluster map to the other.
+    const dbA = fakeFactsDb(2, ["a1", "a2"], [{ sourceFactId: "a1", targetFactId: "a2" }]);
+    const dbB = fakeFactsDb(2, ["b1", "b2"], [{ sourceFactId: "b1", targetFactId: "b2" }]);
+
+    const clustersA = cache.getClusterMap(dbA, 1);
+    const clustersB = cache.getClusterMap(dbB, 1);
+    expect(Array.from(clustersA.keys()).sort()).toEqual(["a1", "a2"]);
+    expect(Array.from(clustersB.keys()).sort()).toEqual(["b1", "b2"]);
+
+    // Re-fetching dbA after dbB was cached must still return dbA's own clusters.
+    const clustersA2 = cache.getClusterMap(dbA, 1);
+    expect(Array.from(clustersA2.keys()).sort()).toEqual(["a1", "a2"]);
+  });
+
+  it("invalidate() clears cached clusters for all instances", () => {
+    const cache = new ClusterCache();
+    const dbA = fakeFactsDb(2, ["a1", "a2"], [{ sourceFactId: "a1", targetFactId: "a2" }]);
+    const first = cache.getClusterMap(dbA, 1);
+    cache.invalidate();
+    const second = cache.getClusterMap(dbA, 1);
+    expect(first).not.toBe(second);
+    expect(Array.from(second.keys()).sort()).toEqual(["a1", "a2"]);
   });
 });

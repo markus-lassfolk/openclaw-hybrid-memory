@@ -24,6 +24,8 @@ export type MineOptions = {
   synthesize?: boolean;
   dryRun?: boolean;
   confirmBudget?: boolean;
+  scope?: "global" | "user" | "agent" | "session";
+  scopeTarget?: string;
 };
 
 const DEFAULT_MAX_BUDGET_USD = 5;
@@ -106,8 +108,8 @@ export async function executeMineCommand(
   const redactionCategories: Record<string, number> = {};
   const db = factsDb.getRawDb();
   const sourceLabel = conversations[0]?.source ?? opts.source ?? "unknown";
-  const mineScope = "global";
-  const mineScopeTarget = null;
+  const mineScope = opts.scope ?? "global";
+  const mineScopeTarget = mineScope === "global" ? null : (opts.scopeTarget?.trim() ?? null);
   for (const conv of conversations) {
     const rawText = conv.messages
       .map((m) => `${m.role}: ${m.content}`)
@@ -170,7 +172,11 @@ export async function executeMineCommand(
     if (opts.embed && vectorDb && embeddings) {
       try {
         const vector = await embeddings.embed(storedText.slice(0, 8000));
-        factsDb.setEmbeddingModel(result.entry.id, embeddings.modelName);
+        // Store the vector FIRST, then mark the fact embedded — marking it first meant a
+        // vectorDb.store() failure (disk full, IPC hiccup) after the mark left the fact with
+        // embedding_model set but no actual Lance row, permanently invisible to the vectorless
+        // audit/reembed-vectorless repair path (it only looks for facts with embedding_model
+        // unset). See utils/fact-embeddings.ts's documented ordering contract.
         await vectorDb.store({
           text: storedText,
           vector,
@@ -178,6 +184,7 @@ export async function executeMineCommand(
           category: "conversation",
           id: result.entry.id,
         });
+        factsDb.setEmbeddingModel(result.entry.id, embeddings.modelName);
       } catch (err) {
         console.warn(`Failed to embed fact ${result.entry.id}: ${err}`);
       }
@@ -233,6 +240,8 @@ export function registerMineCommand(
     .option("--dry-run", "Preview without writing")
     .option("--confirm-budget", "Confirm LLM budget for --synthesize")
     .option("--undo <batchId>", "Soft-delete facts from a prior mine batch")
+    .option("--scope <scope>", "global, user, agent, or session (default: global)")
+    .option("--scope-target <id>", "Scope target id (required for non-global scope)")
     .action(async (path: string, opts: MineOptions & { undo?: string }) => {
       await executeMineCommand(path, opts, factsDb, vectorDb, embeddings);
     });

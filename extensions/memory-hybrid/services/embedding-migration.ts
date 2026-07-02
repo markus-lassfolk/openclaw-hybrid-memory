@@ -185,19 +185,32 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
     category: string;
   }) => {
     if (targetTableName) {
-      await (vectorDb as { storeToTable?: (name: string, entry: unknown) => Promise<void> }).storeToTable?.(
-        targetTableName,
-        entry,
-      );
+      const target = vectorDb as { storeToTable?: (name: string, entry: unknown) => Promise<void> };
+      if (!target.storeToTable) {
+        throw new Error("vectorDb does not support storeToTable — cannot write to shadow table");
+      }
+      await target.storeToTable(targetTableName, entry);
     } else {
       await vectorDb.store(entry);
     }
   };
 
-  // For shadow-table migration, skip duplicate checks (we're rebuilding from scratch)
-  const checkDuplicate = targetTableName ? async () => false : (vec: number[]) => vectorDb.hasDuplicate(vec);
+  // For shadow-table migration, skip duplicate checks (we're rebuilding from scratch).
+  // excludeId prevents a fact from matching its own not-yet-deleted vector below.
+  const checkDuplicate = targetTableName
+    ? async () => false
+    : (vec: number[], excludeId: string) => vectorDb.hasDuplicate(vec, undefined, excludeId);
 
-  while (offset < total) {
+  // Loop until getBatch() itself returns empty (below), NOT `offset < total`. `total` is a
+  // snapshot taken once at the start; it's used for progress/checkpoint reporting only. getBatch
+  // orders by created_at DESC with no stable tiebreaker, so a fact captured concurrently while
+  // this (potentially long-running, fire-and-forget) migration is in progress sorts to the top
+  // and pushes every existing fact's offset down by one. Stopping at the frozen `total` would
+  // then silently leave that many facts at the tail unread — permanently stuck on the old
+  // model's (possibly wrong-dimension) embedding once embedding_meta is marked migrated, with no
+  // way to detect the gap later. `while (true)` + the batch.length===0 break below already
+  // exists (see "ended early" case) and correctly keeps going until the source is truly drained.
+  while (true) {
     // VectorDB was recycled mid-run (hot-reload, plugin re-registration, or
     // a stray close from a peer subsystem — see #1248). Try a transparent
     // reconnect first so a routine connection bump no longer guts re-index.
@@ -245,14 +258,14 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
           ).getBatch(offset, batchSize, { includeSuperseded: false })
         : facts?.slice(offset, offset + batchSize)) ?? [];
     if (batch.length === 0) {
-      // The loop is supposed to terminate via `offset >= total`. Reaching here
-      // with `offset < total` typically means the underlying source returned
-      // fewer rows than the snapshot `total` reported — usually because facts
-      // expired or were superseded between `getCount()` and `getBatch()` on a
-      // long run. This is not a hard failure (the vector store is still
-      // consistent for the facts that DO exist), so we log it explicitly as
-      // "ended early" instead of marking the run as aborted. Callers can
-      // safely treat this as a clean termination and update embedding meta.
+      // This is the loop's only termination condition (see `while (true)` above). Reaching here
+      // with `offset < total` means the underlying source returned fewer rows than the snapshot
+      // `total` reported — usually because facts expired or were superseded between getCount()
+      // and getBatch() on a long run. This is not a hard failure (the vector store is still
+      // consistent for the facts that DO exist), so we log it explicitly as "ended early" instead
+      // of marking the run as aborted. Callers can safely treat this as a clean termination and
+      // update embedding meta. (offset >= total is the common/expected case now — it means facts
+      // were added concurrently during the run, which the source has fully drained regardless.)
       if (offset < total) {
         log.warn(
           `memory-hybrid: embedding-migration: ended early at ${migrated + skipped}/${total} ` +
@@ -333,7 +346,7 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
       try {
         // Check for duplicate BEFORE deleting old vector: if a different fact already has
         // a similar embedding, skip rather than removing the existing entry unnecessarily.
-        const isDuplicate = await checkDuplicate(vec);
+        const isDuplicate = await checkDuplicate(vec, fact.id);
         if (!isDuplicate) {
           // Remove stale entry so dimension-changed stores succeed (only for main table)
           if (!targetTableName) {
@@ -343,13 +356,39 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
               // Entry may not exist — expected on first migration
             }
           }
-          await storeVector({
-            id: fact.id,
-            text: fact.text,
-            vector: vec,
-            importance: fact.importance ?? 0.5,
-            category: fact.category,
-          });
+          try {
+            await storeVector({
+              id: fact.id,
+              text: fact.text,
+              vector: vec,
+              importance: fact.importance ?? 0.5,
+              category: fact.category,
+            });
+          } catch (storeErr) {
+            if (!targetTableName) {
+              // The old vector was already deleted above, so a failed store leaves this fact
+              // with NO vector at all — worse than the pre-delete state. Give the store one
+              // immediate retry (transient failures — timeouts, lock contention — are common
+              // here) before surfacing a clearly-flagged data-loss error distinct from an
+              // ordinary store failure where the old vector might still be intact.
+              try {
+                await storeVector({
+                  id: fact.id,
+                  text: fact.text,
+                  vector: vec,
+                  importance: fact.importance ?? 0.5,
+                  category: fact.category,
+                });
+              } catch (retryErr) {
+                throw new Error(
+                  `vector store failed after stale entry was already removed — fact ${fact.id} now has NO vector (retry also failed: ${retryErr instanceof Error ? retryErr.message : String(retryErr)})`,
+                  { cause: retryErr },
+                );
+              }
+            } else {
+              throw storeErr;
+            }
+          }
           // Update SQLite metadata (only when writing to main table, not shadow)
           if (!targetTableName) {
             factsDb.setEmbeddingModel(fact.id, embeddings.modelName);

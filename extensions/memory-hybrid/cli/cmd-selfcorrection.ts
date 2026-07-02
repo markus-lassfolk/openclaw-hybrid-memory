@@ -610,6 +610,11 @@ export function runSelfCorrectionExtractForCli(
       filePaths,
       correctionRegex: getCorrectionSignalRegex(),
     });
+    if (result.failures && result.failures > 0) {
+      ctx.logger.warn?.(
+        `memory-hybrid: self-correction-extract — ${result.failures} session file(s)/line(s) failed to read or parse this run`,
+      );
+    }
     if (opts.outputPath && result.incidents.length > 0) {
       try {
         const outputJson = JSON.stringify(result.incidents, null, 2);

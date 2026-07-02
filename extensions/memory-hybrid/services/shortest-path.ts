@@ -58,6 +58,17 @@ interface ShortestPathOptions {
   maxDepth?: number;
 }
 
+/**
+ * A fact is only a valid path endpoint/hop if it still exists and hasn't been superseded.
+ * ShortestPathLookup#getById never filters supersededAt on its own, so every call site in this
+ * file must check it explicitly — otherwise a corrected fact can resurface as a "shortest path"
+ * endpoint, or the BFS can traverse straight through a superseded fact as an intermediate hop,
+ * even though direct search correctly excludes it.
+ */
+function isActiveEntry(entry: MemoryEntry | null | undefined): entry is MemoryEntry {
+  return entry != null && entry.supersededAt == null;
+}
+
 // ---------------------------------------------------------------------------
 // Core algorithm
 // ---------------------------------------------------------------------------
@@ -85,12 +96,12 @@ export function findShortestPath(
   // Same start and end → trivial path
   if (startId === endId) {
     const entry = db.getById(startId);
-    if (!entry) return null;
+    if (!isActiveEntry(entry)) return null;
     return { steps: [], hops: 0, fromFactId: startId, toFactId: endId, chain: [entry] };
   }
 
-  // Both endpoints must exist
-  if (!db.getById(startId) || !db.getById(endId)) return null;
+  // Both endpoints must exist and be active (not superseded)
+  if (!isActiveEntry(db.getById(startId)) || !isActiveEntry(db.getById(endId))) return null;
 
   if (maxDepth === 0) return null;
 
@@ -171,8 +182,8 @@ export function resolveInput(db: ShortestPathLookup, input: string): string | nu
   if (!input?.trim()) return null;
   const trimmed = input.trim();
 
-  // Try as a direct fact ID first
-  if (db.getById(trimmed)) return trimmed;
+  // Try as a direct fact ID first (must resolve to an active, non-superseded fact)
+  if (isActiveEntry(db.getById(trimmed))) return trimmed;
 
   // Try as entity name via lookup
   if (db.lookup) {
@@ -208,16 +219,18 @@ export function formatPath(steps: PathStep[]): string {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/** Collect all neighbors (outgoing + incoming) of a node as a flat list. */
+/** Collect all neighbors (outgoing + incoming) of a node as a flat list, skipping superseded facts. */
 function getNeighbors(
   db: ShortestPathLookup,
   nodeId: string,
 ): Array<{ neighborId: string; linkType: string; strength: number }> {
   const result: Array<{ neighborId: string; linkType: string; strength: number }> = [];
   for (const link of db.getLinksFrom(nodeId)) {
+    if (!isActiveEntry(db.getById(link.targetFactId))) continue;
     result.push({ neighborId: link.targetFactId, linkType: link.linkType, strength: link.strength });
   }
   for (const link of db.getLinksTo(nodeId)) {
+    if (!isActiveEntry(db.getById(link.sourceFactId))) continue;
     result.push({ neighborId: link.sourceFactId, linkType: link.linkType, strength: link.strength });
   }
   return result;
@@ -240,7 +253,7 @@ function buildResult(
   const chain: MemoryEntry[] = [];
   for (const id of ids) {
     const entry = db.getById(id);
-    if (entry) chain.push(entry);
+    if (isActiveEntry(entry)) chain.push(entry);
   }
   return { steps, hops: steps.length, fromFactId: startId, toFactId: endId, chain };
 }

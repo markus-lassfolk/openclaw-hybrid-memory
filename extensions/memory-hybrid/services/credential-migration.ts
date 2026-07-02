@@ -70,6 +70,11 @@ export async function migrateCredentialsToVault(opts: MigrateCredentialsOptions)
       continue;
     }
     let plaintextRemoved = false;
+    // credentialsDb.store() overwrites any existing credential for this service/type — capture
+    // it *before* the write so a rollback below can restore it rather than deleting the row
+    // outright (which would also discard this pre-existing value, if this migration ever runs
+    // against a service/type that already has a live vault entry from elsewhere).
+    const priorEntry = credentialsDb.get(parsed.service, parsed.type);
     try {
       credentialsDb.store({
         service: parsed.service,
@@ -96,12 +101,18 @@ export async function migrateCredentialsToVault(opts: MigrateCredentialsOptions)
         tags: ["auth", ...extractTags(pointerText, "Credentials")],
       });
       if (pointerResult.skipped) {
-        rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type, (message, cleanupErr) => {
-          capturePluginError(cleanupErr instanceof Error ? cleanupErr : new Error(String(cleanupErr)), {
-            operation: "migrate-credential-compensating-delete-skip",
-            subsystem: "credentials",
-          });
-        });
+        rollbackVaultCredentialWrite(
+          credentialsDb,
+          parsed.service,
+          parsed.type,
+          (_message, cleanupErr) => {
+            capturePluginError(cleanupErr instanceof Error ? cleanupErr : new Error(String(cleanupErr)), {
+              operation: "migrate-credential-compensating-delete-skip",
+              subsystem: "credentials",
+            });
+          },
+          priorEntry,
+        );
         errors.push(`pointer rejected for ${parsed.service}: pre-store guard blocked`);
         continue;
       }
@@ -172,7 +183,7 @@ export async function migrateCredentialsToVault(opts: MigrateCredentialsOptions)
       migrated++;
     } catch (e) {
       if (!plaintextRemoved) {
-        rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type);
+        rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type, undefined, priorEntry);
       }
       capturePluginError(e instanceof Error ? e : new Error(String(e)), {
         subsystem: "credentials",

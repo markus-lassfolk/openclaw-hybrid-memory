@@ -452,6 +452,13 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
           if (!res.integrityOk) {
             console.warn("⚠ SQLite integrity check failed — backup may be from a corrupt source.");
           }
+          if (res.snapshotSkewMs > 1000) {
+            // SQLite and LanceDB are snapshotted sequentially, not atomically (#81) — a write
+            // landing in this window can leave the two halves briefly out of sync.
+            console.warn(
+              `⚠ SQLite and LanceDB snapshots were taken ${res.snapshotSkewMs}ms apart; a write during that window may not be reflected consistently in both halves.`,
+            );
+          }
           // Record successful backup state for heartbeat monitoring
           try {
             mkdirSync(stateDir, { recursive: true });
@@ -466,6 +473,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
                   lancedbSize: res.lancedbSize,
                   durationMs: res.durationMs,
                   integrityOk: res.integrityOk,
+                  snapshotSkewMs: res.snapshotSkewMs,
                 },
                 null,
                 2,

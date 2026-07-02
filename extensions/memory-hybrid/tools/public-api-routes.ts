@@ -14,6 +14,7 @@ import {
   buildProcessMemorySnapshot,
   sanitizePublicMemoryDiagnostics,
 } from "../services/gateway-memory-diagnostics.js";
+import { capturePluginError } from "../services/error-reporter.js";
 import { buildPublicExportBundle } from "../services/public-export-bundle.js";
 import {
   applyActiveTaskProjectionFilters,
@@ -21,7 +22,11 @@ import {
   readActiveTaskRowsFromFacts,
   refreshActiveTaskProjectionBestEffort,
 } from "../services/task-ledger-facts.js";
-import { globalOnlyScopeFilter, scopeFieldsFromEntry, scopeFieldsFromFilter } from "../utils/scope-filter.js";
+import {
+  scopeFieldsFromEntry,
+  scopeFieldsFromFilter,
+  scopeFilterFromIdentityHeaders,
+} from "../utils/scope-filter.js";
 import { pluginLogger } from "../utils/logger.js";
 import type { ScopeFilter } from "../types/memory.js";
 import { parseDuration } from "../utils/duration.js";
@@ -126,6 +131,11 @@ const HEAP_SNAPSHOT_DIR = "memory/heap-snapshots";
 const AUTO_SNAPSHOT_COOLDOWN_MS = 3_600_000; // 1 hour
 
 let lastAutoSnapshotTimestamp = 0;
+
+/** Test-only: reset the heap-snapshot auto-cooldown timestamp between test cases. */
+export function resetHeapSnapshotCooldownForTests(): void {
+  lastAutoSnapshotTimestamp = 0;
+}
 
 function resolveHeapSnapshotDir(): string {
   const override = getEnv("OPENCLAW_HEAP_SNAPSHOT_DIR");
@@ -252,15 +262,7 @@ function getHeader(req: { headers?: Record<string, string> }, key: string): stri
  * Missing identity defaults to global-only visibility.
  */
 function resolveScopeFilter(req: { headers?: Record<string, string> }): ScopeFilter {
-  const userId = getHeader(req, "x-openclaw-user-id");
-  const agentId = getHeader(req, "x-openclaw-agent-id");
-  const sessionId = getHeader(req, "x-openclaw-session-id");
-
-  if (!userId && !agentId && !sessionId) {
-    return globalOnlyScopeFilter();
-  }
-
-  return { userId: userId ?? undefined, agentId: agentId ?? undefined, sessionId: sessionId ?? undefined };
+  return scopeFilterFromIdentityHeaders((key) => getHeader(req, key));
 }
 
 function rejectWhenUnauthenticated(
@@ -618,14 +620,19 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
       autoMode === "critical" &&
       leakVerdict === "likely_leak" &&
       timeSinceLastAuto >= AUTO_SNAPSHOT_COOLDOWN_MS;
+    if (shouldAutoSnapshot) {
+      // Reserve the cooldown slot synchronously, before the (blocking) snapshot write, and
+      // regardless of whether the write succeeds. Setting it only after a successful write left
+      // the cooldown permanently disengaged on persistent failure (e.g. an unwritable snapshot
+      // dir) — every subsequent diagnostics request during an ongoing "likely_leak" incident would
+      // retry the full mkdirSync + writeHeapSnapshot pipeline instead of waiting out the cooldown.
+      lastAutoSnapshotTimestamp = now;
+    }
     if (heapSnapshotRequested || shouldAutoSnapshot) {
       const snap = writeV8HeapSnapshotWithMeta({
         trigger: shouldAutoSnapshot ? "auto_critical_leak" : "manual_query",
         verdict: leakVerdict,
       });
-      if (shouldAutoSnapshot && snap) {
-        lastAutoSnapshotTimestamp = now;
-      }
       return toJson(200, { ...diag, heapSnapshot: snap });
     }
     return toJson(200, diag);
@@ -748,7 +755,14 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
 
         return toJson(400, { error: `unknown action: ${action}` });
       } catch (err) {
-        return toJson(500, { error: err instanceof Error ? err.message : String(err) });
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "public-api",
+          operation: "fact-mutate",
+        });
+        pluginLogger.error(
+          `memory-hybrid: /fact/mutate failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return toJson(500, { error: "InternalServerError" });
       }
     });
   }

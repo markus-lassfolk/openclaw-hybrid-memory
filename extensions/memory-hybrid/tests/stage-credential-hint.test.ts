@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { registerCredentialHint } from "../lifecycle/stage-credential-hint.js";
+import { pendingCredentialPath, registerCredentialHint } from "../lifecycle/stage-credential-hint.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { FactsDB } from "../backends/facts-db.js";
 import { buildRecallLifecycleContext } from "./helpers/lifecycle-recall-harness.js";
@@ -24,7 +24,7 @@ describe("registerCredentialHint", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "stage-credential-hint-"));
     factsDb = new FactsDB(join(tmpDir, "facts.db"));
-    pendingPath = join(tmpDir, "credentials-pending.json");
+    pendingPath = pendingCredentialPath(tmpDir, "default");
     vi.mocked(capturePluginError).mockClear();
   });
 

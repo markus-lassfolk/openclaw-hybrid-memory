@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { createSessionState, resolveSessionKeyFromHookEvent } from "../lifecycle/session-state.js";
 import { SessionSeenFacts } from "../services/ambient-retrieval.js";
+import { clearNudgeSessionState, recordNudgeEmission, shouldEmitNudge } from "../services/memory-nudge.js";
 
 describe("session-state", () => {
   describe("resolveSessionKeyFromHookEvent", () => {
@@ -246,6 +247,24 @@ describe("session-state", () => {
       it("should handle clearing non-existent session", () => {
         // Should not throw
         expect(() => state.clearSessionState("non-existent")).not.toThrow();
+      });
+
+      it("does not clear memory-nudge throttle state, since clearSessionState runs every turn (#49)", () => {
+        try {
+          const sessionKey = "nudge-throttle-session";
+          recordNudgeEmission(sessionKey);
+          // Immediately after emission, a large throttle window must suppress a repeat nudge.
+          expect(shouldEmitNudge(sessionKey, 24)).toBe(false);
+
+          // clearSessionState runs at the end of EVERY agent turn (see run-capture.ts), not once
+          // per session. If it cleared nudge state, the throttle would be defeated: the next
+          // turn's shouldEmitNudge check would see no prior emission and re-fire immediately.
+          state.clearSessionState(sessionKey);
+
+          expect(shouldEmitNudge(sessionKey, 24)).toBe(false);
+        } finally {
+          clearNudgeSessionState("nudge-throttle-session");
+        }
       });
 
       it("should NOT clear capabilityHintsSessionsSeen (persists across agent turns)", () => {

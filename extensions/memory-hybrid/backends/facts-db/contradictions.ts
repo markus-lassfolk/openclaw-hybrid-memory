@@ -1163,8 +1163,14 @@ export async function resolveContradictionsAutonomously(
     const lww = evaluateLwwEligibility(newFact, oldFact, contradiction.oldFactOriginalConfidence);
 
     if (reviewItem.possibleOverloadedEntity) {
+      // Hard-block: never let LLM adjudication override a possible-entity-reuse signal, matching
+      // the deterministic paths (isAutoResolvableContradiction, the project-state LWW write path
+      // in facts-db-layer3.ts) which treat this as unconditionally unsafe to auto-resolve.
       reviewItem.suggestedReason = "Possible entity reuse detected; leaving for manual review.";
-    } else if (lww.eligible && lww.qualifies && !isFactVerified(db, contradiction.factIdOld)) {
+      reviewItems.push(reviewItem);
+      continue;
+    }
+    if (lww.eligible && lww.qualifies && !isFactVerified(db, contradiction.factIdOld)) {
       reviewItem.suggestedDecision = "keep_new";
       reviewItem.suggestedStrategy = "project-state-lww";
       reviewItem.suggestedConfidence = 1;
@@ -1187,8 +1193,14 @@ export async function resolveContradictionsAutonomously(
         if (applied) decisionsApplied++;
       }
       continue;
-    } else if (isFactVerified(db, contradiction.factIdOld)) {
+    }
+    if (isFactVerified(db, contradiction.factIdOld)) {
+      // Hard-block: verified facts must never be superseded by LLM adjudication alone, matching
+      // the write-time LWW guard (facts-db-layer3.ts) and isAutoResolvableContradiction, both of
+      // which hard-block on isFactVerified(old).
       reviewItem.suggestedReason = "Older fact is verified; leaving for manual review.";
+      reviewItems.push(reviewItem);
+      continue;
     }
 
     if (llm && adjudicate) {

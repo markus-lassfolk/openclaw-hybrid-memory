@@ -19,7 +19,10 @@ import {
   type ExplicitDeepRetrievalPolicy,
 } from "../../services/retrieval-mode-policy.js";
 import { buildExplicitSemanticQueryVector, runExplicitDeepRetrieval } from "../../services/retrieval-orchestrator.js";
-import { runMultiVaultExplicitDeepRetrieval } from "../../services/multi-vault-retrieval.js";
+import {
+  runMultiVaultExplicitDeepRetrieval,
+  type MultiVaultRetrievalResult,
+} from "../../services/multi-vault-retrieval.js";
 import { runScopedFtsVectorFallback } from "../../services/retrieval-scoped-fallback.js";
 import { searchFts } from "../../services/fts-search.js";
 import {
@@ -499,10 +502,14 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       asOfSec?: number;
       scopeFilter?: ScopeFilter;
     },
+    // Defaults to the plugin's primary vault; callers that resolved a specific vault (the
+    // `vault` param on memory_recall) must pass that vault's factsDb explicitly — otherwise
+    // this silently searches the wrong vault's database (#storage-recall-review).
+    searchFactsDb: typeof factsDb = factsDb,
   ): SearchResult[] {
     const ftsHits =
-      typeof factsDb.getRawDb === "function"
-        ? searchFts(factsDb.getRawDb(), query, {
+      typeof searchFactsDb.getRawDb === "function"
+        ? searchFts(searchFactsDb.getRawDb(), query, {
             limit: recallLimit,
             entityFilter: opts.entity,
             tagFilter: opts.tag,
@@ -516,7 +523,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         opts.asOfSec != null || opts.scopeFilter
           ? ({ asOf: opts.asOfSec, scopeFilter: opts.scopeFilter } as { asOf?: number; scopeFilter?: ScopeFilter })
           : undefined;
-      const entry = factsDb.getById(hit.factId, getByIdOpts);
+      const entry = searchFactsDb.getById(hit.factId, getByIdOpts);
       if (entry) {
         // FTS5 rank is negative (closer to 0 is better); invert for descending sort.
         out.push({ entry, score: -hit.rank, backend: "sqlite" });
@@ -755,13 +762,18 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
     };
 
     if (recallMode === "keyword") {
-      let results = keywordRecallResults(query, limit, {
-        entity,
-        tag,
-        includeSuperseded,
-        asOfSec,
-        scopeFilter,
-      });
+      let results = keywordRecallResults(
+        query,
+        limit,
+        {
+          entity,
+          tag,
+          includeSuperseded,
+          asOfSec,
+          scopeFilter,
+        },
+        recallFactsDb,
+      );
       if (!includeCold && results.length > 0) {
         const coldFilterOpts = asOfSec != null || scopeFilter ? { asOf: asOfSec, scopeFilter } : undefined;
         results = results.filter((r) => {
@@ -870,6 +882,31 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
     // Legacy tag-only recall skips semantic search; constrained mode keeps semantic ranking
     // because tag/entity/category/etc. are applied before ranking inside the candidate set.
     let results: SearchResult[] = [];
+    // Populated only for multi-vault fan-out (vaultHandles.length > 1): maps each RRF result's
+    // factId to the vault it actually came from, so post-RRF per-ID refinements below (cold-tier
+    // filter, asOf filter) look it up in the right vault's factsDb instead of unconditionally
+    // recallFactsDb (the resolved `vault` param / default vault), which would silently drop every
+    // non-default-vault result whenever includeCold is false (the default).
+    let vaultByFactId: Map<string, string> | undefined;
+    const getByIdInResultVault = (
+      id: string,
+      opts?: { asOf?: number; scopeFilter?: ScopeFilter },
+    ): MemoryEntry | null => {
+      const vaultName = vaultByFactId?.get(id);
+      if (vaultName) {
+        const handle = vaultHandles.find((h) => h.name === vaultName);
+        if (handle) return handle.factsDb.getById(id, opts);
+      }
+      return recallFactsDb.getById(id, opts);
+    };
+    const isContradictedInResultVault = (id: string): boolean => {
+      const vaultName = vaultByFactId?.get(id);
+      if (vaultName) {
+        const handle = vaultHandles.find((h) => h.name === vaultName);
+        if (handle) return handle.factsDb.isContradicted(id);
+      }
+      return recallFactsDb.isContradicted(id);
+    };
     try {
       const useLegacyTagShortcut = Boolean(tag && !shouldUseConstrainedMode && recallMode !== "semantic");
       const rrfStrategies = resolveRecallRrfStrategies(recallMode, cfg.retrieval.strategies, useLegacyTagShortcut);
@@ -906,7 +943,12 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         semanticWarning = vectorPrep.warning;
         if (recallMode !== "semantic" && queryVector == null && semanticWarning) {
           recallFallback = true;
-          results = keywordRecallResults(query, limit, { entity, tag, includeSuperseded, asOfSec, scopeFilter });
+          results = keywordRecallResults(
+            query,
+            limit,
+            { entity, tag, includeSuperseded, asOfSec, scopeFilter },
+            recallFactsDb,
+          );
         }
       }
       if (!recallFallback) {
@@ -984,6 +1026,9 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
                   warmTierOnly: !includeCold && cfg.memoryTiering.enabled,
                 },
               );
+        if ("vaultByFactId" in rrfOutput) {
+          vaultByFactId = (rrfOutput as MultiVaultRetrievalResult).vaultByFactId;
+        }
 
         // Merge entity-lookup results first, then append RRF results (deduped).
         // When packed is non-empty, only include fused results whose factId was packed
@@ -1044,7 +1089,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
     if (!includeCold && results.length > 0) {
       const filtered: SearchResult[] = [];
       for (const r of results) {
-        const full = recallFactsDb.getById(r.entry.id);
+        const full = getByIdInResultVault(r.entry.id);
         if (full && full.tier !== "cold") filtered.push({ ...r, entry: full });
       }
       results = filtered.slice(0, limit);
@@ -1054,7 +1099,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
     if (asOfSec != null && results.length > 0) {
       const filtered: SearchResult[] = [];
       for (const r of results) {
-        const full = recallFactsDb.getById(r.entry.id, { asOf: asOfSec });
+        const full = getByIdInResultVault(r.entry.id, { asOf: asOfSec });
         if (full) filtered.push({ ...r, entry: full });
       }
       results = filtered.slice(0, limit);
@@ -1159,7 +1204,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
 
     const contradictionStatus = new Map<string, boolean>();
     for (const r of results) {
-      contradictionStatus.set(r.entry.id, recallFactsDb.isContradicted(r.entry.id));
+      contradictionStatus.set(r.entry.id, isContradictedInResultVault(r.entry.id));
     }
 
     // Check integrity for verified facts (Issue #162): flag tampered results.

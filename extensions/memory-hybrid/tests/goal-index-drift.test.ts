@@ -52,7 +52,12 @@ describe("goal index drift (#1987)", () => {
   it("auditGoalIndexDrift reports stale status when index disagrees with file", async () => {
     dir = await makeTempDir();
     const g = await createGoal(dir, { label: "drift_stale", description: "d", acceptanceCriteria: ["c"] }, defaults);
-    await updateGoal(dir, g.id, { status: "stalled" }, "user");
+    await updateGoal(
+      dir,
+      g.id,
+      { status: "stalled" },
+      { timestamp: new Date().toISOString(), action: "status-change", detail: "stalled", actor: "user" },
+    );
 
     await writeFile(
       join(dir, "_index.json"),
@@ -165,7 +170,14 @@ describe("goal atomic write (#1986)", () => {
       throw new Error("simulated rename failure");
     });
 
-    await expect(updateGoal(dir, g.id, { description: "after" }, "user")).rejects.toThrow("simulated rename failure");
+    await expect(
+      updateGoal(
+        dir,
+        g.id,
+        { description: "after" },
+        { timestamp: new Date().toISOString(), action: "description-change", detail: "after", actor: "user" },
+      ),
+    ).rejects.toThrow("simulated rename failure");
     const after = await readFile(goalPath, "utf-8");
     expect(after).toBe(before);
     expect(await readGoal(dir, g.id)).toMatchObject({ description: "before" });

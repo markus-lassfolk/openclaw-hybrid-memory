@@ -7,6 +7,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { type DecayClass, type MemoryCategory, type StoreConfig, TTL_DEFAULTS } from "../../config.js";
 import { applyDedupe, hasGlobalDuplicateProbe, resolveDedupeProfile } from "../../services/dedupe-policy.js";
 import { isPromptArtifactOrReasoningTrace } from "../../services/capture-utils.js";
+import { capturePluginError } from "../../services/error-reporter.js";
 import type { MemoryEntry, MemoryTier } from "../../types/memory.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../../utils/constants.js";
 import { formatDateUtc, formatTimestampUtc } from "../../utils/dates.js";
@@ -281,30 +282,29 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
   const nowSec = Math.floor(Date.now() / 1000);
   const day = formatDateUtc(nowSec);
 
+  const dedupeCandidate = {
+    text: entry.text,
+    source: sourceForPolicy,
+    scope: entry.scope ?? "global",
+    scopeTarget: entry.scopeTarget ?? null,
+    category: entry.category ?? null,
+    entity: entry.entity ?? null,
+    key: entry.key ?? null,
+    value: entry.value ?? null,
+  };
+  const dedupeCtx = {
+    db: ctx.db,
+    nowSec,
+    fuzzyDedupe: ctx.fuzzyDedupe,
+    vectorCandidates: ctx.vectorCandidates,
+    warnOnce: ctx.warnOnce,
+    warnOnceKey: ctx.warnOnceKey,
+    suppressVectorFallbackWarning: ctx.suppressVectorFallbackWarning,
+    warn: (_m: string) => {},
+  };
+
   // Normalized-hash + lexical Jaccard dedupe (per-source profiles) before daily quota.
-  const dedupe = applyDedupe(
-    profile,
-    {
-      text: entry.text,
-      source: sourceForPolicy,
-      scope: entry.scope ?? "global",
-      scopeTarget: entry.scopeTarget ?? null,
-      category: entry.category ?? null,
-      entity: entry.entity ?? null,
-      key: entry.key ?? null,
-      value: entry.value ?? null,
-    },
-    {
-      db: ctx.db,
-      nowSec,
-      fuzzyDedupe: ctx.fuzzyDedupe,
-      vectorCandidates: ctx.vectorCandidates,
-      warnOnce: ctx.warnOnce,
-      warnOnceKey: ctx.warnOnceKey,
-      suppressVectorFallbackWarning: ctx.suppressVectorFallbackWarning,
-      warn: (_m) => {},
-    },
-  );
+  const dedupe = applyDedupe(profile, dedupeCandidate, dedupeCtx);
 
   if (dedupe.action === "skip") {
     // #1186 acceptance ("cosine ≥ 0.85 → skip + recall_count++"): when we skipped because
@@ -353,8 +353,14 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
 
       const rawMergedText = `${existing.text}\n${entry.text}`;
       if (rawMergedText.length > 4000) {
-        process.stderr.write(
-          `memory-hybrid: dedupe merge for fact ${existing.id} truncated to 4000 chars (combined length=${rawMergedText.length}); some content may be lost\n`,
+        capturePluginError(
+          new Error(`dedupe merge for fact ${existing.id} truncated to 4000 chars; some content may be lost`),
+          {
+            operation: "dedupe-merge-truncate",
+            subsystem: "facts-db",
+            severity: "warning",
+            tags: { factId: existing.id, combinedLength: rawMergedText.length, truncatedLength: 4000 },
+          },
         );
       }
       const mergedText = rawMergedText.slice(0, 4000);
@@ -439,15 +445,27 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
   const decayFreezeUntil = rawFreeze !== null && Number.isFinite(rawFreeze) ? rawFreeze : null;
   const adjustedExpiresAt =
     decayFreezeUntil !== null && expiresAt !== null && expiresAt < decayFreezeUntil ? decayFreezeUntil : expiresAt;
-  const beginMode: SqliteTransactionBeginMode = profile.maxPerDay != null ? "IMMEDIATE" : "DEFERRED";
+  // Always IMMEDIATE (not conditional on profile.maxPerDay): the dedupe recheck below needs the
+  // write lock held from the start of the transaction, not just from the first write inside it.
+  const beginMode: SqliteTransactionBeginMode = "IMMEDIATE";
   // Quota "drop" path records `dropped` in this transaction, commits, then throws below so
   // observability survives the error. Retrying the same write increments `dropped` again (each
   // attempt is counted), which is intentional for operational metrics.
   let quotaExceededSource: string | null = null;
   let evictedFactId: string | null = null;
+  const dedupeRaceHitRef: { existingId: string | null } = { existingId: null };
   const tx = createTransaction(
     ctx.db,
     () => {
+      // Re-run the dedupe check now that the write lock is held. The first applyDedupe() call
+      // above ran without a lock, so two concurrent storeFact() calls for identical/near-identical
+      // text could both observe "no duplicate" and both reach here — this recheck closes that
+      // window by making the final duplicate decision atomic with the INSERT.
+      const recheck = applyDedupe(profile, dedupeCandidate, dedupeCtx);
+      if (recheck.action !== "store") {
+        dedupeRaceHitRef.existingId = recheck.existingId;
+        return;
+      }
       if (profile.maxPerDay != null) {
         const quotaRow = ctx.db
           .prepare("SELECT count FROM daily_writes WHERE source = ? AND day = ?")
@@ -560,8 +578,22 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
   runWithSqliteBusyRetry(ctx.db, () => {
     quotaExceededSource = null;
     evictedFactId = null;
+    dedupeRaceHitRef.existingId = null;
     tx();
   });
+  if (dedupeRaceHitRef.existingId) {
+    // A concurrent writer inserted (or updated) a matching fact between the first dedupe check
+    // and this transaction acquiring the write lock — surface their fact instead of inserting a
+    // duplicate. Deliberately skip re-applying skip/boost bookkeeping (recall_count bump, etc.)
+    // for this rare race edge case; the concurrent writer's own store() call already did it.
+    const raceWinner = ctx.getById(dedupeRaceHitRef.existingId);
+    if (raceWinner) {
+      return { entry: raceWinner, evictedFactId: null, embeddingStale: false, newlyStored: false, preMergeText: null };
+    }
+    throw new Error(
+      `memory-hybrid: dedupe existing fact ${dedupeRaceHitRef.existingId} not found (may have been deleted concurrently)`,
+    );
+  }
   if (quotaExceededSource) {
     throw new Error(`memory-hybrid: daily write quota exceeded for source ${quotaExceededSource}`);
   }
@@ -574,8 +606,16 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
   }
   try {
     resolveEntityForeignKeys(ctx.db, id, loaded.entity);
-  } catch {
-    /* non-fatal */
+  } catch (err) {
+    // Non-fatal — the fact is already stored; losing the entity FK link only degrades
+    // entity-scoped retrieval for this fact, not fact-level durability. Still worth surfacing:
+    // silently swallowing this made entity-linkage gaps invisible.
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: "resolve-entity-foreign-keys",
+      subsystem: "facts-db",
+      severity: "warning",
+      tags: { factId: id, entity: loaded.entity ?? "" },
+    });
   }
   return { entry: loaded, evictedFactId, embeddingStale: false, newlyStored: true, preMergeText: null };
 }
@@ -661,6 +701,8 @@ export function hasDuplicateText(
   storeConfig?: StoreConfig,
   source?: string,
   structured?: { category?: MemoryCategory | null; entity?: string | null; key?: string | null; value?: string | null },
+  scope?: "global" | "user" | "agent" | "session",
+  scopeTarget?: string | null,
 ): boolean {
   const nowSec = Math.floor(Date.now() / 1000);
   if (source === undefined) {
@@ -676,6 +718,8 @@ export function hasDuplicateText(
       entity: structured?.entity ?? null,
       key: structured?.key ?? null,
       value: structured?.value ?? null,
+      scope,
+      scopeTarget,
     },
     { db, nowSec, fuzzyDedupe },
   );

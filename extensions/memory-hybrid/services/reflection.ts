@@ -38,6 +38,7 @@ import { capturePluginError } from "./error-reporter.js";
 import { runContaminationGuard } from "./contamination-guard.js";
 import { quarantineSynthesisDraft } from "./synthesis-quarantine.js";
 import { recordMaintenanceTimestamp } from "./maintenance-timestamp.js";
+import { maintenanceRunDeadlineReached } from "../utils/maintenance-run-deadline.js";
 import type { ProvenanceService } from "./provenance.js";
 import {
   dotProductSimilarity,
@@ -583,7 +584,11 @@ export async function runReflection(
   const touchReflectLastRun = () => {
     if (!opts.dryRun) recordMaintenanceTimestamp(factsDb.sqlitePath, ".reflect_last_run");
   };
-  const recentFacts = factsDb.getRecentFacts(windowDays);
+  // globalOnly: reflection's synthesized output is stored as scope='global' (visible to every
+  // agent/user/session) below, so its input must not read agent/user/session-scoped facts —
+  // otherwise a private observation becomes a globally-visible pattern. Deliberate cross-scope
+  // generalization is cross-agent-learning.ts's job (explicit opt-in, provenance tracked).
+  const recentFacts = factsDb.getRecentFacts(windowDays, { globalOnly: true });
 
   if (recentFacts.length < config.minObservations) {
     logger.info(`memory-hybrid: reflection — ${recentFacts.length} facts in window (min ${config.minObservations})`);
@@ -620,7 +625,7 @@ export async function runReflection(
   const factsBlock = factLines.join("\n");
   const nowSec = Math.floor(Date.now() / 1000);
   const existingPatternFacts = factsDb
-    .getByCategory("pattern")
+    .getByCategory("pattern", true)
     .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
   const existingPatternsFingerprint = existingPatternFacts
     .map((f) => f.id)
@@ -741,6 +746,10 @@ export async function runReflection(
   const inRunFactVectors = new Map<string, { vector: number[]; embeddingModel: string }>();
 
   for (const patternText of uniqueNewPatterns) {
+    if (maintenanceRunDeadlineReached()) {
+      logger.warn("memory-hybrid: reflection stopped — maintenance run deadline reached");
+      break;
+    }
     candidateIndex++;
     let vec: number[];
     try {
@@ -807,6 +816,7 @@ export async function runReflection(
         value: null,
         source: "reflection",
         decayClass: "permanent",
+        scope: "global",
         tags: ["reflection", "pattern"],
         extractionMethod: "reflection",
         extractionConfidence: REFLECTION_IMPORTANCE,
@@ -1186,7 +1196,7 @@ export async function runReflectionRules(
   };
   const nowSec = Math.floor(Date.now() / 1000);
   const patternFacts = factsDb
-    .getByCategory("pattern")
+    .getByCategory("pattern", true)
     .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
   const patterns = patternFacts.slice(0, REFLECTION_MAX_PATTERNS_FOR_RULES).map((f) => f.text);
   if (patterns.length < 2) {
@@ -1414,7 +1424,7 @@ export async function runReflectionRules(
     }
   }
   const existingRuleFacts = factsDb
-    .getByCategory("rule")
+    .getByCategory("rule", true)
     .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
   let existingVectors: (number[] | null)[] = [];
   if (existingRuleFacts.length > 0) {
@@ -1452,6 +1462,10 @@ export async function runReflectionRules(
   const reflectionRunId = provenanceService ? randomUUID() : null;
   const inRunFactVectors = new Map<string, { vector: number[]; embeddingModel: string }>();
   for (const ruleText of uniqueRules) {
+    if (maintenanceRunDeadlineReached()) {
+      logger.warn("memory-hybrid: reflect-rules stopped — maintenance run deadline reached");
+      break;
+    }
     let vec: number[];
     try {
       vec = await embeddings.embed(ruleText);
@@ -1506,6 +1520,7 @@ export async function runReflectionRules(
         value: null,
         source: "reflection",
         decayClass: "permanent",
+        scope: "global",
         tags: ["reflection", "rule"],
         extractionMethod: "reflection",
         extractionConfidence: REFLECTION_IMPORTANCE,
@@ -1932,7 +1947,7 @@ export async function runReflectionMeta(
 ): Promise<ReflectionMetaResult> {
   const nowSec = Math.floor(Date.now() / 1000);
   const patternFacts = factsDb
-    .getByCategory("pattern")
+    .getByCategory("pattern", true)
     .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
   const patterns = patternFacts.slice(0, REFLECTION_MAX_PATTERNS_FOR_META).map((f) => f.text);
   if (patterns.length < 3) {
@@ -2057,7 +2072,7 @@ export async function runReflectionMeta(
     }
   }
   const existingMetaFacts = factsDb
-    .getByCategory("pattern")
+    .getByCategory("pattern", true)
     .filter(
       (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec) && f.tags?.includes("meta") === true,
     );
@@ -2091,6 +2106,10 @@ export async function runReflectionMeta(
   const reflectionRunId = provenanceService ? randomUUID() : null;
   const inRunFactVectors = new Map<string, { vector: number[]; embeddingModel: string }>();
   for (const metaText of uniqueMetas) {
+    if (maintenanceRunDeadlineReached()) {
+      logger.warn("memory-hybrid: reflect-meta stopped — maintenance run deadline reached");
+      break;
+    }
     let vec: number[];
     try {
       vec = await embeddings.embed(metaText);
@@ -2138,6 +2157,7 @@ export async function runReflectionMeta(
         value: null,
         source: "reflection",
         decayClass: "permanent",
+        scope: "global",
         tags: ["reflection", "pattern", "meta"],
         extractionMethod: "reflection",
         extractionConfidence: REFLECTION_IMPORTANCE,

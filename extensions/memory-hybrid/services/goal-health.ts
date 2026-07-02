@@ -6,15 +6,17 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { lookup } from "node:dns/promises";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import type { EventLog } from "../backends/event-log.js";
 import type { GoalStewardshipConfig } from "../config/types/index.js";
 import { getEnv } from "../utils/env-manager.js";
 import { nowIso } from "../utils/dates.js";
-import { appendGoalHistory, isTerminalStatus, listGoals, readGoal, updateGoal, writeGoal } from "./goal-registry.js";
+import { appendGoalHistory, isTerminalStatus, listGoals, readGoal, updateGoal } from "./goal-registry.js";
 import type { Goal, GoalHistoryEntry, GoalPulseOutcome } from "./goal-stewardship-types.js";
 import { isPidAlive } from "./task-queue-watchdog.js";
 
@@ -186,7 +188,16 @@ export async function verifyGoalMechanically(
     return verifyPrMergedApi(v.target);
   }
   if (v.type === "file_exists") {
-    const p = isAbsolute(v.target) ? v.target : join(workspaceRoot, v.target);
+    const p = resolve(isAbsolute(v.target) ? v.target : join(workspaceRoot, v.target));
+    // Reject targets that resolve outside workspaceRoot (absolute paths pointing elsewhere, or
+    // relative paths using ".." to climb out) — without this, file_exists could be used to probe
+    // for the presence of arbitrary files anywhere on the filesystem (e.g. ~/.ssh/id_rsa), since
+    // the verification target is attacker/agent-controlled goal input.
+    const rel = relative(resolve(workspaceRoot), p);
+    const contained = rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+    if (!contained) {
+      return { ok: false, detail: `file_exists: target escapes workspace (${p})` };
+    }
     return { ok: existsSync(p), detail: `file_exists: ${p}` };
   }
   if (v.type === "command_exit_zero") {
@@ -223,15 +234,20 @@ export async function verifyGoalMechanically(
     if (parsed.username || parsed.password) {
       return { ok: false, detail: "http_ok: URL credentials are not allowed" };
     }
-    const hostBlock = await getBlockedVerificationHostReason(parsed.hostname);
-    if (hostBlock) {
-      return { ok: false, detail: `http_ok: blocked host (${parsed.hostname}: ${hostBlock})` };
+    const hostResolution = await resolveVerificationHost(parsed.hostname);
+    if (!hostResolution.allowed) {
+      return { ok: false, detail: `http_ok: blocked host (${parsed.hostname}: ${hostResolution.blocked})` };
     }
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(), 10_000);
     try {
-      const res = await fetch(parsed, { signal: ac.signal });
-      return { ok: res.ok, detail: `http ${res.status}` };
+      // Connect using the exact IP validated above (resolveVerificationHost), instead of letting
+      // the request perform its own independent DNS resolution: a second lookup here could
+      // return a different (attacker-controlled / rebound) address than the one just checked,
+      // silently defeating the SSRF guard via DNS rebinding. The hostname is still sent as the
+      // Host header / TLS SNI (via `parsed`), so this only pins the transport-layer address.
+      const status = await fetchStatusViaPinnedIp(parsed, hostResolution.ip, ac.signal);
+      return { ok: status >= 200 && status < 400, detail: `http ${status}` };
     } catch (e) {
       return { ok: false, detail: e instanceof Error ? e.message : String(e) };
     } finally {
@@ -241,26 +257,59 @@ export async function verifyGoalMechanically(
   return { ok: false, detail: "unknown verification type" };
 }
 
-export async function getBlockedVerificationHostReason(hostname: string): Promise<string | null> {
+function fetchStatusViaPinnedIp(parsed: URL, ip: string, signal: AbortSignal): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const requestFn = parsed.protocol === "https:" ? httpsRequest : httpRequest;
+    const req = requestFn(
+      parsed,
+      {
+        signal,
+        lookup: (_hostname, _options, callback) => {
+          callback(null, ip, isIP(ip) === 6 ? 6 : 4);
+        },
+      },
+      (res) => {
+        res.resume();
+        resolve(res.statusCode ?? 0);
+      },
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+type VerificationHostResolution =
+  | { allowed: false; blocked: string }
+  | { allowed: true; blocked: null; ip: string };
+
+async function resolveVerificationHost(hostname: string): Promise<VerificationHostResolution> {
   const h = hostname
     .trim()
     .toLowerCase()
     .replace(/^\[|\]$/g, "");
-  if (!h) return "empty host";
-  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local")) return "local hostname";
-  if (isBlockedVerificationIpLiteral(h)) return "local/private IP";
-  if (isIP(h) !== 0) return null;
+  if (!h) return { allowed: false, blocked: "empty host" };
+  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local")) {
+    return { allowed: false, blocked: "local hostname" };
+  }
+  if (isBlockedVerificationIpLiteral(h)) return { allowed: false, blocked: "local/private IP" };
+  if (isIP(h) !== 0) return { allowed: true, blocked: null, ip: h };
 
   let records: Array<{ address: string }>;
   try {
     records = await lookup(h, { all: true, verbatim: true });
   } catch (err) {
-    return `DNS lookup failed: ${err instanceof Error ? err.message : String(err)}`;
+    return { allowed: false, blocked: `DNS lookup failed: ${err instanceof Error ? err.message : String(err)}` };
   }
-  if (records.length === 0) return "DNS lookup returned no addresses";
-  return records.some((record) => isBlockedVerificationIpLiteral(record.address))
-    ? "DNS resolved to local/private IP"
-    : null;
+  if (records.length === 0) return { allowed: false, blocked: "DNS lookup returned no addresses" };
+  const blockedRecord = records.find((record) => isBlockedVerificationIpLiteral(record.address));
+  if (blockedRecord) return { allowed: false, blocked: "DNS resolved to local/private IP" };
+  const chosen = records[0];
+  if (!chosen) return { allowed: false, blocked: "DNS lookup returned no addresses" };
+  return { allowed: true, blocked: null, ip: chosen.address };
+}
+
+export async function getBlockedVerificationHostReason(hostname: string): Promise<string | null> {
+  return (await resolveVerificationHost(hostname)).blocked;
 }
 
 function isBlockedVerificationIpLiteral(hostname: string): boolean {
@@ -328,10 +377,18 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
             ? `Budget exhausted: dispatches ${goal.dispatchCount}/${goal.maxDispatches}`
             : `Budget exhausted: assessments ${goal.assessmentCount}/${goal.maxAssessments}`;
         if (goal.status !== "blocked") {
+          // Function-form patch: currentBlockers merges against `fresh` (re-read inside the
+          // lock) instead of clobbering it from this pre-lock `goal` snapshot — a concurrent
+          // writer's blocker (e.g. goal_assess) would otherwise be silently discarded.
           await updateGoal(
             goalsDir,
             goal.id,
-            { status: "blocked", currentBlockers: [reason] },
+            (fresh) => ({
+              status: "blocked",
+              currentBlockers: fresh.currentBlockers.includes(reason)
+                ? fresh.currentBlockers
+                : [...fresh.currentBlockers, reason],
+            }),
             { timestamp: nowIso(), action: "budget-enforced", detail: reason, actor: "watchdog" },
           );
           result.goalsUpdated++;
@@ -360,13 +417,19 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
         goal.consecutiveFailures >= goal.escalateAfterFailures &&
         (goal.status === "active" || goal.status === "stalled")
       ) {
+        const escalationReason = `Escalated after ${goal.consecutiveFailures} consecutive failures`;
+        // Function-form patch: currentBlockers merges against `fresh` (re-read inside the lock)
+        // instead of clobbering it from this pre-lock `goal` snapshot — see the budget-exhausted
+        // branch above for the same rationale.
         await updateGoal(
           goalsDir,
           goal.id,
-          {
+          (fresh) => ({
             status: "blocked",
-            currentBlockers: [`Escalated after ${goal.consecutiveFailures} consecutive failures`],
-          },
+            currentBlockers: fresh.currentBlockers.includes(escalationReason)
+              ? fresh.currentBlockers
+              : [...fresh.currentBlockers, escalationReason],
+          }),
           {
             timestamp: nowIso(),
             action: "escalated",
@@ -376,7 +439,7 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
         );
         result.goalsUpdated++;
         result.actions.push({ goalId: goal.id, label: goal.label, action: "escalated", reason: "failures" });
-        recordOutcome("blocked", `Escalated after ${goal.consecutiveFailures} consecutive failures`);
+        recordOutcome("blocked", escalationReason);
         continue;
       }
 
@@ -388,18 +451,21 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
 
       const invalidLinkedTasksReason = await findInvalidLinkedTasksReason(goalsDir, goal.id);
       if (invalidLinkedTasksReason) {
-        const blockers = g.currentBlockers.includes(invalidLinkedTasksReason)
-          ? g.currentBlockers
-          : [...g.currentBlockers, invalidLinkedTasksReason];
+        // currentBlockers/consecutiveFailures are derived from `fresh` (re-read inside
+        // updateGoal's lock), not from `g` above — a concurrent goal_assess/subagent-end call
+        // updating the same arrays could otherwise have its update silently reverted by this
+        // patch overwriting from a stale pre-lock snapshot.
         await updateGoal(
           goalsDir,
           g.id,
-          {
+          (fresh) => ({
             status: "blocked",
-            currentBlockers: blockers,
+            currentBlockers: fresh.currentBlockers.includes(invalidLinkedTasksReason)
+              ? fresh.currentBlockers
+              : [...fresh.currentBlockers, invalidLinkedTasksReason],
             lastOutcome: invalidLinkedTasksReason,
-            consecutiveFailures: g.consecutiveFailures + 1,
-          },
+            consecutiveFailures: fresh.consecutiveFailures + 1,
+          }),
           {
             timestamp: nowIso(),
             action: "goal-schema-invalid",
@@ -427,29 +493,30 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
         const hasSession = typeof lt.sessionKey === "string" && lt.sessionKey.trim().length > 0;
         if (hasSession) continue;
         const reason = `Linked task "${lt.label}" is missing dispatch metadata (sessionKey/runId).`;
-        const updatedTasks = g.linkedTasks.map((t) =>
-          t.label === lt.label
-            ? {
-                ...t,
-                status: "failed",
-                dispatchFailureReason: reason,
-                updatedAt: nowIso(),
-                sessionKey: null,
-                runId: null,
-              }
-            : t,
-        );
-        const blockers = g.currentBlockers.includes(reason) ? g.currentBlockers : [...g.currentBlockers, reason];
+        const targetLabel = lt.label;
+        // linkedTasks/currentBlockers/consecutiveFailures derived from `fresh`, not `g` — same
+        // stale-array-clobber rationale as the invalidLinkedTasksReason branch above.
         await updateGoal(
           goalsDir,
           g.id,
-          {
-            linkedTasks: updatedTasks,
-            consecutiveFailures: g.consecutiveFailures + 1,
+          (fresh) => ({
+            linkedTasks: fresh.linkedTasks.map((t) =>
+              t.label === targetLabel
+                ? {
+                    ...t,
+                    status: "failed",
+                    dispatchFailureReason: reason,
+                    updatedAt: nowIso(),
+                    sessionKey: null,
+                    runId: null,
+                  }
+                : t,
+            ),
+            consecutiveFailures: fresh.consecutiveFailures + 1,
             status: "blocked",
-            currentBlockers: blockers,
+            currentBlockers: fresh.currentBlockers.includes(reason) ? fresh.currentBlockers : [...fresh.currentBlockers, reason],
             lastOutcome: reason,
-          },
+          }),
           { timestamp: nowIso(), action: "dispatch-metadata-missing", detail: reason, actor: "watchdog" },
         );
         result.goalsUpdated++;
@@ -468,19 +535,21 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
           const pid = Number(pidMatch[1]);
           if (!Number.isNaN(pid) && !isPidAlive(pid)) {
             const reason = `Linked task "${lt.label}" died: pid ${pid} is no longer alive`;
-            const updatedTasks = g.linkedTasks.map((t) =>
-              t.label === lt.label ? { ...t, status: "failed", updatedAt: nowIso() } : t,
-            );
-            const blockers = g.currentBlockers.includes(reason) ? g.currentBlockers : [...g.currentBlockers, reason];
+            const targetLabel = lt.label;
+            // Same rationale as the two branches above: derive from `fresh`, not `g`.
             await updateGoal(
               goalsDir,
               g.id,
-              {
-                linkedTasks: updatedTasks,
-                consecutiveFailures: g.consecutiveFailures + 1,
+              (fresh) => ({
+                linkedTasks: fresh.linkedTasks.map((t) =>
+                  t.label === targetLabel ? { ...t, status: "failed", updatedAt: nowIso() } : t,
+                ),
+                consecutiveFailures: fresh.consecutiveFailures + 1,
                 status: "blocked",
-                currentBlockers: blockers,
-              },
+                currentBlockers: fresh.currentBlockers.includes(reason)
+                  ? fresh.currentBlockers
+                  : [...fresh.currentBlockers, reason],
+              }),
               {
                 timestamp: nowIso(),
                 action: "subagent-died",
@@ -593,7 +662,16 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
             const rereadAfterVerify = await readGoal(goalsDir, goal.id);
             if (rereadAfterVerify) g = rereadAfterVerify;
           } else {
-            await writeGoal(goalsDir, { ...g, lastMechanicalCheck: { at: checkAt, ok: mech.ok, detail: mech.detail } });
+            // Use updateGoal (lock + fresh re-read), not a direct writeGoal(...g) spread — mechanical
+            // verification can block for several seconds (command/PR/http checks), during which a
+            // concurrent goal_assess could have updated blockers/circuit-breaker state; overwriting
+            // the whole file from the stale pre-verification `g` snapshot would silently discard it.
+            g = await updateGoal(
+              goalsDir,
+              g.id,
+              { lastMechanicalCheck: { at: checkAt, ok: mech.ok, detail: mech.detail } },
+              { timestamp: checkAt, action: "verification-checked", detail: mech.detail, actor: "watchdog" },
+            );
             if (!mech.ok) waitingReason = `Mechanical verification failed: ${mech.detail}`;
           }
         }

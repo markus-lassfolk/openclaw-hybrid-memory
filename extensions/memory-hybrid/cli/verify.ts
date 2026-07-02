@@ -45,8 +45,8 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
     )
     .option(
       "--reconcile-max-fixes <n>",
-      "Max vectors to rebuild for SQLite orphan gaps (records missing vectors) when --fix is set (default: 200)",
-      "200",
+      "Max vectors to rebuild for SQLite orphan gaps (records missing vectors) when --fix is set (default: 200; " +
+        "--reconcile-policy aggressive raises this to 2000 unless you pass this flag explicitly, which is always honored as a hard cap)",
     )
     .option("--no-emoji", "Use plain text indicators instead of emoji (for terminals with poor Unicode support)")
     .action(
@@ -68,11 +68,16 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
             reconcilePolicyRaw === "conservative" || reconcilePolicyRaw === "aggressive"
               ? reconcilePolicyRaw
               : "balanced";
-          const parsedReconcileMaxFixes = Number.parseInt(String(opts.reconcileMaxFixes ?? "200"), 10);
-          const reconcileMaxFixes = Math.max(
-            0,
-            Math.min(5000, Number.isFinite(parsedReconcileMaxFixes) ? parsedReconcileMaxFixes : 200),
-          );
+          // Preserve `undefined` when the flag is omitted (vs. an explicit value) so downstream
+          // reconcile-policy logic can distinguish "use the policy default" from "user pinned this cap".
+          let reconcileMaxFixes: number | undefined;
+          if (opts.reconcileMaxFixes !== undefined) {
+            const parsedReconcileMaxFixes = Number.parseInt(opts.reconcileMaxFixes, 10);
+            reconcileMaxFixes = Math.max(
+              0,
+              Math.min(5000, Number.isFinite(parsedReconcileMaxFixes) ? parsedReconcileMaxFixes : 200),
+            );
+          }
           try {
             await runVerify(
               {
