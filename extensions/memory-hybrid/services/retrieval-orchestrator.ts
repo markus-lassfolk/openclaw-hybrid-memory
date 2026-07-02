@@ -452,7 +452,11 @@ function describeEmbeddingRegistry(registry: EmbeddingRegistry | null | undefine
   };
 }
 
-function buildSemanticCacheFilterKey(config: RetrievalConfig, options: RetrievalPipelineOptions): string {
+function buildSemanticCacheFilterKey(
+  config: RetrievalConfig,
+  options: RetrievalPipelineOptions,
+  policy: ExplicitDeepRetrievalPolicy | InteractiveRecallPolicy | ConstrainedRetrievalPolicy,
+): string {
   const expanderMode =
     options.queryExpander && typeof (options.queryExpander as QueryExpander).getMode === "function"
       ? options.queryExpander.getMode()
@@ -465,6 +469,20 @@ function buildSemanticCacheFilterKey(config: RetrievalConfig, options: Retrieval
       : null;
 
   return stableStringify({
+    // Distinct retrieval modes/policies (interactive-recall vs. explicit-deep vs.
+    // constrained-recall) enable different sets of RRF fusion/graph/alias/query expansion — a
+    // cached result computed under one policy must never be served for a request resolved under
+    // a different one (#storage-recall-review).
+    policyMode: policy.mode,
+    policyFlags: {
+      allowRrfFusion: "allowRrfFusion" in policy ? policy.allowRrfFusion : null,
+      allowGraphExpansion: "allowGraphExpansion" in policy ? policy.allowGraphExpansion : null,
+      allowAliasExpansion: "allowAliasExpansion" in policy ? policy.allowAliasExpansion : null,
+      allowQueryExpansion: "allowQueryExpansion" in policy ? policy.allowQueryExpansion : null,
+      allowMultiModelSemantic: "allowMultiModelSemantic" in policy ? policy.allowMultiModelSemantic : null,
+      allowHyde: "allowHyde" in policy ? policy.allowHyde : null,
+      allowReranking: "allowReranking" in policy ? policy.allowReranking : null,
+    },
     strategies: [...config.strategies].sort(),
     rrfK: config.rrf_k,
     semanticTopK: config.semanticTopK,
@@ -769,7 +787,7 @@ export async function runExplicitDeepRetrieval(
 
   const validator = queryValidator ?? validateQueryForMemoryLookup;
   const vectorDbWithCache = vectorDb as SemanticCacheCapableVectorDB;
-  const semanticCacheFilterKey = buildSemanticCacheFilterKey(config, options);
+  const semanticCacheFilterKey = buildSemanticCacheFilterKey(config, options, policy);
   const activeDocumentGrader =
     documentGrader ??
     (adaptiveOpenai && documentGradingConfig?.enabled
@@ -1093,12 +1111,14 @@ export async function runExplicitDeepRetrieval(
         } else {
           const existing = deduped.get(res.factId)!;
           existing.sources.push({ strategy: res.source || "unknown", rank: res.rank });
-          if (res.source === "semantic" || res.source?.startsWith("semantic:")) {
-            const semanticScore = 1 / (k + res.rank);
-            if (semanticScore > existing.finalScore) {
-              existing.finalScore = semanticScore;
-              existing.rrfScore = semanticScore;
-            }
+          // The 1/(k+rank) score formula is the same regardless of which strategy produced the
+          // hit — keep the best score across ALL strategies that found this fact, not just
+          // "semantic" ones. A fact ranked #1 by fts5/issues/aliases must not lose to a worse
+          // score kept only because the first-seen strategy happened to run first.
+          const candidateScore = 1 / (k + res.rank);
+          if (candidateScore > existing.finalScore) {
+            existing.finalScore = candidateScore;
+            existing.rrfScore = candidateScore;
           }
         }
       }
