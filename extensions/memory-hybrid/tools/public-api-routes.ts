@@ -14,6 +14,7 @@ import {
   buildProcessMemorySnapshot,
   sanitizePublicMemoryDiagnostics,
 } from "../services/gateway-memory-diagnostics.js";
+import { capturePluginError } from "../services/error-reporter.js";
 import { buildPublicExportBundle } from "../services/public-export-bundle.js";
 import {
   applyActiveTaskProjectionFilters,
@@ -754,7 +755,14 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
 
         return toJson(400, { error: `unknown action: ${action}` });
       } catch (err) {
-        return toJson(500, { error: err instanceof Error ? err.message : String(err) });
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "public-api",
+          operation: "fact-mutate",
+        });
+        pluginLogger.error(
+          `memory-hybrid: /fact/mutate failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return toJson(500, { error: "InternalServerError" });
       }
     });
   }

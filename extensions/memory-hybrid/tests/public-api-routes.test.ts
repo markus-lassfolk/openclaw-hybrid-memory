@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { NarrativesDB } from "../backends/narratives-db.js";
 import type { RegisterHttpRouteGatewayParams } from "../tools/http-route-types.js";
@@ -626,6 +626,29 @@ describe("registerPublicApiRoutes", () => {
     const res = await invokeNodeHttpRoute(route.handler, fakeReq(`${PUBLIC_API_PREFIX}/fact/mutate`));
     expect(res.status).toBe(403);
     expect(JSON.parse(res.body).error).toBe("authentication required");
+  });
+
+  it("fact mutate returns a generic error instead of leaking the raw internal exception message (#68)", async () => {
+    const { api, routes } = makeApi();
+    registerPublicApiRoutes({ cfg: makeCfg(true), factsDb, narrativesDb, factMutationsEnabled: true }, api);
+    const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}/fact/mutate`)!;
+    const storeSpy = vi.spyOn(factsDb, "store").mockImplementation(() => {
+      throw new Error("CHECK constraint failed: internal schema detail should not reach the client");
+    });
+    try {
+      const res = await invokeNodeHttpRoute(route.handler, {
+        method: "POST",
+        url: `${PUBLIC_API_PREFIX}/fact/mutate`,
+        headers: {},
+        body: JSON.stringify({ action: "create", text: "trigger a store failure" }),
+      });
+      expect(res.status).toBe(500);
+      const parsed = JSON.parse(res.body);
+      expect(parsed.error).toBe("InternalServerError");
+      expect(parsed.error).not.toContain("internal schema detail");
+    } finally {
+      storeSpy.mockRestore();
+    }
   });
 
   it("export requires authentication", async () => {
