@@ -72,6 +72,7 @@ import {
   writeVersionCheckCache,
 } from "../utils/plugin-update-check.js";
 import { checkOpenClawVersion } from "../utils/version-check.js";
+import { stopEventLoopLagMonitor } from "../utils/event-loop-health.js";
 import { versionInfo } from "../versionInfo.js";
 
 export interface PluginServiceContext {
@@ -1153,6 +1154,10 @@ export function createPluginService(ctx: PluginServiceContext) {
       shuttingDown = true;
       timers.shuttingDownRef.value = true;
       clearRuntimeTimers(timers);
+      // #91: startEventLoopLagMonitor() is armed during registration (register-plugin.ts) but was
+      // never paired with a stop() here — only the CLI one-shot teardown path called this,
+      // leaving the perf_hooks histogram sampling indefinitely after a real plugin shutdown.
+      stopEventLoopLagMonitor();
       // Flush pending error reports with adaptive timeout so persisted queue replay can drain.
       if (isErrorReporterActive()) {
         const flushed = await flushErrorReporter().catch(() => false);

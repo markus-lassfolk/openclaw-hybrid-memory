@@ -15,6 +15,7 @@ import { hybridConfigSchema } from "../config.js";
 import { _testing } from "../index.js";
 import { capturePluginError, getErrorReporterMuteReason, setErrorReporterMuted } from "../services/error-reporter.js";
 import * as errorReporter from "../services/error-reporter.js";
+import * as eventLoopHealth from "../utils/event-loop-health.js";
 import { type PluginServiceContext, createPluginService } from "../setup/plugin-service.js";
 import { createDashboardServer } from "../routes/dashboard-server.js";
 import { spawn } from "node:child_process";
@@ -533,6 +534,23 @@ describe("createPluginService stop() — resource cleanup (#57, #58)", () => {
       }),
     ).toThrow(/database connection is not open/i);
 
+    (ctx.vectorDb as InstanceType<typeof VectorDB>).close();
+  });
+
+  it("stops the event-loop lag monitor on shutdown (#91)", async () => {
+    const api = makeMockApi(RECOMMENDED_OPENCLAW_VERSION);
+    const ctx = buildMinimalCtx(tmpDir, api, timers);
+    const stopSpy = vi.spyOn(eventLoopHealth, "stopEventLoopLagMonitor");
+
+    await createPluginService(ctx).stop();
+
+    // startEventLoopLagMonitor() is armed once during registration (register-plugin.ts) and is a
+    // process-wide singleton; only the CLI one-shot teardown paired it with a stop() call before
+    // this fix, leaving the perf_hooks histogram sampling indefinitely after a real plugin stop().
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    stopSpy.mockRestore();
+
+    (ctx.factsDb as InstanceType<typeof FactsDB>).close();
     (ctx.vectorDb as InstanceType<typeof VectorDB>).close();
   });
 });
