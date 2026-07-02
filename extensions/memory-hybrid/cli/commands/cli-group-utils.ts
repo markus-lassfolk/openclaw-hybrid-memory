@@ -242,8 +242,8 @@ export function wrapChainableWithRenames(
         node.action(fn);
         return wrapped;
       },
-      option(flags: string, desc?: string, defaultValue?: unknown) {
-        node.option(flags, desc, defaultValue);
+      option(flags: string, desc?: string, defaultValueOrFn?: unknown, defaultValue?: unknown) {
+        node.option(flags, desc, defaultValueOrFn, defaultValue);
         return wrapped;
       },
       requiredOption(flags: string, desc?: string, defaultValue?: unknown) {
@@ -284,8 +284,8 @@ export function wrapChainableWithDeprecated(base: Chainable, flatToGrouped: Reco
         node.action(grouped ? deprecatedAction(currentFlat!, grouped, fn) : fn);
         return wrapped;
       },
-      option(flags: string, desc?: string, defaultValue?: unknown) {
-        node.option(flags, desc, defaultValue);
+      option(flags: string, desc?: string, defaultValueOrFn?: unknown, defaultValue?: unknown) {
+        node.option(flags, desc, defaultValueOrFn, defaultValue);
         return wrapped;
       },
       requiredOption(flags: string, desc?: string, defaultValue?: unknown) {
