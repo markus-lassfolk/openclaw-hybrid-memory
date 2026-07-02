@@ -606,8 +606,16 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
   }
   try {
     resolveEntityForeignKeys(ctx.db, id, loaded.entity);
-  } catch {
-    /* non-fatal */
+  } catch (err) {
+    // Non-fatal — the fact is already stored; losing the entity FK link only degrades
+    // entity-scoped retrieval for this fact, not fact-level durability. Still worth surfacing:
+    // silently swallowing this made entity-linkage gaps invisible.
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: "resolve-entity-foreign-keys",
+      subsystem: "facts-db",
+      severity: "warning",
+      tags: { factId: id, entity: loaded.entity ?? "" },
+    });
   }
   return { entry: loaded, evictedFactId, embeddingStale: false, newlyStored: true, preMergeText: null };
 }
