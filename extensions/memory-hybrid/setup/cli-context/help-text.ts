@@ -59,6 +59,11 @@ Commands by category:
     credentials migrate-to-vault
     scope list|stats|prune|promote
 
+  Contacts (structured profile enrichment, #2014)
+    contacts list|suggest-merges
+    contacts merge <fromId> <intoId>
+    contacts import|sync --from <file>
+
   Plugin lifecycle
     --version            Show installed version (update notice when npm/GitHub are newer)
     version              Detailed version info (GitHub, npm, --json)

@@ -138,6 +138,23 @@ Agents use **`memory_directory`** (`list_contacts`, `org_view`) for **stable** c
 
 **Recommendation**: Start with `autoLink: false` and manually create links using `memory_link` to establish high-quality relationships. Enable `autoLink: true` later once you have a critical mass of facts.
 
+### Contact profile enrichment vs. NER (issue #2014)
+
+**NER** (above) creates *thin* `contacts`/`organizations` rows from PERSON/ORG spans — just `display_name` and, when the same fact also mentions an org, `primary_org_id`. **Contact profile enrichment** is a second, focused step that fills in the rest of the contact record from the same fact text:
+
+- After NER runs, if the fact mentions **exactly one** PERSON (ambiguous when there are two or more — attributing an email to the wrong person is worse than not enriching), the fact text is scanned for an email address, a phone number, and a job-title/role keyword (English + Swedish, e.g. `CEO`, `Sverigechef`, `styrelseledamot`).
+- Matched fields are merged onto that contact's `email`, `phone`, `role`, and `board_status` columns — **filling empty fields**, and only **overwriting already-populated fields** when the new write has equal or higher priority (`manual` > `agent`/`import` > `ner`). `notes` are appended (deduplicated), never overwritten.
+- Example: storing `"Daniel Thunberg email daniel.thunberg@avoki.com Sverigechef Avoki"` sets `contacts.email = "daniel.thunberg@avoki.com"`, `contacts.role = "Sverigechef Avoki"`, and `contacts.board_status = "management"` on the "Daniel Thunberg" contact.
+- This is a lightweight regex heuristic, not an LLM/NLP title parser — it will miss unusual phrasing. Non-goal for v1: full CRM sync.
+
+**Entity resolution (duplicate contacts).** NER often creates near-duplicate contacts from partial names (e.g. "Daniel" and "Daniel Thunberg" as two rows). Two mechanisms address this without manual SQL:
+
+- **Auto-merge**: when NER is about to create a *new* contact and there is **exactly one** existing contact whose name is a token prefix/suffix of the new name (e.g. "Daniel" ⊂ "Daniel Thunberg"), the mention is merged into that existing contact instead of creating a duplicate — the shorter/older name is kept as an alias. Ambiguous cases (zero or 2+ candidates) are left alone.
+- **Manual merge**: `openclaw hybrid-mem contacts suggest-merges` lists remaining candidates; `openclaw hybrid-mem contacts merge <fromId> <intoId>` repoints all `fact_entity_mentions` to `intoId`, folds in `fromId`'s profile fields (manual merges always win field conflicts) and aliases, and deletes `fromId`.
+- Set `contacts.requireSurname: true` to stop NER from creating a *new* PERSON contact from a single-token surface (e.g. bare "Daniel") unless the same fact also mentions an organization — reduces one-word noise contacts at the cost of occasionally not tracking a first-name-only mention. Default `false` (matches pre-#2014 behavior).
+
+**Roster import**: `openclaw hybrid-mem contacts import --from <file> [--dry-run]` upserts organizations/contacts/roster facts from a `CONTACTS.md`-style file — see [CONFIGURATION.md](CONFIGURATION.md#contacts-profile-enrichment-2014) for the file format and the full `contacts` CLI reference.
+
 ---
 
 ## Usage
@@ -479,6 +496,7 @@ Add `valid_at` / `invalid_at` columns to support superseded links without deleti
 ### Config Keys
 
 - `graph.enabled`, `graph.autoLink`, `graph.autoLinkMinScore`, `graph.autoLinkLimit`, `graph.maxTraversalDepth`, `graph.useInRecall`
+- `contacts.requireSurname` — see [Contact profile enrichment vs. NER](#contact-profile-enrichment-vs-ner-issue-2014)
 
 ---
 

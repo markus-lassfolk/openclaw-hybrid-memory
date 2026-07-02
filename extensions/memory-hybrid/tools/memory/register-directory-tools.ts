@@ -80,10 +80,26 @@ export function registerDirectoryTools(runtime: MemoryToolRuntime): void {
           if (operation === "list_contacts") {
             const prefix = typeof params.name_prefix === "string" ? params.name_prefix : "";
             const rows = factsDb.listContactsByNamePrefix(prefix, cap);
-            const lines = rows.map(
-              (c) =>
-                `- ${c.displayName} (id=${c.id})${c.primaryOrgId ? ` [org: ${c.primaryOrgId}]` : ""}${c.email ? ` email=${c.email}` : ""}`,
-            );
+            // Issue #2014: surface phone/role/board status and the org's display name (not just its id).
+            const orgNameCache = new Map<string, string | null>();
+            const orgDisplayName = (orgId: string | null): string | null => {
+              if (!orgId) return null;
+              if (!orgNameCache.has(orgId)) {
+                orgNameCache.set(orgId, factsDb.getOrganizationById(orgId)?.displayName ?? null);
+              }
+              return orgNameCache.get(orgId) ?? null;
+            };
+            const contactsWithOrg = rows.map((c) => ({ ...c, orgDisplayName: orgDisplayName(c.primaryOrgId) }));
+            const lines = contactsWithOrg.map((c) => {
+              const parts = [`- ${c.displayName} (id=${c.id})`];
+              if (c.role) parts.push(`role=${c.role}`);
+              if (c.boardStatus) parts.push(`[${c.boardStatus}]`);
+              if (c.orgDisplayName) parts.push(`org=${c.orgDisplayName}`);
+              if (c.email) parts.push(`email=${c.email}`);
+              if (c.phone) parts.push(`phone=${c.phone}`);
+              if (c.updatedAt != null) parts.push(`updated=${new Date(c.updatedAt * 1000).toISOString().slice(0, 10)}`);
+              return parts.join(" ");
+            });
             return {
               content: [
                 {
@@ -91,7 +107,7 @@ export function registerDirectoryTools(runtime: MemoryToolRuntime): void {
                   text: rows.length === 0 ? "No contacts found." : `Contacts (${rows.length}):\n${lines.join("\n")}`,
                 },
               ],
-              details: { operation: "list_contacts", count: rows.length, contacts: rows },
+              details: { operation: "list_contacts", count: rows.length, contacts: contactsWithOrg },
             };
           }
           if (operation === "org_view") {
@@ -122,19 +138,38 @@ export function registerDirectoryTools(runtime: MemoryToolRuntime): void {
                 ? { id: f.id, text: f.text.slice(0, 240), category: f.category }
                 : { id, text: "(missing)", category: "?" };
             });
-            const peopleLines = people.map((p) => `- ${p.displayName} (contact id=${p.id})`);
+            const personLine = (p: (typeof people)[number]) =>
+              `- ${p.displayName} (contact id=${p.id})${p.role ? ` — ${p.role}` : ""}${p.email ? ` <${p.email}>` : ""}`;
+            // Issue #2014: group board vs management vs unclassified when board_status is set.
+            const board = people.filter((p) => p.boardStatus === "board");
+            const management = people.filter((p) => p.boardStatus === "management");
+            const other = people.filter((p) => p.boardStatus !== "board" && p.boardStatus !== "management");
+            const peopleSections =
+              board.length + management.length > 0
+                ? [
+                    board.length ? `Board (${board.length}):\n${board.map(personLine).join("\n")}` : null,
+                    management.length ? `Management (${management.length}):\n${management.map(personLine).join("\n")}` : null,
+                    other.length ? `Other (${other.length}):\n${other.map(personLine).join("\n")}` : null,
+                  ]
+                    .filter((s): s is string => s != null)
+                    .join("\n\n")
+                : people.length
+                  ? people.map(personLine).join("\n")
+                  : "(none)";
             const factLines = factSummaries.map((f) => `- [${f.id}] ${f.text}${f.text.length >= 240 ? "…" : ""}`);
             return {
               content: [
                 {
                   type: "text",
-                  text: `Organization: ${org.displayName} (id=${org.id}, key=${org.canonicalKey})\n\nPeople (${people.length}):\n${people.length ? peopleLines.join("\n") : "(none)"}\n\nFacts linked (${factSummaries.length}):\n${factSummaries.length ? factLines.join("\n") : "(none)"}`,
+                  text: `Organization: ${org.displayName} (id=${org.id}, key=${org.canonicalKey})\n\nPeople (${people.length}):\n${peopleSections}\n\nFacts linked (${factSummaries.length}):\n${factSummaries.length ? factLines.join("\n") : "(none)"}`,
                 },
               ],
               details: {
                 operation: "org_view",
                 organization: org,
                 people,
+                board,
+                management,
                 facts: factSummaries,
               },
             };
