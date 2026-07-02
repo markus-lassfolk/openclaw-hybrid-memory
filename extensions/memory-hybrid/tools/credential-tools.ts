@@ -68,6 +68,10 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
             typeof notes === "string" && notes.length > CREDENTIAL_NOTES_MAX_CHARS
               ? notes.slice(0, CREDENTIAL_NOTES_MAX_CHARS)
               : notes;
+          // credentialsDb.store() overwrites any existing credential for this service/type —
+          // capture it *before* the write so a rollback below can restore it rather than
+          // deleting the row outright (which would also discard this pre-existing value).
+          const priorEntry = credentialsDb.get(service, type);
           try {
             credentialsDb.store({ service, type, value, url: urlTrim, notes: notesTrim, expires });
           } catch (err) {
@@ -80,12 +84,12 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
             throw err;
           }
           if (!factsDb) {
-            rollbackVaultCredentialWrite(credentialsDb, service, type);
+            rollbackVaultCredentialWrite(credentialsDb, service, type, undefined, priorEntry);
             throw new Error("Facts store not available — cannot create vault pointer for credential");
           }
           const pointer = ensureCredentialVaultPointer(factsDb, service, type, "credential-tool");
           if (!pointer.ok) {
-            rollbackVaultCredentialWrite(credentialsDb, service, type);
+            rollbackVaultCredentialWrite(credentialsDb, service, type, undefined, priorEntry);
             throw new Error("Credential pointer rejected by pre-store guard");
           }
           return {
