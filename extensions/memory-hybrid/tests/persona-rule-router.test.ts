@@ -1,9 +1,10 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { assessPersonaProposalRouting, assessPersonaProposalRoutingSync } from "../cli/proposals.js";
+import * as errorReporter from "../services/error-reporter.js";
 import {
   classifyAuthorityBucket,
   findCrossFileContentMatch,
@@ -136,6 +137,76 @@ describe("routePersonaProposal", () => {
     expect(assessment.blockCandidate?.source).toBe("memory-fact");
     expect(shouldBlockProposalCreation(assessment, "advisory")).toBe(true);
     expect(personaRuleRoutingMetrics.dedupHits).toBeGreaterThan(0);
+  });
+
+  it("logs (instead of silently swallowing) an embedding provider failure during routing (#45)", async () => {
+    const captureSpy = vi.spyOn(errorReporter, "capturePluginError").mockImplementation(() => undefined);
+    try {
+      const failingEmbedText = async () => {
+        throw new Error("embedding provider unavailable");
+      };
+
+      // Should not throw — cachedEmbed's failure degrades routing to text-pattern heuristics
+      // rather than crashing the caller.
+      const assessment = await routePersonaProposal({
+        targetFile: "SOUL.md",
+        title: REGRESSION_PROPOSAL.title,
+        observation: REGRESSION_PROPOSAL.observation,
+        suggestedChange: REGRESSION_PROPOSAL.suggestedChange,
+        confidence: REGRESSION_PROPOSAL.confidence,
+        evidenceSessions: ["session-1"],
+        workspaceRoot: tmpDir,
+        allowedFiles: ["SOUL.md", "IDENTITY.md", "USER.md", "AGENTS.md"],
+        routing: DEFAULT_PERSONA_RULE_ROUTING,
+        factsDb,
+        embedText: failingEmbedText,
+      });
+
+      expect(assessment).toBeDefined();
+      expect(captureSpy).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({ subsystem: "persona-rule-router", operation: "cachedEmbed" }),
+      );
+    } finally {
+      captureSpy.mockRestore();
+    }
+  });
+
+  it("logs (instead of silently swallowing) a rule-facts DB read failure during routing (#45)", async () => {
+    const captureSpy = vi.spyOn(errorReporter, "capturePluginError").mockImplementation(() => undefined);
+    const listSpy = vi.spyOn(factsDb, "listFactsByCategory").mockImplementation(() => {
+      throw new Error("sqlite disk I/O error");
+    });
+    try {
+      // listRuleFacts is only reached once a query embedding vector is successfully produced,
+      // so embedText must succeed here (unlike the cachedEmbed-failure test above).
+      const embedText = makeEmbedder({ "github issue": [1, 0, 0] });
+
+      // Should not throw — listRuleFacts's failure degrades to "no rule facts" rather than
+      // crashing the caller.
+      const assessment = await routePersonaProposal({
+        targetFile: "SOUL.md",
+        title: REGRESSION_PROPOSAL.title,
+        observation: REGRESSION_PROPOSAL.observation,
+        suggestedChange: REGRESSION_PROPOSAL.suggestedChange,
+        confidence: REGRESSION_PROPOSAL.confidence,
+        evidenceSessions: ["session-1"],
+        workspaceRoot: tmpDir,
+        allowedFiles: ["SOUL.md", "IDENTITY.md", "USER.md", "AGENTS.md"],
+        routing: DEFAULT_PERSONA_RULE_ROUTING,
+        factsDb,
+        embedText,
+      });
+
+      expect(assessment).toBeDefined();
+      expect(captureSpy).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({ subsystem: "persona-rule-router", operation: "listRuleFacts" }),
+      );
+    } finally {
+      listSpy.mockRestore();
+      captureSpy.mockRestore();
+    }
   });
 
   it("flags cross-file already-in-file matches against AGENTS.md when targeting USER.md", () => {

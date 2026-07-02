@@ -13,6 +13,7 @@ import type { MemoryEntry } from "../types/memory.js";
 import { normalizeProposalText } from "../cli/proposals.js";
 import type { PersonaRuleRoutingConfig } from "../config/types/agents.js";
 import { cosineSimilarity } from "./ambient-retrieval.js";
+import { capturePluginError } from "./error-reporter.js";
 
 export type AuthorityTarget =
   | "SOUL.md"
@@ -279,7 +280,14 @@ async function cachedEmbed(
     const vector = await embedText(text);
     embeddingCache.set(key, { vector, expiresAt: now + ttlSeconds * 1000 });
     return vector;
-  } catch {
+  } catch (err) {
+    // Log so a persistently-failing embedding provider is visible instead of looking identical
+    // to "no embedText configured" — both silently degrade routing to text-pattern heuristics.
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "persona-rule-router",
+      operation: "cachedEmbed",
+      severity: "warning",
+    });
     return null;
   }
 }
@@ -337,7 +345,14 @@ function listRuleFacts(factsDb: FactsDB | null | undefined, limit: number): Memo
   if (!factsDb) return [];
   try {
     return factsDb.listFactsByCategory("rule", limit);
-  } catch {
+  } catch (err) {
+    // Log so a genuine DB read failure is distinguishable from "no rule facts exist yet" —
+    // both currently degrade routing/dedup the same way (proceeding with zero rule facts).
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "persona-rule-router",
+      operation: "listRuleFacts",
+      severity: "warning",
+    });
     return [];
   }
 }
