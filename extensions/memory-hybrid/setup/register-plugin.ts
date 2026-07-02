@@ -312,7 +312,13 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     } else {
       recordReregisterFullTeardown();
       const oldRuntime = old;
-      old.pythonBridge?.shutdown().catch(() => {});
+      old.pythonBridge?.shutdown().catch((err) => {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "registration",
+          operation: "plugin-reregister:python-bridge-shutdown",
+          severity: "warning",
+        });
+      });
       // Let in-flight bootstrap (vault check, embedding verify) finish before permanentClose (#1550 reload race).
       schedulePluginTeardown(async () => {
         await drainOldBootstrap(oldRuntime.bootstrapAsyncInit);

@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hybridConfigSchema } from "../config.js";
 import { _testing } from "../index.js";
 import { capturePluginError, getErrorReporterMuteReason, setErrorReporterMuted } from "../services/error-reporter.js";
+import * as errorReporter from "../services/error-reporter.js";
 import { type PluginServiceContext, createPluginService } from "../setup/plugin-service.js";
 import { createDashboardServer } from "../routes/dashboard-server.js";
 import { MIN_OPENCLAW_VERSION, RECOMMENDED_OPENCLAW_VERSION } from "../utils/version-check.js";
@@ -302,6 +303,35 @@ describe("createPluginService startup — dashboard wiring (#1968)", () => {
     const warnCalls = api.logger.warn.mock.calls.map((c: unknown[]) => c[0] as string);
     expect(warnCalls.some((msg) => msg.includes("embeddingRegistry is not defined"))).toBe(false);
     expect(warnCalls.some((msg) => msg.includes("dashboard server failed to start"))).toBe(false);
+
+    (ctx.factsDb as InstanceType<typeof FactsDB>).close();
+    (ctx.vectorDb as InstanceType<typeof VectorDB>).close();
+  });
+
+  it("reports (instead of silently swallowing) a dashboardServer.close() failure during stop() (#61)", async () => {
+    vi.mocked(createDashboardServer).mockResolvedValueOnce({
+      port: 17701,
+      close: vi.fn(() => {
+        throw new Error("dashboard close boom");
+      }),
+    } as never);
+
+    const api = makeMockApi(RECOMMENDED_OPENCLAW_VERSION);
+    const ctx = buildMinimalCtx(tmpDir, api, timers, {
+      dashboard: { enabled: true, port: 0 },
+      errorReporting: { enabled: false, consent: false },
+    });
+    const captureSpy = vi.spyOn(errorReporter, "capturePluginError").mockImplementation(() => undefined);
+
+    const service = createPluginService(ctx);
+    await service.start();
+    await service.stop();
+
+    const dashboardCloseCalls = captureSpy.mock.calls.filter(
+      ([, ctxArg]) => (ctxArg as { operation?: string })?.operation === "dashboard-close",
+    );
+    expect(dashboardCloseCalls.length).toBeGreaterThan(0);
+    captureSpy.mockRestore();
 
     (ctx.factsDb as InstanceType<typeof FactsDB>).close();
     (ctx.vectorDb as InstanceType<typeof VectorDB>).close();

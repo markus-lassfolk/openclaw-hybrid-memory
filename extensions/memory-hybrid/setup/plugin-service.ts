@@ -1066,8 +1066,12 @@ export function createPluginService(ctx: PluginServiceContext) {
       if (dashboardServer) {
         try {
           dashboardServer.close();
-        } catch {
-          /* non-fatal */
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "plugin-service",
+            operation: "dashboard-close",
+            severity: "warning",
+          });
         }
         dashboardServer = null;
       }
