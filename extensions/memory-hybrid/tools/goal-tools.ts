@@ -625,41 +625,49 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
         if (!gs.enabled) return notEnabled();
         const dropped = guardArgs("goal_update", params);
         if (dropped) return dropped;
-        const p = params as {
-          goal_id: string;
-          description?: string;
-          acceptance_criteria?: string[];
-          priority?: (typeof PRIORITIES)[number];
-          note?: string;
-          confirmed?: boolean;
-        };
-        const goal = await resolveGoalId(goalsDir, p.goal_id);
-        if (!goal) return { content: [{ type: "text", text: "Goal not found." }], details: { error: "not_found" } };
-        if (p.acceptance_criteria !== undefined) {
-          const clarity = validateGoalRegisterClarity({
-            label: goal.label,
-            description: p.description ?? goal.description,
-            acceptance_criteria: p.acceptance_criteria,
-            priority: p.priority ?? goal.priority,
-          });
-          if (!clarity.ok && p.confirmed !== true) {
-            return {
-              content: [{ type: "text", text: formatGoalClarityRejection(clarity) }],
-              details: { error: "goal_criteria_unclear", ...clarity },
-            };
+        try {
+          const p = params as {
+            goal_id: string;
+            description?: string;
+            acceptance_criteria?: string[];
+            priority?: (typeof PRIORITIES)[number];
+            note?: string;
+            confirmed?: boolean;
+          };
+          const goal = await resolveGoalId(goalsDir, p.goal_id);
+          if (!goal) return { content: [{ type: "text", text: "Goal not found." }], details: { error: "not_found" } };
+          if (p.acceptance_criteria !== undefined) {
+            const clarity = validateGoalRegisterClarity({
+              label: goal.label,
+              description: p.description ?? goal.description,
+              acceptance_criteria: p.acceptance_criteria,
+              priority: p.priority ?? goal.priority,
+            });
+            if (!clarity.ok && p.confirmed !== true) {
+              return {
+                content: [{ type: "text", text: formatGoalClarityRejection(clarity) }],
+                details: { error: "goal_criteria_unclear", ...clarity },
+              };
+            }
           }
+          const patch: Parameters<typeof updateGoal>[2] = {};
+          if (p.description !== undefined) patch.description = p.description;
+          if (p.acceptance_criteria !== undefined) patch.acceptanceCriteria = p.acceptance_criteria;
+          if (p.priority !== undefined) patch.priority = p.priority;
+          const updated = await updateGoal(goalsDir, goal.id, patch, {
+            timestamp: nowIso(),
+            action: "updated",
+            detail: p.note ?? "update",
+            actor: "agent",
+          });
+          return { content: [{ type: "text", text: `Updated ${updated.label}` }], details: { goal: updated } };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "goal-tools",
+            operation: "goal_update",
+          });
+          return { content: [{ type: "text", text: String(err) }], details: { error: String(err) } };
         }
-        const patch: Parameters<typeof updateGoal>[2] = {};
-        if (p.description !== undefined) patch.description = p.description;
-        if (p.acceptance_criteria !== undefined) patch.acceptanceCriteria = p.acceptance_criteria;
-        if (p.priority !== undefined) patch.priority = p.priority;
-        const updated = await updateGoal(goalsDir, goal.id, patch, {
-          timestamp: nowIso(),
-          action: "updated",
-          detail: p.note ?? "update",
-          actor: "agent",
-        });
-        return { content: [{ type: "text", text: `Updated ${updated.label}` }], details: { goal: updated } };
       },
     },
     { name: "goal_update" },
@@ -685,55 +693,65 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
         if (!gs.enabled) return notEnabled();
         const dropped = guardArgs("goal_complete", params);
         if (dropped) return dropped;
-        const p = params as { goal_id: string; reason: string; confirmed?: boolean };
-        const goal = await resolveGoalId(goalsDir, p.goal_id);
-        if (!goal) return { content: [{ type: "text", text: "Goal not found." }], details: { error: "not_found" } };
-        if (isTerminalStatus(goal.status)) {
-          return {
-            content: [{ type: "text", text: `Goal ${goal.label} is already ${goal.status}.` }],
-            details: { error: "terminal" },
-          };
-        }
-        if (goal.verification && goal.verification.type !== "manual" && p.confirmed !== true) {
-          const mech = await verifyGoalMechanically(goal, workspaceRoot, gs);
-          if (mech.detail !== "skip" && !mech.ok) {
+        try {
+          const p = params as { goal_id: string; reason: string; confirmed?: boolean };
+          const goal = await resolveGoalId(goalsDir, p.goal_id);
+          if (!goal) return { content: [{ type: "text", text: "Goal not found." }], details: { error: "not_found" } };
+          if (isTerminalStatus(goal.status)) {
+            return {
+              content: [{ type: "text", text: `Goal ${goal.label} is already ${goal.status}.` }],
+              details: { error: "terminal" },
+            };
+          }
+          if (goal.verification && goal.verification.type !== "manual" && p.confirmed !== true) {
+            const mech = await verifyGoalMechanically(goal, workspaceRoot, gs);
+            if (mech.detail !== "skip" && !mech.ok) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Cannot complete: mechanical verification failed (${mech.detail}). Fix criteria, run goal_assess, or retry with confirmed:true and a reason documenting manual acceptance.`,
+                  },
+                ],
+                details: { error: "verification_failed", verification: mech },
+              };
+            }
+          }
+          if (goal.acceptanceCriteria.length > 0 && p.confirmed !== true && !goal.lastAssessedAt) {
             return {
               content: [
                 {
                   type: "text",
-                  text: `Cannot complete: mechanical verification failed (${mech.detail}). Fix criteria, run goal_assess, or retry with confirmed:true and a reason documenting manual acceptance.`,
+                  text: "Goal has acceptance criteria but no assessment recorded. Call goal_assess first, or complete with confirmed:true after user accepts outcome.",
                 },
               ],
-              details: { error: "verification_failed", verification: mech },
+              details: { error: "no_assessment" },
             };
           }
-        }
-        if (goal.acceptanceCriteria.length > 0 && p.confirmed !== true && !goal.lastAssessedAt) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Goal has acceptance criteria but no assessment recorded. Call goal_assess first, or complete with confirmed:true after user accepts outcome.",
-              },
-            ],
-            details: { error: "no_assessment" },
-          };
-        }
-        const completed = await terminateGoal(goalsDir, goal.id, "completed", p.reason, "agent", eventLog);
-        if (cfg.activeTask.flushOnComplete !== false) {
-          await flushGoalOutcomeToMemory(memoryDir, `Goal completed: ${completed.label}`, [`**Outcome:** ${p.reason}`]);
-        }
-        try {
-          factsDb?.recordEpisode?.({
-            event: `Goal completed: ${completed.label}`,
-            outcome: "success",
-            context: p.reason,
-            importance: 0.7,
+          const completed = await terminateGoal(goalsDir, goal.id, "completed", p.reason, "agent", eventLog);
+          if (cfg.activeTask.flushOnComplete !== false) {
+            await flushGoalOutcomeToMemory(memoryDir, `Goal completed: ${completed.label}`, [
+              `**Outcome:** ${p.reason}`,
+            ]);
+          }
+          try {
+            factsDb?.recordEpisode?.({
+              event: `Goal completed: ${completed.label}`,
+              outcome: "success",
+              context: p.reason,
+              importance: 0.7,
+            });
+          } catch {
+            /* */
+          }
+          return { content: [{ type: "text", text: `Completed ${completed.label}` }], details: { goal: completed } };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "goal-tools",
+            operation: "goal_complete",
           });
-        } catch {
-          /* */
+          return { content: [{ type: "text", text: String(err) }], details: { error: String(err) } };
         }
-        return { content: [{ type: "text", text: `Completed ${completed.label}` }], details: { goal: completed } };
       },
     },
     { name: "goal_complete" },
@@ -748,30 +766,40 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
         if (!gs.enabled) return notEnabled();
         const dropped = guardArgs("goal_abandon", params);
         if (dropped) return dropped;
-        const p = params as { goal_id: string; reason: string };
-        const goal = await resolveGoalId(goalsDir, p.goal_id);
-        if (!goal) return { content: [{ type: "text", text: "Goal not found." }], details: { error: "not_found" } };
-        if (isTerminalStatus(goal.status)) {
-          return {
-            content: [{ type: "text", text: `Goal ${goal.label} is already ${goal.status}.` }],
-            details: { error: "terminal" },
-          };
-        }
-        const abandoned = await terminateGoal(goalsDir, goal.id, "abandoned", p.reason, "agent", eventLog);
-        if (cfg.activeTask.flushOnComplete !== false) {
-          await flushGoalOutcomeToMemory(memoryDir, `Goal abandoned: ${abandoned.label}`, [`**Reason:** ${p.reason}`]);
-        }
         try {
-          factsDb?.recordEpisode?.({
-            event: `Goal abandoned: ${abandoned.label}`,
-            outcome: "failure",
-            context: p.reason,
-            importance: 0.5,
+          const p = params as { goal_id: string; reason: string };
+          const goal = await resolveGoalId(goalsDir, p.goal_id);
+          if (!goal) return { content: [{ type: "text", text: "Goal not found." }], details: { error: "not_found" } };
+          if (isTerminalStatus(goal.status)) {
+            return {
+              content: [{ type: "text", text: `Goal ${goal.label} is already ${goal.status}.` }],
+              details: { error: "terminal" },
+            };
+          }
+          const abandoned = await terminateGoal(goalsDir, goal.id, "abandoned", p.reason, "agent", eventLog);
+          if (cfg.activeTask.flushOnComplete !== false) {
+            await flushGoalOutcomeToMemory(memoryDir, `Goal abandoned: ${abandoned.label}`, [
+              `**Reason:** ${p.reason}`,
+            ]);
+          }
+          try {
+            factsDb?.recordEpisode?.({
+              event: `Goal abandoned: ${abandoned.label}`,
+              outcome: "failure",
+              context: p.reason,
+              importance: 0.5,
+            });
+          } catch {
+            /* */
+          }
+          return { content: [{ type: "text", text: `Abandoned ${abandoned.label}` }], details: { goal: abandoned } };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "goal-tools",
+            operation: "goal_abandon",
           });
-        } catch {
-          /* */
+          return { content: [{ type: "text", text: String(err) }], details: { error: String(err) } };
         }
-        return { content: [{ type: "text", text: `Abandoned ${abandoned.label}` }], details: { goal: abandoned } };
       },
     },
     { name: "goal_abandon" },
