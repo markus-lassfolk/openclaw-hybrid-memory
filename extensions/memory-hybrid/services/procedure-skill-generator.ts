@@ -465,8 +465,19 @@ export function generateAutoSkills(
       });
       // #1328: generated skills are draft/quarantine artifacts and are not enabled. The
       // existing promoted marker is used as a churn guard only after all auto-safe gates pass.
-      factsDb.markProcedurePromoted(proc.id, allocated.relativePath);
+      const marked = factsDb.markProcedurePromoted(proc.id, allocated.relativePath);
       const allocatedSkillPath = join(allocated.skillDir, "SKILL.md");
+      if (!marked) {
+        // The skill file is already written to disk at this point (writeDraftSkill above), but
+        // the procedure row couldn't be updated (e.g. deleted/purged concurrently) — the
+        // procedure stays "eligible" forever in getProceduresReadyForSkill and will keep being
+        // re-evaluated (likely deferred as a duplicate-existing-skill match), never reflecting
+        // that a skill was actually drafted for it. Log so this isn't indistinguishable from a
+        // clean success.
+        logger.warn(
+          `procedure-skill-generator: wrote draft skill ${allocatedSkillPath} but failed to mark procedure ${proc.id} as promoted (row missing?) — it will be re-evaluated on future runs`,
+        );
+      }
       decisions.push({
         procedureId: proc.id,
         action: decision.action,
@@ -675,7 +686,15 @@ export function generateAutoSkillForProcedure(
       changedPath: join(allocated.skillDir, "SKILL.md"),
       reason: "hybrid-memory-procedure-skill-draft",
     });
-    factsDb.markProcedurePromoted(proc.id, allocated.relativePath);
+    const marked = factsDb.markProcedurePromoted(proc.id, allocated.relativePath);
+    if (!marked) {
+      // Skill file is already written at this point; the procedure row couldn't be updated
+      // (e.g. deleted/purged concurrently). Log so this isn't indistinguishable from success —
+      // see the analogous check in generateAutoSkills above for the full explanation.
+      logger.warn(
+        `procedure-skill-generator: wrote draft skill ${allocated.relativePath} but failed to mark procedure ${proc.id} as promoted (row missing?) — it will be re-evaluated on future runs`,
+      );
+    }
   } catch (err) {
     rollbackDraftSkill(allocated?.skillDir ?? skillDir);
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
