@@ -200,3 +200,25 @@ describe("parseMaintenanceResumeArgv", () => {
     );
   });
 });
+
+describe("resolveMaintenanceResumeOutcome", () => {
+  it("reports a non-zero exit code and the signal when the subprocess was killed by a signal", async () => {
+    const { resolveMaintenanceResumeOutcome } = await import("../cli/commands/manage/register-maintenance-run.js");
+    // spawnSync leaves status=null (not 0) when a process is terminated by a signal — this must
+    // not be silently treated as a clean exit.
+    expect(resolveMaintenanceResumeOutcome({ status: null, signal: "SIGKILL" })).toEqual({
+      exitCode: 1,
+      signalKilled: "SIGKILL",
+    });
+  });
+
+  it("propagates a non-zero child exit code", async () => {
+    const { resolveMaintenanceResumeOutcome } = await import("../cli/commands/manage/register-maintenance-run.js");
+    expect(resolveMaintenanceResumeOutcome({ status: 2, signal: null })).toEqual({ exitCode: 2 });
+  });
+
+  it("reports no exit code override for a clean zero-status exit", async () => {
+    const { resolveMaintenanceResumeOutcome } = await import("../cli/commands/manage/register-maintenance-run.js");
+    expect(resolveMaintenanceResumeOutcome({ status: 0, signal: null })).toEqual({});
+  });
+});
