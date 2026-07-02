@@ -234,11 +234,12 @@ subscription WatchNewFacts {
 }
 `,
     },
-    cors: {
-      origin: "*",
-      credentials: false,
-      methods: ["GET", "POST", "OPTIONS"],
-    },
+    // The dashboard's own graph explorer calls this endpoint via a same-origin relative
+    // fetch('/graphql', ...) — no legitimate caller needs cross-origin access. A wildcard
+    // origin here would let any webpage open in the same browser read the full memory store
+    // via fetch() (classic localhost CSRF pattern), since reads require no auth token.
+    // Disabling CORS means the browser enforces same-origin policy on responses instead.
+    cors: false,
     logging: {
       debug: (...args) => pluginLogger.debug(args.map(String).join(" ")),
       info: (...args) => pluginLogger.info(args.map(String).join(" ")),

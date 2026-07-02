@@ -136,6 +136,43 @@ async function httpPost(port: number, path: string, body: string): Promise<{ sta
   });
 }
 
+async function httpPostWithHeaders(
+  port: number,
+  path: string,
+  body: string,
+  extraHeaders: Record<string, string> = {},
+): Promise<{ status: number; body: string; headers: Record<string, string | string[] | undefined> }> {
+  return new Promise((resolve, reject) => {
+    const req = request(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path,
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(body),
+          ...extraHeaders,
+        },
+      },
+      (res) => {
+        let responseBody = "";
+        res.on("data", (chunk: Buffer) => {
+          responseBody += chunk.toString();
+        });
+        res.on("end", () =>
+          resolve({ status: res.statusCode ?? 0, body: responseBody, headers: res.headers }),
+        );
+      },
+    );
+    req.on("error", reject);
+    req.setTimeout(3000, () => {
+      req.destroy(new Error("timeout"));
+    });
+    req.end(body);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -485,6 +522,18 @@ describeCreateDashboardServer("createDashboardServer", () => {
     const { status, body } = await httpPost(port, "/graphql", big);
     expect(status).toBe(413);
     expect(JSON.parse(body).error).toBe("PayloadTooLarge");
+  });
+
+  it("POST /graphql does not send a wildcard (or any) CORS origin header (#64)", async () => {
+    if (!server) return;
+    const { status, headers } = await httpPostWithHeaders(
+      port,
+      "/graphql",
+      JSON.stringify({ query: "query { stats { totalFacts } }" }),
+      { origin: "https://evil.example.com" },
+    );
+    expect(status).toBe(200);
+    expect(headers["access-control-allow-origin"]).toBeUndefined();
   });
 
   it("exposes the port in the returned object", () => {
