@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hybridConfigSchema } from "../config.js";
 import { registerCleanupHandlers } from "../lifecycle/stage-cleanup.js";
 import type { LifecycleContext } from "../lifecycle/types.js";
+import * as activeTaskModule from "../services/active-task.js";
 import {
   readActiveTaskFile,
   readPendingSignals,
@@ -76,6 +77,7 @@ describe("stage-cleanup markdown ledger signal consumption", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await rm(workspaceRoot, { recursive: true, force: true });
   });
 
@@ -122,5 +124,97 @@ describe("stage-cleanup markdown ledger signal consumption", () => {
     const task = file?.active.find((t) => t.label === "terminal-failed");
     expect(task?.status).toBe("Failed");
     expect(task?.next ?? "").not.toContain("should not reopen");
+  });
+
+  it("does not clobber a concurrent write when subagent_spawned races another ACTIVE-TASKS.md writer (#48)", async () => {
+    const now = new Date().toISOString();
+    await writeActiveTaskFile(
+      activeTaskPath,
+      [{ label: "task-a", description: "d", status: "Waiting", started: now, updated: now }],
+      [],
+    );
+
+    // Simulate a concurrent writer (e.g. a second subagent_spawned/subagent_ended handler)
+    // committing a change to a *different* task between this handler's pre-write read and its
+    // optimistic write attempt — the exact race window the fix closes.
+    const realReadWithMtime = activeTaskModule.readActiveTaskFileWithMtime;
+    const spy = vi.spyOn(activeTaskModule, "readActiveTaskFileWithMtime");
+    spy.mockImplementationOnce(async (path, staleMinutes) => {
+      const stale = await realReadWithMtime(path, staleMinutes);
+      const fresh = await realReadWithMtime(path, staleMinutes);
+      await writeActiveTaskFile(
+        path,
+        [
+          ...(fresh?.active ?? []),
+          { label: "task-b", description: "concurrent", status: "In progress", started: now, updated: now },
+        ],
+        fresh?.completed ?? [],
+      );
+      return stale;
+    });
+
+    await api.emitAll(
+      "subagent_spawned",
+      { label: "task-a", childSessionKey: "agent:main:subagent:x" },
+      { sessionKey: "agent:main:main" },
+    );
+
+    const file = await readActiveTaskFile(activeTaskPath, 1440);
+    // This handler's own update must have landed...
+    expect(file?.active.find((t) => t.label === "task-a")?.status).toBe("In progress");
+    // ...and the concurrent writer's task must NOT have been clobbered.
+    expect(file?.active.find((t) => t.label === "task-b")).toBeDefined();
+  });
+
+  it("does not clobber a concurrent write when subagent_ended races another ACTIVE-TASKS.md writer (#48)", async () => {
+    const now = new Date().toISOString();
+    await writeActiveTaskFile(
+      activeTaskPath,
+      [
+        {
+          label: "task-a",
+          description: "d",
+          status: "In progress",
+          subagent: "agent:main:subagent:x",
+          started: now,
+          updated: now,
+        },
+      ],
+      [],
+    );
+
+    const realReadWithMtime = activeTaskModule.readActiveTaskFileWithMtime;
+    const spy = vi.spyOn(activeTaskModule, "readActiveTaskFileWithMtime");
+    let injected = false;
+    spy.mockImplementation(async (path, staleMinutes) => {
+      const stale = await realReadWithMtime(path, staleMinutes);
+      if (!injected) {
+        injected = true;
+        const fresh = await realReadWithMtime(path, staleMinutes);
+        await writeActiveTaskFile(
+          path,
+          [
+            ...(fresh?.active ?? []),
+            { label: "task-b", description: "concurrent", status: "In progress", started: now, updated: now },
+          ],
+          fresh?.completed ?? [],
+        );
+      }
+      return stale;
+    });
+
+    await api.emitAll(
+      "subagent_ended",
+      { label: "task-a", targetSessionKey: "agent:main:subagent:x", success: true, outcome: "ok" },
+      { sessionKey: "agent:main:main" },
+    );
+    spy.mockRestore();
+
+    const file = await readActiveTaskFile(activeTaskPath, 1440);
+    // task-a completed and moved to the completed section.
+    expect(file?.active.find((t) => t.label === "task-a")).toBeUndefined();
+    expect(file?.completed.find((t) => t.label === "task-a")?.status).toBe("Done");
+    // The concurrent writer's task-b must survive in the active section.
+    expect(file?.active.find((t) => t.label === "task-b")).toBeDefined();
   });
 });

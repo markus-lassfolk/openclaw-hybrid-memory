@@ -19,7 +19,6 @@ import {
   readActiveTaskFileWithMtime,
   readPendingSignals,
   upsertTask,
-  writeActiveTaskFileGuarded,
   writeActiveTaskFileOptimistic,
 } from "../services/active-task.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -433,7 +432,42 @@ export function registerCleanupHandlers(
         return;
       }
 
-      const taskFile = await readActiveTaskFile(resolvedActiveTaskPath, staleMinutes);
+      if (isSubagentSession(api.context?.sessionKey)) {
+        const reason = "sub-agent sessions are read-only for ACTIVE-TASKS.md; use writeTaskSignal instead";
+        api.logger.debug?.(`memory-hybrid: skipped ACTIVE-TASKS.md write in subagent_spawned: ${reason}`);
+        ctx.auditStore?.append({
+          agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+          action: "cleanup:active-task-write-skipped",
+          outcome: "skipped",
+          sessionId: api.context?.sessionKey,
+          context: { reason, taskLabel: label },
+        });
+        return;
+      }
+
+      // buildSpawnEntry is re-invoked against freshly-read state on optimistic-write conflict
+      // (see writeActiveTaskFileOptimistic's merge callback below) rather than reusing the
+      // pre-read `existing` snapshot — otherwise a concurrent subagent_spawned/subagent_ended for
+      // a *different* task label could have its ACTIVE-TASKS.md update silently reverted by this
+      // handler's write clobbering the array from stale data.
+      const buildSpawnEntry = (existingEntry: ActiveTaskEntry | undefined): ActiveTaskEntry => {
+        const reopeningFromTerminal = !!existingEntry && isTerminalActiveTaskStatus(existingEntry.status);
+        const entry: ActiveTaskEntry = {
+          ...(existingEntry ?? {}),
+          label: existingEntry?.label ?? label,
+          description,
+          status: "In progress",
+          subagent: childOrSession,
+          next: reopeningFromTerminal ? "" : existingEntry?.next,
+          started: existingEntry?.started ?? now,
+          updated: now,
+        };
+        if (reopeningFromTerminal) clearActiveTaskHandoff(entry);
+        else delete entry.handoff;
+        return entry;
+      };
+
+      const taskFile = await readActiveTaskFileWithMtime(resolvedActiveTaskPath, staleMinutes);
       const existingActive = taskFile?.active ?? [];
       const existingCompleted = taskFile?.completed ?? [];
       const existing = existingActive.find((t) => taskLabelsMatch(t.label, label));
@@ -443,35 +477,24 @@ export function registerCleanupHandlers(
         );
         return;
       }
-      const reopeningFromTerminal = !!existing && isTerminalActiveTaskStatus(existing.status);
-      const entry: ActiveTaskEntry = {
-        ...(existing ?? {}),
-        label: existing?.label ?? label,
-        description,
-        status: "In progress",
-        subagent: childOrSession,
-        next: reopeningFromTerminal ? "" : existing?.next,
-        started: existing?.started ?? now,
-        updated: now,
-      };
-      if (reopeningFromTerminal) clearActiveTaskHandoff(entry);
-      else delete entry.handoff;
-      const updated = upsertTask(existingActive, entry);
-      const writeResult = await writeActiveTaskFileGuarded(
+
+      const wrote = await writeActiveTaskFileOptimistic(
         resolvedActiveTaskPath,
-        updated,
+        upsertTask(existingActive, buildSpawnEntry(existing)),
         existingCompleted,
-        api.context?.sessionKey,
+        taskFile?.mtime ?? 0,
+        async (fresh) => {
+          const freshExisting = fresh.active.find((t) => taskLabelsMatch(t.label, label));
+          if (freshExisting?.status === "Done") return null;
+          return [upsertTask(fresh.active, buildSpawnEntry(freshExisting)), fresh.completed];
+        },
+        3,
+        staleMinutes,
       );
-      if (writeResult.skipped) {
-        api.logger.debug?.(`memory-hybrid: skipped ACTIVE-TASKS.md write in subagent_spawned: ${writeResult.reason}`);
-        ctx.auditStore?.append({
-          agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
-          action: "cleanup:active-task-write-skipped",
-          outcome: "skipped",
-          sessionId: api.context?.sessionKey,
-          context: { reason: writeResult.reason, taskLabel: label },
-        });
+      if (!wrote) {
+        api.logger.debug?.(
+          "memory-hybrid: skipped ACTIVE-TASKS.md write in subagent_spawned: conflict or terminal task",
+        );
       } else {
         api.logger.info?.(`memory-hybrid: auto-checkpoint — created active task [${label}] for subagent spawn`);
       }
@@ -561,11 +584,14 @@ export function registerCleanupHandlers(
         api.context?.sessionKey,
       );
 
+      let knownMtime = 0;
       if (ctx.cfg.activeTask.ledger === "facts") {
         const reloaded = loadTaskLedgerFromFacts(ctx.factsDb);
         taskFile = { active: reloaded.active, completed: reloaded.completed };
       } else {
-        taskFile = await readActiveTaskFile(resolvedActiveTaskPath, staleMinutes);
+        const withMtime = await readActiveTaskFileWithMtime(resolvedActiveTaskPath, staleMinutes);
+        taskFile = withMtime;
+        knownMtime = withMtime?.mtime ?? 0;
       }
       if (!taskFile) return;
 
@@ -591,6 +617,22 @@ export function registerCleanupHandlers(
         );
         return;
       }
+
+      if (ctx.cfg.activeTask.ledger !== "facts" && isSubagentSession(api.context?.sessionKey)) {
+        const reason = "sub-agent sessions are read-only for ACTIVE-TASKS.md; use writeTaskSignal instead";
+        api.logger.debug?.(`memory-hybrid: skipped ACTIVE-TASKS.md write in subagent_ended (${newStatus}): ${reason}`);
+        if (newStatus === "Done") {
+          ctx.auditStore?.append({
+            agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+            action: "cleanup:active-task-write-skipped",
+            outcome: "skipped",
+            sessionId: api.context?.sessionKey,
+            context: { reason, taskLabel },
+          });
+        }
+        return;
+      }
+
       if (newStatus === "Done") {
         const { updated, completed } = completeTask(taskFile.active, taskLabel);
         if (completed) {
@@ -605,27 +647,40 @@ export function registerCleanupHandlers(
               `memory-hybrid: auto-checkpoint — updated task [${taskLabel}] to ${newStatus} on subagent_ended`,
             );
           } else {
-            const writeResult = await writeActiveTaskFileGuarded(
+            // completeTask/findActiveTaskForSubagentEnd are re-invoked against freshly-read
+            // state on optimistic-write conflict, mirroring the fix in subagent_spawned above —
+            // taskFile.active here can be stale by the time this write actually lands.
+            let flushCompleted: ActiveTaskEntry | null = completed;
+            const wrote = await writeActiveTaskFileOptimistic(
               resolvedActiveTaskPath,
               updated,
               [...taskFile.completed, completed],
-              api.context?.sessionKey,
+              knownMtime,
+              async (fresh) => {
+                const freshTask = findActiveTaskForSubagentEnd(fresh.active, ev);
+                if (!freshTask || isTerminalActiveTaskStatus(freshTask.status)) {
+                  flushCompleted = null;
+                  return null;
+                }
+                const retry = completeTask(fresh.active, freshTask.label);
+                if (!retry.completed) {
+                  flushCompleted = null;
+                  return null;
+                }
+                flushCompleted = retry.completed;
+                return [retry.updated, [...fresh.completed, retry.completed]];
+              },
+              3,
+              staleMinutes,
             );
-            if (writeResult.skipped) {
+            if (!wrote || !flushCompleted) {
               api.logger.debug?.(
-                `memory-hybrid: skipped ACTIVE-TASKS.md write in subagent_ended (Done): ${writeResult.reason}`,
+                "memory-hybrid: skipped ACTIVE-TASKS.md write in subagent_ended (Done): conflict or already terminal",
               );
-              ctx.auditStore?.append({
-                agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
-                action: "cleanup:active-task-write-skipped",
-                outcome: "skipped",
-                sessionId: api.context?.sessionKey,
-                context: { reason: writeResult.reason, taskLabel },
-              });
             } else {
               if (ctx.cfg.activeTask.flushOnComplete) {
                 const memoryDir = join(workspaceRoot, "memory");
-                await flushCompletedTaskToMemory(completed, memoryDir).catch(() => {});
+                await flushCompletedTaskToMemory(flushCompleted, memoryDir).catch(() => {});
               }
               api.logger.info?.(
                 `memory-hybrid: auto-checkpoint — updated task [${taskLabel}] to ${newStatus} on subagent_ended`,
@@ -635,30 +690,45 @@ export function registerCleanupHandlers(
         }
       } else {
         const errHint = ev.error ?? ev.reason;
-        const updatedEntry: ActiveTaskEntry = {
-          ...taskAfterSignals,
-          status: "Failed",
-          updated: now,
-          next: errHint ? `Fix: ${String(errHint).slice(0, 100)}` : taskAfterSignals.next,
-          subagent: "",
+        const buildFailedEntry = (task: ActiveTaskEntry): ActiveTaskEntry => {
+          const entry: ActiveTaskEntry = {
+            ...task,
+            status: "Failed",
+            updated: now,
+            next: errHint ? `Fix: ${String(errHint).slice(0, 100)}` : task.next,
+            subagent: "",
+          };
+          clearActiveTaskHandoff(entry);
+          return entry;
         };
-        clearActiveTaskHandoff(updatedEntry);
         if (ctx.cfg.activeTask.ledger === "facts") {
-          await syncActiveTaskEntryToFacts(ctx.factsDb, ctx.vectorDb, ctx.embeddings, updatedEntry, api.logger);
+          await syncActiveTaskEntryToFacts(
+            ctx.factsDb,
+            ctx.vectorDb,
+            ctx.embeddings,
+            buildFailedEntry(taskAfterSignals),
+            api.logger,
+          );
           api.logger.info?.(
             `memory-hybrid: auto-checkpoint — updated task [${taskLabel}] to ${newStatus} on subagent_ended`,
           );
         } else {
-          const updated = upsertTask(taskFile.active, updatedEntry);
-          const writeResult = await writeActiveTaskFileGuarded(
+          const wrote = await writeActiveTaskFileOptimistic(
             resolvedActiveTaskPath,
-            updated,
+            upsertTask(taskFile.active, buildFailedEntry(taskAfterSignals)),
             taskFile.completed,
-            api.context?.sessionKey,
+            knownMtime,
+            async (fresh) => {
+              const freshTask = findActiveTaskForSubagentEnd(fresh.active, ev);
+              if (!freshTask || isTerminalActiveTaskStatus(freshTask.status)) return null;
+              return [upsertTask(fresh.active, buildFailedEntry(freshTask)), fresh.completed];
+            },
+            3,
+            staleMinutes,
           );
-          if (writeResult.skipped) {
+          if (!wrote) {
             api.logger.debug?.(
-              `memory-hybrid: skipped ACTIVE-TASKS.md write in subagent_ended (Failed): ${writeResult.reason}`,
+              "memory-hybrid: skipped ACTIVE-TASKS.md write in subagent_ended (Failed): conflict or already terminal",
             );
           } else {
             api.logger.info?.(
