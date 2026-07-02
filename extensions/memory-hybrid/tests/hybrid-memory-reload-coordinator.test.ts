@@ -80,4 +80,32 @@ describe("hybrid-memory-reload-coordinator", () => {
     await drain;
     expect(ref.value).toBe(1);
   });
+
+  it("TEARDOWN_WAIT_MS covers a chained vault-registry teardown ahead of the full-database teardown (#87)", async () => {
+    vi.useFakeTimers();
+    let vaultClosed = false;
+    let dbClosed = false;
+    // Mirrors register-plugin.ts: when old.vaultRegistry exists, its teardown (drainOldRecall) is
+    // scheduled first and chains sequentially ahead of the full-database teardown
+    // (drainOldBootstrap + drainOldRecall) via the shared reloadTeardownChain.
+    schedulePluginTeardown(async () => {
+      await drainOldRecall({ value: 1 });
+      vaultClosed = true;
+    });
+    schedulePluginTeardown(async () => {
+      await drainOldBootstrap(
+        new Promise<void>(() => {
+          /* never settles, worst case */
+        }),
+      );
+      await drainOldRecall({ value: 1 });
+      dbClosed = true;
+    });
+
+    const waitPromise = awaitReloadTeardownBeforeOpen(TEARDOWN_WAIT_MS);
+    await vi.advanceTimersByTimeAsync(TEARDOWN_WAIT_MS);
+    expect(await waitPromise).toBe(true);
+    expect(vaultClosed).toBe(true);
+    expect(dbClosed).toBe(true);
+  });
 });
