@@ -6,6 +6,8 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { lookup } from "node:dns/promises";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
@@ -223,15 +225,20 @@ export async function verifyGoalMechanically(
     if (parsed.username || parsed.password) {
       return { ok: false, detail: "http_ok: URL credentials are not allowed" };
     }
-    const hostBlock = await getBlockedVerificationHostReason(parsed.hostname);
-    if (hostBlock) {
-      return { ok: false, detail: `http_ok: blocked host (${parsed.hostname}: ${hostBlock})` };
+    const hostResolution = await resolveVerificationHost(parsed.hostname);
+    if (!hostResolution.allowed) {
+      return { ok: false, detail: `http_ok: blocked host (${parsed.hostname}: ${hostResolution.blocked})` };
     }
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(), 10_000);
     try {
-      const res = await fetch(parsed, { signal: ac.signal });
-      return { ok: res.ok, detail: `http ${res.status}` };
+      // Connect using the exact IP validated above (resolveVerificationHost), instead of letting
+      // the request perform its own independent DNS resolution: a second lookup here could
+      // return a different (attacker-controlled / rebound) address than the one just checked,
+      // silently defeating the SSRF guard via DNS rebinding. The hostname is still sent as the
+      // Host header / TLS SNI (via `parsed`), so this only pins the transport-layer address.
+      const status = await fetchStatusViaPinnedIp(parsed, hostResolution.ip, ac.signal);
+      return { ok: status >= 200 && status < 400, detail: `http ${status}` };
     } catch (e) {
       return { ok: false, detail: e instanceof Error ? e.message : String(e) };
     } finally {
@@ -241,26 +248,59 @@ export async function verifyGoalMechanically(
   return { ok: false, detail: "unknown verification type" };
 }
 
-export async function getBlockedVerificationHostReason(hostname: string): Promise<string | null> {
+function fetchStatusViaPinnedIp(parsed: URL, ip: string, signal: AbortSignal): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const requestFn = parsed.protocol === "https:" ? httpsRequest : httpRequest;
+    const req = requestFn(
+      parsed,
+      {
+        signal,
+        lookup: (_hostname, _options, callback) => {
+          callback(null, ip, isIP(ip) === 6 ? 6 : 4);
+        },
+      },
+      (res) => {
+        res.resume();
+        resolve(res.statusCode ?? 0);
+      },
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+type VerificationHostResolution =
+  | { allowed: false; blocked: string }
+  | { allowed: true; blocked: null; ip: string };
+
+async function resolveVerificationHost(hostname: string): Promise<VerificationHostResolution> {
   const h = hostname
     .trim()
     .toLowerCase()
     .replace(/^\[|\]$/g, "");
-  if (!h) return "empty host";
-  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local")) return "local hostname";
-  if (isBlockedVerificationIpLiteral(h)) return "local/private IP";
-  if (isIP(h) !== 0) return null;
+  if (!h) return { allowed: false, blocked: "empty host" };
+  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local")) {
+    return { allowed: false, blocked: "local hostname" };
+  }
+  if (isBlockedVerificationIpLiteral(h)) return { allowed: false, blocked: "local/private IP" };
+  if (isIP(h) !== 0) return { allowed: true, blocked: null, ip: h };
 
   let records: Array<{ address: string }>;
   try {
     records = await lookup(h, { all: true, verbatim: true });
   } catch (err) {
-    return `DNS lookup failed: ${err instanceof Error ? err.message : String(err)}`;
+    return { allowed: false, blocked: `DNS lookup failed: ${err instanceof Error ? err.message : String(err)}` };
   }
-  if (records.length === 0) return "DNS lookup returned no addresses";
-  return records.some((record) => isBlockedVerificationIpLiteral(record.address))
-    ? "DNS resolved to local/private IP"
-    : null;
+  if (records.length === 0) return { allowed: false, blocked: "DNS lookup returned no addresses" };
+  const blockedRecord = records.find((record) => isBlockedVerificationIpLiteral(record.address));
+  if (blockedRecord) return { allowed: false, blocked: "DNS resolved to local/private IP" };
+  const chosen = records[0];
+  if (!chosen) return { allowed: false, blocked: "DNS lookup returned no addresses" };
+  return { allowed: true, blocked: null, ip: chosen.address };
+}
+
+export async function getBlockedVerificationHostReason(hostname: string): Promise<string | null> {
+  return (await resolveVerificationHost(hostname)).blocked;
 }
 
 function isBlockedVerificationIpLiteral(hostname: string): boolean {
