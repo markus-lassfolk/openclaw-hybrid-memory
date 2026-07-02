@@ -822,14 +822,14 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     if (pathname === "/api/workshop/changes" && wctx) {
       try {
         const u = new URL(req.url ?? "", "http://127.0.0.1");
-        const limitRaw = u.searchParams.get("limit");
-        const limit = limitRaw ? Number(limitRaw) : DEFAULT_WORKSHOP_LIST_LIMIT;
+        // Use the shared clamp (like every other route) instead of a bare Number.isFinite check —
+        // a negative limit (e.g. ?limit=-1) passed Number.isFinite and propagated into
+        // collectWorkshopChanges' internal Math.min/Math.max/slice(0, limit) calls, where a
+        // negative slice(0, limit) uses JS's "slice from end" semantics and returns a wrong,
+        // non-empty result instead of an empty set or a 400.
+        const limit = parseLimitParam(u.searchParams.get("limit"), DEFAULT_WORKSHOP_LIST_LIMIT, 200);
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
-        res.end(
-          JSON.stringify({
-            changes: collectWorkshopChanges(wctx, Number.isFinite(limit) ? limit : DEFAULT_WORKSHOP_LIST_LIMIT),
-          }),
-        );
+        res.end(JSON.stringify({ changes: collectWorkshopChanges(wctx, limit) }));
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: workshopClientError(err, "/api/workshop/changes") }));
@@ -888,6 +888,11 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           res.end(JSON.stringify(result));
         })
         .catch((err: unknown) => {
+          if (err instanceof Error && err.message === "Request body too large") {
+            res.writeHead(413, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "PayloadTooLarge" }));
+            return;
+          }
           res.writeHead(400, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: workshopClientError(err, "/api/workshop/changes/revert") }));
         });
@@ -968,6 +973,11 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
             res.end(JSON.stringify(result));
           })
           .catch((err: unknown) => {
+            if (err instanceof Error && err.message === "Request body too large") {
+              res.writeHead(413, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ error: "PayloadTooLarge" }));
+              return;
+            }
             res.writeHead(400, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ error: workshopClientError(err, "/api/workshop/proposals/*") }));
           });

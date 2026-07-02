@@ -1516,6 +1516,52 @@ describeCreateDashboardServer("Workshop API", () => {
     );
   });
 
+  it("GET /api/workshop/changes clamps a negative limit instead of passing it through raw (#70)", async () => {
+    await withWorkshopServer(async (_ctx, port) => {
+      const spy = vi.spyOn(workshopCollectors, "collectWorkshopChanges");
+      try {
+        const { status } = await httpGet(port, "/api/workshop/changes?limit=-1");
+        expect(status).toBe(200);
+        const passedLimit = spy.mock.calls[0]?.[1];
+        expect(passedLimit).toBeGreaterThan(0);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  });
+
+  it("POST /api/workshop/changes/revert returns 413 (not 400) for an oversized body (#71)", async () => {
+    await withWorkshopServer(async (_ctx, port) => {
+      const big = JSON.stringify({ id: "x", filler: "a".repeat(70 * 1024) });
+      const { status, body } = await httpPost(port, "/api/workshop/changes/revert", big);
+      expect(status).toBe(413);
+      expect(JSON.parse(body).error).toBe("PayloadTooLarge");
+    });
+  });
+
+  it("POST /api/workshop/proposals/:id/reject returns 413 (not 400) for an oversized body (#71)", async () => {
+    await withWorkshopServer(async (ctx, port) => {
+      const proposal = ctx.proposalsDb.create({
+        targetFile: "SOUL.md",
+        title: "Oversized body test",
+        observation: "obs",
+        suggestedChange: "Guidance.",
+        confidence: 0.8,
+        evidenceSessions: [],
+      });
+      const { makeUnifiedKey } = await import("../services/unified-proposals.js");
+      const key = makeUnifiedKey("persona", proposal.id);
+      const big = JSON.stringify({ reason: "a".repeat(70 * 1024) });
+      const { status, body } = await httpPost(
+        port,
+        `/api/workshop/proposals/${encodeURIComponent(key)}/reject`,
+        big,
+      );
+      expect(status).toBe(413);
+      expect(JSON.parse(body).error).toBe("PayloadTooLarge");
+    });
+  });
+
   it("returns 503 when workshop is explicitly disabled", async () => {
     const td = mkdtempSync(join(tmpdir(), "workshop-disabled-"));
     const ctx = makeContext(td) as ReturnType<typeof makeContext> & {
