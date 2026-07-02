@@ -38,10 +38,25 @@ let cachedToolStorePath: string | null = null;
 function getToolEffectivenessStore(resolvedSqlitePath: string): ToolEffectivenessStore {
   const effectivenessDbPath = resolvedSqlitePath.replace(/(\.[^.]+)?$/, "-tool-effectiveness.db");
   if (!cachedToolStore || cachedToolStorePath !== effectivenessDbPath) {
+    // Close the previous instance before replacing it — otherwise a config change that alters
+    // sqlitePath (e.g. switching vaults) followed by a hot reload/re-register leaks the old
+    // SQLite file handle for the lifetime of the process.
+    cachedToolStore?.close();
     cachedToolStore = new ToolEffectivenessStore(effectivenessDbPath);
     cachedToolStorePath = effectivenessDbPath;
   }
   return cachedToolStore;
+}
+
+/**
+ * Close the cached ToolEffectivenessStore, if any — called from the plugin's dispose hook so the
+ * handle doesn't leak past plugin.stop()/hot-reload teardown (unlike the intent-classifier and
+ * memory-nudge caches in the same lifecycle layer, this store previously had no dispose path).
+ */
+export function disposeToolEffectivenessStore(): void {
+  cachedToolStore?.close();
+  cachedToolStore = null;
+  cachedToolStorePath = null;
 }
 
 export function registerFrustrationHandlers(

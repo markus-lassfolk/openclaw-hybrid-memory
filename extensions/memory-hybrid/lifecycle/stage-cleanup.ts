@@ -25,6 +25,7 @@ import {
 import { capturePluginError } from "../services/error-reporter.js";
 import { sweepStaleIntentSessionCaches, disposeIntentClassifier } from "../services/intent-classifier.js";
 import { sweepStaleNudgeSessionState, disposeMemoryNudge } from "../services/memory-nudge.js";
+import { disposeToolEffectivenessStore } from "./stage-frustration.js";
 import {
   consumePendingTaskSignalsFacts,
   loadTaskLedgerFromFacts,
@@ -372,6 +373,7 @@ export function getDispose(
     sessionState.clearAll?.(injectedFactIdsBySession);
     disposeIntentClassifier();
     disposeMemoryNudge();
+    disposeToolEffectivenessStore();
   };
 }
 
