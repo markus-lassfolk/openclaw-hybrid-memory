@@ -25,8 +25,19 @@ import {
   isOllamaOOM,
   resolveMaintenanceChatTimeoutMs,
 } from "./chat.js";
+import { acquireStepLock, releaseStepLock } from "./cron-guard.js";
 import { capturePluginError } from "./error-reporter.js";
 import { isMiniMaxModel } from "./model-capabilities.js";
+
+/**
+ * Cross-process lease guard for auto-classifier batch runs (issue: overlapping runs waste LLM
+ * budget re-classifying the same "other" facts, and can race on the read-modify-write of
+ * discoveredCategoriesPath). Distinct from the maintenance orchestrator's own per-step lock
+ * (acquired around the "auto-classify" step name before this module is even entered) — this
+ * guard also covers the CLI entry point (`hybrid-mem classify`), which the orchestrator's step
+ * lock never sees, so a manual CLI run and a scheduled orchestrator run can otherwise overlap.
+ */
+const AUTO_CLASSIFIER_LOCK_NAME = "auto-classify-batch";
 
 function resolveAutoClassifyLlmTimeoutMs(model: string): number {
   return capTimeoutByMaintenanceRunDeadline(resolveMaintenanceChatTimeoutMs(model));
@@ -425,7 +436,7 @@ async function runClassifyForCli(
     minFactsForNewCategory?: number;
     discoveryIntervalHours?: number;
   },
-  opts: { dryRun: boolean; limit: number; model?: string },
+  opts: { dryRun: boolean; limit: number; model?: string; openclawDir?: string },
   discoveredPath: string,
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   progressReporter?: ClassifyProgressReporter,
@@ -439,53 +450,64 @@ async function runClassifyForCli(
     return { reclassified: 0, total: 0 };
   }
 
-  if (!opts.dryRun && config.suggestCategories && others.length >= MIN_OTHER_FOR_DISCOVERY) {
-    await discoverCategoriesFromOther(factsDb, openai, { ...config, model: classifyModel }, logger, discoveredPath);
-    others = factsDb.getByCategory("other").slice(0, opts.limit);
+  // Dry runs never mutate factsDb or discoveredCategoriesPath (all writes below are gated on
+  // !opts.dryRun), so they don't need the lock — only real runs, which can race with each other
+  // or with the orchestrator's scheduled auto-classify step.
+  if (!opts.dryRun && !acquireStepLock(AUTO_CLASSIFIER_LOCK_NAME, opts.openclawDir)) {
+    logger.info("memory-hybrid: classify skipped — another classify batch run is already in progress");
+    return { reclassified: 0, total: others.length };
   }
+  try {
+    if (!opts.dryRun && config.suggestCategories && others.length >= MIN_OTHER_FOR_DISCOVERY) {
+      await discoverCategoriesFromOther(factsDb, openai, { ...config, model: classifyModel }, logger, discoveredPath);
+      others = factsDb.getByCategory("other").slice(0, opts.limit);
+    }
 
-  const numBatches = Math.ceil(others.length / config.batchSize);
-  let reporter = progressReporter;
-  if (!reporter && numBatches > 0) {
-    const sink = { log: (m: string) => logger.info(m) };
-    reporter = createProgressReporter(sink, numBatches, "Classifying");
-  }
-  let totalReclassified = 0;
-  let batchFailures = 0;
-  let batchIndex = 0;
-  for (let i = 0; i < others.length; i += config.batchSize) {
-    if (maintenanceRunDeadlineReached()) {
-      logger.info("memory-hybrid: classify stopped — maintenance run deadline reached");
-      break;
+    const numBatches = Math.ceil(others.length / config.batchSize);
+    let reporter = progressReporter;
+    if (!reporter && numBatches > 0) {
+      const sink = { log: (m: string) => logger.info(m) };
+      reporter = createProgressReporter(sink, numBatches, "Classifying");
     }
-    reporter?.update(batchIndex + 1);
-    const batch = others.slice(i, i + config.batchSize).map((e) => ({ id: e.id, text: e.text }));
-    const { results, suggestions, success } = await classifyBatch(openai, classifyModel, batch, categories);
-    if (!success) batchFailures++;
-    for (const [id, newCat] of results) {
-      if (!opts.dryRun) factsDb.updateCategory(id, newCat);
-      totalReclassified++;
-    }
-    if (!opts.dryRun) {
-      for (const [id, label] of suggestions) {
-        // #1188: surface invalid-but-meaningful LLM suggestions instead of silently
-        // dropping them. Operators can review with `categories propose` and promote
-        // via existing `categories remap`.
-        factsDb.addTag(id, `category-suggested:${label}`);
+    let totalReclassified = 0;
+    let batchFailures = 0;
+    let batchIndex = 0;
+    for (let i = 0; i < others.length; i += config.batchSize) {
+      if (maintenanceRunDeadlineReached()) {
+        logger.info("memory-hybrid: classify stopped — maintenance run deadline reached");
+        break;
       }
+      reporter?.update(batchIndex + 1);
+      const batch = others.slice(i, i + config.batchSize).map((e) => ({ id: e.id, text: e.text }));
+      const { results, suggestions, success } = await classifyBatch(openai, classifyModel, batch, categories);
+      if (!success) batchFailures++;
+      for (const [id, newCat] of results) {
+        if (!opts.dryRun) factsDb.updateCategory(id, newCat);
+        totalReclassified++;
+      }
+      if (!opts.dryRun) {
+        for (const [id, label] of suggestions) {
+          // #1188: surface invalid-but-meaningful LLM suggestions instead of silently
+          // dropping them. Operators can review with `categories propose` and promote
+          // via existing `categories remap`.
+          factsDb.addTag(id, `category-suggested:${label}`);
+        }
+      }
+      batchIndex++;
+      if (i + config.batchSize < others.length) await new Promise((r) => setTimeout(r, 500));
     }
-    batchIndex++;
-    if (i + config.batchSize < others.length) await new Promise((r) => setTimeout(r, 500));
-  }
-  reporter?.done();
+    reporter?.done();
 
-  const breakdown = !opts.dryRun ? factsDb.statsBreakdown() : undefined;
-  return {
-    reclassified: totalReclassified,
-    total: others.length,
-    breakdown,
-    batchFailures: batchFailures > 0 ? batchFailures : undefined,
-  };
+    const breakdown = !opts.dryRun ? factsDb.statsBreakdown() : undefined;
+    return {
+      reclassified: totalReclassified,
+      total: others.length,
+      breakdown,
+      batchFailures: batchFailures > 0 ? batchFailures : undefined,
+    };
+  } finally {
+    if (!opts.dryRun) releaseStepLock(AUTO_CLASSIFIER_LOCK_NAME, opts.openclawDir);
+  }
 }
 
 /**
@@ -505,7 +527,7 @@ async function runAutoClassify(
     discoveryIntervalHours?: number;
   },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
-  opts?: { discoveredCategoriesPath?: string; model?: string },
+  opts?: { discoveredCategoriesPath?: string; model?: string; openclawDir?: string },
 ): Promise<{ reclassified: number; suggested: string[]; batchFailures?: number }> {
   const model = opts?.model ?? config.model;
   if (!model) {
@@ -516,70 +538,81 @@ async function runAutoClassify(
   const configWithModel = { ...config, model };
   const categories = getMemoryCategories();
 
-  // Optionally discover new categories from "other" (free-form grouping; threshold not told to LLM)
-  if (opts?.discoveredCategoriesPath && config.suggestCategories) {
-    await discoverCategoriesFromOther(factsDb, openai, configWithModel, logger, opts.discoveredCategoriesPath);
-  }
-
-  // Only classify "other" facts that haven't been attempted yet (or were re-ingested since last attempt).
-  const others = factsDb.getUnattemptedOtherFacts();
-  if (others.length === 0) {
-    const totalOther = factsDb.getByCategory("other").length;
-    if (totalOther > 0) {
-      logger.info(
-        `memory-hybrid: auto-classify — ${totalOther} "other" facts exist but all were already attempted; skipping (new/changed facts will be retried)`,
-      );
-    }
+  // Distinct from the orchestrator's own "auto-classify" step lock (acquired by the caller before
+  // this function is entered, when run on schedule) — this guard also covers direct/manual
+  // invocation and mutually excludes against a concurrent runClassifyForCli CLI run.
+  if (!acquireStepLock(AUTO_CLASSIFIER_LOCK_NAME, opts?.openclawDir)) {
+    logger.info("memory-hybrid: auto-classify skipped — another classify batch run is already in progress");
     return { reclassified: 0, suggested: [] };
   }
-
-  const totalOther = factsDb.getByCategory("other").length;
-  logger.info(
-    `memory-hybrid: auto-classify starting on ${others.length} unattempted "other" facts (${totalOther} total "other")`,
-  );
-
-  let totalReclassified = 0;
-  let batchFailures = 0;
-
-  for (let i = 0; i < others.length; i += config.batchSize) {
-    if (maintenanceRunDeadlineReached()) {
-      logger.info("memory-hybrid: auto-classify stopped — maintenance run deadline reached");
-      break;
-    }
-    const batch = others.slice(i, i + config.batchSize).map((e) => ({
-      id: e.id,
-      text: e.text,
-    }));
-
-    const { results, suggestions, success } = await classifyBatch(openai, model, batch, categories);
-    if (!success) batchFailures++;
-
-    const batchIds = batch.map((b) => b.id);
-    for (const [id, newCat] of results) {
-      factsDb.updateCategory(id, newCat);
-      totalReclassified++;
-    }
-    for (const [id, label] of suggestions) {
-      // #1188: tag invalid LLM categories so they surface in `categories propose`
-      // instead of being silently dropped. The fact stays in `category=other`.
-      factsDb.addTag(id, `category-suggested:${label}`);
-    }
-    // Only mark classify attempt if the LLM call succeeded
-    if (success) {
-      factsDb.markClassifyAttempt(batchIds);
+  try {
+    // Optionally discover new categories from "other" (free-form grouping; threshold not told to LLM)
+    if (opts?.discoveredCategoriesPath && config.suggestCategories) {
+      await discoverCategoriesFromOther(factsDb, openai, configWithModel, logger, opts.discoveredCategoriesPath);
     }
 
-    if (i + config.batchSize < others.length) {
-      await new Promise((r) => setTimeout(r, 500));
+    // Only classify "other" facts that haven't been attempted yet (or were re-ingested since last attempt).
+    const others = factsDb.getUnattemptedOtherFacts();
+    if (others.length === 0) {
+      const totalOther = factsDb.getByCategory("other").length;
+      if (totalOther > 0) {
+        logger.info(
+          `memory-hybrid: auto-classify — ${totalOther} "other" facts exist but all were already attempted; skipping (new/changed facts will be retried)`,
+        );
+      }
+      return { reclassified: 0, suggested: [] };
     }
+
+    const totalOther = factsDb.getByCategory("other").length;
+    logger.info(
+      `memory-hybrid: auto-classify starting on ${others.length} unattempted "other" facts (${totalOther} total "other")`,
+    );
+
+    let totalReclassified = 0;
+    let batchFailures = 0;
+
+    for (let i = 0; i < others.length; i += config.batchSize) {
+      if (maintenanceRunDeadlineReached()) {
+        logger.info("memory-hybrid: auto-classify stopped — maintenance run deadline reached");
+        break;
+      }
+      const batch = others.slice(i, i + config.batchSize).map((e) => ({
+        id: e.id,
+        text: e.text,
+      }));
+
+      const { results, suggestions, success } = await classifyBatch(openai, model, batch, categories);
+      if (!success) batchFailures++;
+
+      const batchIds = batch.map((b) => b.id);
+      for (const [id, newCat] of results) {
+        factsDb.updateCategory(id, newCat);
+        totalReclassified++;
+      }
+      for (const [id, label] of suggestions) {
+        // #1188: tag invalid LLM categories so they surface in `categories propose`
+        // instead of being silently dropped. The fact stays in `category=other`.
+        factsDb.addTag(id, `category-suggested:${label}`);
+      }
+      // Only mark classify attempt if the LLM call succeeded
+      if (success) {
+        factsDb.markClassifyAttempt(batchIds);
+      }
+
+      if (i + config.batchSize < others.length) {
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    }
+
+    logger.info(`memory-hybrid: auto-classify done — reclassified ${totalReclassified}/${others.length} facts`);
+    return {
+      reclassified: totalReclassified,
+      suggested: [],
+      batchFailures: batchFailures > 0 ? batchFailures : undefined,
+    };
+  } finally {
+    releaseStepLock(AUTO_CLASSIFIER_LOCK_NAME, opts?.openclawDir);
   }
-
-  logger.info(`memory-hybrid: auto-classify done — reclassified ${totalReclassified}/${others.length} facts`);
-  return {
-    reclassified: totalReclassified,
-    suggested: [],
-    batchFailures: batchFailures > 0 ? batchFailures : undefined,
-  };
 }
 
 // ============================================================================

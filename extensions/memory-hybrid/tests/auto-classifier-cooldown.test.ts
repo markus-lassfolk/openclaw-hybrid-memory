@@ -172,14 +172,14 @@ describe("discoverCategoriesFromOther cooldown", () => {
     };
 
     // First call: discovery + classification LLM calls (≥1 discovery batch + classify batch)
-    await runAutoClassify(factsDb, openai, config, noop, { discoveredCategoriesPath: discoveredPath });
+    await runAutoClassify(factsDb, openai, config, noop, { discoveredCategoriesPath: discoveredPath, openclawDir: tmpDir });
     const callsAfterFirst = llmCallCount;
     expect(callsAfterFirst).toBeGreaterThan(0);
 
     // Second call immediately after: discovery skipped (cooldown), classification still runs.
     // The number of additional calls should be LESS than the first call (only classify, no discover).
     const callsBeforeSecond = llmCallCount;
-    await runAutoClassify(factsDb, openai, config, noop, { discoveredCategoriesPath: discoveredPath });
+    await runAutoClassify(factsDb, openai, config, noop, { discoveredCategoriesPath: discoveredPath, openclawDir: tmpDir });
     const additionalCalls = llmCallCount - callsBeforeSecond;
     // Discovery batch (ceil(16/25)=1) should be absent; only classify batch (ceil(16/20)=1) should run.
     // Total calls in first run = discovery(1) + classify(1) = 2; second run = classify(1) = 1.
@@ -210,7 +210,7 @@ describe("discoverCategoriesFromOther cooldown", () => {
       openai as any,
       { model: "test-model", batchSize: 20, suggestCategories: true, discoveryIntervalHours: 72 },
       noop,
-      { discoveredCategoriesPath: discoveredPath },
+      { discoveredCategoriesPath: discoveredPath, openclawDir: tmpDir },
     );
     const after = Date.now();
 
@@ -244,7 +244,7 @@ describe("discoverCategoriesFromOther cooldown", () => {
       mockOpenai as any,
       { model: "test-model", batchSize: 20, suggestCategories: true, discoveryIntervalHours: 72 },
       noop,
-      { discoveredCategoriesPath: discoveredPath },
+      { discoveredCategoriesPath: discoveredPath, openclawDir: tmpDir },
     );
 
     // Timestamp should remain as the original (discovery was skipped, not overwritten)
@@ -280,7 +280,7 @@ describe("discoverCategoriesFromOther cooldown", () => {
       mockOpenai as any,
       { model: "test-model", batchSize: 20, suggestCategories: true, discoveryIntervalHours: 72 },
       noop,
-      { discoveredCategoriesPath: discoveredPath },
+      { discoveredCategoriesPath: discoveredPath, openclawDir: tmpDir },
     );
 
     // LLM should have been called since cooldown expired
@@ -312,7 +312,7 @@ describe("discoverCategoriesFromOther cooldown", () => {
       mockOpenai as any,
       { model: "test-model", batchSize: 20, suggestCategories: true, discoveryIntervalHours: 0 },
       noop,
-      { discoveredCategoriesPath: discoveredPath },
+      { discoveredCategoriesPath: discoveredPath, openclawDir: tmpDir },
     );
 
     // LLM should have been called despite recent last-run (cooldown disabled)
