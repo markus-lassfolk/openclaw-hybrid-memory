@@ -349,11 +349,12 @@ describe("tryParseCredentialForVault", () => {
     expect(result).toBeNull();
   });
 
-  it("includes notes field containing original text when text is short enough", () => {
+  it("includes notes field with the secret redacted (notes column is stored unencrypted)", () => {
     const text = `github token: ${GHP_TOKEN}`;
     const result = tryParseCredentialForVault(text, null, null, null);
     expect(result).not.toBeNull();
-    expect(result?.notes).toBe(text);
+    expect(result?.notes).toBe("github token: [redacted]");
+    expect(result?.notes).not.toContain(GHP_TOKEN);
   });
 
   it("returns null when service name is invalid (too long / invalid chars)", () => {
