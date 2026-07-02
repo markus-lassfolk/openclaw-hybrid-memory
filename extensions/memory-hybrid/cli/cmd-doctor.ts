@@ -84,21 +84,30 @@ export function registerDoctorCommand(
       }
 
       // Check 3: Embedding provider
-      const providers = await detectAvailableProviders(cfg.embedding?.apiKey, cfg.embedding?.googleApiKey);
-      const currentProvider = cfg.embedding?.provider;
-      const providerStatus = providers.find((p) => p.provider === currentProvider);
+      try {
+        const providers = await detectAvailableProviders(cfg.embedding?.apiKey, cfg.embedding?.googleApiKey);
+        const currentProvider = cfg.embedding?.provider;
+        const providerStatus = providers.find((p) => p.provider === currentProvider);
 
-      if (providerStatus?.available) {
-        checks.push({
-          name: "Embedding Provider",
-          status: "pass",
-          message: `${currentProvider?.toUpperCase()} is available`,
-        });
-      } else {
+        if (providerStatus?.available) {
+          checks.push({
+            name: "Embedding Provider",
+            status: "pass",
+            message: `${currentProvider?.toUpperCase()} is available`,
+          });
+        } else {
+          checks.push({
+            name: "Embedding Provider",
+            status: "fail",
+            message: providerStatus?.reason || "Provider not configured",
+            fix: "Run: openclaw hybrid-mem providers",
+          });
+        }
+      } catch (error) {
         checks.push({
           name: "Embedding Provider",
           status: "fail",
-          message: providerStatus?.reason || "Provider not configured",
+          message: `Provider detection failed: ${error instanceof Error ? error.message : String(error)}`,
           fix: "Run: openclaw hybrid-mem providers",
         });
       }
@@ -438,6 +447,15 @@ export function registerDoctorCommand(
             message: "No stale maintenance jobs in audit journal",
           });
         }
+      } catch (err) {
+        checks.push({
+          name: "Maintenance health",
+          status: "warn",
+          message: `Audit journal unavailable: ${String(err)}`,
+        });
+      }
+
+      try {
         const pinned = countPinnedFacts(factsDb);
         checks.push({
           name: "Pin/snooze totals",
@@ -446,9 +464,9 @@ export function registerDoctorCommand(
         });
       } catch (err) {
         checks.push({
-          name: "Maintenance health",
+          name: "Pin/snooze totals",
           status: "warn",
-          message: `Audit journal unavailable: ${String(err)}`,
+          message: `Pin/snooze totals unavailable: ${String(err)}`,
         });
       }
 
@@ -510,7 +528,7 @@ export function registerDoctorCommand(
 
       if (failed > 0) {
         console.log("❌ Critical issues detected. Please address the failed checks.\n");
-        process.exit(1);
+        process.exitCode = 1;
       } else if (warnings > 0) {
         console.log("⚠️  Some issues detected. Consider addressing the warnings.\n");
       } else {

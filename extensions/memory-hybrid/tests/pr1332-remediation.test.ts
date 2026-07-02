@@ -411,7 +411,9 @@ describe("PR #1332 unresolved feedback remediation", () => {
     );
     const doctor = command.children.find((child) => child.name === "doctor");
     vi.spyOn(console, "log").mockImplementation(() => undefined);
-    await expect(doctor?.handler?.()).rejects.toThrow(/process\.exit/);
+    await doctor?.handler?.();
+    expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
 
     const { replayWalEntries } = await import("../utils/wal-replay.js");
     const factsDb = {
