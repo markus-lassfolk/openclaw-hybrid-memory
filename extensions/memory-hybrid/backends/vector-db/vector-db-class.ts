@@ -1420,6 +1420,15 @@ export class VectorDB {
         const rawId = entry.id ?? randomUUID();
         return entry.id !== undefined && UUID_REGEX.test(entry.id) ? entry.id.toLowerCase() : rawId;
       }
+      // Reject dimension-mismatched vectors before they reach LanceDB. Unlike search()/hasDuplicate(),
+      // which can safely degrade to "no results" on a dim mismatch, a store() write has no safe
+      // degraded behavior — writing a wrong-width vector risks a confusing LanceDB schema error deep
+      // in add(), or (worse) succeeding and corrupting the fixed-width vector column.
+      if (entry.vector.length !== this.vectorDim) {
+        throw new Error(
+          `memory-hybrid: cannot store vector with dim=${entry.vector.length}, table expects dim=${this.vectorDim}. Check embedding.preferredProviders/embedding.dimensions or re-index with a matching embedding provider.`,
+        );
+      }
       // Wait for any in-progress optimization to complete before writing
       if (this.optimizePromise) {
         await this.optimizePromise;

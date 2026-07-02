@@ -562,3 +562,45 @@ describe("VectorDB hasDuplicate() excludeId (#51)", () => {
     expect(result).toBe(true);
   });
 });
+
+describe("VectorDB store() dimension validation (#53)", () => {
+  let tmpDir: string;
+  let db: InstanceType<typeof VectorDB>;
+  const DIM = 3;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "vector-store-dim-test-"));
+    db = new VectorDB(join(tmpDir, "lance"), DIM);
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("rejects a store() whose vector length doesn't match the table's configured dimension", async () => {
+    await expect(
+      db.store({
+        text: "wrong dim",
+        vector: [0.1, 0.2, 0.3, 0.4, 0.5],
+        importance: 0.8,
+        category: "fact",
+        id: "wrong-dim-id",
+      }),
+    ).rejects.toThrow(/dim=5.*expected dim=3|cannot store vector with dim/i);
+
+    expect(await db.count()).toBe(0);
+  });
+
+  it("still accepts a store() whose vector length matches the table's configured dimension", async () => {
+    await db.store({
+      text: "correct dim",
+      vector: [0.1, 0.2, 0.3],
+      importance: 0.8,
+      category: "fact",
+      id: "correct-dim-id",
+    });
+
+    expect(await db.count()).toBe(1);
+  });
+});

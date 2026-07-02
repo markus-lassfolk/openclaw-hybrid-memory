@@ -41,15 +41,6 @@ export async function runMemoryDiagnostics(opts: {
     markerId = entry.id;
 
     const vector = await embeddings.embed(markerText);
-    await vectorDb.store({
-      text: markerText,
-      vector,
-      importance: entry.importance ?? 0.5,
-      category: entry.category,
-      id: entry.id,
-    });
-    factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
-
     const structuredResults = factsDb.search(markerText, 5, {
       tierFilter: "all",
       scopeFilter: scopeFilter ?? undefined,
@@ -57,22 +48,36 @@ export async function runMemoryDiagnostics(opts: {
 
     let semanticResults: SearchResult[] = [];
     let semanticFailReason: string | undefined;
-    try {
-      semanticResults = await vectorDb.search(vector, 5, minScore);
-      if (semanticResults.length === 0) {
-        semanticFailReason = vectorDb.getLastSearchFailReason() ?? undefined;
-      }
-      semanticResults = filterByScope(
-        semanticResults,
-        (id, opts) => factsDb.getById(id, opts),
-        scopeFilter ?? undefined,
-      );
-    } catch (err) {
-      semanticFailReason = "search_exception";
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "diagnostics",
-        operation: "semantic-search",
+    // store() rejects a vector whose dimension doesn't match the table's, so check up front
+    // rather than let the diagnostic run crash on the same mismatch it exists to detect.
+    if (vector.length !== vectorDb.getVectorDim()) {
+      semanticFailReason = "vector_dim_mismatch";
+    } else {
+      await vectorDb.store({
+        text: markerText,
+        vector,
+        importance: entry.importance ?? 0.5,
+        category: entry.category,
+        id: entry.id,
       });
+      factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+      try {
+        semanticResults = await vectorDb.search(vector, 5, minScore);
+        if (semanticResults.length === 0) {
+          semanticFailReason = vectorDb.getLastSearchFailReason() ?? undefined;
+        }
+        semanticResults = filterByScope(
+          semanticResults,
+          (id, opts) => factsDb.getById(id, opts),
+          scopeFilter ?? undefined,
+        );
+      } catch (err) {
+        semanticFailReason = "search_exception";
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "diagnostics",
+          operation: "semantic-search",
+        });
+      }
     }
 
     const semanticOk = semanticResults.some((r) => r.entry.id === entry.id);
