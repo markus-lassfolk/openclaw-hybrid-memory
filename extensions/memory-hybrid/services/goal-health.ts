@@ -328,10 +328,18 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
             ? `Budget exhausted: dispatches ${goal.dispatchCount}/${goal.maxDispatches}`
             : `Budget exhausted: assessments ${goal.assessmentCount}/${goal.maxAssessments}`;
         if (goal.status !== "blocked") {
+          // Function-form patch: currentBlockers merges against `fresh` (re-read inside the
+          // lock) instead of clobbering it from this pre-lock `goal` snapshot — a concurrent
+          // writer's blocker (e.g. goal_assess) would otherwise be silently discarded.
           await updateGoal(
             goalsDir,
             goal.id,
-            { status: "blocked", currentBlockers: [reason] },
+            (fresh) => ({
+              status: "blocked",
+              currentBlockers: fresh.currentBlockers.includes(reason)
+                ? fresh.currentBlockers
+                : [...fresh.currentBlockers, reason],
+            }),
             { timestamp: nowIso(), action: "budget-enforced", detail: reason, actor: "watchdog" },
           );
           result.goalsUpdated++;
@@ -360,13 +368,19 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
         goal.consecutiveFailures >= goal.escalateAfterFailures &&
         (goal.status === "active" || goal.status === "stalled")
       ) {
+        const escalationReason = `Escalated after ${goal.consecutiveFailures} consecutive failures`;
+        // Function-form patch: currentBlockers merges against `fresh` (re-read inside the lock)
+        // instead of clobbering it from this pre-lock `goal` snapshot — see the budget-exhausted
+        // branch above for the same rationale.
         await updateGoal(
           goalsDir,
           goal.id,
-          {
+          (fresh) => ({
             status: "blocked",
-            currentBlockers: [`Escalated after ${goal.consecutiveFailures} consecutive failures`],
-          },
+            currentBlockers: fresh.currentBlockers.includes(escalationReason)
+              ? fresh.currentBlockers
+              : [...fresh.currentBlockers, escalationReason],
+          }),
           {
             timestamp: nowIso(),
             action: "escalated",
@@ -376,7 +390,7 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
         );
         result.goalsUpdated++;
         result.actions.push({ goalId: goal.id, label: goal.label, action: "escalated", reason: "failures" });
-        recordOutcome("blocked", `Escalated after ${goal.consecutiveFailures} consecutive failures`);
+        recordOutcome("blocked", escalationReason);
         continue;
       }
 

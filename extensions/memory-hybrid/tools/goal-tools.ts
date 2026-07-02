@@ -396,10 +396,20 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             return { content: [{ type: "text", text: `Goal already ${goal.status}` }], details: { error: "terminal" } };
           }
           if (goal.assessmentCount >= goal.maxAssessments) {
+            const budgetReason = "Assessment budget exhausted";
+            // Function-form patch: currentBlockers is merged against `fresh` (re-read inside the
+            // lock), not clobbered from this pre-lock `goal` snapshot — a concurrent writer's
+            // blocker (e.g. another goal_assess call, or the watchdog) would otherwise be
+            // silently discarded by overwriting the array with a single-element list.
             await updateGoal(
               goalsDir,
               goal.id,
-              { status: "blocked", currentBlockers: ["Assessment budget exhausted"] },
+              (fresh) => ({
+                status: "blocked",
+                currentBlockers: fresh.currentBlockers.includes(budgetReason)
+                  ? fresh.currentBlockers
+                  : [...fresh.currentBlockers, budgetReason],
+              }),
               { timestamp: nowIso(), action: "blocked", detail: "assessments", actor: "steward" },
             );
             return { content: [{ type: "text", text: "Assessment budget exhausted." }], details: { error: "budget" } };

@@ -187,4 +187,79 @@ describe("goal_assess stale-patch write race", () => {
     expect(onDisk?.humanEscalationSummary).toBeTruthy();
     expect(onDisk?.history?.some((h) => h.action === "circuit_breaker")).toBe(true);
   });
+
+  it("does not clobber a concurrent blocker when the assessment budget is already exhausted (#36)", async () => {
+    const g = await createGoal(
+      goalsDir,
+      { label: "budget-race-goal", description: "d", acceptanceCriteria: ["a"], maxAssessments: 1 },
+      { ...defaults, maxAssessments: 1 },
+    );
+    await goalStewardship.updateGoal(
+      goalsDir,
+      g.id,
+      { assessmentCount: 1 },
+      { timestamp: new Date().toISOString(), action: "test", detail: "fill", actor: "user" },
+    );
+
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-that-is-long-enough-to-pass", model: "text-embedding-3-small" },
+      goalStewardship: { enabled: true, goalsDir: "state/goals" },
+    });
+    const tools = new Map<string, { execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }>();
+    const api: Pick<ClawdbotPluginApi, "registerTool"> = {
+      registerTool(toolDefinition: {
+        name: string;
+        execute: (id: string, params: Record<string, unknown>) => Promise<unknown>;
+      }) {
+        tools.set(toolDefinition.name, { execute: toolDefinition.execute });
+      },
+    };
+    registerGoalTools(
+      {
+        cfg,
+        goalsDir,
+        workspaceRoot,
+        resolvedActiveTaskPath: join(workspaceRoot, "ACTIVE-TASKS.md"),
+        factsDb: null,
+        vectorDb: null,
+        embeddings: null,
+        eventLog: null,
+        memoryDir: join(workspaceRoot, "memory"),
+      },
+      api as ClawdbotPluginApi,
+    );
+    const assess = tools.get("goal_assess");
+    expect(assess).toBeDefined();
+
+    // Simulate a concurrent writer (e.g. the watchdog) appending a different blocker between
+    // this call's pre-lock read and its own updateGoal() call for the budget-exhausted branch.
+    const resolveSpy = vi.spyOn(goalStewardship, "resolveGoalIdResult");
+    resolveSpy.mockImplementationOnce(async (dir, idOrLabel) => {
+      const staleResult = await goalStewardship.resolveGoalIdResult(dir, idOrLabel);
+      await goalStewardship.updateGoal(
+        goalsDir,
+        g.id,
+        (fresh) => ({
+          currentBlockers: fresh.currentBlockers.includes("concurrent-blocker")
+            ? fresh.currentBlockers
+            : [...fresh.currentBlockers, "concurrent-blocker"],
+        }),
+        { timestamp: new Date().toISOString(), action: "assessed", detail: "concurrent update", actor: "steward" },
+      );
+      return staleResult;
+    });
+
+    const result = (await assess?.execute("tc", {
+      goal_id: g.id,
+      assessment: "made progress",
+      next_action: "continue",
+    })) as { details?: { error?: string } };
+    expect(result.details?.error).toBe("budget");
+
+    const onDisk = await readGoal(goalsDir, g.id);
+    expect(onDisk?.status).toBe("blocked");
+    // Both the concurrent writer's blocker AND this call's budget-exhausted blocker must survive.
+    expect(onDisk?.currentBlockers).toContain("concurrent-blocker");
+    expect(onDisk?.currentBlockers.some((b) => b.includes("Assessment budget exhausted"))).toBe(true);
+  });
 });

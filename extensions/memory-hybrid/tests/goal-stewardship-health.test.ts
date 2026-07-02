@@ -679,4 +679,76 @@ describe("runGoalHealthCheck", () => {
     expect(after?.currentBlockers).toContain("concurrent-blocker");
     expect(after?.currentBlockers.some((b) => b.includes("missing dispatch metadata"))).toBe(true);
   });
+
+  it("does not lose a concurrent currentBlockers update racing the budget-exhausted patch (#36)", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-race-budget-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-race-budget-"));
+    const g = await createGoal(
+      goalsDir,
+      { label: "race_budget", description: "d", acceptanceCriteria: ["a"], maxDispatches: 1 },
+      { ...defaults, maxDispatches: 1 },
+    );
+    await updateGoal(
+      goalsDir,
+      g.id,
+      { dispatchCount: 1 },
+      { timestamp: new Date().toISOString(), action: "test", detail: "fill", actor: "user" },
+    );
+
+    const goalsDirLocal = goalsDir;
+    const [r] = await Promise.all([
+      runGoalHealthCheck({ goalsDir: goalsDirLocal, cfg: baseCfg(), workspaceRoot, logger: {} }),
+      updateGoal(
+        goalsDirLocal,
+        g.id,
+        (fresh) => ({
+          currentBlockers: fresh.currentBlockers.includes("concurrent-blocker")
+            ? fresh.currentBlockers
+            : [...fresh.currentBlockers, "concurrent-blocker"],
+        }),
+        { timestamp: new Date().toISOString(), action: "assessed", detail: "concurrent update", actor: "steward" },
+      ),
+    ]);
+    expect(r.actions.some((a) => a.action === "blocked")).toBe(true);
+
+    const after = await readGoal(goalsDirLocal, g.id);
+    expect(after?.currentBlockers).toContain("concurrent-blocker");
+    expect(after?.currentBlockers.some((b) => b.includes("Budget exhausted"))).toBe(true);
+  });
+
+  it("does not lose a concurrent currentBlockers update racing the escalation patch (#36)", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-race-escalate-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-race-escalate-"));
+    const g = await createGoal(
+      goalsDir,
+      { label: "race_escalate", description: "d", acceptanceCriteria: ["a"], escalateAfterFailures: 1 },
+      { ...defaults, escalateAfterFailures: 1 },
+    );
+    await updateGoal(
+      goalsDir,
+      g.id,
+      { consecutiveFailures: 1, status: "active" },
+      { timestamp: new Date().toISOString(), action: "test", detail: "fill", actor: "user" },
+    );
+
+    const goalsDirLocal = goalsDir;
+    const [r] = await Promise.all([
+      runGoalHealthCheck({ goalsDir: goalsDirLocal, cfg: baseCfg(), workspaceRoot, logger: {} }),
+      updateGoal(
+        goalsDirLocal,
+        g.id,
+        (fresh) => ({
+          currentBlockers: fresh.currentBlockers.includes("concurrent-blocker")
+            ? fresh.currentBlockers
+            : [...fresh.currentBlockers, "concurrent-blocker"],
+        }),
+        { timestamp: new Date().toISOString(), action: "assessed", detail: "concurrent update", actor: "steward" },
+      ),
+    ]);
+    expect(r.actions.some((a) => a.action === "escalated")).toBe(true);
+
+    const after = await readGoal(goalsDirLocal, g.id);
+    expect(after?.currentBlockers).toContain("concurrent-blocker");
+    expect(after?.currentBlockers.some((b) => b.includes("Escalated after"))).toBe(true);
+  });
 });
