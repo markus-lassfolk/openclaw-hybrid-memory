@@ -499,10 +499,14 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       asOfSec?: number;
       scopeFilter?: ScopeFilter;
     },
+    // Defaults to the plugin's primary vault; callers that resolved a specific vault (the
+    // `vault` param on memory_recall) must pass that vault's factsDb explicitly — otherwise
+    // this silently searches the wrong vault's database (#storage-recall-review).
+    searchFactsDb: typeof factsDb = factsDb,
   ): SearchResult[] {
     const ftsHits =
-      typeof factsDb.getRawDb === "function"
-        ? searchFts(factsDb.getRawDb(), query, {
+      typeof searchFactsDb.getRawDb === "function"
+        ? searchFts(searchFactsDb.getRawDb(), query, {
             limit: recallLimit,
             entityFilter: opts.entity,
             tagFilter: opts.tag,
@@ -516,7 +520,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         opts.asOfSec != null || opts.scopeFilter
           ? ({ asOf: opts.asOfSec, scopeFilter: opts.scopeFilter } as { asOf?: number; scopeFilter?: ScopeFilter })
           : undefined;
-      const entry = factsDb.getById(hit.factId, getByIdOpts);
+      const entry = searchFactsDb.getById(hit.factId, getByIdOpts);
       if (entry) {
         // FTS5 rank is negative (closer to 0 is better); invert for descending sort.
         out.push({ entry, score: -hit.rank, backend: "sqlite" });
@@ -755,13 +759,18 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
     };
 
     if (recallMode === "keyword") {
-      let results = keywordRecallResults(query, limit, {
-        entity,
-        tag,
-        includeSuperseded,
-        asOfSec,
-        scopeFilter,
-      });
+      let results = keywordRecallResults(
+        query,
+        limit,
+        {
+          entity,
+          tag,
+          includeSuperseded,
+          asOfSec,
+          scopeFilter,
+        },
+        recallFactsDb,
+      );
       if (!includeCold && results.length > 0) {
         const coldFilterOpts = asOfSec != null || scopeFilter ? { asOf: asOfSec, scopeFilter } : undefined;
         results = results.filter((r) => {
@@ -906,7 +915,12 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         semanticWarning = vectorPrep.warning;
         if (recallMode !== "semantic" && queryVector == null && semanticWarning) {
           recallFallback = true;
-          results = keywordRecallResults(query, limit, { entity, tag, includeSuperseded, asOfSec, scopeFilter });
+          results = keywordRecallResults(
+            query,
+            limit,
+            { entity, tag, includeSuperseded, asOfSec, scopeFilter },
+            recallFactsDb,
+          );
         }
       }
       if (!recallFallback) {

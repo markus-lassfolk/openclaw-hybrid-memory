@@ -661,6 +661,8 @@ export function hasDuplicateText(
   storeConfig?: StoreConfig,
   source?: string,
   structured?: { category?: MemoryCategory | null; entity?: string | null; key?: string | null; value?: string | null },
+  scope?: "global" | "user" | "agent" | "session",
+  scopeTarget?: string | null,
 ): boolean {
   const nowSec = Math.floor(Date.now() / 1000);
   if (source === undefined) {
@@ -676,6 +678,8 @@ export function hasDuplicateText(
       entity: structured?.entity ?? null,
       key: structured?.key ?? null,
       value: structured?.value ?? null,
+      scope,
+      scopeTarget,
     },
     { db, nowSec, fuzzyDedupe },
   );

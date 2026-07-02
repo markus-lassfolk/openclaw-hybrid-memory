@@ -71,24 +71,45 @@ function invalidScopeMessage(
   return null;
 }
 
-function findExistingFactIdForWal(factsDb: FactsDB, text: string, source: string | null): string | null {
+function findExistingFactIdForWal(
+  factsDb: FactsDB,
+  text: string,
+  source: string | null,
+  scope: "global" | "user" | "agent" | "session" | null,
+  scopeTarget: string | null,
+): string | null {
   try {
     const src = source?.trim() || "conversation";
-    const row = factsDb
-      .getRawDb()
-      .prepare(
-        "SELECT id FROM facts WHERE text = ? AND source = ? AND superseded_at IS NULL ORDER BY created_at DESC LIMIT 1",
-      )
-      .get(text, src) as { id: string } | undefined;
+    const effectiveScope = scope ?? "global";
+    const row =
+      effectiveScope === "global"
+        ? (factsDb
+            .getRawDb()
+            .prepare(
+              "SELECT id FROM facts WHERE text = ? AND source = ? AND scope = 'global' AND superseded_at IS NULL ORDER BY created_at DESC LIMIT 1",
+            )
+            .get(text, src) as { id: string } | undefined)
+        : (factsDb
+            .getRawDb()
+            .prepare(
+              "SELECT id FROM facts WHERE text = ? AND source = ? AND scope = ? AND scope_target = ? AND superseded_at IS NULL ORDER BY created_at DESC LIMIT 1",
+            )
+            .get(text, src, effectiveScope, scopeTarget) as { id: string } | undefined);
     return row?.id ?? null;
   } catch {
     return null;
   }
 }
 
-function hasReplayDuplicateForWal(factsDb: FactsDB, text: string, source: string | null): boolean {
+function hasReplayDuplicateForWal(
+  factsDb: FactsDB,
+  text: string,
+  source: string | null,
+  scope: "global" | "user" | "agent" | "session" | null,
+  scopeTarget: string | null,
+): boolean {
   try {
-    return factsDb.hasDuplicate(text, source?.trim() || "conversation");
+    return factsDb.hasDuplicate(text, source?.trim() || "conversation", undefined, scope ?? "global", scopeTarget);
   } catch {
     return false;
   }
@@ -239,7 +260,7 @@ export async function replayWalEntries(
         }
 
         // Idempotent replay: if the fact already exists, still ensure vector/embedding metadata.
-        const existingId = findExistingFactIdForWal(factsDb, text, source);
+        const existingId = findExistingFactIdForWal(factsDb, text, source, scope, scopeTarget);
         if (existingId) {
           await ensureVectorAndEmbeddingMeta({
             factId: existingId,
@@ -261,7 +282,7 @@ export async function replayWalEntries(
         // without creating an exact text+source row. If that already happened before
         // a crash but before WAL removal, replay must not call store() again: boost
         // and merge dedupe actions are not idempotent.
-        if (hasReplayDuplicateForWal(factsDb, text, source)) {
+        if (hasReplayDuplicateForWal(factsDb, text, source, scope, scopeTarget)) {
           skipped++;
           await wal.remove(entry.id);
           continue;
@@ -395,7 +416,7 @@ export async function replayWalEntries(
         }
 
         // Idempotent replay: if the exact intended replacement already exists, ensure vector metadata.
-        const existingId = findExistingFactIdForWal(factsDb, text, source);
+        const existingId = findExistingFactIdForWal(factsDb, text, source, scope, scopeTarget);
         if (existingId && existingId !== targetId) {
           const existing = factsDb.getById(existingId);
           if (existing?.supersedesId === targetId) {
@@ -417,7 +438,7 @@ export async function replayWalEntries(
           }
         }
 
-        if (hasReplayDuplicateForWal(factsDb, text, source)) {
+        if (hasReplayDuplicateForWal(factsDb, text, source, scope, scopeTarget)) {
           skipped++;
           await wal.remove(entry.id);
           continue;

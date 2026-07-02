@@ -511,8 +511,19 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     text: string,
     source?: string,
     structured?: { category?: string | null; entity?: string | null; key?: string | null; value?: string | null },
+    scope?: "global" | "user" | "agent" | "session",
+    scopeTarget?: string | null,
   ): boolean {
-    return hasDuplicateText(this.liveDb, this.fuzzyDedupe, text, this.storeConfig, source, structured);
+    return hasDuplicateText(
+      this.liveDb,
+      this.fuzzyDedupe,
+      text,
+      this.storeConfig,
+      source,
+      structured,
+      scope,
+      scopeTarget,
+    );
   }
 
   /**
