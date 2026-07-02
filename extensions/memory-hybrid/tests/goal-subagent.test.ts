@@ -11,9 +11,10 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as goalRegistry from "../services/goal-registry.js";
 import { createGoal, readGoal, updateGoal } from "../services/goal-registry.js";
-import { linkSubagentToGoal, updateGoalOnSubagentEnd } from "../services/goal-subagent.js";
+import { linkSubagentToGoal, markGoalDispatchFailure, updateGoalOnSubagentEnd } from "../services/goal-subagent.js";
 
 const defaults = {
   maxDispatches: 20,
@@ -77,5 +78,104 @@ describe("updateGoalOnSubagentEnd concurrency", () => {
     // Both increments must land: 0 -> 1 (manual bump) -> 2 (subagent failure), regardless of
     // commit order, because each is computed from the freshly-locked read, not a stale snapshot.
     expect(after?.consecutiveFailures).toBe(2);
+  });
+});
+
+describe("goal-subagent TOCTOU terminal-status re-check (#37)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("linkSubagentToGoal does not resurrect a goal terminated between the pre-check read and the lock", async () => {
+    dir = await mkdtemp(join(tmpdir(), "goal-subagent-toctou-link-"));
+    const goal = await createGoal(dir, { label: "toctou_link_goal", description: "d", acceptanceCriteria: ["a"] }, defaults);
+
+    // Simulate a concurrent goal_complete landing between linkSubagentToGoal's pre-lock
+    // readGoal() and its updateGoal() call: the spy returns the STALE (still-active) snapshot,
+    // exactly matching the real race window, after a genuine concurrent write has already
+    // terminated the goal.
+    const readGoalSpy = vi.spyOn(goalRegistry, "readGoal");
+    readGoalSpy.mockImplementationOnce(async (goalsDir, id) => {
+      const stale = await goalRegistry.readGoal(goalsDir, id);
+      await goalRegistry.updateGoal(goalsDir, id, { status: "completed" }, {
+        timestamp: new Date().toISOString(),
+        action: "completed",
+        detail: "concurrent completion",
+        actor: "user",
+      });
+      return stale;
+    });
+
+    await linkSubagentToGoal(dir, goal.id, { label: "late-task", sessionKey: "session-late", status: "in_progress" });
+
+    const after = await readGoal(dir, goal.id);
+    // Status must remain "completed" — the fix must not overwrite it back to a non-terminal
+    // status, and the late task must not be linked onto an already-finished goal.
+    expect(after?.status).toBe("completed");
+    expect(after?.linkedTasks.some((t) => t.label === "late-task")).toBe(false);
+    expect(after?.history?.some((h) => h.action === "subagent-linked")).toBe(false);
+  });
+
+  it("markGoalDispatchFailure does not resurrect a goal terminated between the pre-check read and the lock", async () => {
+    dir = await mkdtemp(join(tmpdir(), "goal-subagent-toctou-dispatch-"));
+    const goal = await createGoal(
+      dir,
+      { label: "toctou_dispatch_goal", description: "d", acceptanceCriteria: ["a"] },
+      defaults,
+    );
+
+    const readGoalSpy = vi.spyOn(goalRegistry, "readGoal");
+    readGoalSpy.mockImplementationOnce(async (goalsDir, id) => {
+      const stale = await goalRegistry.readGoal(goalsDir, id);
+      await goalRegistry.updateGoal(goalsDir, id, { status: "abandoned" }, {
+        timestamp: new Date().toISOString(),
+        action: "abandoned",
+        detail: "concurrent abandonment",
+        actor: "user",
+      });
+      return stale;
+    });
+
+    await markGoalDispatchFailure(dir, goal.id, {
+      label: "late-task",
+      sessionKey: "session-late",
+      runId: null,
+      reason: "dispatch exploded",
+    });
+
+    const after = await readGoal(dir, goal.id);
+    // Without the fix this would flip back to "blocked" and append a stray dispatch-failed entry.
+    expect(after?.status).toBe("abandoned");
+    expect(after?.history?.some((h) => h.action === "dispatch-failed")).toBe(false);
+  });
+
+  it("updateGoalOnSubagentEnd does not resurrect a goal terminated between the pre-check read and the lock", async () => {
+    dir = await mkdtemp(join(tmpdir(), "goal-subagent-toctou-end-"));
+    const goal = await createGoal(dir, { label: "toctou_end_goal", description: "d", acceptanceCriteria: ["a"] }, defaults);
+    await linkSubagentToGoal(dir, goal.id, { label: "task-a", sessionKey: "session-a", status: "in_progress" });
+
+    const listActiveGoalsSpy = vi.spyOn(goalRegistry, "listActiveGoals");
+    listActiveGoalsSpy.mockImplementationOnce(async (goalsDir) => {
+      const stale = await goalRegistry.listActiveGoals(goalsDir);
+      await goalRegistry.updateGoal(goalsDir, goal.id, { status: "failed" }, {
+        timestamp: new Date().toISOString(),
+        action: "failed",
+        detail: "concurrent failure",
+        actor: "user",
+      });
+      return stale;
+    });
+
+    await updateGoalOnSubagentEnd(dir, { label: "task-a", sessionKey: "session-a", success: true, outcome: "done a" });
+
+    const after = await readGoal(dir, goal.id);
+    // Without the fix, a successful subagent-end for the only linked task would flip an
+    // already-failed goal to "verifying".
+    expect(after?.status).toBe("failed");
+    const taskA = after?.linkedTasks.find((t) => t.label === "task-a");
+    expect(taskA?.status).toBe("in_progress");
+    expect(after?.history?.some((h) => h.action === "subagent-succeeded" || h.action === "all-tasks-complete")).toBe(
+      false,
+    );
   });
 });

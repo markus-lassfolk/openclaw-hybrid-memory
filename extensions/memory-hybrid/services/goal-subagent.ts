@@ -74,6 +74,11 @@ export async function linkSubagentToGoal(
     goalsDir,
     goalId,
     (fresh) => {
+      // Re-check terminal status inside the lock: the pre-check above can be stale if the goal
+      // was completed/failed/abandoned in the race window between that read and this lock being
+      // acquired (e.g. a concurrent goal_complete call) — linking a task afterward would leave a
+      // stray in-progress linkedTasks entry on a goal the user already accepted as done.
+      if (isTerminalStatus(fresh.status)) return {};
       const existing = fresh.linkedTasks.find((t) => taskLabelsMatch(t.label, task.label));
       const linkedTasks = existing
         ? fresh.linkedTasks.map((t) =>
@@ -105,11 +110,14 @@ export async function linkSubagentToGoal(
           ];
       return { linkedTasks };
     },
-    {
-      timestamp: ts,
-      action: "subagent-linked",
-      detail: `${task.label} (${task.sessionKey ?? "no session"}${task.runId ? `, run=${task.runId}` : ""})`,
-      actor: "agent",
+    (fresh) => {
+      if (isTerminalStatus(fresh.status)) return [];
+      return {
+        timestamp: ts,
+        action: "subagent-linked",
+        detail: `${task.label} (${task.sessionKey ?? "no session"}${task.runId ? `, run=${task.runId}` : ""})`,
+        actor: "agent",
+      };
     },
   );
 }
@@ -126,6 +134,7 @@ export async function markGoalDispatchFailure(
     goalsDir,
     goalId,
     (fresh) => {
+      if (isTerminalStatus(fresh.status)) return {};
       const existing = fresh.linkedTasks.find((t) => taskLabelsMatch(t.label, info.label));
       const linkedTasks = existing
         ? fresh.linkedTasks.map((t) =>
@@ -163,11 +172,14 @@ export async function markGoalDispatchFailure(
         lastOutcome: info.reason,
       };
     },
-    {
-      timestamp: ts,
-      action: "dispatch-failed",
-      detail: `${info.label}: ${info.reason}`,
-      actor: "agent",
+    (fresh) => {
+      if (isTerminalStatus(fresh.status)) return [];
+      return {
+        timestamp: ts,
+        action: "dispatch-failed",
+        detail: `${info.label}: ${info.reason}`,
+        actor: "agent",
+      };
     },
   );
 }
@@ -234,6 +246,7 @@ export async function updateGoalOnSubagentEnd(
     goalsDir,
     matchedGoal.id,
     (fresh) => {
+      if (isTerminalStatus(fresh.status)) return {};
       const linkedTasks = normalizedLinkedTasks(fresh).map((t) =>
         taskLabelsMatch(t.label, matchedTaskLabel)
           ? { ...t, status: newStatus, updatedAt: ts, sessionKey: info.sessionKey ?? t.sessionKey }
@@ -251,7 +264,8 @@ export async function updateGoalOnSubagentEnd(
       }
       return { linkedTasks, consecutiveFailures, lastOutcome };
     },
-    (_fresh, resolvedPatch) => {
+    (fresh, resolvedPatch) => {
+      if (isTerminalStatus(fresh.status)) return [];
       if (resolvedPatch.status === "verifying") {
         return { timestamp: ts, action: "all-tasks-complete", detail: "ready for LLM verification", actor: "agent" };
       }
