@@ -109,6 +109,38 @@ export interface PluginServiceContext {
 }
 
 /**
+ * Terminally close a store during plugin stop(), preferring permanentClose() (which transitions
+ * BaseSqliteStore's internal phase to "shutdown" so `liveDb` throws on any later access) over the
+ * non-terminal close() every BaseSqliteStore subclass also exposes. close() alone is designed for
+ * background maintenance and deliberately allows the store to auto-reopen a new native handle on
+ * next access — exactly what a stale tool/hook closure invoked after "shutdown" would trigger,
+ * accumulating duplicate SQLite connections (issue #1550). Falls back to close() for stores that
+ * don't implement permanentClose() (e.g. VerificationStore, and VectorDB whose close() is already
+ * terminal), matching bootstrap-databases.ts's closeOldDatabases() convention.
+ */
+function closeStorePermanently(
+  store: { permanentClose?: () => void; close?: () => void } | null | undefined,
+  subsystem: string,
+  logger: { warn: (msg: string) => void },
+): void {
+  if (!store) return;
+  try {
+    if (typeof store.permanentClose === "function") {
+      store.permanentClose();
+    } else if (typeof store.close === "function") {
+      store.close();
+    }
+  } catch (err) {
+    logger.warn(`memory-hybrid: failed to close ${subsystem} during shutdown: ${err}`);
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "plugin-service",
+      operation: `close-${subsystem}`,
+      severity: "warning",
+    });
+  }
+}
+
+/**
  * Creates the plugin service registration object with start/stop handlers.
  * Manages:
  * - Error reporter initialization
@@ -1111,45 +1143,24 @@ export function createPluginService(ctx: PluginServiceContext) {
       if (ctx.pythonBridge) {
         await ctx.pythonBridge.shutdown();
       }
-      factsDb.close();
+      closeStorePermanently(factsDb, "factsDb", api.logger);
+      // VectorDB is LanceDB-based (not a BaseSqliteStore); its close() is already terminal.
       vectorDb.close();
-      if (credentialsDb) {
-        credentialsDb.close();
-      }
-      if (proposalsDb) {
-        proposalsDb.close();
-      }
-      if (auditStore) {
-        auditStore.close();
-      }
-      if (agentHealthStore) {
-        agentHealthStore.close();
-      }
-      edictStore.close();
-      if (eventLog) {
-        eventLog.close();
-      }
-      if (narrativesDb) {
-        narrativesDb.close();
-      }
-      if (issueStore) {
-        issueStore.close();
-      }
-      if (workflowStore) {
-        workflowStore.close();
-      }
-      if (crystallizationStore) {
-        crystallizationStore.close();
-      }
-      if (toolProposalStore) {
-        toolProposalStore.close();
-      }
-      if (verificationStore) {
-        verificationStore.close();
-      }
-      if (eventBus) {
-        eventBus.close();
-      }
+      closeStorePermanently(credentialsDb, "credentialsDb", api.logger);
+      closeStorePermanently(proposalsDb, "proposalsDb", api.logger);
+      closeStorePermanently(auditStore, "auditStore", api.logger);
+      closeStorePermanently(agentHealthStore, "agentHealthStore", api.logger);
+      closeStorePermanently(edictStore, "edictStore", api.logger);
+      closeStorePermanently(eventLog, "eventLog", api.logger);
+      closeStorePermanently(narrativesDb, "narrativesDb", api.logger);
+      closeStorePermanently(issueStore, "issueStore", api.logger);
+      closeStorePermanently(workflowStore, "workflowStore", api.logger);
+      closeStorePermanently(crystallizationStore, "crystallizationStore", api.logger);
+      closeStorePermanently(toolProposalStore, "toolProposalStore", api.logger);
+      // VerificationStore doesn't extend BaseSqliteStore / doesn't implement permanentClose();
+      // closeStorePermanently() falls back to its plain close().
+      closeStorePermanently(verificationStore, "verificationStore", api.logger);
+      closeStorePermanently(eventBus, "eventBus", api.logger);
     },
   };
 }

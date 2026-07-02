@@ -379,9 +379,12 @@ describe("createPluginService stop() — resource cleanup (#57, #58)", () => {
     const ctx = buildMinimalCtx(tmpDir, api, timers, {
       errorReporting: { enabled: false, consent: false },
     });
-    const closeSpy = vi.spyOn(ctx.factsDb as InstanceType<typeof FactsDB>, "close").mockImplementation(() => {
-      order.push("db-closed");
-    });
+    // stop() now closes via permanentClose() (#86), not close() — see closeStorePermanently().
+    const closeSpy = vi
+      .spyOn(ctx.factsDb as InstanceType<typeof FactsDB>, "permanentClose")
+      .mockImplementation(() => {
+        order.push("db-closed");
+      });
 
     const service = createPluginService(ctx);
     await service.start();
@@ -436,6 +439,31 @@ describe("createPluginService stop() — resource cleanup (#57, #58)", () => {
     expect(edictCloseSpy).toHaveBeenCalledTimes(1);
 
     (ctx.factsDb as InstanceType<typeof FactsDB>).close();
+    (ctx.vectorDb as InstanceType<typeof VectorDB>).close();
+  });
+
+  it("permanently closes factsDb so a stale closure can't silently reopen it after stop() (#86)", async () => {
+    const api = makeMockApi(RECOMMENDED_OPENCLAW_VERSION);
+    const ctx = buildMinimalCtx(tmpDir, api, timers);
+    const factsDb = ctx.factsDb as InstanceType<typeof FactsDB>;
+
+    await createPluginService(ctx).stop();
+
+    // close() (the non-terminal variant) lets liveDb lazily reopen a new native handle on the
+    // next access — exactly the #1550 duplicate-handle bug. permanentClose() must instead make
+    // any post-shutdown access throw, proving stop() upgraded to the terminal variant.
+    expect(() =>
+      factsDb.store({
+        text: "Should not be writable after permanentClose",
+        category: "fact",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "test",
+      }),
+    ).toThrow(/database connection is not open/i);
+
     (ctx.vectorDb as InstanceType<typeof VectorDB>).close();
   });
 });
