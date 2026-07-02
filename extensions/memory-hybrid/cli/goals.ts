@@ -375,7 +375,8 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
       };
       if (opts.json) {
         console.log(JSON.stringify(payload, null, 2));
-        if (quarantined.length > 0 && !opts.repairCorrupt) process.exitCode = 1;
+        const repairFailed = repairResults.some((r) => r.action === "failed");
+        if ((quarantined.length > 0 && !opts.repairCorrupt) || repairFailed) process.exitCode = 1;
         return;
       }
       console.log(`Goals directory: ${dir}`);
