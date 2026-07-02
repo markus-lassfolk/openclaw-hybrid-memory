@@ -21,7 +21,17 @@
  * Cron automation for scheduled backups should be managed via openclaw.yaml.
  */
 
-import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readlinkSync, statSync, symlinkSync } from "node:fs";
+import {
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readlinkSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -67,7 +77,12 @@ function defaultBackupRoot(): string {
 
 function timestampedDir(root: string): string {
   const now = new Date();
-  const ts = now.toISOString().replace(/[:.]/g, "-").slice(0, 19); // YYYY-MM-DDTHH-mm-ss
+  // Keep millisecond resolution (drop the old .slice(0, 19) truncation to whole seconds) — two
+  // backups triggered within the same second (a scripted retry, or a manual run racing a cron
+  // tick) previously resolved to the identical directory name. VACUUM INTO then failed on the
+  // second run because SQLite refuses to write into an already-existing destination file,
+  // reporting a misleading "SQLite backup failed" for what was really a naming collision.
+  const ts = now.toISOString().replace(/[:.]/g, "-"); // YYYY-MM-DDTHH-mm-ss-SSSZ
   return join(root, ts);
 }
 
@@ -145,9 +160,24 @@ export async function runBackup(ctx: BackupContext): Promise<BackupCliResult> {
     return { ok: false, error: `Failed to create backup directory ${dest}: ${err}` };
   }
 
+  /** Remove the half-written backup directory before reporting a failure — otherwise a stale,
+   * incomplete backup (e.g. valid memory.db but missing/partial lancedb) is left on disk looking
+   * like a legitimate timestamped backup, with no marker that it's incomplete. */
+  const cleanupAndFail = (error: string): { ok: false; error: string } => {
+    try {
+      rmSync(dest, { recursive: true, force: true });
+    } catch {
+      // Best-effort cleanup only — the original error is what matters to the caller.
+    }
+    return { ok: false, error };
+  };
+
   // -- SQLite backup --
   let sqliteSize = 0;
-  let integrityOk = true;
+  // Defaults to false (not true): if resolvedSqlitePath doesn't exist, no integrity check ever
+  // ran, and reporting `integrityOk: true` in that case falsely implied a check passed. Failing
+  // closed means a caller relying on this flag can't mistake "never checked" for "verified ok."
+  let integrityOk = false;
 
   if (existsSync(ctx.resolvedSqlitePath)) {
     const destSqlite = join(dest, basename(ctx.resolvedSqlitePath));
@@ -172,7 +202,7 @@ export async function runBackup(ctx: BackupContext): Promise<BackupCliResult> {
         subsystem: "backup",
         operation: "sqlite-backup",
       });
-      return { ok: false, error: `SQLite backup failed: ${err}` };
+      return cleanupAndFail(`SQLite backup failed: ${err}`);
     }
   }
 
@@ -188,7 +218,7 @@ export async function runBackup(ctx: BackupContext): Promise<BackupCliResult> {
         subsystem: "backup",
         operation: "lancedb-backup",
       });
-      return { ok: false, error: `LanceDB backup failed: ${err}` };
+      return cleanupAndFail(`LanceDB backup failed: ${err}`);
     }
   }
 

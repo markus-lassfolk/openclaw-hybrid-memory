@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -54,7 +54,7 @@ describe("backup", () => {
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.backupDir).toMatch(/[\\/]backups[\\/]\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/);
+        expect(result.backupDir).toMatch(/[\\/]backups[\\/]\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/);
         expect(existsSync(result.backupDir)).toBe(true);
       }
     });
@@ -172,6 +172,47 @@ describe("backup", () => {
       if (result.ok) {
         expect(result.sqliteSize).toBe(0);
         expect(result.lancedbSize).toBeGreaterThan(0);
+        // No integrity check ever ran (no SQLite file present), so integrityOk must not claim
+        // "checked and passed" — it previously defaulted to true here, falsely implying a
+        // check happened when a misconfigured/typo'd path (or a fresh vault with no DB yet)
+        // means nothing was actually verified.
+        expect(result.integrityOk).toBe(false);
+      }
+    });
+
+    it("creates distinct backup directories for two runs within the same second", async () => {
+      const backupDir = join(testDir, "backups");
+      const [first, second] = await Promise.all([
+        runBackup({ resolvedSqlitePath: sqlitePath, resolvedLancePath: lancePath, backupDir }),
+        runBackup({ resolvedSqlitePath: sqlitePath, resolvedLancePath: lancePath, backupDir }),
+      ]);
+      expect(first.ok).toBe(true);
+      expect(second.ok).toBe(true);
+      if (first.ok && second.ok) {
+        expect(first.backupDir).not.toBe(second.backupDir);
+      }
+    });
+
+    it("removes the half-written backup directory when LanceDB copy fails partway", async () => {
+      const backupDir = join(testDir, "backups");
+      // Force copyDirSync to fail: its source is a *file*, not a directory, so
+      // mkdirSync(dest, {recursive:true}) creates `dest` as a directory, then cpSync(file, dir)
+      // throws (can't copy a file onto an existing directory path). Avoids relying on chmod-based
+      // permission simulation, which doesn't work when tests run as root.
+      const brokenLancePath = join(testDir, "broken-lance-source");
+      writeFileSync(brokenLancePath, "not a directory");
+
+      const result = await runBackup({
+        resolvedSqlitePath: sqlitePath,
+        resolvedLancePath: brokenLancePath,
+        backupDir,
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        // The half-complete backup dir (valid memory.db already written, lancedb copy failed)
+        // must be cleaned up, not left behind looking like a legitimate backup.
+        const dirs = existsSync(backupDir) ? readdirSync(backupDir) : [];
+        expect(dirs.length).toBe(0);
       }
     });
 
