@@ -127,8 +127,6 @@ export function loadKnownEntitySurfaces(db: DatabaseSync, limit = 500): KnownEnt
   return limit >= surfaces.length ? surfaces : surfaces.slice(0, limit);
 }
 
-const MIN_SUBSTRING_ENTITY_KEY_LEN = 4;
-
 /**
  * Match entity surfaces mentioned in message text.
  */
@@ -140,9 +138,12 @@ export function matchEntitySurfacesInText(text: string, surfaces: KnownEntitySur
   for (const surface of surfaces) {
     if (seen.has(surface.key)) continue;
     const escaped = surface.key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // Word-boundary only — a bare substring match (e.g. a 4+ char key like "mark" inside
+    // "denmark"/"benchmark"/"supermarket") is not evidence of a real mention and pulls in facts
+    // for the wrong entity during ambient/constrained recall. \b already matches at punctuation
+    // boundaries (possessives, plurals), so this doesn't lose legitimate partial-word mentions.
     const wordBoundaryMatch = new RegExp(`\\b${escaped}\\b`, "i").test(lower);
-    const substringMatch = surface.key.length >= MIN_SUBSTRING_ENTITY_KEY_LEN && lower.includes(surface.key);
-    if (wordBoundaryMatch || substringMatch) {
+    if (wordBoundaryMatch) {
       seen.add(surface.key);
       matched.push(surface);
     }

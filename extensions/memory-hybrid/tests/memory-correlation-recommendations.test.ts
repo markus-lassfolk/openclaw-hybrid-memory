@@ -312,6 +312,20 @@ describe("entity surface matching", () => {
     const surfaces = [{ key: "ai", displayName: "AI", label: "OTHER" as const }];
     expect(matchEntitySurfacesInText("wait for email", surfaces)).toHaveLength(0);
   });
+
+  it("does not substring-match a 4+ char entity key inside an unrelated word", () => {
+    // "mark" (4 chars, over the old MIN_SUBSTRING_ENTITY_KEY_LEN threshold) must not match
+    // inside "denmark"/"benchmark"/"supermarket" — those are unrelated words, not mentions.
+    const surfaces = [{ key: "mark", displayName: "Mark", label: "OTHER" as const }];
+    expect(matchEntitySurfacesInText("We shipped a new benchmark for the supermarket app", surfaces)).toHaveLength(
+      0,
+    );
+  });
+
+  it("still matches a 4+ char entity key when it appears as its own word", () => {
+    const surfaces = [{ key: "mark", displayName: "Mark", label: "OTHER" as const }];
+    expect(matchEntitySurfacesInText("Ask Mark about the deploy", surfaces)).toHaveLength(1);
+  });
 });
 
 describe("entity surface cache and fact lookup", () => {

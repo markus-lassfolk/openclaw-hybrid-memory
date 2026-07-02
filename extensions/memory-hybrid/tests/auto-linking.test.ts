@@ -198,12 +198,26 @@ describe("FactsDB.extractEntitiesFromText", () => {
     expect(result[0].weight).toBe(1.0);
   });
 
-  it("substring match (no word boundary) returns weight 0.7", () => {
-    // "MyProject" is a substring of "MyProjectFoo" — no word boundary at end
+  it("substring match (no word boundary) is not recorded as a mention", () => {
+    // "MyProject" is a substring of "MyProjectFoo" — no word boundary at end. A bare substring
+    // match is not evidence of a real mention (e.g. "art" inside "smart"/"chart"/"artist"), so it
+    // must not feed autoLinkEntities() and create a spurious RELATED_TO edge.
     const result = db.extractEntitiesFromText("Working on MyProjectFoo code", ["MyProject"]);
+    expect(result).toEqual([]);
+  });
+
+  it("does not match a short known entity that is only a substring of unrelated words", () => {
+    // A known entity "art" must not match inside "smart", "chart", or "artist" — those are
+    // unrelated words that merely contain the same letters, not mentions of "art".
+    const result = db.extractEntitiesFromText("We need a smart chart for the artist's exhibit", ["art"]);
+    expect(result).toEqual([]);
+  });
+
+  it("still matches a short known entity when it appears as its own word", () => {
+    const result = db.extractEntitiesFromText("The art exhibit opens Friday", ["art"]);
     expect(result).toHaveLength(1);
-    expect(result[0].entity).toBe("MyProject");
-    expect(result[0].weight).toBe(0.7);
+    expect(result[0].entity).toBe("art");
+    expect(result[0].weight).toBe(1.0);
   });
 
   it("exact word-boundary match returns 1.0 not 0.7", () => {
@@ -247,7 +261,9 @@ describe("FactsDB.extractEntitiesFromText", () => {
 
   it("results sorted by descending weight", () => {
     const result = db.extractEntitiesFromText("alice leads MyProjectFoo and 10.0.0.1", ["alice", "MyProject"]);
-    // alice → 1.0, MyProject → 0.7 (substring in MyProjectFoo), IP → 0.5
+    // alice → 1.0 (word-boundary match), MyProject → not recorded (substring-only in
+    // MyProjectFoo), IP → 0.5
+    expect(result.map((r) => r.entity)).not.toContain("MyProject");
     for (let i = 0; i < result.length - 1; i++) {
       expect(result[i].weight).toBeGreaterThanOrEqual(result[i + 1].weight);
     }
