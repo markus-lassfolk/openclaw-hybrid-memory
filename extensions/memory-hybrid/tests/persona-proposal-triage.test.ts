@@ -989,6 +989,53 @@ describe("persona proposal triage", () => {
     expect(persisted.some((d) => d.action === "failed-validation" && d.reasonCode === "lock-conflict")).toBe(true);
   });
 
+  it("rejects a persona apply when a different proposal already holds the target-file lock (#43)", async () => {
+    // Two DIFFERENT proposals for the same target file: the per-proposal lock (keyed by
+    // proposal id) does not protect against this — only a target-file-scoped lock does. This
+    // simulates a concurrent apply already in flight for USER.md by acquiring the file lock
+    // under a *different* proposal's identity before triage runs.
+    const mechanical = proposal({
+      targetFile: "IDENTITY.md",
+      targetHash: fileHash(join(tmpDir, "IDENTITY.md")),
+      title: "Identity document punctuation cleanup",
+      observation: "IDENTITY.md has a punctuation-only nit.",
+      suggestedChange: "Replace entire file:\n# IDENTITY\nName - Forge\n",
+      confidence: 0.99,
+    });
+    const stateDb = join(tmpDir, "pending-file-lock-conflict.db");
+    const blocker = new PendingAutopilotStore(stateDb);
+    const fileLockKey = "apply-target:IDENTITY.md";
+    expect(
+      blocker.acquireLock({
+        queue: "persona",
+        itemId: fileLockKey,
+        inputHash: fileLockKey,
+        owner: "some-other-proposal:persona-triage",
+        ttlSeconds: 300,
+        mode: "apply",
+      }),
+    ).toBe(true);
+    blocker.close();
+
+    const result = await runPersonaProposalTriage({
+      proposalsDb,
+      cfg,
+      workspace: tmpDir,
+      mode: "apply",
+      policy: "apply-safe",
+      stateDbPath: stateDb,
+      runId: "file-lock-conflict-run",
+    });
+
+    const decision = result.decisions.find((d) => d.proposalId === mechanical.id);
+    expect(decision?.action).toBe("failed-validation");
+    expect(decision?.reason).toBe("lock-conflict");
+    expect(proposalsDb.get(mechanical.id)?.status).toBe("pending");
+    // The target file must be untouched — a clobbered/partial write would be the actual
+    // consequence of the race this lock closes.
+    expect(readFileSync(join(tmpDir, "IDENTITY.md"), "utf-8")).toBe("# IDENTITY\nName: Forge\n");
+  });
+
   it("cautious rejection CAS is not blocked by concurrent target file edits", async () => {
     const p = proposal({
       targetFile: "USER.md",
