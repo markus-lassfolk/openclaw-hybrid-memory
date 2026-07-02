@@ -14,6 +14,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
 import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
 import { pluginLogger } from "../utils/logger.js";
+import { scopeFieldsFromFilter } from "../utils/scope-filter.js";
 import {
   notifyGraphqlFactCreated,
   notifyGraphqlFactDeleted,
@@ -220,7 +221,15 @@ function asDecayClass(value: unknown): DecayClass {
     : "normal";
 }
 
-function createStoreInput(input: Record<string, unknown>) {
+/**
+ * SECURITY: scope/scopeTarget are derived from the caller's own resolved identity
+ * (context.scopeFilter), never trusted from client input. Otherwise any caller could set
+ * scope="user"/scopeTarget="<victim>" and inject a fact that later surfaces in the victim's
+ * own legitimately-scoped reads — worse than a read leak, since it lets one tenant plant
+ * data in another tenant's memory.
+ */
+function createStoreInput(input: Record<string, unknown>, context: GraphQLContext) {
+  const { scope, scopeTarget } = scopeFieldsFromFilter(context.scopeFilter);
   return {
     text: asString(input.text) ?? "",
     category: asString(input.category) ?? "other",
@@ -232,8 +241,8 @@ function createStoreInput(input: Record<string, unknown>) {
     entity: asString(input.entity) ?? null,
     key: asString(input.key) ?? null,
     value: asString(input.value) ?? null,
-    scope: asString(input.scope) as MemoryEntry["scope"] | undefined,
-    scopeTarget: asString(input.scopeTarget) ?? null,
+    scope: scope as MemoryEntry["scope"] | undefined,
+    scopeTarget: scopeTarget ?? null,
     expiresAt: asNumber(input.expiresAt) ?? null,
   };
 }
@@ -421,7 +430,7 @@ export const resolvers: GraphQLResolvers = {
   Mutation: {
     createFact: async (_parent, args, context) => {
       const input = asRecord(asRecord(args).input);
-      const result = context.factsDb.storeWithResult(createStoreInput(input));
+      const result = context.factsDb.storeWithResult(createStoreInput(input, context));
       if (result.entry.id === "") {
         throw new Error("Fact rejected: artifact or reasoning trace text cannot be stored");
       }
@@ -437,7 +446,7 @@ export const resolvers: GraphQLResolvers = {
       const input = asRecord(asRecord(args).input);
       const id = asString(input.id);
       if (!id) throw new Error("Missing fact id");
-      const existing = context.factsDb.getById(id);
+      const existing = context.factsDb.getById(id, { scopeFilter: context.scopeFilter });
       if (!existing) throw new Error(`Fact not found: ${id}`);
       const updatedText = asString(input.text) ?? existing.text;
       if (isPromptArtifactOrReasoningTrace(updatedText)) {
@@ -482,7 +491,10 @@ export const resolvers: GraphQLResolvers = {
     deleteFact: async (_parent, args, context) => {
       const id = asString(asRecord(args).id);
       if (!id) return false;
-      const existing = context.factsDb.getById(id);
+      // SECURITY: scope-check before deleting — an unscoped delete() would let any caller
+      // remove a fact belonging to another tenant just by knowing/guessing its id.
+      const existing = context.factsDb.getById(id, { scopeFilter: context.scopeFilter });
+      if (!existing) return false;
       const deleted = context.factsDb.delete(id);
       if (deleted && context.vectorDb) {
         await deleteVectorForFactId({
@@ -503,9 +515,9 @@ export const resolvers: GraphQLResolvers = {
       const oldFactId = asString(input.oldFactId);
       const newFactId = asString(input.newFactId);
       if (!oldFactId || !newFactId) throw new Error("Missing fact id");
-      const oldFact = context.factsDb.getById(oldFactId);
+      const oldFact = context.factsDb.getById(oldFactId, { scopeFilter: context.scopeFilter });
       if (!oldFact) throw new Error(`Fact not found: ${oldFactId}`);
-      const newFact = context.factsDb.getById(newFactId);
+      const newFact = context.factsDb.getById(newFactId, { scopeFilter: context.scopeFilter });
       if (!newFact) throw new Error(`Fact not found: ${newFactId}`);
       const applied = context.factsDb.supersede(oldFactId, newFactId);
       if (!applied) throw new Error(`Fact supersede did not apply: ${oldFactId}`);
@@ -543,7 +555,7 @@ export const resolvers: GraphQLResolvers = {
 
     importFacts: async (_parent, args, context) => {
       const facts = Array.isArray(asRecord(args).facts) ? (asRecord(args).facts as unknown[]) : [];
-      const inputs = facts.map((raw) => createStoreInput(asRecord(raw)));
+      const inputs = facts.map((raw) => createStoreInput(asRecord(raw), context));
       // Pre-validate all facts before storing any
       for (const input of inputs) {
         if (isPreStoreGuardBlocked(input)) {

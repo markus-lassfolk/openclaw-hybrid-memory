@@ -570,6 +570,56 @@ describeCreateDashboardServer("createDashboardServer", () => {
     );
   });
 
+  it("POST /graphql createFact ignores client-supplied scope/scopeTarget and derives it from caller identity (#69)", async () => {
+    if (!server) return;
+    const mutation = JSON.stringify({
+      query:
+        'mutation { createFact(input: { text: "planted note", scope: "user", scopeTarget: "victim-user" }) { id scope scopeTarget } }',
+    });
+
+    // Attacker has no special identity — tries to plant a fact directly into victim-user's scope.
+    const { status, body } = await httpPost(port, "/graphql", mutation);
+    expect(status).toBe(200);
+    const parsed = JSON.parse(body);
+    expect(parsed.errors).toBeUndefined();
+    // The fact must be stored under the CALLER's own resolved scope (global, since no identity
+    // headers were sent), not the client-requested "user/victim-user" — otherwise this fact would
+    // surface in victim-user's own legitimately-scoped reads.
+    expect(parsed.data.createFact.scope).toBe("global");
+    expect(parsed.data.createFact.scopeTarget).toBeNull();
+  });
+
+  it("POST /graphql updateFact/deleteFact cannot target a different tenant's scoped fact (#69)", async () => {
+    if (!server) return;
+    const victimFact = ctx.factsDb.store({
+      text: "victim's note",
+      category: "fact",
+      source: "test",
+      scope: "user",
+      scopeTarget: "victim-user",
+    });
+
+    const updateMutation = JSON.stringify({
+      query: `mutation { updateFact(input: { id: "${victimFact.id}", text: "tampered" }) { id } }`,
+    });
+    const updateResult = await httpPostWithHeaders(port, "/graphql", updateMutation, {
+      "x-openclaw-user-id": "attacker-user",
+    });
+    // Yoga masks the raw error message in the client response by default; the important
+    // assertion is that the mutation errored (didn't silently succeed) and left the fact untouched.
+    expect(JSON.parse(updateResult.body).errors?.[0]).toBeDefined();
+    expect(ctx.factsDb.getById(victimFact.id)?.text).toBe("victim's note");
+
+    const deleteMutation = JSON.stringify({
+      query: `mutation { deleteFact(id: "${victimFact.id}") }`,
+    });
+    const deleteResult = await httpPostWithHeaders(port, "/graphql", deleteMutation, {
+      "x-openclaw-user-id": "attacker-user",
+    });
+    expect(JSON.parse(deleteResult.body).data.deleteFact).toBe(false);
+    expect(ctx.factsDb.getById(victimFact.id)).not.toBeNull();
+  });
+
   it("exposes the port in the returned object", () => {
     if (!server) return;
     expect(server.port).toBeGreaterThan(0);

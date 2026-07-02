@@ -264,7 +264,7 @@ describe("PR #1332 unresolved feedback remediation", () => {
       entry: { id: input.text, text: input.text },
       skipped: false,
     }));
-    const context = { factsDb: { storeWithResult } } as unknown as ResolverContext;
+    const context = { factsDb: { storeWithResult }, scopeFilter: {} } as unknown as ResolverContext;
 
     await expect(
       resolvers.Mutation.importFacts(
@@ -280,7 +280,7 @@ describe("PR #1332 unresolved feedback remediation", () => {
     const entry = { id: "created", text: "created" };
     const storeWithResult = vi.fn(() => ({ entry, skipped: false, evictedFactId: "evicted" }));
     const vectorDb = { delete: vi.fn().mockResolvedValue(true) };
-    const context = { factsDb: { storeWithResult }, vectorDb } as unknown as ResolverContext;
+    const context = { factsDb: { storeWithResult }, vectorDb, scopeFilter: {} } as unknown as ResolverContext;
 
     await expect(
       resolvers.Mutation.createFact(null, { input: { text: "created" } } as ResolverArgs, context),
