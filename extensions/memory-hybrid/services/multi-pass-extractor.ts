@@ -68,6 +68,19 @@ interface MultiPassExtractionResult {
   implicitCount: number;
   /** Facts rejected by Pass 3 (only meaningful when verificationPass is true). */
   rejectedCount: number;
+  /**
+   * True when Pass 1 (explicit extraction) errored (e.g. LLM call failure) rather than
+   * genuinely finding zero facts. Without this, explicitCount === 0 is ambiguous between
+   * "no facts in this transcript" and "the extraction call failed silently."
+   */
+  pass1Failed?: boolean;
+  /** Same ambiguity as pass1Failed, for Pass 2 (implicit extraction). Only set when extractionPasses is enabled. */
+  pass2Failed?: boolean;
+  /**
+   * Count of Pass 3 verification calls that errored and fell back to UNCERTAIN, as opposed to
+   * a genuine ambiguous LLM verdict. Only meaningful when verificationPass is true.
+   */
+  pass3FailureCount?: number;
 }
 
 interface MultiPassExtractorOptions {
@@ -214,6 +227,11 @@ export class MultiPassExtractor {
   private readonly contaminationGuard: "off" | "audit" | "enforce";
   private readonly quarantineDb?: import("node:sqlite").DatabaseSync;
 
+  /** Failure tracking for the most recent extract() call — see MultiPassExtractionResult. */
+  private pass1Failed = false;
+  private pass2Failed = false;
+  private pass3FailureCount = 0;
+
   constructor(openai: OpenAI, options?: MultiPassExtractorOptions) {
     this.openai = openai;
     this.extractionModel = options?.extractionModel ?? DEFAULT_EXTRACTION_MODEL;
@@ -239,6 +257,7 @@ export class MultiPassExtractor {
       });
       return parseCandidateFacts(response, 1);
     } catch (err) {
+      this.pass1Failed = true;
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "multi-pass-extractor",
         operation: "runPass1",
@@ -260,6 +279,7 @@ export class MultiPassExtractor {
       });
       return parseCandidateFacts(response, 2);
     } catch (err) {
+      this.pass2Failed = true;
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "multi-pass-extractor",
         operation: "runPass2",
@@ -281,6 +301,7 @@ export class MultiPassExtractor {
       });
       return parseVerdict(response);
     } catch (err) {
+      this.pass3FailureCount++;
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "multi-pass-extractor",
         operation: "verifyCandidate",
@@ -297,6 +318,10 @@ export class MultiPassExtractor {
    * When verificationPass=true: each candidate is checked and REJECTED facts are excluded.
    */
   async extract(transcript: string): Promise<MultiPassExtractionResult> {
+    this.pass1Failed = false;
+    this.pass2Failed = false;
+    this.pass3FailureCount = 0;
+
     // Pass 1: Explicit extraction
     const pass1Candidates = await this.runPass1(transcript);
 
@@ -368,6 +393,9 @@ export class MultiPassExtractor {
       explicitCount: pass1Candidates.length,
       implicitCount: pass2Candidates.length,
       rejectedCount,
+      ...(this.pass1Failed ? { pass1Failed: true } : {}),
+      ...(this.pass2Failed ? { pass2Failed: true } : {}),
+      ...(this.pass3FailureCount > 0 ? { pass3FailureCount: this.pass3FailureCount } : {}),
     };
   }
 }

@@ -354,6 +354,54 @@ describe("MultiPassExtractor.extract — no verification", () => {
     expect(result.explicitCount).toBe(0);
     expect(result.implicitCount).toBe(0);
     expect(result.rejectedCount).toBe(0);
+    // Regression (#27): explicitCount === 0 was ambiguous between "no facts" and "Pass 1 errored."
+    expect(result.pass1Failed).toBe(true);
+  });
+
+  it("does not set pass1Failed when Pass 1 genuinely finds zero facts (#27)", async () => {
+    const openai = makeOpenAI(["[]"]);
+    const extractor = new MultiPassExtractor(openai as never, { extractionPasses: false });
+    const result = await extractor.extract(TRANSCRIPT);
+
+    expect(result.explicitCount).toBe(0);
+    expect(result.pass1Failed).toBeUndefined();
+  });
+
+  it("sets pass2Failed when Pass 2 errors (#27)", async () => {
+    const pass1Json = JSON.stringify([{ text: "A fact", category: "other", importance: 0.7 }]);
+    const openai = makeOpenAI([pass1Json, new Error("implicit LLM down")]);
+    const extractor = new MultiPassExtractor(openai as never, { extractionPasses: true });
+    const result = await extractor.extract(TRANSCRIPT);
+
+    expect(result.explicitCount).toBe(1);
+    expect(result.implicitCount).toBe(0);
+    expect(result.pass1Failed).toBeUndefined();
+    expect(result.pass2Failed).toBe(true);
+  });
+
+  it("does not set pass2Failed on a successful run with both passes (#27)", async () => {
+    const pass1Json = JSON.stringify([{ text: "A fact", category: "other", importance: 0.7 }]);
+    const pass2Json = JSON.stringify([{ text: "An implicit fact", category: "other", importance: 0.6 }]);
+    const openai = makeOpenAI([pass1Json, pass2Json]);
+    const extractor = new MultiPassExtractor(openai as never, { extractionPasses: true });
+    const result = await extractor.extract(TRANSCRIPT);
+
+    expect(result.pass1Failed).toBeUndefined();
+    expect(result.pass2Failed).toBeUndefined();
+  });
+
+  it("resets failure flags between successive extract() calls (#27)", async () => {
+    const failingOpenai = makeOpenAI([new Error("LLM down")]);
+    const extractor = new MultiPassExtractor(failingOpenai as never, { extractionPasses: false });
+    const firstResult = await extractor.extract(TRANSCRIPT);
+    expect(firstResult.pass1Failed).toBe(true);
+
+    // Second call succeeds — the flag from the first call must not leak into this result.
+    (
+      failingOpenai.chat.completions.create as unknown as { mockImplementation: (fn: () => unknown) => void }
+    ).mockImplementation(async () => ({ choices: [{ message: { content: "[]" } }] }));
+    const secondResult = await extractor.extract(TRANSCRIPT);
+    expect(secondResult.pass1Failed).toBeUndefined();
   });
 
   it("facts without verification have confidence = importance", async () => {
@@ -448,6 +496,37 @@ describe("MultiPassExtractor.extract — with verification", () => {
     expect(result.facts).toHaveLength(1);
     expect(result.facts[0].verdict).toBe("UNCERTAIN");
     expect(result.facts[0].confidence).toBe(0.4);
+    // Regression (#27): this UNCERTAIN came from a verification LLM error, not a genuine
+    // ambiguous verdict — pass3FailureCount lets callers distinguish the two.
+    expect(result.pass3FailureCount).toBe(1);
+  });
+
+  it("does not set pass3FailureCount for a genuine UNCERTAIN verdict (#27)", async () => {
+    const pass1Json = JSON.stringify([{ text: "A fact", category: "other", importance: 0.8 }]);
+    const openai = makeOpenAI([pass1Json, "MAYBE, hard to tell"]);
+    const extractor = new MultiPassExtractor(openai as never, {
+      extractionPasses: false,
+      verificationPass: true,
+    });
+    const result = await extractor.extract(TRANSCRIPT);
+
+    expect(result.facts[0].verdict).toBe("UNCERTAIN");
+    expect(result.pass3FailureCount).toBeUndefined();
+  });
+
+  it("counts multiple Pass 3 verification failures across candidates (#27)", async () => {
+    const pass1Json = JSON.stringify([
+      { text: "Fact one", category: "other", importance: 0.8 },
+      { text: "Fact two", category: "other", importance: 0.8 },
+    ]);
+    const openai = makeOpenAI([pass1Json, new Error("verify failed 1"), new Error("verify failed 2")]);
+    const extractor = new MultiPassExtractor(openai as never, {
+      extractionPasses: false,
+      verificationPass: true,
+    });
+    const result = await extractor.extract(TRANSCRIPT);
+
+    expect(result.pass3FailureCount).toBe(2);
   });
 });
 
