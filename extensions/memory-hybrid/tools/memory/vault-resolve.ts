@@ -60,7 +60,10 @@ export function shouldFanOutVaultRecall(cfg: HybridMemoryConfig, vaultParam?: st
 /** WAL for store durability — routes to vault-specific path for named vaults (#1917). */
 export function resolveToolVaultWal(runtime: MemoryToolRuntime, vaultName?: string): WriteAheadLog | null {
   const trimmed = vaultName?.trim();
-  if (!trimmed || trimmed === "default") return runtime.wal;
+  // "all" is a fan-out sentinel, not a real vault entry (see resolveToolVaultBackends above) —
+  // a store always targets exactly one vault, so alias it to the default WAL rather than
+  // forwarding to resolveVaultWal(), which has no "all" entry and would throw.
+  if (!trimmed || trimmed === "default" || trimmed === "all") return runtime.wal;
   if (runtime.resolveVaultWal) return runtime.resolveVaultWal(trimmed);
   return runtime.wal;
 }

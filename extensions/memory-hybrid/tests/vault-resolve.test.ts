@@ -3,7 +3,12 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { resolveToolVaultBackends, shouldFanOutVaultRecall, listToolVaultHandles } from "../tools/memory/vault-resolve.js";
+import {
+  resolveToolVaultBackends,
+  resolveToolVaultWal,
+  shouldFanOutVaultRecall,
+  listToolVaultHandles,
+} from "../tools/memory/vault-resolve.js";
 import type { MemoryToolRuntime } from "../tools/memory/runtime.js";
 
 function mockRuntime(overrides: Partial<MemoryToolRuntime> = {}): MemoryToolRuntime {
@@ -104,5 +109,37 @@ describe("resolveToolVaultBackends (#1917)", () => {
   it("still throws for a genuinely unknown vault name", () => {
     const rt = strictMockRuntime();
     expect(() => resolveToolVaultBackends(rt, "nonexistent")).toThrow(/Unknown vault/);
+  });
+});
+
+describe("resolveToolVaultWal (#1917)", () => {
+  // A resolveVaultWal that behaves like the real WAL router: throws for any name it doesn't
+  // recognize, including "all" (never a real vault entry). The plain mockRuntime() above has no
+  // resolveVaultWal at all, which is exactly why vault:"all" reaching resolveVaultWal("all")
+  // unnoticed went untested in production — regression-test against a stricter mock here.
+  function strictWalMockRuntime(): MemoryToolRuntime {
+    return mockRuntime({
+      wal: { path: "default-wal" } as unknown as MemoryToolRuntime["wal"],
+      resolveVaultWal: (name?: string) => {
+        if (name === "work") return { path: "work-wal" } as unknown as ReturnType<NonNullable<MemoryToolRuntime["resolveVaultWal"]>>;
+        throw new Error(`Unknown vault "${name}". Configured: work`);
+      },
+    });
+  }
+
+  it("does not throw for vault='all' and resolves to the default WAL", () => {
+    const rt = strictWalMockRuntime();
+    expect(() => resolveToolVaultWal(rt, "all")).not.toThrow();
+    expect(resolveToolVaultWal(rt, "all")).toBe(rt.wal);
+  });
+
+  it("still resolves an explicit named vault's WAL normally", () => {
+    const rt = strictWalMockRuntime();
+    expect(resolveToolVaultWal(rt, "work")).toEqual({ path: "work-wal" });
+  });
+
+  it("still throws for a genuinely unknown vault name", () => {
+    const rt = strictWalMockRuntime();
+    expect(() => resolveToolVaultWal(rt, "nonexistent")).toThrow(/Unknown vault/);
   });
 });
