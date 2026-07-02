@@ -199,6 +199,49 @@ describe("vault registry (#1917)", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("resolveAll skips a vault that fails to open instead of throwing for the whole fan-out", () => {
+    const dir = mkdtempSync(join(homedir(), ".hm-vault-broken-"));
+    try {
+      const sqlitePath = join(dir, "facts.db");
+      const lancePath = join(dir, "facts.lance");
+      const factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false, storeConfig: { fuzzyDedupe: false } });
+      const vectorDb = new VectorDB(lancePath, 8, false);
+      const healthyPath = join(dir, "healthy.db");
+      // Outside $HOME → validateVaultPath() rejects it, so resolve("broken") throws inside
+      // resolveAll()'s per-vault loop, exercising the same failure mode as a missing/corrupted
+      // sqlite file (both throw synchronously from openNamedVault before any handle is cached).
+      const outsideHomePath = "/tmp/hm-vault-registry-outside-home-test.db";
+      const warnCalls: string[] = [];
+      const registry = createVaultRegistry({
+        cfg: {
+          vaults: { healthy: healthyPath, broken: outsideHomePath },
+          wal: { enabled: false, maxAge: 60_000 },
+          store: { fuzzyDedupe: false },
+          vector: { autoRepair: false },
+        } as never,
+        api: {
+          resolvePath: (p: string) => p,
+          logger: { warn: (msg: string) => warnCalls.push(msg), info: () => {} },
+        } as never,
+        defaultFactsDb: factsDb,
+        defaultVectorDb: vectorDb,
+        defaultSqlitePath: sqlitePath,
+        defaultLancePath: lancePath,
+        defaultWal: null,
+        vectorDim: 8,
+      });
+
+      let all: ReturnType<typeof registry.resolveAll> = [];
+      expect(() => {
+        all = registry.resolveAll();
+      }).not.toThrow();
+      expect(all.map((h) => h.name).sort()).toEqual(["default", "healthy"]);
+      expect(warnCalls.some((m) => m.includes("broken") && m.includes("excluded"))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("injection attribution store (#1916)", () => {

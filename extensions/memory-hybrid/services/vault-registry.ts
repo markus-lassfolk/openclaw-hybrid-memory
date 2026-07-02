@@ -181,7 +181,28 @@ export function createVaultRegistry(opts: {
     resolveAll() {
       const names = listConfiguredVaultNames(cfg.vaults);
       if (names.length === 0) return [defaultHandle];
-      return [defaultHandle, ...names.map((name) => resolve(name))];
+      const handles: VaultHandle[] = [defaultHandle];
+      for (const name of names) {
+        try {
+          handles.push(resolve(name));
+        } catch (err) {
+          // A single unopenable named vault (missing/corrupted sqlite file, schema-incompatible,
+          // etc.) must not take down multi-vault fan-out for every other — including the
+          // default — vault. resolveAll() is the hot interactive-recall/injection path
+          // (stage-recall/run-recall.ts, stage-injection.ts have no try/catch around it), so a
+          // thrown error here previously broke auto-recall for the whole session on every turn
+          // until the broken vault was fixed. Skip it and keep serving the healthy vaults.
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "vault-registry",
+            operation: "resolve-all-skip-broken-vault",
+            severity: "warning",
+          });
+          api.logger.warn(
+            `memory-hybrid: vault "${name}" failed to open and was excluded from this fan-out: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+      return handles;
     },
     resolveWal,
     listNames: () => listConfiguredVaultNames(cfg.vaults),
