@@ -20,6 +20,7 @@ import {
   applyMaintenanceAutoFix,
   clearStaleLock,
 } from "../services/maintenance-auto-fix.js";
+import * as maintenanceLogAnalyzerModule from "../services/maintenance-log-analyzer.js";
 import {
   analyzeMaintenanceSteps,
   buildMaintenanceAnalysisReport,
@@ -1017,6 +1018,50 @@ describe("maintenance log analyzer", () => {
     } finally {
       db.close();
     }
+  });
+
+  it("still generates the report when persisting findings fails", async () => {
+    const root = tmpRoot();
+    const nowMs = Date.now() - 2 * 60 * 60 * 1000;
+    const dayStamp = formatTimestampUtcFromMs(nowMs).slice(0, 10).replace(/-/g, "");
+    const day = join(root, dayStamp);
+    mkdirSync(day, { recursive: true });
+    const iso1 = formatTimestampUtcFromMs(nowMs);
+    const exitPath = join(day, `nightly-distill-${dayStamp}T060000Z-123.exit.txt`);
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(exitPath, `${iso1} distill exit=1`);
+    writeFileSync(logPath, "TypeError: Cannot read properties of undefined\n");
+
+    const outPath = join(root, "report.json");
+    const findingsPath = join(root, "maintenance-findings.db");
+    const persistSpy = vi
+      .spyOn(maintenanceLogAnalyzerModule, "persistMaintenanceFindings")
+      .mockImplementation(() => {
+        throw new Error("disk full");
+      });
+
+    const result = await runAnalyzeMaintenanceLogs(
+      { root, since: "7d", format: "json", out: outPath, persist: findingsPath },
+      { cfg: { sqlitePath: "" }, factsDb: {} as never } as unknown as ManageBindings,
+    );
+
+    expect(persistSpy).toHaveBeenCalled();
+    expect(result.summary).toContain("findings=1");
+    expect(existsSync(outPath)).toBe(true);
+    const report = JSON.parse(readFileSync(outPath, "utf-8")) as { findings: unknown[] };
+    expect(report.findings).toHaveLength(1);
+    expect(capturePluginError).toHaveBeenCalled();
+    persistSpy.mockRestore();
+  });
+
+  it("rejects --auto-fix-all without --auto-fix instead of silently doing nothing", async () => {
+    const root = tmpRoot();
+    await expect(
+      runAnalyzeMaintenanceLogs(
+        { root, since: "7d", autoFixAll: true },
+        { cfg: { sqlitePath: "" }, factsDb: {} as never } as unknown as ManageBindings,
+      ),
+    ).rejects.toThrow(/--auto-fix-all requires --auto-fix/);
   });
 
   it("pluginVersionGte compares dotted plugin versions for resolved-issue suppression", () => {

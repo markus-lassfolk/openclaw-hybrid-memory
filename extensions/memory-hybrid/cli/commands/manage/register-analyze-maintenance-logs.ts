@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { stdin } from "node:process";
 
 import { applyHeavyMaintenanceAutoFixes, applyMaintenanceAutoFix } from "../../../services/maintenance-auto-fix.js";
+import { capturePluginError } from "../../../services/error-reporter.js";
 import {
   analyzeMaintenanceSteps,
   buildMaintenanceAnalysisReport,
@@ -90,6 +91,10 @@ export async function runAnalyzeMaintenanceLogs(
   const findingsPath =
     typeof opts?.persist === "string" && opts.persist.trim().length > 0 ? opts.persist : defaultFindingsPath;
 
+  if (opts?.autoFixAll && !opts.autoFix) {
+    throw new Error("--auto-fix-all requires --auto-fix (it extends the safe fixes with heavier repairs)");
+  }
+
   let steps: MaintenanceLogStep[] = [];
   if (opts?.root || existsSync(root)) {
     steps = collectMaintenanceSteps(root, since, Date.now(), { staleThresholdMs });
@@ -136,9 +141,20 @@ export async function runAnalyzeMaintenanceLogs(
     };
   });
 
+  // A persistence failure must not prevent the analysis report itself from being generated —
+  // the report is the primary output; findings history is best-effort.
+  let persistOk = false;
   if (persistedFindings.length > 0 && opts?.noPersist !== true) {
-    mkdirSync(dirname(findingsPath), { recursive: true });
-    persistMaintenanceFindings(findingsPath, persistedFindings);
+    try {
+      mkdirSync(dirname(findingsPath), { recursive: true });
+      persistMaintenanceFindings(findingsPath, persistedFindings);
+      persistOk = true;
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "cli",
+        operation: "analyze-maintenance-logs-persist",
+      });
+    }
   }
 
   const report = buildMaintenanceAnalysisReport({
@@ -146,7 +162,7 @@ export async function runAnalyzeMaintenanceLogs(
     since,
     steps,
     findings: reportFindings,
-    findingsPath: persistedFindings.length > 0 && opts?.noPersist !== true ? findingsPath : undefined,
+    findingsPath: persistOk ? findingsPath : undefined,
     historicalStaleSuppressed: summarized.historicalStaleSuppressed,
     benignNoiseSuppressed: steps.filter((step) => step.exitCode !== 0 && isBenignNoiseOnlyMaintenanceStep(step)).length,
     includeTrend: opts?.trend === true || since.endsWith("d") || since.endsWith("w"),
