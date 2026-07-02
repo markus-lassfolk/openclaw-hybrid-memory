@@ -297,6 +297,15 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
         dispatchCount: 0,
         assessmentCount: 0,
         consecutiveFailures: 0,
+        // Circuit-breaker bookkeeping must be cleared alongside the counters above — otherwise a
+        // goal reset right after a trip re-trips on the very next assessment if the underlying
+        // blocker is unchanged (sameBlockerStreak would just keep incrementing from its
+        // already-at-limit value instead of starting fresh).
+        lastBlockerFingerprint: null,
+        sameBlockerStreak: 0,
+        circuitBreakerLastProgressAssessmentCount: 0,
+        escalationKind: null,
+        humanEscalationSummary: null,
       };
       if (wasBlocked) {
         patch.status = "active";
