@@ -5,7 +5,7 @@
  * Single timeout: 60s.
  */
 
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { getCronModelConfig, getDefaultCronModel } from "../../config/index.js";
 import type { MemoryCategory } from "../../config.js";
@@ -48,6 +48,7 @@ import { extractTags } from "../../utils/tags.js";
 import { isSubstantiveMemoryText, prepareMemoryTextForStorage } from "../../services/recalled-context-assembler.js";
 import { isHighPriorityCapture } from "../../services/capture-utils.js";
 import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
+import { pendingCredentialPath } from "../stage-credential-hint.js";
 import type { LifecycleContext, SessionState } from "../types.js";
 
 const _CAPTURE_STAGE_TIMEOUT_MS = 60_000;
@@ -1066,7 +1067,7 @@ export async function runCapture(
       clearSessionState(sessionKey);
       return;
     }
-    const pendingPath = join(dirname(ctx.resolvedSqlitePath), "credentials-pending.json");
+    const pendingPath = pendingCredentialPath(dirname(ctx.resolvedSqlitePath), sessionKey);
     try {
       const texts: string[] = [];
       for (const msg of messages as unknown[]) {

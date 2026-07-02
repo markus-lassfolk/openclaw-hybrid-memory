@@ -3,29 +3,40 @@
  * Reads credentials-pending.json and injects hint on before_agent_start when enabled.
  */
 
-import { access, readFile, unlink } from "node:fs/promises";
+import { readFile, unlink } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { capturePluginError } from "../services/error-reporter.js";
 import { applyPrependBudget } from "../services/prepend-budget.js";
 import { runOptionalBeforeAgentStartStage } from "../services/before-agent-start-budget.js";
 import { sanitizePromptInjection } from "../services/skill-prompt-injection.js";
+import { withHookResolutionApi } from "./hook-resolution-api.js";
+import { resolveSessionKeyFromHookEvent } from "./session-state.js";
 import type { LifecycleContext } from "./types.js";
 
 const PENDING_TTL_MS = 5 * 60 * 1000; // 5 min
 
+/**
+ * Per-session pending-credential-hint file path. Hashed rather than embedding the raw session
+ * key so arbitrary session key content (path separators, `..`, etc.) can't escape `stateDir` or
+ * collide across sessions that happen to share a filesystem-unsafe substring.
+ */
+export function pendingCredentialPath(stateDir: string, sessionKey: string): string {
+  const digest = createHash("sha256").update(sessionKey).digest("hex").slice(0, 32);
+  return join(stateDir, `credentials-pending-${digest}.json`);
+}
+
 export function registerCredentialHint(api: ClawdbotPluginApi, ctx: LifecycleContext): void {
   if (!ctx.cfg.credentials.enabled || !ctx.cfg.credentials.autoDetect || ctx.cfg.verbosity === "silent") return;
 
-  const pendingPath = join(dirname(ctx.resolvedSqlitePath), "credentials-pending.json");
+  const stateDir = dirname(ctx.resolvedSqlitePath);
 
-  api.on("before_agent_start", async () =>
+  api.on("before_agent_start", async (event: unknown, hookCtx: unknown) =>
     runOptionalBeforeAgentStartStage(ctx.beforeAgentStartTurnRef, "credential-hint", api.logger, async () => {
-    try {
-      await access(pendingPath);
-    } catch {
-      return;
-    }
+    const rApi = withHookResolutionApi(api, hookCtx);
+    const sessionKey = resolveSessionKeyFromHookEvent(event, rApi) ?? "default";
+    const pendingPath = pendingCredentialPath(stateDir, sessionKey);
     try {
       const raw = (await readFile(pendingPath, "utf-8")).trim();
       if (raw.length === 0) {

@@ -583,7 +583,7 @@ describe("runCaptureStage", () => {
 
     expect(atomicWriteFileMock).toHaveBeenCalledOnce();
     const [calledPath, calledContent] = atomicWriteFileMock.mock.calls[0] as [string, string];
-    expect(calledPath).toMatch(/credentials-pending\.json$/);
+    expect(calledPath).toMatch(/credentials-pending-[0-9a-f]{32}\.json$/);
     const parsed = JSON.parse(calledContent) as { hints: string[]; at: number };
     expect(parsed.hints).toEqual(["OPENAI_API_KEY", "GITHUB_TOKEN"]);
     expect(typeof parsed.at).toBe("number");
