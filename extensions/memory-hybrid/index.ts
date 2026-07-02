@@ -9,6 +9,7 @@ import { isHybridMemHelpInvocation } from "./index-help.js";
 export { isHybridMemHelpInvocation };
 export { isHybridMemCredentialsOnlyInvocation } from "./index-credentials-cli.js";
 export { isHybridMemUpgradeOnlyInvocation } from "./index-upgrade-cli.js";
+export { isHybridMemVersionOnlyInvocation } from "./index-version-cli.js";
 export {
   isHybridMemJsonInvocation,
   isHybridMemCredentialsValueOnlyInvocation,

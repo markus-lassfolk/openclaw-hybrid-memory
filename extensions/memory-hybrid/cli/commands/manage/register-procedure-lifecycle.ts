@@ -19,6 +19,7 @@ import {
 import { generateAutoSkillForProcedure } from "../../../services/procedure-skill-generator.js";
 import { resolveWorkspacePath } from "../../../utils/path.js";
 import { formatTimestampUtc, nowIso } from "../../../utils/dates.js";
+import { runHybridMemVersion } from "../../cmd-version.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
@@ -348,104 +349,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
     .option("--json", "Machine-readable JSON output")
     .action(
       withExit(async (opts?: { json?: boolean }) => {
-        const installed = ctx.versionInfo.pluginVersion;
-        const timeoutMs = 3000;
-        const fetchWithTimeout = async (url: string): Promise<Response> => {
-          const c = new AbortController();
-          const t = setTimeout(() => c.abort(), timeoutMs);
-          try {
-            const res = await fetch(url, { signal: c.signal });
-            clearTimeout(t);
-            return res;
-          } catch (err) {
-            clearTimeout(t);
-            if (err instanceof Error && err.name === "AbortError") throw new Error("Request timed out");
-            throw err;
-          }
-        };
-
-        let githubVersion: string | null = null;
-        let npmVersion: string | null = null;
-        try {
-          const ghRes = await fetchWithTimeout(
-            "https://api.github.com/repos/markus-lassfolk/openclaw-hybrid-memory/releases/latest",
-          );
-          if (ghRes.ok) {
-            const data = (await ghRes.json()) as { tag_name?: string };
-            const tag = data.tag_name;
-            githubVersion = typeof tag === "string" ? tag.replace(/^v/, "") : null;
-          }
-        } catch {
-          githubVersion = null;
-        }
-        try {
-          const npmRes = await fetchWithTimeout("https://registry.npmjs.org/openclaw-hybrid-memory/latest");
-          if (npmRes.ok) {
-            const data = (await npmRes.json()) as { version?: string };
-            npmVersion = typeof data.version === "string" ? data.version : null;
-          }
-        } catch {
-          npmVersion = null;
-        }
-
-        const compare = (a: string, b: string): number => {
-          const parseNum = (s: string): number => {
-            const n = Number.parseInt(s, 10);
-            return Number.isNaN(n) ? 0 : n;
-          };
-          const pa = a
-            .replace(/[-+].*/, "")
-            .split(".")
-            .map(parseNum);
-          const pb = b
-            .replace(/[-+].*/, "")
-            .split(".")
-            .map(parseNum);
-          for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-            const va = pa[i] ?? 0;
-            const vb = pb[i] ?? 0;
-            if (va !== vb) return va < vb ? -1 : 1;
-          }
-          return 0;
-        };
-        const updateHint = (latest: string | null) => {
-          if (latest == null) return "";
-          return compare(installed, latest) < 0 ? " ⬆ update available" : " (up to date)";
-        };
-
-        if (opts?.json) {
-          console.log(
-            JSON.stringify(
-              {
-                name: "openclaw-hybrid-memory",
-                installed,
-                github: githubVersion ?? "unavailable",
-                npm: npmVersion ?? "unavailable",
-                updateAvailable:
-                  (githubVersion != null && compare(installed, githubVersion) < 0) ||
-                  (npmVersion != null && compare(installed, npmVersion) < 0),
-              },
-              null,
-              2,
-            ),
-          );
-          return;
-        }
-
-        console.log("openclaw-hybrid-memory");
-        console.log(`  Installed:  ${installed}`);
-        console.log(
-          `  GitHub:     ${githubVersion ?? "unavailable"}${
-            githubVersion != null && compare(installed, githubVersion) > 0
-              ? " (installed is newer)"
-              : updateHint(githubVersion)
-          }`,
-        );
-        console.log(
-          `  npm:        ${npmVersion ?? "unavailable"}${
-            npmVersion != null && compare(installed, npmVersion) > 0 ? " (installed is newer)" : updateHint(npmVersion)
-          }`,
-        );
+        await runHybridMemVersion(ctx.versionInfo.pluginVersion, { json: opts?.json, format: "subcommand" });
       }),
     );
 

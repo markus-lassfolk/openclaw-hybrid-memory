@@ -34,11 +34,13 @@ describe("registerContextEngineBestEffort", () => {
     const logger = { warn: vi.fn() };
     const runtime = makeRuntime();
     const registerHybridContextEngine = vi.fn();
+    const registerContextEngine = vi.fn();
 
     registerContextEngineBestEffort({
       runtime,
       logger,
       pluginVersion: "2026.5.0",
+      registerContextEngine,
       loadContextEngine: async () => ({ registerHybridContextEngine }),
     });
 
@@ -53,6 +55,7 @@ describe("registerContextEngineBestEffort", () => {
       injectedFactIdsBySession: runtime.injectedFactIdsBySession,
       logger,
       pluginVersion: "2026.5.0",
+      registerContextEngine,
     });
     expect(capturePluginErrorMock).not.toHaveBeenCalled();
     expect(logger.warn).not.toHaveBeenCalled();

@@ -60,6 +60,8 @@ Commands by category:
     scope list|stats|prune|promote
 
   Plugin lifecycle
+    --version            Show installed version (update notice when npm/GitHub are newer)
+    version              Detailed version info (GitHub, npm, --json)
     upgrade [version]    Upgrade to version or latest
     uninstall            Remove plugin (--clean-all, --leave-config)
     backup               Create a point-in-time snapshot (SQLite + LanceDB)

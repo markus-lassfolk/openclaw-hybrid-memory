@@ -11,8 +11,8 @@
  *  - assemble: pass-through (autoRecall handles injection via before_agent_start)
  *  - ingest: no-op (SessionManager owns persistence)
  *
- * Feature detection: if registerContextEngine is absent the module exports a
- * no-op so callers do not need to guard on their side.
+ * Feature detection: prefers `api.registerContextEngine`, then `openclaw/plugin-sdk`.
+ * Registration is a no-op when neither is available.
  */
 
 import { access, readFile } from "node:fs/promises";
@@ -226,6 +226,8 @@ interface MinimalContextEngine {
 // Engine implementation
 // ---------------------------------------------------------------------------
 
+export type ContextEngineRegistrar = (id: string, factory: () => MinimalContextEngine) => void;
+
 export interface ContextEngineOptions {
   factsDb: FactsDB;
   vectorDb: VectorDB;
@@ -235,6 +237,8 @@ export interface ContextEngineOptions {
   logger: { info?: (m: string) => void; warn?: (m: string) => void; debug?: (m: string) => void };
   pluginVersion?: string;
   injectedFactIdsBySession?: InjectedFactIdsBySession;
+  /** Prefer `api.registerContextEngine` from the plugin host (OpenClaw ≥ 2026.6). */
+  registerContextEngine?: ContextEngineRegistrar;
 }
 
 // ---------------------------------------------------------------------------
@@ -663,30 +667,39 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
 
 let loggedMissingRegisterContextEngine = false;
 
+async function resolveRegisterContextEngine(
+  explicit?: ContextEngineRegistrar,
+): Promise<ContextEngineRegistrar | null> {
+  if (typeof explicit === "function") return explicit;
+
+  try {
+    // Host API lives on openclaw/plugin-sdk (not plugin-sdk/core).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sdk: any = await import("openclaw/plugin-sdk").catch(() => null);
+    if (sdk && typeof sdk.registerContextEngine === "function") {
+      return sdk.registerContextEngine as ContextEngineRegistrar;
+    }
+  } catch {
+    /* feature-detected fallback */
+  }
+
+  return null;
+}
+
 /**
  * Attempt to register HybridMemoryContextEngine with the OpenClaw plugin SDK.
  *
  * Safe to call even when:
- *  - The registerContextEngine export doesn't exist (older OpenClaw versions)
- *  - The import fails (ESM resolution error in older runtime)
+ *  - `api.registerContextEngine` is absent (older OpenClaw versions)
+ *  - The SDK import fails (ESM resolution error in older runtime)
  *
  * Returns true if registration succeeded, false otherwise.
  */
 export async function registerHybridContextEngine(opts: ContextEngineOptions): Promise<boolean> {
   try {
-    // Dynamic import for feature detection — avoids hard dependency on the API.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const sdk: any = await import("openclaw/plugin-sdk/core").catch(() => null);
-    if (!sdk) {
-      opts.logger.debug?.("memory-hybrid: openclaw/plugin-sdk not available; skipping ContextEngine registration");
-      return false;
-    }
+    const registerContextEngine = await resolveRegisterContextEngine(opts.registerContextEngine);
 
-    const { registerContextEngine } = sdk as {
-      registerContextEngine?: (id: string, factory: () => MinimalContextEngine) => void;
-    };
-
-    if (typeof registerContextEngine !== "function") {
+    if (registerContextEngine == null) {
       if (!loggedMissingRegisterContextEngine) {
         loggedMissingRegisterContextEngine = true;
         opts.logger.debug?.(

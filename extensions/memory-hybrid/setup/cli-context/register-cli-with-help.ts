@@ -17,6 +17,11 @@ export function registerCliWithHelp(
     "Verbose output for subcommands that support it (same effect as per-command --verbose where available)",
     false,
   );
+  // `--version` is intentionally NOT registered here — it is handled by a dedicated fast path
+  // (registerHybridMemCliVersionOnlyWithApi, issue #2012) so it can never shadow an
+  // identically-named option on a subcommand (e.g. `upgrade --json`, `list --json`); see PR #2013
+  // review. A stray `hybrid-mem --version` that somehow reaches this tree correctly falls back to
+  // Commander's "unknown option" error instead of silently doing nothing.
   const onComplete = options?.onHybridMemCliComplete;
   // Before subcommands are registered — children inherit this exit handler (Issue #1224).
   attachHybridMemCliFatalExit(mem, onComplete);

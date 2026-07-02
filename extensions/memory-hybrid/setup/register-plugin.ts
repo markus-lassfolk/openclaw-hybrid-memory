@@ -25,6 +25,7 @@ import { registerHybridMemCliMetadataOnly } from "./cli-context/metadata.js";
 import { registerHybridMemCliHelpOnlyWithApi } from "./cli-context/register-help.js";
 import { registerHybridMemCliCredentialsOnlyWithApi } from "./cli-context/register-credentials-only.js";
 import { registerHybridMemCliUpgradeOnlyWithApi } from "./cli-context/register-upgrade-only.js";
+import { registerHybridMemCliVersionOnlyWithApi } from "./cli-context/register-version-only.js";
 import { registerHybridMemCliWithApi } from "./cli-context/register-full.js";
 import { parseHybridMemPluginConfig } from "./parse-plugin-config.js";
 import "./cli-context.js";
@@ -59,6 +60,7 @@ import { PLUGIN_ID } from "../utils/constants.js";
 import { isHybridMemHelpInvocation } from "../index-help.js";
 import { isHybridMemCredentialsOnlyInvocation } from "../index-credentials-cli.js";
 import { isHybridMemUpgradeOnlyInvocation } from "../index-upgrade-cli.js";
+import { isHybridMemVersionOnlyInvocation } from "../index-version-cli.js";
 import { wrapApiLoggerStderrForJsonCli, restoreStdoutAfterJsonCli } from "../utils/hybrid-mem-json-cli.js";
 import {
   getCategoryDecisionRegex,
@@ -195,6 +197,15 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
   // Examples: `openclaw hybrid-mem --help`, `openclaw hybrid-mem verify --help`.
   if (isHybridMemHelpInvocation(process.argv)) {
     registerHybridMemCliHelpOnlyWithApi(api);
+    return;
+  }
+
+  // `--version` should be fast, deterministic, and side-effect-free (issue #2012): no DB
+  // bootstrap, no live config parse. Checked before the other fast paths since it is the
+  // lightest — it registers no subcommands at all (see PR #2013 review on why `--version`/
+  // `--json` cannot be root-level Commander options in the full command tree).
+  if (isHybridMemVersionOnlyInvocation(process.argv)) {
+    registerHybridMemCliVersionOnlyWithApi(api);
     return;
   }
 
@@ -688,6 +699,10 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     runtime,
     logger: logApi.logger,
     pluginVersion: versionInfo.pluginVersion,
+    registerContextEngine:
+      typeof api.registerContextEngine === "function"
+        ? api.registerContextEngine.bind(api)
+        : undefined,
   });
 
   // Lifecycle Hooks (issueStore may be null; issue-related behavior is gated inside hooks)
