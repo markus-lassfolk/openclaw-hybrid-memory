@@ -8,6 +8,7 @@ import type {
 } from "../../../backends/facts-db/contradictions.js";
 import { PROJECT_STATE_LWW_KEYS } from "../../../backends/facts-db/contradictions.js";
 import { getCronModelConfig, getDefaultCronModel } from "../../../config.js";
+import { acquireStepLock, releaseStepLock } from "../../../services/cron-guard.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { isEntityEnrichmentHardFailure } from "../../../services/entity-enrichment-adaptive.js";
 import { getEffectivenessReport, runClosedLoopAnalysis } from "../../../services/feedback-effectiveness.js";
@@ -346,6 +347,15 @@ export function registerManageReflectionPipeline(
             const limit = Number.parseInt(opts?.limit ?? "10", 10);
             const model = opts?.model ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "maintenance");
             let res;
+            // Real cross-process mutex, matching the "consolidate" lock name the maintenance
+            // orchestrator acquires around its own consolidate step — without this, a manual CLI
+            // run can overlap a scheduled orchestrator tick and both merge the same cluster,
+            // producing a mis-categorized/provenance-less fact (see #73). Dry runs never mutate
+            // state, so they don't need the lock — mirrors auto-classifier's same convention.
+            if (!dryRun && !acquireStepLock("consolidate")) {
+              console.log("Consolidation skipped — another consolidate run is already in progress.");
+              return;
+            }
             try {
               res = await runConsolidate({ threshold, includeStructured, dryRun, limit, model });
             } catch (err) {
@@ -354,6 +364,8 @@ export function registerManageReflectionPipeline(
                 operation: "consolidate",
               });
               throw err;
+            } finally {
+              if (!dryRun) releaseStepLock("consolidate");
             }
             console.log(
               `Consolidation complete: ${res.clustersFound} clusters found, ${res.merged} merged, ${res.deleted} deleted ${dryRun ? "(dry-run)" : ""}`,
@@ -713,6 +725,16 @@ export function registerManageReflectionPipeline(
             let res;
             const followUpFailures: Array<{ phase: string; error: string }> = [];
             let toolEffectivenessSummary: string | null = null;
+            // Real cross-process mutex, matching the "dream-cycle-core" lock name the maintenance
+            // orchestrator acquires around its own dream-cycle step — without this, a manual CLI
+            // run can overlap a scheduled orchestrator tick and both compute different merges for
+            // the same event group (see #72). Only the core run needs the lock; released
+            // immediately after so it doesn't block a concurrent run for the whole follow-up
+            // pipeline (which doesn't share dream-cycle's own race window).
+            if (!acquireStepLock("dream-cycle-core")) {
+              console.log("Dream cycle skipped — another dream-cycle run is already in progress.");
+              return;
+            }
             try {
               res = await runDreamCycle(verbose ? { verbose: true } : undefined);
             } catch (err) {
@@ -721,6 +743,8 @@ export function registerManageReflectionPipeline(
                 operation: "dream-cycle",
               });
               throw err;
+            } finally {
+              releaseStepLock("dream-cycle-core");
             }
             const coreElapsedSec = Math.floor((Date.now() - coreStartedAt) / 1000);
             if (res.skipped) {
