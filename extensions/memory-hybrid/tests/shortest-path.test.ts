@@ -461,6 +461,75 @@ describe("findShortestPath: link types and strengths", () => {
 });
 
 // ---------------------------------------------------------------------------
+// findShortestPath — superseded facts (#31)
+// ---------------------------------------------------------------------------
+
+describe("findShortestPath: excludes superseded facts", () => {
+  it("returns null when start fact is superseded", () => {
+    const a = makeEntry("a", { supersededAt: 1_700_000_500 });
+    const b = makeEntry("b");
+    const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
+    const result = findShortestPath(db, "a", "b");
+    expect(result).toBeNull();
+  });
+
+  it("returns null when end fact is superseded", () => {
+    const a = makeEntry("a");
+    const b = makeEntry("b", { supersededAt: 1_700_000_500 });
+    const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
+    const result = findShortestPath(db, "a", "b");
+    expect(result).toBeNull();
+  });
+
+  it("returns null for a trivial (same-id) path when the fact is superseded", () => {
+    const a = makeEntry("a", { supersededAt: 1_700_000_500 });
+    const db = buildMockDb([a], {}, {});
+    const result = findShortestPath(db, "a", "a");
+    expect(result).toBeNull();
+  });
+
+  it("does not traverse through a superseded intermediate fact", () => {
+    // a→b→c, but b is superseded — the only path from a to c goes through it.
+    const a = makeEntry("a");
+    const b = makeEntry("b", { supersededAt: 1_700_000_500 });
+    const c = makeEntry("c");
+    const db = buildMockDb(
+      [a, b, c],
+      {
+        a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }],
+        b: [{ id: "l2", targetFactId: "c", linkType: "RELATED_TO", strength: 1.0 }],
+      },
+      {},
+    );
+    const result = findShortestPath(db, "a", "c", { maxDepth: 5 });
+    expect(result).toBeNull();
+  });
+
+  it("finds an alternate path around a superseded intermediate fact", () => {
+    // a→b(superseded)→c is blocked, but a→d→c is a valid detour.
+    const a = makeEntry("a");
+    const b = makeEntry("b", { supersededAt: 1_700_000_500 });
+    const c = makeEntry("c");
+    const d = makeEntry("d");
+    const db = buildMockDb(
+      [a, b, c, d],
+      {
+        a: [
+          { id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 },
+          { id: "l3", targetFactId: "d", linkType: "RELATED_TO", strength: 1.0 },
+        ],
+        b: [{ id: "l2", targetFactId: "c", linkType: "RELATED_TO", strength: 1.0 }],
+        d: [{ id: "l4", targetFactId: "c", linkType: "RELATED_TO", strength: 1.0 }],
+      },
+      {},
+    );
+    const result = findShortestPath(db, "a", "c", { maxDepth: 5 });
+    expect(result).not.toBeNull();
+    expect(result?.steps.every((s) => s.fromFactId !== "b" && s.toFactId !== "b")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // resolveInput
 // ---------------------------------------------------------------------------
 
@@ -503,6 +572,21 @@ describe("resolveInput", () => {
     const db = buildMockDb([a, b], {}, {}, { "real-id": [b] });
     // "real-id" matches getById directly → returns "real-id", not "entity-id"
     expect(resolveInput(db, "real-id")).toBe("real-id");
+  });
+
+  it("does not resolve an ID that matches a superseded fact (#31)", () => {
+    const a = makeEntry("superseded-id", { supersededAt: 1_700_000_500 });
+    const db = buildMockDb([a], {}, {});
+    expect(resolveInput(db, "superseded-id")).toBeNull();
+  });
+
+  it("falls through to entity-name lookup when the ID matches only a superseded fact (#31)", () => {
+    const superseded = makeEntry("dup-id", { supersededAt: 1_700_000_500 });
+    const replacement = makeEntry("replacement-id");
+    // "dup-id" is itself a superseded fact's ID, but also happens to be a lookup-able entity name
+    // resolving to a different (active) fact — the ID match must not shadow the entity-name path.
+    const db = buildMockDb([superseded, replacement], {}, {}, { "dup-id": [replacement] });
+    expect(resolveInput(db, "dup-id")).toBe("replacement-id");
   });
 });
 
@@ -667,5 +751,86 @@ describe("findShortestPath: integration with FactsDB", () => {
     expect(result?.chain).toHaveLength(2);
     expect(result?.chain[0].text).toBe("Fact A");
     expect(result?.chain[1].text).toBe("Fact B");
+  });
+
+  it("excludes a superseded fact as a path endpoint in real DB (#31)", () => {
+    const aId = factsDb.store({
+      text: "Fact A",
+      category: "fact",
+      importance: 0.7,
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+    }).id;
+    const bId = factsDb.store({
+      text: "Fact B (old)",
+      category: "fact",
+      importance: 0.7,
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+    }).id;
+    const bNewId = factsDb.store({
+      text: "Fact B (corrected)",
+      category: "fact",
+      importance: 0.7,
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+    }).id;
+    factsDb.createLink(aId, bId, "RELATED_TO", 1.0);
+    factsDb.supersede(bId, bNewId);
+
+    const result = findShortestPath(factsDb, aId, bId, { maxDepth: 5 });
+    expect(result).toBeNull();
+  });
+
+  it("does not traverse through a superseded intermediate fact in real DB (#31)", () => {
+    const aId = factsDb.store({
+      text: "Fact A",
+      category: "fact",
+      importance: 0.7,
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+    }).id;
+    const bId = factsDb.store({
+      text: "Fact B (old)",
+      category: "fact",
+      importance: 0.7,
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+    }).id;
+    const bNewId = factsDb.store({
+      text: "Fact B (corrected)",
+      category: "fact",
+      importance: 0.7,
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+    }).id;
+    const cId = factsDb.store({
+      text: "Fact C",
+      category: "fact",
+      importance: 0.7,
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+    }).id;
+    factsDb.createLink(aId, bId, "RELATED_TO", 1.0);
+    factsDb.createLink(bId, cId, "RELATED_TO", 1.0);
+    factsDb.supersede(bId, bNewId);
+
+    // b is now superseded; a→b→c is no longer a valid traversable path and no alternate exists.
+    const result = findShortestPath(factsDb, aId, cId, { maxDepth: 5 });
+    expect(result).toBeNull();
   });
 });

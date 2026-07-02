@@ -287,31 +287,28 @@ export function expandGraphWithCTE(
   const asOf = options?.asOf ?? null;
   const scopeFilter = options?.scopeFilter;
   const hubDegreeCap = options?.hubDegreeCap === undefined ? 500 : options.hubDegreeCap;
-  let factJoinOut = "";
-  let factWhereOut = "";
-  let factJoinIn = "";
-  let factWhereIn = "";
+  // The facts join (and superseded_at check) must always apply, not just when asOf/scopeFilter
+  // are supplied — otherwise the recursive CTE traverses raw memory_links with zero regard for
+  // fact validity, letting a superseded (corrected/replaced) fact serve as an intermediate hop
+  // or be returned as an expansion result even though direct search correctly excludes it.
+  const factJoinOut = "JOIN facts f ON f.id = ml.target_fact_id";
+  const factJoinIn = "JOIN facts f ON f.id = ml.source_fact_id";
   const filterParamsOut: SQLInputValue[] = [];
   const filterParamsIn: SQLInputValue[] = [];
 
-  if (asOf != null || scopeFilter) {
-    factJoinOut = "JOIN facts f ON f.id = ml.target_fact_id";
-    factJoinIn = "JOIN facts f ON f.id = ml.source_fact_id";
-
-    let baseWhere = "";
-    if (asOf != null) {
-      baseWhere += " AND COALESCE(f.valid_from, f.created_at) <= ? AND (f.valid_until IS NULL OR f.valid_until > ?)";
-      filterParamsOut.push(asOf, asOf);
-      filterParamsIn.push(asOf, asOf);
-    }
-    if (scopeFilter && (scopeFilter.userId || scopeFilter.agentId || scopeFilter.sessionId)) {
-      baseWhere += ` AND (f.scope = 'global' OR (f.scope = 'user' AND f.scope_target = ?) OR (f.scope = 'agent' AND f.scope_target = ?) OR (f.scope = 'session' AND f.scope_target = ?))`;
-      filterParamsOut.push(scopeFilter.userId ?? null, scopeFilter.agentId ?? null, scopeFilter.sessionId ?? null);
-      filterParamsIn.push(scopeFilter.userId ?? null, scopeFilter.agentId ?? null, scopeFilter.sessionId ?? null);
-    }
-    factWhereOut = baseWhere;
-    factWhereIn = baseWhere;
+  let baseWhere = " AND f.superseded_at IS NULL";
+  if (asOf != null) {
+    baseWhere += " AND COALESCE(f.valid_from, f.created_at) <= ? AND (f.valid_until IS NULL OR f.valid_until > ?)";
+    filterParamsOut.push(asOf, asOf);
+    filterParamsIn.push(asOf, asOf);
   }
+  if (scopeFilter && (scopeFilter.userId || scopeFilter.agentId || scopeFilter.sessionId)) {
+    baseWhere += ` AND (f.scope = 'global' OR (f.scope = 'user' AND f.scope_target = ?) OR (f.scope = 'agent' AND f.scope_target = ?) OR (f.scope = 'session' AND f.scope_target = ?))`;
+    filterParamsOut.push(scopeFilter.userId ?? null, scopeFilter.agentId ?? null, scopeFilter.sessionId ?? null);
+    filterParamsIn.push(scopeFilter.userId ?? null, scopeFilter.agentId ?? null, scopeFilter.sessionId ?? null);
+  }
+  const factWhereOut = baseWhere;
+  const factWhereIn = baseWhere;
 
   // Use recursive CTE to traverse the graph in a single query.
   // We track: current node, seed that originated this path, hop count, and JSON path.
