@@ -1018,6 +1018,7 @@ export function createPluginService(ctx: PluginServiceContext) {
       const versionFile = rawVersionFilePath.replace(/\$HOME/g, _home).replace(/^~(?=\/|$)/, _home);
       timers.postUpgradeTimeout.value = setTimeout(() => {
         timers.postUpgradeTimeout.value = null;
+        if (timers.shuttingDownRef.value) return;
         let lastVer = "";
         try {
           lastVer = readFileSync(versionFile, "utf-8").trim();
@@ -1095,15 +1096,33 @@ export function createPluginService(ctx: PluginServiceContext) {
               });
             };
 
+            // #89: this pipeline is fire-and-forget from start()'s perspective and can run for
+            // several minutes across sequential subprocess spawns; check for a concurrent stop()
+            // before each step so a shutdown mid-pipeline stops spawning new CLI subprocesses
+            // instead of continuing to mutate the databases after the plugin was asked to stop.
+            const abortIfShuttingDown = (): boolean => {
+              if (!timers.shuttingDownRef.value) return false;
+              api.logger.info?.("memory-hybrid: post-upgrade pipeline aborted — shutdown in progress");
+              return true;
+            };
+
             const langPath = getLanguageKeywordsFilePath();
+            if (abortIfShuttingDown()) return;
             if (langPath && !existsSync(langPath)) await runCli(["build-languages"]);
+            if (abortIfShuttingDown()) return;
             await runCli(["self-correction-run", "--force"]);
             if (cfg.reflection.enabled) {
+              if (abortIfShuttingDown()) return;
               await runCli(["reflect", "--window", String(cfg.reflection.defaultWindow), "--force"]);
+              if (abortIfShuttingDown()) return;
               await runCli(["reflect-rules", "--force"]);
             }
+            if (abortIfShuttingDown()) return;
             await runCli(["extract-procedures", "--force"]);
+            if (abortIfShuttingDown()) return;
             await runCli(["generate-auto-skills"]);
+            // Only mark the pipeline complete once every step above actually ran to completion.
+            if (abortIfShuttingDown()) return;
             writeFileSync(versionFile, versionInfo.pluginVersion, "utf-8");
             api.logger.info("memory-hybrid: post-upgrade pipeline done.");
           } catch (e) {

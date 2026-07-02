@@ -7,7 +7,7 @@
  * while the unit tests in version-check.test.ts stay green.
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +17,7 @@ import { capturePluginError, getErrorReporterMuteReason, setErrorReporterMuted }
 import * as errorReporter from "../services/error-reporter.js";
 import { type PluginServiceContext, createPluginService } from "../setup/plugin-service.js";
 import { createDashboardServer } from "../routes/dashboard-server.js";
+import { spawn } from "node:child_process";
 import { MIN_OPENCLAW_VERSION, RECOMMENDED_OPENCLAW_VERSION } from "../utils/version-check.js";
 
 vi.mock("../routes/dashboard-server.js", async (importOriginal) => {
@@ -27,6 +28,14 @@ vi.mock("../routes/dashboard-server.js", async (importOriginal) => {
       port: port === 0 ? 17700 : port,
       close: vi.fn(),
     })),
+  };
+});
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    spawn: vi.fn(),
   };
 });
 
@@ -495,6 +504,76 @@ describe("createPluginService stop() — resource cleanup (#57, #58)", () => {
       }),
     ).toThrow(/database connection is not open/i);
 
+    (ctx.vectorDb as InstanceType<typeof VectorDB>).close();
+  });
+});
+
+describe("createPluginService startup — post-upgrade pipeline shutdown guard (#89)", () => {
+  let tmpDir: string;
+  let timers: ReturnType<typeof makeTimers>;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "plugin-svc-post-upgrade-"));
+    timers = makeTimers();
+    vi.mocked(spawn).mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    clearTimers(timers);
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("stops spawning post-upgrade CLI steps once a concurrent stop() flips shuttingDownRef mid-pipeline", async () => {
+    let spawnCallCount = 0;
+    vi.mocked(spawn).mockImplementation(() => {
+      spawnCallCount += 1;
+      const isFirstCall = spawnCallCount === 1;
+      const handlers: Record<string, (...a: unknown[]) => void> = {};
+      const child = {
+        stdout: { on: vi.fn() },
+        stderr: { on: vi.fn() },
+        on: (event: string, cb: (...a: unknown[]) => void) => {
+          handlers[event] = cb;
+        },
+      };
+      // Every mocked CLI step "completes" on the next microtask; simulate stop() having run
+      // concurrently right after the first step finishes, before the pipeline spawns step two.
+      queueMicrotask(() => {
+        if (isFirstCall) timers.shuttingDownRef.value = true;
+        handlers.close?.(0);
+      });
+      return child as never;
+    });
+
+    const api = makeMockApi(RECOMMENDED_OPENCLAW_VERSION);
+    const ctx = buildMinimalCtx(tmpDir, api, timers, {
+      reflection: { enabled: false },
+    });
+
+    vi.useFakeTimers();
+    await createPluginService(ctx).start();
+    // Bounded advance (not runAllTimersAsync): maintenanceTick/watchdogTimer are recurring
+    // intervals armed unconditionally by start(), which would re-arm forever otherwise.
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    // The pipeline has 3 steps with reflection disabled (build-languages is skipped when no
+    // language keywords path is configured): self-correction-run, extract-procedures,
+    // generate-auto-skills. Only the first should have been spawned before the abort was seen.
+    expect(spawnCallCount).toBeLessThan(3);
+    const spawnedArgs = vi.mocked(spawn).mock.calls.map((c) => c[1] as string[]);
+    expect(spawnedArgs.some((args) => args.includes("generate-auto-skills"))).toBe(false);
+
+    const versionFile = join(tmpDir, ".last-post-upgrade-version");
+    expect(existsSync(versionFile)).toBe(false);
+
+    const infoCalls = api.logger.info.mock.calls.map((c: unknown[]) => c[0] as string);
+    expect(infoCalls.some((msg) => msg.includes("post-upgrade pipeline aborted"))).toBe(true);
+    expect(infoCalls.some((msg) => msg.includes("post-upgrade pipeline done"))).toBe(false);
+
+    timers.shuttingDownRef.value = false;
+    vi.useRealTimers();
+    (ctx.factsDb as InstanceType<typeof FactsDB>).close();
     (ctx.vectorDb as InstanceType<typeof VectorDB>).close();
   });
 });
