@@ -326,7 +326,7 @@ Use "other" ONLY if no category fits at all.
 Facts to classify:
 ${factLines}
 
-Respond with ONLY a JSON array of category strings, one per fact, in order. Example: ["fact","entity","preference"]`;
+Respond with ONLY a JSON array of objects, one per fact, each with the fact's number ("n") from the list above and its "category" — this lets us match each category back to the right fact even if you reorder or omit entries. Example: [{"n":1,"category":"fact"},{"n":2,"category":"entity"},{"n":3,"category":"preference"}]`;
 
   const timeoutMs = resolveAutoClassifyLlmTimeoutMs(model);
   if (timeoutMs <= 0) {
@@ -347,18 +347,30 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
       return { results: new Map(), suggestions: new Map(), success: false };
     }
 
-    const results: string[] = parsed as string[];
     const map = new Map<string, string>();
     const suggestions = new Map<string, string>();
-
-    for (let i = 0; i < Math.min(results.length, facts.length); i++) {
-      const cat = results[i]?.toLowerCase()?.trim();
+    // Key each response entry by its declared fact number ("n") rather than trusting array
+    // position — the LLM's response array can be reordered, missing an entry, or contain a
+    // duplicate while still passing the plain length check above, which would otherwise
+    // silently apply a category to the wrong fact. Out-of-range or duplicate "n" values are
+    // dropped rather than applied, so a misaligned response degrades to "fewer facts
+    // reclassified this batch" instead of miscategorizing a fact (#77).
+    const seenIndices = new Set<number>();
+    for (const entry of parsed) {
+      if (typeof entry !== "object" || entry === null) continue;
+      const n = (entry as Record<string, unknown>).n;
+      const rawCategory = (entry as Record<string, unknown>).category;
+      if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > facts.length) continue;
+      if (seenIndices.has(n)) continue;
+      seenIndices.add(n);
+      const cat = typeof rawCategory === "string" ? rawCategory.toLowerCase().trim() : "";
       if (!cat || cat === "other") continue;
+      const fact = facts[n - 1];
       if (isValidCategory(cat)) {
-        map.set(facts[i].id, cat);
+        map.set(fact.id, cat);
       } else {
         const normalized = normalizeSuggestedLabel(cat);
-        if (normalized) suggestions.set(facts[i].id, normalized);
+        if (normalized) suggestions.set(fact.id, normalized);
       }
     }
     return { results: map, suggestions, success: true };
