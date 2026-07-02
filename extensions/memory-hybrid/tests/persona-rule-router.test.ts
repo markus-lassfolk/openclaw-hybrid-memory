@@ -7,8 +7,11 @@ import { assessPersonaProposalRouting, assessPersonaProposalRoutingSync } from "
 import * as errorReporter from "../services/error-reporter.js";
 import {
   classifyAuthorityBucket,
+  EMBEDDING_CACHE_MAX_ENTRIES_FOR_TESTS,
+  embeddingCacheSizeForTests,
   findCrossFileContentMatch,
   personaRuleRoutingMetrics,
+  primeEmbeddingCacheForTests,
   resetPersonaRuleRoutingMetrics,
   routePersonaProposal,
   shouldBlockProposalCreation,
@@ -403,5 +406,18 @@ describe("findCrossFileContentMatch", () => {
       excludeFile: "USER.md",
     });
     expect(match?.file).toBe("AGENTS.md");
+  });
+});
+
+describe("embeddingCache growth bound (#46)", () => {
+  it("never exceeds EMBEDDING_CACHE_MAX_ENTRIES_FOR_TESTS regardless of how many distinct texts are embedded", async () => {
+    const embedText = async (text: string) => [text.length, 0, 0];
+    // Insert well over the cap using distinct cache keys (one per unique text) — without
+    // eviction, the module-level Map would grow without bound across the process lifetime.
+    const overCap = EMBEDDING_CACHE_MAX_ENTRIES_FOR_TESTS + 500;
+    for (let i = 0; i < overCap; i++) {
+      await primeEmbeddingCacheForTests(`unique embedding cache probe text #${i}`, embedText, 3600);
+    }
+    expect(embeddingCacheSizeForTests()).toBeLessThanOrEqual(EMBEDDING_CACHE_MAX_ENTRIES_FOR_TESTS);
   });
 });

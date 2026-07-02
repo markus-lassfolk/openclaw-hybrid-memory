@@ -143,6 +143,36 @@ const OPERATIONAL_FAMILY = new Set<string>(["AGENTS.md", "TOOLS.md"]);
 const IDENTITY_FAMILY = new Set<string>(["SOUL.md", "IDENTITY.md"]);
 
 const embeddingCache = new Map<string, { vector: number[]; expiresAt: number }>();
+/** Hard cap on cached embeddings — this is a module-level, process-lifetime Map with no other
+ * eviction beyond lazy TTL-checks-on-read, so without a cap it grows unbounded across the life
+ * of the process (proposal triage/routing runs keep hashing new text into new cache keys). */
+export const EMBEDDING_CACHE_MAX_ENTRIES_FOR_TESTS = 2000;
+const EMBEDDING_CACHE_MAX_ENTRIES = EMBEDDING_CACHE_MAX_ENTRIES_FOR_TESTS;
+
+/** Test-only accessors for the module-level embedding cache; not part of the public API. */
+export function embeddingCacheSizeForTests(): number {
+  return embeddingCache.size;
+}
+export async function primeEmbeddingCacheForTests(
+  text: string,
+  embedText: (text: string) => Promise<number[]>,
+  ttlSeconds: number,
+): Promise<number[] | null> {
+  return cachedEmbed(text, embedText, ttlSeconds);
+}
+
+/** Evict expired entries first, then oldest-inserted entries, until back under the cap. */
+function pruneEmbeddingCache(now: number): void {
+  if (embeddingCache.size <= EMBEDDING_CACHE_MAX_ENTRIES) return;
+  for (const [key, entry] of embeddingCache) {
+    if (entry.expiresAt <= now) embeddingCache.delete(key);
+  }
+  while (embeddingCache.size > EMBEDDING_CACHE_MAX_ENTRIES) {
+    const oldestKey = embeddingCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    embeddingCache.delete(oldestKey);
+  }
+}
 
 export const personaRuleRoutingMetrics = {
   routingSuggestions: 0,
@@ -279,6 +309,7 @@ async function cachedEmbed(
   try {
     const vector = await embedText(text);
     embeddingCache.set(key, { vector, expiresAt: now + ttlSeconds * 1000 });
+    pruneEmbeddingCache(now);
     return vector;
   } catch (err) {
     // Log so a persistently-failing embedding provider is visible instead of looking identical
