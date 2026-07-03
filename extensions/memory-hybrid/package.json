@@ -9,6 +9,7 @@
     "index-help.ts",
     "index-credentials-cli.ts",
     "index-upgrade-cli.ts",
+    "index-version-cli.ts",
     "index-testing-exports.ts",
     "api",
     "config.ts",
