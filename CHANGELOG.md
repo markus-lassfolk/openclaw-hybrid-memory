@@ -23,7 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
-## [2026.7.30] - 2026-07-03
+## [2026.7.31] - 2026-07-03
 
 ### Added
 
@@ -35,10 +35,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `contacts merge` now repoints `facts.entity_contact_id` (not just NER mentions) before deleting the merged-away contact, so no fact is left pointing at a deleted contact row.
 - Contact-import roster stores are idempotent on re-run (deduped stores no longer create duplicate facts or `PART_OF` links).
+- **Packaging:** `index-version-cli.ts` (the `hybrid-mem --version` fast-path added in #2013) was missing from `package.json` `files`, failing `verify:publish` and blocking the npm publish for this release (originally tagged 2026.7.30; re-cut as 2026.7.31 after the fix).
 
 ### Changed
 
-- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.7.30**.
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.7.31**.
 
 ---
 
