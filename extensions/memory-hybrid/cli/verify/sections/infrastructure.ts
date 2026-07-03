@@ -22,6 +22,7 @@ import {
   detectStaleLegacyInstallIndexEntry,
   formatStaleInstallIndexWarning,
   reconcileLegacyInstallIndex,
+  removeRedundantNpmProjectTreeWhenExtensionsCanonical,
   resolveCanonicalLivePluginPathForInstallIndex,
 } from "../../install/install-index-reconcile.js";
 import { capturePluginError, isErrorReporterActive, resolvePendingErrorReportCount } from "../../../services/error-reporter.js";
@@ -82,19 +83,38 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
       warnings.push(dualInstall);
       log(`${WARN_LINE} Plugin install layout: ${dualInstall}`);
       if (opts.fix) {
-        const extVer = readPluginPackageVersion(extensionsPluginDir);
-        if (extVer) {
-          const sync = syncKnownNpmProjectPinWhenExtensionsCanonical({
-            extensionsPluginDir,
-            version: extVer,
-            npmProjectPluginDir,
-          });
-          if (sync.updated) {
-            log(
-              `  → Synced npm-project dependency pin to ${extVer} (legacy install-index sidecar is checked separately below)`,
-            );
-          } else if (sync.error) {
-            log(`  → Could not sync npm-project pin: ${sync.error}`);
+        // Extensions is canonical here — remove the redundant npm-project tree outright
+        // rather than only syncing its pin (#2021). Keeping the duplicate is what triggers
+        // the gateway "duplicate plugin id" errors; the sidecar reconcile below then drops
+        // any stale install-index record pointing at the removed tree.
+        const removal = removeRedundantNpmProjectTreeWhenExtensionsCanonical({
+          extensionsPluginDir,
+          npmProjectPluginDir,
+        });
+        if (removal.removed) {
+          const msg = `Removed redundant npm-project tree at ${removal.removedPath} (extensions copy at ${extensionsPluginDir} is canonical)`;
+          fixes.push(msg);
+          log(`  → ${msg}`);
+        } else {
+          if (removal.error) {
+            log(`  → Could not remove redundant npm-project tree: ${removal.error}`);
+          }
+          // Removal was skipped (e.g. npm-project copy is newer, or no distinct tree) — fall
+          // back to at least aligning the npm-project pin with the canonical extensions version.
+          const extVer = readPluginPackageVersion(extensionsPluginDir);
+          if (extVer) {
+            const sync = syncKnownNpmProjectPinWhenExtensionsCanonical({
+              extensionsPluginDir,
+              version: extVer,
+              npmProjectPluginDir,
+            });
+            if (sync.updated) {
+              log(
+                `  → Synced npm-project dependency pin to ${extVer} (legacy install-index sidecar is checked separately below)`,
+              );
+            } else if (sync.error) {
+              log(`  → Could not sync npm-project pin: ${sync.error}`);
+            }
           }
         }
       }

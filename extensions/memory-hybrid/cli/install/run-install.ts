@@ -49,7 +49,10 @@ import {
   preflightUpgradePluginConfig,
   runStandaloneUpgradeInstall,
 } from "./upgrade-config-preflight.js";
-import { runInstallIndexReconcileForPlugin } from "./install-index-reconcile.js";
+import {
+  runInstallIndexReconcileForPlugin,
+  removeRedundantNpmProjectTreeWhenExtensionsCanonical,
+} from "./install-index-reconcile.js";
 
 export type RunUpgradeForCliOptions = {
   /** Skip cron normalization when config was not fully parsed (upgrade-only fast path). */
@@ -678,18 +681,34 @@ export async function runUpgradeForCli(
   if (npmPin.updated) {
     logger?.info?.(`memory-hybrid: upgrade — npm project dependency pinned to ${installedVersion}`);
   } else {
-    const staleSync = syncKnownNpmProjectPinWhenExtensionsCanonical({
+    // The upgrade targeted the extensions copy (extensions is canonical). A leftover
+    // npm-project tree (e.g. from a prior `openclaw plugins install`) is redundant and
+    // makes the gateway fight over duplicate plugin ids — remove it outright rather than
+    // just re-pinning it (#2021). Fall back to a pin sync only if removal is skipped.
+    const removal = removeRedundantNpmProjectTreeWhenExtensionsCanonical({
       extensionsPluginDir: installedPluginDir,
-      version: installedVersion,
     });
-    if (staleSync.updated) {
+    if (removal.removed) {
       logger?.info?.(
-        `memory-hybrid: upgrade — reconciled stale npm-project pin to ${installedVersion} (#2008)`,
+        `memory-hybrid: upgrade — removed redundant npm-project tree at ${removal.removedPath} (extensions is canonical) (#2021)`,
       );
-    } else if (staleSync.attempted && staleSync.error) {
-      logger?.warn?.(
-        `memory-hybrid: upgrade — could not reconcile npm-project pin: ${staleSync.error}${staleSync.guidance ? ` (${staleSync.guidance})` : ""}`,
-      );
+    } else {
+      if (removal.error) {
+        logger?.warn?.(`memory-hybrid: upgrade — ${removal.error}`);
+      }
+      const staleSync = syncKnownNpmProjectPinWhenExtensionsCanonical({
+        extensionsPluginDir: installedPluginDir,
+        version: installedVersion,
+      });
+      if (staleSync.updated) {
+        logger?.info?.(
+          `memory-hybrid: upgrade — reconciled stale npm-project pin to ${installedVersion} (#2008)`,
+        );
+      } else if (staleSync.attempted && staleSync.error) {
+        logger?.warn?.(
+          `memory-hybrid: upgrade — could not reconcile npm-project pin: ${staleSync.error}${staleSync.guidance ? ` (${staleSync.guidance})` : ""}`,
+        );
+      }
     }
   }
 

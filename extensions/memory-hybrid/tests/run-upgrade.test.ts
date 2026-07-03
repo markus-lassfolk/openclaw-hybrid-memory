@@ -12,6 +12,7 @@ import {
   detectDualPluginInstallVersionMismatch,
   buildDualInstallReconciliationGuidance,
   syncKnownNpmProjectPinWhenExtensionsCanonical,
+  removeRedundantNpmProjectTreeWhenExtensionsCanonical,
   UPGRADE_REQUIRED_BUNDLE_PATHS,
   verifyNpmProjectDependencyPin,
   verifyUpgradePluginBundle,
@@ -98,7 +99,7 @@ describe("runUpgrade helpers", () => {
     expect(msg).toMatch(/Dual plugin install/i);
   });
 
-  it("buildDualInstallReconciliationGuidance includes repair commands (#2008)", () => {
+  it("buildDualInstallReconciliationGuidance recommends verify --fix and manual rm, not plugins install (#2021)", () => {
     const npmDir = join(tmp, "npm-copy");
     const extDir = join(tmp, "ext-copy");
     for (const dir of [npmDir, extDir]) {
@@ -108,8 +109,84 @@ describe("runUpgrade helpers", () => {
     writeFileSync(join(npmDir, "package.json"), JSON.stringify({ version: "2026.6.261" }));
     writeFileSync(join(extDir, "package.json"), JSON.stringify({ version: "2026.6.291" }));
     const guidance = buildDualInstallReconciliationGuidance(npmDir, extDir);
-    expect(guidance).toMatch(/openclaw plugins install openclaw-hybrid-memory@2026\.6\.291/);
     expect(guidance).toMatch(/verify --fix/);
+    expect(guidance).toMatch(/openclaw hybrid-mem upgrade 2026\.6\.291/);
+    expect(guidance).toMatch(/rm -rf/);
+    // Must NOT tell operators to run `plugins install`, which reinstalls into npm/projects
+    // and recreates the very duplicate this guidance is warning about (#2021).
+    expect(guidance).not.toMatch(/plugins install openclaw-hybrid-memory@/);
+  });
+
+  it("removeRedundantNpmProjectTreeWhenExtensionsCanonical removes the npm-project tree when extensions is canonical (#2021)", () => {
+    const projectRoot = join(tmp, "npm-projects", "openclaw-hybrid-memory");
+    const npmPluginDir = join(projectRoot, "node_modules", "openclaw-hybrid-memory");
+    const extDir = join(tmp, "extensions", "openclaw-hybrid-memory");
+    for (const dir of [npmPluginDir, extDir]) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "openclaw.plugin.json"), "{}");
+    }
+    writeFileSync(
+      join(projectRoot, "package.json"),
+      JSON.stringify({ dependencies: { "openclaw-hybrid-memory": "2026.6.261" } }),
+    );
+    writeFileSync(join(npmPluginDir, "package.json"), JSON.stringify({ version: "2026.6.261" }));
+    writeFileSync(join(extDir, "package.json"), JSON.stringify({ version: "2026.6.291" }));
+
+    const res = removeRedundantNpmProjectTreeWhenExtensionsCanonical({
+      extensionsPluginDir: extDir,
+      npmProjectPluginDir: npmPluginDir,
+    });
+    expect(res.attempted).toBe(true);
+    expect(res.removed).toBe(true);
+    expect(res.removedPath).toBe(projectRoot);
+    expect(existsSync(projectRoot)).toBe(false);
+    // Extensions copy is untouched.
+    expect(existsSync(join(extDir, "openclaw.plugin.json"))).toBe(true);
+  });
+
+  it("removeRedundantNpmProjectTreeWhenExtensionsCanonical refuses to delete a newer npm-project copy (#2021)", () => {
+    const projectRoot = join(tmp, "npm-projects", "openclaw-hybrid-memory");
+    const npmPluginDir = join(projectRoot, "node_modules", "openclaw-hybrid-memory");
+    const extDir = join(tmp, "extensions", "openclaw-hybrid-memory");
+    for (const dir of [npmPluginDir, extDir]) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "openclaw.plugin.json"), "{}");
+    }
+    writeFileSync(
+      join(projectRoot, "package.json"),
+      JSON.stringify({ dependencies: { "openclaw-hybrid-memory": "2026.7.10" } }),
+    );
+    writeFileSync(join(npmPluginDir, "package.json"), JSON.stringify({ version: "2026.7.10" }));
+    writeFileSync(join(extDir, "package.json"), JSON.stringify({ version: "2026.6.291" }));
+
+    const res = removeRedundantNpmProjectTreeWhenExtensionsCanonical({
+      extensionsPluginDir: extDir,
+      npmProjectPluginDir: npmPluginDir,
+    });
+    expect(res.attempted).toBe(false);
+    expect(res.removed).toBe(false);
+    expect(res.skippedReason).toBe("npm-project-not-older");
+    expect(existsSync(projectRoot)).toBe(true);
+  });
+
+  it("removeRedundantNpmProjectTreeWhenExtensionsCanonical skips when the target dir is itself npm-project layout (#2021)", () => {
+    const projectRoot = join(tmp, "npm-projects", "openclaw-hybrid-memory");
+    const npmPluginDir = join(projectRoot, "node_modules", "openclaw-hybrid-memory");
+    mkdirSync(npmPluginDir, { recursive: true });
+    writeFileSync(
+      join(projectRoot, "package.json"),
+      JSON.stringify({ dependencies: { "openclaw-hybrid-memory": "2026.6.291" } }),
+    );
+    writeFileSync(join(npmPluginDir, "openclaw.plugin.json"), "{}");
+    writeFileSync(join(npmPluginDir, "package.json"), JSON.stringify({ version: "2026.6.291" }));
+
+    const res = removeRedundantNpmProjectTreeWhenExtensionsCanonical({
+      extensionsPluginDir: npmPluginDir,
+      npmProjectPluginDir: npmPluginDir,
+    });
+    expect(res.attempted).toBe(false);
+    expect(res.skippedReason).toBe("extensions-dir-is-npm-project-layout");
+    expect(existsSync(npmPluginDir)).toBe(true);
   });
 
   it("syncKnownNpmProjectPinWhenExtensionsCanonical skips npm-project layout (#2008)", () => {
