@@ -68,6 +68,7 @@ export type StorageCommandNames = {
   reembed: string;
   reIndex: string;
   repair: string;
+  rebuildAliases: string;
   prune: string;
   checkpoint: string;
   recordSample: string;
@@ -83,6 +84,7 @@ export const FLAT_STORAGE_COMMAND_NAMES: StorageCommandNames = {
   reembed: "reembed-vectorless",
   reIndex: "re-index",
   repair: "repair-vectors",
+  rebuildAliases: "rebuild-aliases",
   prune: "prune",
   checkpoint: "checkpoint",
   recordSample: "record-storage-sample",
@@ -98,6 +100,7 @@ export const GROUPED_STORAGE_COMMAND_NAMES: StorageCommandNames = {
   reembed: "reembed",
   reIndex: "re-index",
   repair: "repair",
+  rebuildAliases: "rebuild-aliases",
   prune: "prune",
   checkpoint: "checkpoint",
   recordSample: "record-sample",

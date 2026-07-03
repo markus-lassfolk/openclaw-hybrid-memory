@@ -573,6 +573,10 @@ export function mergeContacts(
     const mentionsRes = db
       .prepare("UPDATE fact_entity_mentions SET contact_id = ? WHERE contact_id = ?")
       .run(intoId, fromId);
+    // Repoint resolved fact→contact FKs before deleting the source row, otherwise any fact whose
+    // entity_contact_id still points at the merged-away contact is left dangling (the column has no
+    // ON DELETE cascade). See facts-db entity_contact_id writers (#2014).
+    db.prepare("UPDATE facts SET entity_contact_id = ? WHERE entity_contact_id = ?").run(intoId, fromId);
     db.prepare("DELETE FROM contacts WHERE id = ?").run(fromId);
     return { mergedFactMentions: Number(mentionsRes.changes ?? 0) };
   });

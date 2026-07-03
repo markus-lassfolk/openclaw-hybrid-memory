@@ -118,8 +118,8 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | `contacts list [--prefix <name>] [--limit <n>] [--json]` | List contacts (id, name, role, org, email). Issue #2014. |
 | `contacts suggest-merges [--json]` | List unambiguous partial-name duplicate candidates (e.g. "Daniel" vs. "Daniel Thunberg"). |
 | `contacts merge <fromId> <intoId>` | Merge `fromId` into `intoId`: repoints NER mentions, folds in profile fields (manual wins conflicts), deletes `fromId`. |
-| `contacts import --from <path> [--dry-run]` | Upsert organizations/contacts/roster facts from a `CONTACTS.md`-style roster file. Idempotent. See [CONFIGURATION.md](CONFIGURATION.md#contacts-profile-enrichment-2014) for the file format. |
-| `contacts sync --from <path> [--force]` | Re-run `contacts import` only if the file's mtime changed since the last sync. |
+| `contacts import [--from <path>] [--dry-run] [--embed]` | Upsert organizations/contacts/roster facts from a `CONTACTS.md`-style roster file. Idempotent. `--from` defaults to `contacts.importPath`; `--embed` is a no-op (roster facts embed via the normal store path). See [CONFIGURATION.md](CONFIGURATION.md#contacts-profile-enrichment-2014) for the file format. |
+| `contacts sync [--from <path>] [--force]` | Re-run `contacts import` only if the file's mtime changed since the last sync. `--from` defaults to `contacts.importPath`. |
 | `scope list` | List all scopes present in memory (from facts). |
 | `scope stats` | Show fact counts by scope (global, user, agent, session). |
 | `scope prune --scope <s> [--scope-target <id>]` | Remove all facts in a given scope (destructive). Use `--scope-target` when scope is user/agent/session. |

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { registerHybridContextEngine } from "../services/context-engine.js";
+import { registerHybridContextEngine, registerHybridContextEngineSync } from "../services/context-engine.js";
 
 describe("registerHybridContextEngine", () => {
   const baseOpts = {
@@ -26,6 +26,23 @@ describe("registerHybridContextEngine", () => {
     expect(ok).toBe(true);
     expect(registerContextEngine).toHaveBeenCalledWith("hybrid-memory", expect.any(Function));
     expect(baseOpts.logger.info).toHaveBeenCalledWith("memory-hybrid: ContextEngine registered (id=hybrid-memory)");
+  });
+
+  it("registers synchronously via registerHybridContextEngineSync", () => {
+    const registerContextEngine = vi.fn();
+    const ok = registerHybridContextEngineSync({
+      ...baseOpts,
+      registerContextEngine,
+    });
+
+    expect(ok).toBe(true);
+    expect(registerContextEngine).toHaveBeenCalledWith("hybrid-memory", expect.any(Function));
+    expect(baseOpts.logger.info).toHaveBeenCalledWith("memory-hybrid: ContextEngine registered (id=hybrid-memory)");
+  });
+
+  it("returns false from sync registration when api hook is absent", () => {
+    const ok = registerHybridContextEngineSync({ ...baseOpts });
+    expect(ok).toBe(false);
   });
 
   it("returns false when no registrar is available", async () => {

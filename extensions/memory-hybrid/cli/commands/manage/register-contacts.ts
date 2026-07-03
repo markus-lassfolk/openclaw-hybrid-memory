@@ -214,15 +214,21 @@ export function registerManageContacts(mem: Chainable, b: ManageBindings): void 
   contacts
     .command("import")
     .description("Import/upsert organizations, contacts, and roster facts from a CONTACTS.md-style file (idempotent)")
-    .requiredOption("--from <path>", "Path to the roster markdown file")
+    .option("--from <path>", "Path to the roster markdown file (defaults to contacts.importPath from config)")
     .option("--dry-run", "Preview counts without writing")
     .option(
       "--embed",
       "No-op: roster facts always go through the existing store path, which embeds them when an embedding provider is configured",
     )
     .action(
-      withExit(async (opts: { from: string; dryRun?: boolean; embed?: boolean }) => {
-        const filePath = resolve(opts.from);
+      withExit(async (opts: { from?: string; dryRun?: boolean; embed?: boolean }) => {
+        const fromPath = opts.from ?? b.cfg.contacts.importPath;
+        if (!fromPath) {
+          console.error("error: no roster file given; pass --from <path> or set contacts.importPath in config");
+          process.exitCode = 1;
+          return;
+        }
+        const filePath = resolve(fromPath);
         if (!existsSync(filePath)) {
           console.error(`error: file not found: ${filePath}`);
           process.exitCode = 1;
@@ -236,11 +242,17 @@ export function registerManageContacts(mem: Chainable, b: ManageBindings): void 
   contacts
     .command("sync")
     .description("Re-run `contacts import` only if the roster file's mtime changed since the last sync")
-    .requiredOption("--from <path>", "Path to the roster markdown file")
+    .option("--from <path>", "Path to the roster markdown file (defaults to contacts.importPath from config)")
     .option("--force", "Re-import even if the file has not changed")
     .action(
-      withExit(async (opts: { from: string; force?: boolean }) => {
-        const filePath = resolve(opts.from);
+      withExit(async (opts: { from?: string; force?: boolean }) => {
+        const fromPath = opts.from ?? b.cfg.contacts.importPath;
+        if (!fromPath) {
+          console.error("error: no roster file given; pass --from <path> or set contacts.importPath in config");
+          process.exitCode = 1;
+          return;
+        }
+        const filePath = resolve(fromPath);
         if (!existsSync(filePath)) {
           console.error(`error: file not found: ${filePath}`);
           process.exitCode = 1;

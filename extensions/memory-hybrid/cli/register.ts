@@ -688,6 +688,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       wal: ctx.wal,
       embeddings: ctx.embeddings,
       resolvedSqlitePath: ctx.resolvedSqlitePath,
+      aliasDb: ctx.aliasDb,
       runConfigSet: ctx.runConfigSet,
       runConfigMode: ctx.runConfigMode,
       runInstall: ctx.runInstall,

@@ -915,7 +915,7 @@ export function buildAuditHealthReport(
     );
   }
   if (vectorless > 0) remediation.push("Run `openclaw hybrid-mem reembed-vectorless --apply`.");
-  if (degraded) remediation.push("Run `openclaw hybrid-mem repair-vectors` and validate LanceDB connectivity.");
+  if (degraded) remediation.push("Run `openclaw hybrid-mem storage repair` and validate LanceDB connectivity.");
   if (procedureTriage.summary.total > 0) {
     remediation.push(
       "Run `openclaw hybrid-mem procedures triage --not-promoted` and `generate-auto-skills` where appropriate.",

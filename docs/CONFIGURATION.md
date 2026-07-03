@@ -83,6 +83,28 @@ openclaw hybrid-mem config set verbosity silent
 
 Plugin tools are registered with **underscore** identifiers (`memory_store`, `memory_recall`, `memory_directory`, `credential_list`, …). Providers such as **Anthropic** reject tool names that contain `.` or other characters outside `^[a-zA-Z0-9_-]{1,128}$`. When writing prompts, issue reports, or automation, refer to the underscore names only.
 
+## Structured contact profiles (`contacts`)
+
+Issue [#2014](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2014). Complements NER (`graph.enabled`) with typed contact fields and roster import.
+
+| Key | Default | Description |
+|-----|--------|-------------|
+| `contacts.profileEnrichment` | `true` | On `memory_store` / auto-capture, merge email/phone/role from fact text into matched `contacts` rows. |
+| `contacts.requireSurname` | `false` | When `true`, NER skips creating new PERSON contacts from single-token names unless an org is co-mentioned on the same fact. |
+| `contacts.importPath` | `null` | Default roster file for `contacts import` / `contacts sync` when `--from` is omitted. When unset, `--from` is required. |
+
+Example:
+
+```json
+"contacts": {
+  "profileEnrichment": true,
+  "requireSurname": true,
+  "importPath": "workspace/CONTACTS.md"
+}
+```
+
+CLI: `contacts import [--from …]`, `contacts sync`, `contacts merge <fromId> <intoId>`. See [GRAPH-MEMORY.md § Structured contact profiles](GRAPH-MEMORY.md#structured-contact-profiles-2014).
+
 ## Auto-capture and auto-recall
 
 `captureMaxChars` (default 5000): messages longer than this are not captured; stored text is truncated to this length.

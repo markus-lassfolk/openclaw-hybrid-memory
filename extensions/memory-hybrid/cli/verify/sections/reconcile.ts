@@ -17,6 +17,7 @@ import { capturePluginError } from "../../../services/error-reporter.js";
 import { HYBRID_MEM_CRON_DEFAULT_JOB_STEPS } from "../../../services/hybrid-mem-cron-default-job-steps.js";
 import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
 import { findOrphanVectorIds, reconcileOrphanVectors } from "../../../services/vector-maintenance.js";
+import { collectStorageSyncSnapshot, formatStorageSyncSummary } from "../../../services/storage-sync-diagnostics.js";
 import { PLUGIN_ID } from "../../../utils/constants.js";
 import { nowIso, formatTimestampUtcFromMs } from "../../../utils/dates.js";
 import { describeCronStoreLocation } from "../../../services/openclaw-cron-store.js";
@@ -77,19 +78,23 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
                 reconcileMaxFixesExplicit
                 ? reconcileMaxFixes
                 : Math.max(reconcileMaxFixes, 2000);
-        const sqliteIds = new Set(factsDb.getAllIds());
-        const vectorIds = await vectorDb.getAllIds();
+        const snapshot = await collectStorageSyncSnapshot(factsDb, vectorDb);
+        if (!snapshot) {
+          log(`${FAIL} Reconciliation skipped — LanceDB unavailable.`);
+          state.allOk = false;
+        } else {
+        const { vectorOrphans, sqliteOrphans } = snapshot;
 
-        // Vector orphans: IDs in LanceDB that have no corresponding SQLite fact.
-        const vectorOrphans = await findOrphanVectorIds(factsDb, vectorDb);
-        // SQLite orphans: active facts in SQLite with no vector in LanceDB.
-        const vectorIdSet = new Set(vectorIds);
-        const sqliteOrphans = Array.from(sqliteIds).filter((id) => !vectorIdSet.has(id));
-
-        if (vectorOrphans.length === 0 && sqliteOrphans.length === 0) {
-          log(
-            `${OK} Reconciliation: SQLite and LanceDB are in sync (${sqliteIds.size} facts, ${vectorIds.length} vectors)`,
-          );
+        if (vectorOrphans.length === 0 && sqliteOrphans.length === 0 && !snapshot.hasStructuralDrift) {
+          log(`${OK} Reconciliation: ID sets aligned (${formatStorageSyncSummary(snapshot)})`);
+        } else if (vectorOrphans.length === 0 && sqliteOrphans.length === 0 && snapshot.hasStructuralDrift) {
+          state.allOk = false;
+          log(`${WARN_LINE} Reconciliation: ID sets aligned but row-count drift remains (${formatStorageSyncSummary(snapshot)})`);
+          if (opts.fix) {
+            log(`  → Run storage structural repair via unified --fix (see Storage sync metrics below).`);
+          } else {
+            log(`  → Run with --fix to compact/repair Lance storage, or \`openclaw hybrid-mem storage repair\`.`);
+          }
         } else {
           state.allOk = false;
           if (vectorOrphans.length > 0) {
@@ -213,10 +218,11 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
               fix: opts.fix,
               reconcilePolicy,
               reconcileMaxFixes,
-              vectorOrphans: vectorOrphans.length,
-              sqliteOrphans: sqliteOrphans.length,
+              vectorOrphans: snapshot.vectorOrphans.length,
+              sqliteOrphans: snapshot.sqliteOrphans.length,
             },
           });
+        }
         }
       } catch (e) {
         log(`${FAIL} Reconciliation: FAIL — ${String(e)}`);
@@ -409,25 +415,6 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
       log(
         "Config file not found. Run 'openclaw hybrid-mem install' to create it with full defaults, then set your API key and restart.",
       );
-    }
-  }
-
-  if (opts.reconcile) {
-    log("\n───── Vector / SQLite consistency (reconcile) ─────");
-    try {
-      await vectorDb.ensureInitialized();
-      const vCount = await vectorDb.count();
-      const embCount = factsDb.countCanonicalEmbeddings();
-      log(`${OK} SQLite canonical embeddings (fact_embeddings): ${embCount}`);
-      const lanceRowsOk = vectorDb.isLanceAvailable();
-      log(`${lanceRowsOk ? OK : PAUSE} LanceDB row count: ${vCount} (lanceAvailable=${lanceRowsOk})`);
-      if (lanceRowsOk && vCount !== embCount) {
-        log(
-          `${FAIL} Drift: fact_embeddings rows (${embCount}) != Lance rows (${vCount}). Consider re-embed or diagnostics.`,
-        );
-      }
-    } catch (e) {
-      log(`${FAIL} Reconcile check failed: ${e}`);
     }
   }
 }
