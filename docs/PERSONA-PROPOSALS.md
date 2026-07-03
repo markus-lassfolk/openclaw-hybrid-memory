@@ -6,7 +6,9 @@ nav_order: 12
 ---
 # Persona Proposals
 
-**Agent self-evolution with human approval** — the agent can propose changes to identity files (SOUL.md, IDENTITY.md, USER.md) based on observed patterns. By default a human reviews and approves or rejects via CLI; optionally you can enable **automatic handling** so proposals are applied without human review.
+**Agent self-evolution with human approval** — the agent can propose changes to its authority files (identity files SOUL.md / IDENTITY.md / USER.md, and the operational files AGENTS.md / TOOLS.md) based on observed patterns. By default a human reviews and approves or rejects via CLI; optionally you can enable **automatic handling** so proposals are applied without human review.
+
+Pipeline-generated proposals (dream-cycle reflection, self-correction, reinforcement) are routed by the durable-rule classifier: operational guidance the classifier confidently attributes to **AGENTS.md** (GitHub/PR/CI/workflow rules) or **TOOLS.md** (wrapper/host/local-path rules) is retargeted there instead of defaulting to SOUL.md, provided the file is in `allowedFiles`. Routing between the identity files stays advisory and never overrides a deliberate target.
 
 ---
 
@@ -52,7 +54,7 @@ Proposes a change to one of the allowed identity files.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `targetFile` | enum | One of `SOUL.md`, `IDENTITY.md`, `USER.md` (or subset if you restrict `allowedFiles`). |
+| `targetFile` | enum | One of `SOUL.md`, `IDENTITY.md`, `USER.md`, `AGENTS.md`, `TOOLS.md` (or subset if you restrict `allowedFiles`). |
 | `title` | string | Short title (e.g. "Add tone-matching guidance"). |
 | `observation` | string | What the agent observed that motivates the change. |
 | `suggestedChange` | string | The exact text to add/change in the file. |
@@ -134,7 +136,7 @@ If the target file is missing or write fails, an error is printed and the propos
 |--------|---------|-------------|
 | `enabled` | `false` | Turn persona proposals on. |
 | `autoApply` | `false` | When `true`, proposals that pass validation are approved and applied automatically (no human review). **Use with care:** the agent can modify identity files. |
-| `allowedFiles` | `["SOUL.md", "IDENTITY.md", "USER.md"]` | Only these identity files can be modified by proposals. |
+| `allowedFiles` | `["SOUL.md", "IDENTITY.md", "USER.md", "AGENTS.md", "TOOLS.md"]` | Only these authority files can be modified by proposals. Narrow the list (e.g. drop `AGENTS.md`/`TOOLS.md`) to keep proposals away from operational files. |
 | `maxProposalsPerWeek` | `5` | Rate limit: max new proposals in a rolling 7-day window. |
 | `minConfidence` | `0.7` | Minimum confidence (0–1) for the agent to submit a proposal. |
 | `proposalTTLDays` | `30` | Days until a **pending** proposal expires; expired ones are pruned. Use `0` for no expiry. |

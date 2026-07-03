@@ -11,7 +11,7 @@ import {
   DEFAULT_WORKBOARD_CONFIG,
   DEFAULT_WORKBOARD_COLUMNS,
 } from "../types/workboard.js";
-import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
+import { PERSONA_PROPOSAL_TARGET_FILES, type PersonaProposalTargetFile } from "../types/agents.js";
 import type {
   AliasesConfig,
   AmbientConfig,
@@ -65,8 +65,7 @@ export function parseEntityExtractionConfig(cfg: Record<string, unknown>): Entit
 
 export function parseContactsConfig(cfg: Record<string, unknown>): ContactsConfig {
   const raw = cfg.contacts as Record<string, unknown> | undefined;
-  const importPath =
-    typeof raw?.importPath === "string" && raw.importPath.trim() ? raw.importPath.trim() : null;
+  const importPath = typeof raw?.importPath === "string" && raw.importPath.trim() ? raw.importPath.trim() : null;
   return {
     profileEnrichment: raw?.profileEnrichment !== false,
     requireSurname: raw?.requireSurname === true,
@@ -82,10 +81,7 @@ export function parseGraphConfig(cfg: Record<string, unknown>): GraphConfig {
   const graphRaw = cfg.graph as Record<string, unknown> | undefined;
   const legacyMinScore = graphRaw?.autoLinkMinScore;
   const autoLinkStrength = parseUnitInterval(graphRaw?.autoLinkStrength ?? legacyMinScore, 0.7);
-  const autoLinkSimilarityThreshold = parseUnitInterval(
-    graphRaw?.autoLinkSimilarityThreshold ?? legacyMinScore,
-    0.7,
-  );
+  const autoLinkSimilarityThreshold = parseUnitInterval(graphRaw?.autoLinkSimilarityThreshold ?? legacyMinScore, 0.7);
   if (
     legacyMinScore !== undefined &&
     graphRaw?.autoLinkStrength === undefined &&
@@ -433,13 +429,13 @@ export function parsePersonaProposalsConfig(cfg: Record<string, unknown>): Perso
     autoApply: proposalsRaw?.autoApply === true,
     allowedFiles: (() => {
       if (!Array.isArray(proposalsRaw?.allowedFiles)) {
-        return [...IDENTITY_FILE_TYPES];
+        return [...PERSONA_PROPOSAL_TARGET_FILES];
       }
       const filtered = (proposalsRaw.allowedFiles as string[]).filter((f) =>
-        IDENTITY_FILE_TYPES.includes(f as IdentityFileType),
-      ) as IdentityFileType[];
+        PERSONA_PROPOSAL_TARGET_FILES.includes(f as PersonaProposalTargetFile),
+      ) as PersonaProposalTargetFile[];
       // Fallback to defaults if filter produces empty array
-      return filtered.length > 0 ? filtered : [...IDENTITY_FILE_TYPES];
+      return filtered.length > 0 ? filtered : [...PERSONA_PROPOSAL_TARGET_FILES];
     })(),
     maxProposalsPerWeek:
       typeof proposalsRaw?.maxProposalsPerWeek === "number" && proposalsRaw.maxProposalsPerWeek > 0
@@ -487,7 +483,11 @@ function parsePersonaRuleRoutingConfig(
   if (typeof raw.nearDedupeThreshold === "number" && raw.nearDedupeThreshold > 0 && raw.nearDedupeThreshold <= 1) {
     out.nearDedupeThreshold = raw.nearDedupeThreshold;
   }
-  if (typeof raw.contradictionThreshold === "number" && raw.contradictionThreshold > 0 && raw.contradictionThreshold <= 1) {
+  if (
+    typeof raw.contradictionThreshold === "number" &&
+    raw.contradictionThreshold > 0 &&
+    raw.contradictionThreshold <= 1
+  ) {
     out.contradictionThreshold = raw.contradictionThreshold;
   }
   if (typeof raw.routingCacheTtlSeconds === "number" && raw.routingCacheTtlSeconds >= 0) {

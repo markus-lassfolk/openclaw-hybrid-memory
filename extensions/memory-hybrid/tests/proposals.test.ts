@@ -244,11 +244,9 @@ describe("applyApprovedProposal (non-git workspace — issue #90)", () => {
     proposalsDb.updateStatus(proposal.id, "approved");
 
     const changeFeedEmit = await import("../services/change-feed-emit.js");
-    const emitSpy = vi
-      .spyOn(changeFeedEmit, "emitPersonaApplied")
-      .mockImplementation(() => {
-        throw new Error("simulated late failure after write");
-      });
+    const emitSpy = vi.spyOn(changeFeedEmit, "emitPersonaApplied").mockImplementation(() => {
+      throw new Error("simulated late failure after write");
+    });
     try {
       const ctx = {
         proposalsDb,
@@ -623,5 +621,101 @@ describe("ProposalsDB.countRecentProposals separateSelfCorrectionQuota", () => {
     });
     expect(proposalsDb.countRecentProposals(7)).toBe(2);
     expect(proposalsDb.countRecentProposals(7, { excludeSelfCorrection: true })).toBe(1);
+  });
+});
+
+describe("resolvePipelineProposalTarget routing retarget", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "pipeline-retarget-"));
+    writeFileSync(join(tmpDir, "SOUL.md"), "# SOUL\nValues and tone.\n", "utf-8");
+    writeFileSync(join(tmpDir, "AGENTS.md"), "# AGENTS\nOperational workflow.\n", "utf-8");
+    writeFileSync(join(tmpDir, "TOOLS.md"), "# TOOLS\nTool invocation notes.\n", "utf-8");
+    writeFileSync(join(tmpDir, "USER.md"), "# USER\nPreferences.\n", "utf-8");
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  const ALL_FILES = ["SOUL.md", "IDENTITY.md", "USER.md", "AGENTS.md", "TOOLS.md"] as const;
+
+  it("retargets a confident AGENTS.md classification away from the caller's SOUL.md", () => {
+    const resolved = resolvePipelineProposalTarget({
+      targetFile: "SOUL.md",
+      suggestedChange: "Always verify GitHub PR headRefOid and CI status before claiming a PR is merge-ready.",
+      allowedFiles: [...ALL_FILES],
+      workspaceRoot: tmpDir,
+      confidence: 0.75,
+      proposalTTLDays: 30,
+    });
+    expect(resolved?.targetFile).toBe("AGENTS.md");
+  });
+
+  it("retargets a wrapper/local-path rule to TOOLS.md", () => {
+    const resolved = resolvePipelineProposalTarget({
+      targetFile: "SOUL.md",
+      suggestedChange: "Use the proxmox.sh wrapper at /usr/local/bin to invoke the host tooling.",
+      allowedFiles: [...ALL_FILES],
+      workspaceRoot: tmpDir,
+      confidence: 0.75,
+      proposalTTLDays: 30,
+    });
+    expect(resolved?.targetFile).toBe("TOOLS.md");
+  });
+
+  it("leaves the caller target unchanged when the recommended file is not allowlisted", () => {
+    const resolved = resolvePipelineProposalTarget({
+      targetFile: "SOUL.md",
+      suggestedChange: "Always verify GitHub PR headRefOid and CI status before claiming a PR is merge-ready.",
+      allowedFiles: ["SOUL.md", "IDENTITY.md", "USER.md"], // AGENTS.md intentionally absent
+      workspaceRoot: tmpDir,
+      confidence: 0.75,
+      proposalTTLDays: 30,
+    });
+    expect(resolved?.targetFile).toBe("SOUL.md");
+  });
+
+  it("does not override a deliberate identity-file target for an advisory identity-family suggestion", () => {
+    // A working-style preference deliberately filed under USER.md trips the SOUL "values"
+    // keyword, so the classifier advises SOUL.md. Identity-family suggestions are advisory only
+    // and must not override the deliberate USER.md choice (regression: reinforcement pipeline).
+    const resolved = resolvePipelineProposalTarget({
+      targetFile: "USER.md",
+      suggestedChange: "Add to Working Style: Values thorough inline code reviews with resolvable threads.",
+      allowedFiles: [...ALL_FILES],
+      workspaceRoot: tmpDir,
+      confidence: 0.75,
+      proposalTTLDays: 30,
+    });
+    expect(resolved?.targetFile).toBe("USER.md");
+  });
+
+  it("does not retarget identity/values guidance that already belongs in SOUL.md", () => {
+    const resolved = resolvePipelineProposalTarget({
+      targetFile: "SOUL.md",
+      suggestedChange: "Uphold honesty and integrity; act with a helpful, principled character.",
+      allowedFiles: [...ALL_FILES],
+      workspaceRoot: tmpDir,
+      confidence: 0.75,
+      proposalTTLDays: 30,
+    });
+    expect(resolved?.targetFile).toBe("SOUL.md");
+  });
+
+  it("surfaces the routing assessment for callers/logging", () => {
+    const input = {
+      targetFile: "SOUL.md",
+      suggestedChange: "Always verify GitHub PR headRefOid and CI status before claiming a PR is merge-ready.",
+      allowedFiles: [...ALL_FILES],
+      workspaceRoot: tmpDir,
+      confidence: 0.75,
+      proposalTTLDays: 30,
+    } as Parameters<typeof resolvePipelineProposalTarget>[0];
+    const resolved = resolvePipelineProposalTarget(input);
+    expect(resolved?.targetFile).toBe("AGENTS.md");
+    expect(input.routingAssessment?.routingSuggestion?.recommendedTargetFile).toBe("AGENTS.md");
+    expect(input.routingAssessment?.overallDisposition).toBe("retarget");
   });
 });

@@ -75,6 +75,92 @@ describe("dream-cycle proposal bridge", () => {
     }
   });
 
+  it("retargets operational rules to AGENTS.md/TOOLS.md instead of defaulting to SOUL.md", () => {
+    // Regression for the routing-bias bug: the router classifies these rules as AGENTS.md /
+    // TOOLS.md, but the pipeline used to file every dream-cycle rule under SOUL.md (via
+    // inferTargetFile's default) because the confident routing suggestion was only advisory.
+    writeFileSync(join(tmpDir, "AGENTS.md"), "# AGENTS\nOperational workflow.\n", "utf-8");
+    writeFileSync(join(tmpDir, "TOOLS.md"), "# TOOLS\nTool invocation notes.\n", "utf-8");
+    const opsCfg = {
+      ...cfg,
+      personaProposals: {
+        ...cfg.personaProposals,
+        allowedFiles: ["SOUL.md", "IDENTITY.md", "USER.md", "AGENTS.md", "TOOLS.md"],
+      },
+    } as HybridMemoryConfig;
+
+    const githubRule = factsDb.store({
+      text: "Always verify GitHub PR headRefOid and CI status before claiming a PR is merge-ready.",
+      category: "rule",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "dream-cycle-test",
+    });
+    const wrapperRule = factsDb.store({
+      text: "Use the proxmox.sh wrapper at /usr/local/bin to invoke the host tooling.",
+      category: "rule",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "dream-cycle-test",
+    });
+
+    const result = runDreamCycleProposalBridge({
+      cfg: opsCfg,
+      factsDb,
+      proposalsDb,
+      patternsStored: 0,
+      rulesGenerated: 2,
+      newRuleFactIds: [githubRule.id, wrapperRule.id],
+      logger: { info: () => {}, warn: () => {} },
+      workspaceRoot: tmpDir,
+    });
+
+    expect(result.personaProposalsCreated).toBe(2);
+    const created = proposalsDb.list({ status: "pending" });
+    const byChange = new Map(created.map((p) => [p.suggestedChange, p.targetFile]));
+    expect(byChange.get("Always verify GitHub PR headRefOid and CI status before claiming a PR is merge-ready.")).toBe(
+      "AGENTS.md",
+    );
+    expect(byChange.get("Use the proxmox.sh wrapper at /usr/local/bin to invoke the host tooling.")).toBe("TOOLS.md");
+    // None of the operational rules should have leaked into SOUL.md.
+    expect(created.some((p) => p.targetFile === "SOUL.md")).toBe(false);
+  });
+
+  it("keeps operational rules on the caller target when AGENTS.md/TOOLS.md are not allowlisted", () => {
+    // With the default (identity-only) allowlist and no operational files present, a confident
+    // AGENTS.md suggestion cannot be honored, so the proposal is still created (not dropped)
+    // against the caller's allowlisted target rather than silently discarded.
+    const githubRule = factsDb.store({
+      text: "Always verify GitHub PR headRefOid and CI status before claiming a PR is merge-ready.",
+      category: "rule",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "dream-cycle-test",
+    });
+
+    const result = runDreamCycleProposalBridge({
+      cfg, // allowedFiles: ["SOUL.md", "IDENTITY.md", "USER.md"]
+      factsDb,
+      proposalsDb,
+      patternsStored: 0,
+      rulesGenerated: 1,
+      newRuleFactIds: [githubRule.id],
+      logger: { info: () => {}, warn: () => {} },
+      workspaceRoot: tmpDir,
+    });
+
+    expect(result.personaProposalsCreated).toBe(1);
+    const created = proposalsDb.list({ status: "pending" });
+    expect(created).toHaveLength(1);
+    expect(cfg.personaProposals.allowedFiles).toContain(created[0].targetFile);
+  });
+
   it("does not re-propose existing rules when newRuleFactIds is omitted", () => {
     const result = runDreamCycleProposalBridge({
       cfg,

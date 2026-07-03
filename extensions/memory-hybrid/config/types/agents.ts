@@ -6,6 +6,14 @@ export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number];
 export const IDENTITY_FILE_TYPES = ["SOUL.md", "IDENTITY.md", "USER.md"] as const;
 export type IdentityFileType = (typeof IDENTITY_FILE_TYPES)[number];
 
+/**
+ * Files a persona proposal may target. Extends the identity files with the two operational
+ * authority files (AGENTS.md, TOOLS.md) so the durable-rule router can retarget operational
+ * guidance to the file it belongs in instead of forcing everything into SOUL.md (#2002 follow-up).
+ */
+export const PERSONA_PROPOSAL_TARGET_FILES = [...IDENTITY_FILE_TYPES, "AGENTS.md", "TOOLS.md"] as const;
+export type PersonaProposalTargetFile = (typeof PERSONA_PROPOSAL_TARGET_FILES)[number];
+
 /** Multi-agent memory scoping configuration (dynamic agent detection) */
 export type MultiAgentConfig = {
   /** Agent ID of the orchestrator (main agent). Default: "main". This agent sees all scopes. */
@@ -46,8 +54,13 @@ export type PersonaProposalsConfig = {
   enabled: boolean;
   /** When true, approved proposals are applied automatically without human review (default: false). */
   autoApply: boolean;
-  /** Identity files that can be modified via proposals (default: ["SOUL.md", "IDENTITY.md", "USER.md"]) */
-  allowedFiles: IdentityFileType[];
+  /**
+   * Files that can be modified via proposals
+   * (default: ["SOUL.md", "IDENTITY.md", "USER.md", "AGENTS.md", "TOOLS.md"]). Operational
+   * authority files (AGENTS.md, TOOLS.md) are targets so the router can route operational rules
+   * to them; identity files (SOUL/IDENTITY/USER) remain the default for behavioural guidance.
+   */
+  allowedFiles: PersonaProposalTargetFile[];
   /** Max proposals per week to prevent spam (default: 5) */
   maxProposalsPerWeek: number;
   /** Min confidence score 0-1 for proposals (default: 0.7) */

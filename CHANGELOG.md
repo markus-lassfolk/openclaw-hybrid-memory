@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.32] - 2026-07-03
+
+### Fixed
+
+- **Persona proposal routing bias:** the durable-rule router already classified operational guidance to `AGENTS.md`/`TOOLS.md`, but `resolvePipelineProposalTarget()` only recorded the suggestion as advisory, so every pipeline-generated rule (dream-cycle, self-correction, reinforcement) still landed in `SOUL.md` via `inferTargetFile()`'s default. Confident routing suggestions now **retarget** the proposal onto the recommended operational file when it is allowlisted. Retargeting is intentionally limited to `AGENTS.md`/`TOOLS.md` (the destinations upstream target inference cannot produce); routing among the identity files stays advisory so it never overrides a deliberate `USER.md`/`IDENTITY.md` choice.
+
+### Changed
+
+- **`personaProposals.allowedFiles`** now accepts and defaults to the operational authority files as well: `["SOUL.md", "IDENTITY.md", "USER.md", "AGENTS.md", "TOOLS.md"]`. Human approval is still required before any file is written (`autoApply` stays off by default); narrow the list to keep proposals away from operational files.
+
+---
+
 ## [2026.7.31] - 2026-07-03
 
 ### Added
