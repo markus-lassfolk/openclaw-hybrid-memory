@@ -37,7 +37,13 @@ import { atomicWriteFile } from "../../utils/atomic-write.js";
 import { PLUGIN_ID } from "../../utils/constants.js";
 import { getEnv } from "../../utils/env-manager.js";
 import { findPluginRoot } from "../../utils/plugin-root.js";
-import { readPluginPackageVersion } from "./workspace.js";
+import {
+  readPluginPackageVersion,
+  isNpmProjectPluginLayout,
+  resolveKnownNpmProjectPluginDir,
+  resolveKnownNpmProjectRoot,
+  resolveNpmProjectRootForPlugin,
+} from "./workspace.js";
 import { resolveOpenclawHomeDir } from "../../utils/openclaw-workspace.js";
 
 /** Relative path of the legacy install-index sidecar under the OpenClaw state dir. */
@@ -127,6 +133,97 @@ export function resolveCanonicalLivePluginPathForInstallIndex(pluginId: string =
     return extensionsDir;
   }
   return findPluginRoot(import.meta.url);
+}
+
+export type RemoveRedundantNpmProjectTreeResult = {
+  /** True when the guards passed and removal was actually tried. */
+  attempted: boolean;
+  /** True when the redundant npm-project tree is no longer at the canonical path. */
+  removed: boolean;
+  /** The npm-project root that was removed (its canonical path). */
+  removedPath?: string;
+  /** Populated when removal was tried but failed. */
+  error?: string;
+  /** Populated when removal was intentionally skipped (guard tripped). */
+  skippedReason?:
+    | "extensions-dir-is-npm-project-layout"
+    | "no-npm-project-tree"
+    | "extensions-not-installed"
+    | "same-tree"
+    | "npm-project-not-older";
+};
+
+/**
+ * Remove the redundant `~/.openclaw/npm/projects/<plugin>` tree when the extensions
+ * copy is canonical (#2021).
+ *
+ * On extensions-canonical hosts (Maeve/Doris) the gateway loads
+ * `~/.openclaw/extensions/openclaw-hybrid-memory`. A second copy under
+ * `npm/projects/openclaw-hybrid-memory` — typically left behind by
+ * `openclaw plugins install`, which targets npm/projects rather than extensions —
+ * makes the gateway emit "duplicate plugin id" / "plugin entry path escapes plugin
+ * root" errors. Syncing the npm-project pin (the previous #2008 behaviour) keeps the
+ * duplicate alive; the only durable fix is to remove the redundant tree, which the
+ * issue confirms is safe when extensions is canonical.
+ *
+ * Guards (all must hold, else returns `attempted: false` with a `skippedReason`):
+ * - the extensions dir is NOT itself an npm-project layout (i.e. extensions is canonical);
+ * - a distinct npm-project tree actually exists;
+ * - the extensions copy is installed with a readable version;
+ * - the npm-project copy is not strictly newer than the extensions copy (never delete a
+ *   newer install — the host may be mid-upgrade or npm/projects may actually be live).
+ *
+ * Removal is atomic-then-cleanup: the project root is renamed to a `.redundant-<ts>`
+ * sibling (which immediately neutralises the duplicate, since gateway discovery only
+ * matches the exact `openclaw-hybrid-memory` directory name) and then best-effort
+ * deleted. If the final delete fails the duplicate is still gone from the canonical path.
+ */
+export function removeRedundantNpmProjectTreeWhenExtensionsCanonical(opts: {
+  extensionsPluginDir: string;
+  /** npm-project plugin dir detected by verify/upgrade (defaults to Maeve layout). */
+  npmProjectPluginDir?: string;
+}): RemoveRedundantNpmProjectTreeResult {
+  if (isNpmProjectPluginLayout(opts.extensionsPluginDir)) {
+    return { attempted: false, removed: false, skippedReason: "extensions-dir-is-npm-project-layout" };
+  }
+  const npmPluginDir = opts.npmProjectPluginDir ?? resolveKnownNpmProjectPluginDir();
+  const projectRoot = npmPluginDir ? resolveNpmProjectRootForPlugin(npmPluginDir) : resolveKnownNpmProjectRoot();
+  if (!npmPluginDir || !projectRoot) {
+    return { attempted: false, removed: false, skippedReason: "no-npm-project-tree" };
+  }
+  if (!existsSync(join(opts.extensionsPluginDir, "openclaw.plugin.json"))) {
+    return { attempted: false, removed: false, skippedReason: "extensions-not-installed" };
+  }
+  const extVer = readPluginPackageVersion(opts.extensionsPluginDir);
+  if (!extVer) {
+    return { attempted: false, removed: false, skippedReason: "extensions-not-installed" };
+  }
+  if (samePath(npmPluginDir, opts.extensionsPluginDir)) {
+    return { attempted: false, removed: false, skippedReason: "same-tree" };
+  }
+  const npmVer = readPluginPackageVersion(npmPluginDir);
+  if (npmVer && compareVersions(npmVer, extVer) > 0) {
+    // npm-project copy is newer than extensions — refuse to delete a newer install.
+    return { attempted: false, removed: false, skippedReason: "npm-project-not-older" };
+  }
+  try {
+    const graveyard = `${projectRoot}.redundant-${Date.now()}`;
+    renameSync(projectRoot, graveyard);
+    try {
+      rmSync(graveyard, { recursive: true, force: true });
+    } catch {
+      // Best-effort: the duplicate is already gone from the canonical path; leftover
+      // `.redundant-*` dirs are ignored by gateway plugin discovery.
+    }
+    return { attempted: true, removed: true, removedPath: projectRoot };
+  } catch (err) {
+    return {
+      attempted: true,
+      removed: false,
+      removedPath: projectRoot,
+      error: `Could not remove redundant npm-project tree at ${projectRoot}: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
 }
 
 /**

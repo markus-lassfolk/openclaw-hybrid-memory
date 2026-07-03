@@ -23,6 +23,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.33] - 2026-07-03
+
+### Fixed
+
+- **`hybrid-mem upgrade` no longer 404s (#2021):** the standalone upgrade path and every "manual upgrade" fallback message referenced `openclaw-hybrid-mem-upgrade`, a package that was never published to npm, so `openclaw hybrid-mem upgrade <version>` failed with `npm error 404` and the printed fallback command could not run. Both now use the published, in-repo `openclaw-hybrid-memory-install` package (`STANDALONE_UPGRADE_PACKAGE`), which npm-packs the target version straight into the extensions tree the gateway loads.
+- **Extensions-canonical hosts: no more duplicate plugin tree (#2021).** When the gateway loads the plugin from `~/.openclaw/extensions/openclaw-hybrid-memory`, a leftover `~/.openclaw/npm/projects/openclaw-hybrid-memory` copy (typically from `openclaw plugins install`, which targets `npm/projects`) triggered gateway "duplicate plugin id" / "plugin entry path escapes plugin root" errors. `hybrid-mem upgrade` and `hybrid-mem verify --fix` now **remove** the redundant npm-project tree (guarded: only when extensions is canonical and not older than the npm-project copy) instead of merely re-pinning it, which had left the duplicate in place.
+
+### Changed
+
+- **Dual-install reconciliation guidance no longer recommends `openclaw plugins install` (#2021).** On extensions-canonical hosts that command reinstalls into `npm/projects` and recreates the very duplicate it was meant to fix; the guidance now points operators at `openclaw hybrid-mem verify --fix` / `openclaw hybrid-mem upgrade` and an explicit manual `rm -rf` fallback.
+- **Docs:** `docs/UPGRADE-PLUGIN.md` gains a single blessed "Extensions-canonical hosts (Maeve/Doris layout)" upgrade section.
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.7.33**.
+
+---
+
 ## [2026.7.32] - 2026-07-03
 
 ### Fixed

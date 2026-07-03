@@ -9,8 +9,19 @@ import { npxExecutable } from "./workspace.js";
 export const MANUAL_UPGRADE_DOC_URL =
   "https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/UPGRADE-PLUGIN.md#manual-upgrade-copy-from-repo";
 
-/** Standalone upgrade when OpenClaw cannot load hybrid-mem (schema drift / invalid config). */
-export const STANDALONE_UPGRADE_CMD = "npx -y openclaw-hybrid-mem-upgrade";
+/**
+ * Standalone upgrade when OpenClaw cannot load hybrid-mem (schema drift / invalid config).
+ *
+ * Uses the published `openclaw-hybrid-memory-install` package (source:
+ * `packages/openclaw-hybrid-memory-install`). It npm-packs the target version into
+ * `OPENCLAW_EXTENSIONS_DIR/openclaw-hybrid-memory` (default `~/.openclaw/extensions`),
+ * which is exactly the extensions-canonical tree the gateway loads. The previously
+ * referenced `openclaw-hybrid-mem-upgrade` package was never published to npm (404),
+ * so `hybrid-mem upgrade` and every "manual upgrade" fallback message pointed at a
+ * command that could not run (#2021).
+ */
+export const STANDALONE_UPGRADE_PACKAGE = "openclaw-hybrid-memory-install";
+export const STANDALONE_UPGRADE_CMD = `npx -y ${STANDALONE_UPGRADE_PACKAGE}`;
 
 export const NPM_PACK_PREFLIGHT_TIMEOUT_MS = 120_000;
 
@@ -240,7 +251,7 @@ export function formatManualUpgradeFallback(version: string): string {
 }
 
 export function runStandaloneUpgradeInstall(version: string, extensionsParentDir: string): { ok: boolean; error?: string } {
-  const r = spawnSync(npxExecutable(), ["-y", "openclaw-hybrid-mem-upgrade", version], {
+  const r = spawnSync(npxExecutable(), ["-y", STANDALONE_UPGRADE_PACKAGE, version], {
     stdio: "inherit",
     cwd: homedir(),
     shell: false,

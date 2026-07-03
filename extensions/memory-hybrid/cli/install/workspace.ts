@@ -170,16 +170,18 @@ export function buildDualInstallReconciliationGuidance(
   if (!base) return undefined;
   const extVer = readPluginPackageVersion(extensionsPluginDir);
   const npmVer = readPluginPackageVersion(npmProjectPluginDir);
-  const versionHint = extVer ? `@${extVer}` : "@latest";
   const upgradeCmd = extVer ? `openclaw hybrid-mem upgrade ${extVer}` : "openclaw hybrid-mem upgrade";
+  // Do NOT recommend `openclaw plugins install` on extensions-canonical hosts: it installs
+  // into npm/projects (not extensions), which recreates exactly the duplicate tree this
+  // warning is about (#2021). The blessed path is `verify --fix`, which now removes the
+  // redundant npm-project tree and reconciles the legacy install-index sidecar.
   return (
     `${base} Gateway loads the extensions copy${extVer ? ` (${extVer})` : ""}. ` +
-    `Reconcile stale npm-project metadata (${npmVer ?? "unknown"} at ${npmProjectPluginDir}) with ` +
-    `\`openclaw plugins install openclaw-hybrid-memory${versionHint}\`, ` +
-    `\`${upgradeCmd}\`, or ` +
-    `\`openclaw hybrid-mem verify --fix\` to sync the npm-project pin and reconcile the legacy install-index sidecar. ` +
-    `When extensions is canonical, removing the unused npm-project tree is safe: ` +
-    `rm -rf ${join(resolveOpenclawHomeDir(), "npm", "projects", PLUGIN_ID)}`
+    `The npm-project copy (${npmVer ?? "unknown"} at ${npmProjectPluginDir}) is redundant on extensions-canonical hosts. ` +
+    "Run `openclaw hybrid-mem verify --fix` to remove it and reconcile the legacy install-index sidecar, " +
+    `or \`${upgradeCmd}\` to refresh the extensions copy. ` +
+    "Avoid `openclaw plugins install` here — it reinstalls into npm/projects and recreates the duplicate. " +
+    `To remove the redundant tree manually: rm -rf ${join(resolveOpenclawHomeDir(), "npm", "projects", PLUGIN_ID)}`
   );
 }
 

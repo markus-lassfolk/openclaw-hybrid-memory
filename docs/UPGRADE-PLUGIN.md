@@ -66,6 +66,40 @@ Then run `openclaw hybrid-mem verify` to confirm.
 
 ---
 
+## Extensions-canonical hosts (Maeve/Doris layout)
+
+On some hosts the gateway loads the plugin from **`~/.openclaw/extensions/openclaw-hybrid-memory`** (the "extensions" tree) rather than from `~/.openclaw/npm/projects/…`. On these hosts there is exactly **one** blessed upgrade path:
+
+```bash
+openclaw hybrid-mem upgrade            # or: openclaw hybrid-mem upgrade <VERSION>
+openclaw gateway stop && openclaw gateway start
+openclaw hybrid-mem verify
+```
+
+`hybrid-mem upgrade` installs straight into the extensions tree via the standalone `openclaw-hybrid-memory-install` package (npm pack → `~/.openclaw/extensions/openclaw-hybrid-memory`) and, if a stale `npm/projects/openclaw-hybrid-memory` copy is present, **removes it in the same step** so the gateway never fights over duplicate plugin ids.
+
+**Do not run `openclaw plugins install openclaw-hybrid-memory@…` on these hosts.** OpenClaw core installs into `~/.openclaw/npm/projects/openclaw-hybrid-memory/`, which is *not* the tree the gateway loads. That leaves a second copy behind and produces gateway warnings like:
+
+```
+[plugins] duplicate plugin id detected; global plugin will be overridden …
+[plugins] plugin entry path escapes plugin root or fails alias checks …
+```
+
+**If you already ended up with two copies,** reconcile them without recreating the duplicate:
+
+```bash
+openclaw hybrid-mem verify --fix       # removes the redundant npm/projects tree + reconciles the install-index sidecar
+```
+
+`verify --fix` deletes the redundant `~/.openclaw/npm/projects/openclaw-hybrid-memory` tree only when the extensions copy is canonical and is not older than the npm-project copy. To remove it by hand instead:
+
+```bash
+rm -rf ~/.openclaw/npm/projects/openclaw-hybrid-memory
+openclaw gateway stop && openclaw gateway start
+```
+
+---
+
 ## When "plugin not found" blocks install
 
 If you see **"plugin not found: openclaw-hybrid-memory"** and `openclaw plugins install` fails (because OpenClaw validates config before running commands), use one of these **standalone installers** — they bypass OpenClaw entirely:
@@ -234,6 +268,40 @@ Then run `openclaw hybrid-mem verify` to confirm.
 **First install or when plugin dir is missing:** `openclaw plugins install openclaw-hybrid-memory@latest` (or `@VERSION`) works. Use **`openclaw hybrid-mem upgrade`** or the standalone installer when the folder already exists.
 
 **Note (issue [#35](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/35)):** A generic `openclaw plugins upgrade [@version]` command for in-place plugin updates would live in the OpenClaw CLI; for the hybrid-memory plugin, **`openclaw hybrid-mem upgrade`** provides that workflow today.
+
+---
+
+## Extensions-canonical hosts (Maeve/Doris layout)
+
+On some hosts the gateway loads the plugin from **`~/.openclaw/extensions/openclaw-hybrid-memory`** (the "extensions" tree) rather than from `~/.openclaw/npm/projects/…`. On these hosts there is exactly **one** blessed upgrade path:
+
+```bash
+openclaw hybrid-mem upgrade            # or: openclaw hybrid-mem upgrade <VERSION>
+openclaw gateway stop && openclaw gateway start
+openclaw hybrid-mem verify
+```
+
+`hybrid-mem upgrade` installs straight into the extensions tree via the standalone `openclaw-hybrid-memory-install` package (npm pack → `~/.openclaw/extensions/openclaw-hybrid-memory`) and, if a stale `npm/projects/openclaw-hybrid-memory` copy is present, **removes it in the same step** so the gateway never fights over duplicate plugin ids.
+
+**Do not run `openclaw plugins install openclaw-hybrid-memory@…` on these hosts.** OpenClaw core installs into `~/.openclaw/npm/projects/openclaw-hybrid-memory/`, which is *not* the tree the gateway loads. That leaves a second copy behind and produces gateway warnings like:
+
+```
+[plugins] duplicate plugin id detected; global plugin will be overridden …
+[plugins] plugin entry path escapes plugin root or fails alias checks …
+```
+
+**If you already ended up with two copies,** reconcile them without recreating the duplicate:
+
+```bash
+openclaw hybrid-mem verify --fix       # removes the redundant npm/projects tree + reconciles the install-index sidecar
+```
+
+`verify --fix` deletes the redundant `~/.openclaw/npm/projects/openclaw-hybrid-memory` tree only when the extensions copy is canonical and is not older than the npm-project copy. To remove it by hand instead:
+
+```bash
+rm -rf ~/.openclaw/npm/projects/openclaw-hybrid-memory
+openclaw gateway stop && openclaw gateway start
+```
 
 ---
 
