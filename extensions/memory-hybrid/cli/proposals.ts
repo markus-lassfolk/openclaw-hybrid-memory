@@ -203,6 +203,17 @@ export function getProposalExpiryError(
   return `Proposal ${proposal.id} expired and cannot be approved or applied`;
 }
 
+/**
+ * Operational authority files the router may retarget a pipeline proposal onto. These are the
+ * proposal targets that the identity-oriented upstream inference cannot produce, so routing a rule
+ * here only ever adds a destination rather than overriding a deliberate identity-file choice.
+ */
+const OPERATIONAL_RETARGET_FILES: ReadonlySet<string> = new Set(["AGENTS.md", "TOOLS.md"]);
+
+function isOperationalRetargetFile(file: string): boolean {
+  return OPERATIONAL_RETARGET_FILES.has(file);
+}
+
 /** Snapshot + validation helpers for pipeline-created proposals (self-correction, reinforcement, generate-proposals). */
 export function resolvePipelineProposalTarget(input: {
   targetFile: string;
@@ -232,7 +243,7 @@ export function resolvePipelineProposalTarget(input: {
   targetHash: string | null;
   expiresAt: number | null;
 } | null {
-  const targetFile = input.targetFile.trim();
+  let targetFile = input.targetFile.trim();
   if (!targetFile || !input.allowedFiles.includes(targetFile as IdentityFileType)) return null;
   const contentCheck = validateProposalContent(input.suggestedChange);
   if (!contentCheck.ok) return null;
@@ -250,7 +261,28 @@ export function resolvePipelineProposalTarget(input: {
       personaRuleRouting: input.personaRuleRouting,
     });
     input.routingAssessment = syncAssessment;
-    if (shouldBlockProposalCreation(syncAssessment, routing.routingMode)) return null;
+    // Honor a confident routing suggestion by retargeting the proposal onto an operational
+    // authority file (AGENTS.md/TOOLS.md) when that file is allowlisted. These are exactly the
+    // destinations the upstream target inference (inferTargetFile / an explicit caller target)
+    // can never produce, so operational guidance used to pile into SOUL.md even when the router
+    // classified it as AGENTS.md/TOOLS.md. We deliberately do NOT retarget among the identity
+    // files (SOUL/IDENTITY/USER): the keyword classifier is only advisory there and must not
+    // override a deliberate caller choice (e.g. a USER.md working-style rule that trips the
+    // SOUL "values" keyword). All dedup/snapshot/confidence checks below use the final target.
+    const suggestion = syncAssessment.routingSuggestion;
+    const canRetarget =
+      syncAssessment.overallDisposition === "retarget" &&
+      suggestion != null &&
+      isOperationalRetargetFile(suggestion.recommendedTargetFile) &&
+      suggestion.recommendedTargetFile !== targetFile &&
+      input.allowedFiles.includes(suggestion.recommendedTargetFile as IdentityFileType);
+    if (canRetarget) {
+      // In enforce mode this also resolves the "enforce-routing" block: we route to the correct
+      // allowlisted file instead of dropping the proposal.
+      targetFile = suggestion!.recommendedTargetFile;
+    } else if (shouldBlockProposalCreation(syncAssessment, routing.routingMode)) {
+      return null;
+    }
   }
   if (input.proposalsDb) {
     const duplicate = input.proposalsDb.findPendingOrAppliedDuplicate(targetFile, input.suggestedChange);
