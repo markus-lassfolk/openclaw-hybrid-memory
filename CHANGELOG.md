@@ -23,6 +23,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.30] - 2026-07-03
+
+### Added
+
+- **Structured contact profiles (#2014):** `contacts` rows carry phone/role/board fields; email/phone/role merge from `memory_store` / auto-capture (gated by `contacts.profileEnrichment`); prefix dedup for NER (`Daniel` → `Daniel Thunberg`); `contacts list|suggest-merges|merge|import|sync` CLI (`merge` accepts a contact id **or** a name); per-org summary roster fact with `PART_OF` links from each person's roster fact (`--no-part-of` to skip); richer `memory_directory` (`list_contacts`, grouped `org_view`); `contacts.*` config block (`profileEnrichment`, `requireSurname`, `importPath`).
+- **Storage sync diagnostics & repair:** unified SQLite ↔ LanceDB drift detection (ID-set, row-count, embedding, structural) and a policy-driven storage-repair pipeline wired into `hybrid-mem verify` / `doctor`; retrieval-alias rebuild CLI (`rebuild-aliases`).
+- **Context engine:** synchronous ContextEngine registration to win the plugin cold-start race (#273); root `hybrid-mem --version` flag with GitHub/npm update notices.
+
+### Fixed
+
+- `contacts merge` now repoints `facts.entity_contact_id` (not just NER mentions) before deleting the merged-away contact, so no fact is left pointing at a deleted contact row.
+- Contact-import roster stores are idempotent on re-run (deduped stores no longer create duplicate facts or `PART_OF` links).
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.7.30**.
+
+---
+
 ## [2026.6.292] - 2026-06-29
 
 ### Fixed

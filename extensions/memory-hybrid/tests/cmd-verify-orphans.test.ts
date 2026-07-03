@@ -117,7 +117,7 @@ describe("runVerifyForCli --reconcile", () => {
     await runVerifyForCli(buildCtx() as never, { fix: false, reconcile: true }, { log: (m) => lines.push(m) });
     const out = lines.join("\n");
     expect(out).toContain("Reconciliation");
-    expect(out).toMatch(/in sync|SQLite and LanceDB are in sync/i);
+    expect(out).toMatch(/ID sets aligned|in sync/i);
   });
 
   it("reports vector orphans during reconcile when LanceDB has extra IDs", async () => {

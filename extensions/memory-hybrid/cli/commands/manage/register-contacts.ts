@@ -17,15 +17,17 @@ export type ContactsImportResult = {
   contactsMerged: number;
   factsStored: number;
   factsSkipped: number;
+  partOfLinksCreated: number;
 };
 
 /** Exported for tests (issue #2014). */
 export async function runContactsImport(
   b: ManageBindings,
   filePath: string,
-  opts: { dryRun: boolean },
+  opts: { dryRun: boolean; linkPartOf?: boolean },
 ): Promise<ContactsImportResult> {
   const { factsDb, runStore } = b;
+  const linkPartOf = opts.linkPartOf !== false;
   const markdown = readFileSync(filePath, "utf-8");
   const orgs = parseContactsRoster(markdown);
   const result: ContactsImportResult = {
@@ -34,6 +36,7 @@ export async function runContactsImport(
     contactsMerged: 0,
     factsStored: 0,
     factsSkipped: 0,
+    partOfLinksCreated: 0,
   };
 
   for (const org of orgs) {
@@ -44,6 +47,31 @@ export async function runContactsImport(
     }
     const orgResult = factsDb.upsertOrganization(org.name);
     if (orgResult) result.orgsUpserted++;
+
+    // Per-org summary roster fact (#2014): one searchable fact listing the whole roster, linked to
+    // the org. Person roster facts below attach to it via PART_OF so graph traversal from a person
+    // reaches the org roster. Only freshly-stored facts get an id (dedupe returns no id), which
+    // keeps re-imports idempotent — no duplicate roster facts or PART_OF links on repeat runs.
+    let orgRosterFactId: string | null = null;
+    if (org.people.length > 0) {
+      const rosterSummary = org.people
+        .map((p) => [p.name, p.email, p.role].filter(Boolean).join(" — "))
+        .join("; ");
+      const orgRosterResult = await runStore({
+        text: `${org.name} contacts: ${rosterSummary}`,
+        category: "entity",
+        entity: org.name,
+        key: "roster",
+        value: org.name,
+      });
+      if (orgRosterResult.outcome === "stored") {
+        result.factsStored++;
+        orgRosterFactId = orgRosterResult.id;
+        if (orgResult) factsDb.linkFactToOrganization(orgResult.id, orgRosterResult.id, "roster_import");
+      } else {
+        result.factsSkipped++;
+      }
+    }
 
     for (const person of org.people) {
       const contactResult = factsDb.upsertContactWithProfile(person.name, orgResult?.id ?? null, {
@@ -72,6 +100,11 @@ export async function runContactsImport(
       if (storeResult.outcome === "stored") {
         result.factsStored++;
         if (orgResult) factsDb.linkFactToOrganization(orgResult.id, storeResult.id, "roster_import");
+        // PART_OF: this person's roster fact belongs to the org's roster fact (#2014).
+        if (linkPartOf && orgRosterFactId && orgRosterFactId !== storeResult.id) {
+          factsDb.createLink(storeResult.id, orgRosterFactId, "PART_OF", 1.0);
+          result.partOfLinksCreated++;
+        }
       } else {
         result.factsSkipped++;
       }
@@ -106,7 +139,7 @@ function formatImportSummary(prefix: string, filePath: string, result: ContactsI
   return (
     `${prefix} ${filePath}: ${result.orgsUpserted} org(s), ${result.contactsUpserted} contact(s) ` +
     `(${result.contactsMerged} merged), ${result.factsStored} roster fact(s) stored ` +
-    `(${result.factsSkipped} skipped as duplicate).`
+    `(${result.factsSkipped} skipped as duplicate), ${result.partOfLinksCreated} PART_OF link(s).`
   );
 }
 
@@ -119,10 +152,22 @@ export function registerManageContacts(mem: Chainable, b: ManageBindings): void 
   contacts
     .command("merge <fromId> <intoId>")
     .description(
-      "Merge one contact into another: repoints NER mentions to intoId, folds in profile fields (manual wins conflicts), deletes fromId",
+      "Merge one contact into another (each arg accepts a contact id or a name): repoints NER mentions and fact FKs to intoId, folds in profile fields (manual wins conflicts), deletes fromId",
     )
     .action(
-      withExit(async (fromId: string, intoId: string) => {
+      withExit(async (fromArg: string, intoArg: string) => {
+        const fromId = factsDb.resolveContactId(fromArg);
+        const intoId = factsDb.resolveContactId(intoArg);
+        if (!fromId) {
+          console.error(`Merge failed: no contact matches "${fromArg}".`);
+          process.exitCode = 1;
+          return;
+        }
+        if (!intoId) {
+          console.error(`Merge failed: no contact matches "${intoArg}".`);
+          process.exitCode = 1;
+          return;
+        }
         const result = factsDb.mergeContacts(fromId, intoId);
         if (!result.ok) {
           console.error(`Merge failed: ${result.error}`);
@@ -214,21 +259,31 @@ export function registerManageContacts(mem: Chainable, b: ManageBindings): void 
   contacts
     .command("import")
     .description("Import/upsert organizations, contacts, and roster facts from a CONTACTS.md-style file (idempotent)")
-    .requiredOption("--from <path>", "Path to the roster markdown file")
+    .option("--from <path>", "Path to the roster markdown file (defaults to contacts.importPath from config)")
     .option("--dry-run", "Preview counts without writing")
     .option(
       "--embed",
       "No-op: roster facts always go through the existing store path, which embeds them when an embedding provider is configured",
     )
+    .option("--no-part-of", "Skip PART_OF links from person roster facts to the org roster fact")
     .action(
-      withExit(async (opts: { from: string; dryRun?: boolean; embed?: boolean }) => {
-        const filePath = resolve(opts.from);
+      withExit(async (opts: { from?: string; dryRun?: boolean; embed?: boolean; noPartOf?: boolean }) => {
+        const fromPath = opts.from ?? b.cfg.contacts.importPath;
+        if (!fromPath) {
+          console.error("error: no roster file given; pass --from <path> or set contacts.importPath in config");
+          process.exitCode = 1;
+          return;
+        }
+        const filePath = resolve(fromPath);
         if (!existsSync(filePath)) {
           console.error(`error: file not found: ${filePath}`);
           process.exitCode = 1;
           return;
         }
-        const result = await runContactsImport(b, filePath, { dryRun: opts.dryRun === true });
+        const result = await runContactsImport(b, filePath, {
+          dryRun: opts.dryRun === true,
+          linkPartOf: opts.noPartOf !== true,
+        });
         console.log(formatImportSummary(opts.dryRun ? "Would import from" : "Imported from", filePath, result));
       }),
     );
@@ -236,11 +291,17 @@ export function registerManageContacts(mem: Chainable, b: ManageBindings): void 
   contacts
     .command("sync")
     .description("Re-run `contacts import` only if the roster file's mtime changed since the last sync")
-    .requiredOption("--from <path>", "Path to the roster markdown file")
+    .option("--from <path>", "Path to the roster markdown file (defaults to contacts.importPath from config)")
     .option("--force", "Re-import even if the file has not changed")
     .action(
-      withExit(async (opts: { from: string; force?: boolean }) => {
-        const filePath = resolve(opts.from);
+      withExit(async (opts: { from?: string; force?: boolean }) => {
+        const fromPath = opts.from ?? b.cfg.contacts.importPath;
+        if (!fromPath) {
+          console.error("error: no roster file given; pass --from <path> or set contacts.importPath in config");
+          process.exitCode = 1;
+          return;
+        }
+        const filePath = resolve(fromPath);
         if (!existsSync(filePath)) {
           console.error(`error: file not found: ${filePath}`);
           process.exitCode = 1;

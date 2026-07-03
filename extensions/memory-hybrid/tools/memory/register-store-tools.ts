@@ -1357,8 +1357,11 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     requireSurnameForNewContacts: cfg.contacts.requireSurname,
                   });
                   // Structured contact profile enrichment (#2014): fill email/phone/role/board
-                  // status on the fact's single PERSON contact from the same text.
-                  storeFactsDb.applyContactProfileEnrichment(entry.id, textToStore, "ner");
+                  // status on the fact's single PERSON contact from the same text. Gated on the
+                  // contacts.profileEnrichment config toggle (default on).
+                  if (cfg.contacts.profileEnrichment) {
+                    storeFactsDb.applyContactProfileEnrichment(entry.id, textToStore, "ner");
+                  }
                 })
                 .catch((err) => {
                   const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);

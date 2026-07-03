@@ -8,6 +8,7 @@ import { runVerifyEmbeddingsSection } from "./verify/sections/embeddings.js";
 import { runVerifyLlmModelsSection } from "./verify/sections/llm-models.js";
 import { runVerifyConfigCronSection } from "./verify/sections/config-cron.js";
 import { runVerifyReconcileSection } from "./verify/sections/reconcile.js";
+import { runVerifyStorageSyncSection } from "./verify/sections/storage-sync.js";
 import { runVerifyUiIntegrationsSection } from "./verify/sections/ui-integrations.js";
 
 export async function runVerifyForCli(
@@ -22,13 +23,14 @@ export async function runVerifyForCli(
   await runVerifyConfigCronSection(state);
   await runVerifyUiIntegrationsSection(state);
   await runVerifyReconcileSection(state);
+  await runVerifyStorageSyncSection(state);
 
   // Centralized, single point of truth for the exit code: runVerifyConfigCronSection prints its
   // own summary and previously only set process.exitCode for the restartPending case, never for
   // real issues (state.allOk === false) — a CI/automation script gating on `verify`'s exit code
-  // silently passed despite genuine problems. Reconcile/UiIntegrations run AFTER ConfigCron and
-  // can also flip state.allOk to false, so this check must happen here, after every section has
-  // run, not inside any single section.
+  // silently passed despite genuine problems. Reconcile/UiIntegrations/StorageSync run AFTER
+  // ConfigCron and can also flip state.allOk to false, so this check must happen here, after
+  // every section has run, not inside any single section.
   if (!state.allOk && process.exitCode == null) {
     process.exitCode = 1;
   }

@@ -136,6 +136,26 @@ When **`graph.enabled`** is `true`, each successful **`memory_store`** also runs
 
 Agents use **`memory_directory`** (`list_contacts`, `org_view`) for **stable** contact lists and org-scoped fact ids—not for ad-hoc ranked search (use **`memory_recall`** for that). Facts stored before this feature, or imports without mentions, can be backfilled with **`openclaw hybrid-mem enrich-entities`**. See [MULTILINGUAL-SUPPORT.md](MULTILINGUAL-SUPPORT.md) and issue [#985–#987](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/985).
 
+### Structured contact profiles (#2014)
+
+NER populates **`contacts.display_name`** and weak **`primary_org_id`** heuristics, but operators also keep email, role, and board membership in facts and curated **`CONTACTS.md`** rosters. When **`contacts.profileEnrichment`** is enabled (default), each successful **`memory_store`** / auto-capture also:
+
+1. Parses email, phone, and role patterns from the fact text (reuses `extractStructuredFields` plus person-aware heuristics).
+2. **Merges** into the matched `contacts` row (fill empty fields; overwrite only when the incoming source outranks the existing `profile_updated_by`, or on import/manual supersede).
+3. Resolves partial NER names (`Daniel` → existing `Daniel Thunberg`) when there is a single unambiguous prefix match.
+
+**CLI**
+
+```bash
+openclaw hybrid-mem contacts import --from workspace/CONTACTS.md [--dry-run]
+openclaw hybrid-mem contacts sync    # re-import when CONTACTS.md mtime changes
+openclaw hybrid-mem contacts merge <fromId> <intoId>   # each arg accepts a contact id or a name
+```
+
+**Config** (`contacts` block): `profileEnrichment` (default `true`), `requireSurname` (skip single-token PERSON rows from NER unless co-mentioned org sets context), `importPath` (default for `contacts sync`). See [CONFIGURATION.md](CONFIGURATION.md#structured-contact-profiles-contacts).
+
+**`memory_directory`:** `list_contacts` includes email, role, board status, and `updated_at`; `org_view` groups people under Board / Management when `board_status` is set.
+
 **Recommendation**: Start with `autoLink: false` and manually create links using `memory_link` to establish high-quality relationships. Enable `autoLink: true` later once you have a critical mass of facts.
 
 ### Contact profile enrichment vs. NER (issue #2014)
@@ -150,10 +170,10 @@ Agents use **`memory_directory`** (`list_contacts`, `org_view`) for **stable** c
 **Entity resolution (duplicate contacts).** NER often creates near-duplicate contacts from partial names (e.g. "Daniel" and "Daniel Thunberg" as two rows). Two mechanisms address this without manual SQL:
 
 - **Auto-merge**: when NER is about to create a *new* contact and there is **exactly one** existing contact whose name is a token prefix/suffix of the new name (e.g. "Daniel" ⊂ "Daniel Thunberg"), the mention is merged into that existing contact instead of creating a duplicate — the shorter/older name is kept as an alias. Ambiguous cases (zero or 2+ candidates) are left alone.
-- **Manual merge**: `openclaw hybrid-mem contacts suggest-merges` lists remaining candidates; `openclaw hybrid-mem contacts merge <fromId> <intoId>` repoints all `fact_entity_mentions` to `intoId`, folds in `fromId`'s profile fields (manual merges always win field conflicts) and aliases, and deletes `fromId`.
+- **Manual merge**: `openclaw hybrid-mem contacts suggest-merges` lists remaining candidates; `openclaw hybrid-mem contacts merge <fromId> <intoId>` (each arg accepts a contact id or a name) repoints all `fact_entity_mentions` **and** `facts.entity_contact_id` to `intoId`, folds in `fromId`'s profile fields (manual merges always win field conflicts) and aliases, and deletes `fromId`.
 - Set `contacts.requireSurname: true` to stop NER from creating a *new* PERSON contact from a single-token surface (e.g. bare "Daniel") unless the same fact also mentions an organization — reduces one-word noise contacts at the cost of occasionally not tracking a first-name-only mention. Default `false` (matches pre-#2014 behavior).
 
-**Roster import**: `openclaw hybrid-mem contacts import --from <file> [--dry-run]` upserts organizations/contacts/roster facts from a `CONTACTS.md`-style file — see [CONFIGURATION.md](CONFIGURATION.md#contacts-profile-enrichment-2014) for the file format and the full `contacts` CLI reference.
+**Roster import**: `openclaw hybrid-mem contacts import --from <file> [--dry-run] [--no-part-of]` upserts organizations/contacts/roster facts from a `CONTACTS.md`-style file. It also stores a per-org summary roster fact and links each person's roster fact to it with a `PART_OF` edge (use `--no-part-of` to skip). See [CONFIGURATION.md](CONFIGURATION.md#contacts-profile-enrichment-2014) for the file format and the full `contacts` CLI reference.
 
 ---
 

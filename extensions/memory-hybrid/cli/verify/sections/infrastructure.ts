@@ -315,7 +315,7 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
     if (degradedState.active) {
       const WARN = noEmoji ? "[WARN]" : "⚠️";
       log(
-        `${WARN} LanceDB degraded mode is active${degradedState.reason ? ` (reason=${degradedState.reason})` : ""}. Use 'openclaw hybrid-mem repair-vectors' after connectivity/config fixes.`,
+        `${WARN} LanceDB degraded mode is active${degradedState.reason ? ` (reason=${degradedState.reason})` : ""}. Use 'openclaw hybrid-mem storage repair' after connectivity/config fixes.`,
       );
       state.warnings.push(
         `LanceDB degraded mode active${degradedState.reason ? ` (${degradedState.reason})` : ""}; vector retrieval may be unavailable`,

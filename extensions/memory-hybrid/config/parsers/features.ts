@@ -65,7 +65,13 @@ export function parseEntityExtractionConfig(cfg: Record<string, unknown>): Entit
 
 export function parseContactsConfig(cfg: Record<string, unknown>): ContactsConfig {
   const raw = cfg.contacts as Record<string, unknown> | undefined;
-  return { requireSurname: raw?.requireSurname === true };
+  const importPath =
+    typeof raw?.importPath === "string" && raw.importPath.trim() ? raw.importPath.trim() : null;
+  return {
+    profileEnrichment: raw?.profileEnrichment !== false,
+    requireSurname: raw?.requireSurname === true,
+    importPath,
+  };
 }
 
 function parseUnitInterval(value: unknown, fallback: number): number {

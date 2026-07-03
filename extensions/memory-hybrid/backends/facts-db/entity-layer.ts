@@ -573,6 +573,10 @@ export function mergeContacts(
     const mentionsRes = db
       .prepare("UPDATE fact_entity_mentions SET contact_id = ? WHERE contact_id = ?")
       .run(intoId, fromId);
+    // Repoint resolved fact→contact FKs before deleting the source row, otherwise any fact whose
+    // entity_contact_id still points at the merged-away contact is left dangling (the column has no
+    // ON DELETE cascade). See facts-db entity_contact_id writers (#2014).
+    db.prepare("UPDATE facts SET entity_contact_id = ? WHERE entity_contact_id = ?").run(intoId, fromId);
     db.prepare("DELETE FROM contacts WHERE id = ?").run(fromId);
     return { mergedFactMentions: Number(mentionsRes.changes ?? 0) };
   });
@@ -805,6 +809,21 @@ function rowToContact(row: Record<string, unknown>): ContactRow {
 export function getContactById(db: DatabaseSync, id: string): ContactRow | null {
   const row = db.prepare("SELECT * FROM contacts WHERE id = ?").get(id) as Record<string, unknown> | undefined;
   return row ? rowToContact(row) : null;
+}
+
+/**
+ * Resolve a contact query to a contact id (#2014): accepts either a raw contact id or a
+ * display-name query (matched on `normalized_key`). Returns null if it matches no contact.
+ */
+export function resolveContactId(db: DatabaseSync, query: string): string | null {
+  const trimmed = query.trim();
+  if (!trimmed) return null;
+  const byId = db.prepare("SELECT id FROM contacts WHERE id = ?").get(trimmed) as { id: string } | undefined;
+  if (byId) return byId.id;
+  const nk = normalizeEntityKey(trimmed);
+  if (!nk) return null;
+  const byKey = db.prepare("SELECT id FROM contacts WHERE normalized_key = ?").get(nk) as { id: string } | undefined;
+  return byKey?.id ?? null;
 }
 
 /** Priority order for arbitrating conflicting profile-field writes (#2014): higher wins ties. */
