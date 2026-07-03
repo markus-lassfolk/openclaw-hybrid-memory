@@ -31,7 +31,7 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
     .description("Verify plugin config, databases, and suggest fixes (run after gateway start for full checks)");
   if (verifyCommand.alias) verifyCommand.alias("preflight");
   verifyCommand
-    .option("--fix", "Print or apply default config for missing items")
+    .option("--fix", "Apply safe fixes (config, cron, storage repair when drift detected)")
     .option("--log-file <path>", "Check this log file for memory-hybrid / cron errors")
     .option("--test-llm", "Test each configured LLM model with a minimal completion (requires gateway)")
     .option(

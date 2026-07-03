@@ -20,6 +20,13 @@ import { getStaleMaintenanceJobs } from "../services/maintenance-audit-journal.j
 import { countPinnedFacts } from "../services/fact-lifecycle-verbs.js";
 import { resolvePendingErrorReportCount, isErrorReporterActive } from "../services/error-reporter.js";
 import { listQuarantinedGoalIds, resolveGoalsDir } from "../services/goal-registry.js";
+import {
+  collectStorageSyncSnapshot,
+  formatStorageSyncSummary,
+  STORAGE_OPTIMIZE_REMEDIATION,
+  STORAGE_REBUILD_ALIASES_REMEDIATION,
+  STORAGE_REPAIR_REMEDIATION,
+} from "../services/storage-sync-diagnostics.js";
 import { workspaceRootForCli } from "./config-feature-summaries.js";
 
 interface DiagnosticCheck {
@@ -36,6 +43,7 @@ export function registerDoctorCommand(
   vectorDb: VectorDB,
   wal: WriteAheadLog | null = null,
   resolvedSqlitePath?: string,
+  aliasDb: import("../services/retrieval-aliases.js").AliasDB | null = null,
 ): void {
   program
     .command("doctor")
@@ -119,27 +127,43 @@ export function registerDoctorCommand(
         });
       }
 
-      // Check 5: Database synchronization
+      // Check 5: Database synchronization (unified metrics)
       try {
-        const sqliteCount = factsDb.getCount();
-        const vectorIds = await vectorDb.getAllIds();
-        const vectorCount = vectorIds.length;
-        const diff = Math.abs(sqliteCount - vectorCount);
-        const percentDiff = (diff / Math.max(sqliteCount, 1)) * 100;
-
-        if (percentDiff < 5) {
-          checks.push({
-            name: "Database Sync",
-            status: "pass",
-            message: `SQLite and LanceDB are synchronized (±${diff} items)`,
-          });
-        } else {
+        const snapshot = await collectStorageSyncSnapshot(factsDb, vectorDb);
+        if (!snapshot) {
           checks.push({
             name: "Database Sync",
             status: "warn",
-            message: `Databases out of sync: SQLite ${sqliteCount}, LanceDB ${vectorCount}`,
-            fix: "Run: openclaw hybrid-mem verify --reconcile --fix",
+            message: "Could not collect Lance/SQLite sync metrics (LanceDB unavailable)",
+            fix: `Run: ${STORAGE_REPAIR_REMEDIATION}`,
           });
+        } else {
+          const diff = Math.abs(snapshot.sqliteActiveFacts - snapshot.lanceRowCount);
+          const percentDiff = (diff / Math.max(snapshot.sqliteActiveFacts, 1)) * 100;
+          const syncOk =
+            !snapshot.hasIdSetDrift &&
+            !snapshot.hasRowCountDrift &&
+            percentDiff < 5 &&
+            snapshot.duplicateIdExtraRows === 0;
+
+          if (syncOk) {
+            checks.push({
+              name: "Database Sync",
+              status: "pass",
+              message: `Storage aligned (${formatStorageSyncSummary(snapshot)})`,
+            });
+          } else {
+            const fixParts = ["openclaw hybrid-mem verify --reconcile --fix"];
+            if (snapshot.hasStructuralDrift) {
+              fixParts.push(STORAGE_OPTIMIZE_REMEDIATION, STORAGE_REPAIR_REMEDIATION);
+            }
+            checks.push({
+              name: "Database Sync",
+              status: "warn",
+              message: `Storage drift (${formatStorageSyncSummary(snapshot)})`,
+              fix: `Run: ${fixParts.join(" then ")}`,
+            });
+          }
         }
       } catch (_error) {
         checks.push({
@@ -147,6 +171,33 @@ export function registerDoctorCommand(
           status: "warn",
           message: "Could not check synchronization",
         });
+      }
+
+      if (cfg.aliases?.enabled && aliasDb) {
+        try {
+          const aliasDiag = await aliasDb.getLanceDiagnostics();
+          if (aliasDiag.schemaValid && aliasDiag.lanceDim === aliasDiag.configuredDim) {
+            checks.push({
+              name: "Alias Lance Index",
+              status: "pass",
+              message: `Alias Lance valid (dim=${aliasDiag.configuredDim}, rows=${aliasDiag.sqliteAliasRows})`,
+            });
+          } else {
+            const lanceDim = aliasDiag.lanceDim == null ? "unknown" : String(aliasDiag.lanceDim);
+            checks.push({
+              name: "Alias Lance Index",
+              status: "warn",
+              message: `Alias Lance mismatch (configured=${aliasDiag.configuredDim}, lance=${lanceDim}, sqliteRows=${aliasDiag.sqliteAliasRows})`,
+              fix: `Run: ${STORAGE_REBUILD_ALIASES_REMEDIATION} (--re-embed after embedding model change)`,
+            });
+          }
+        } catch (error) {
+          checks.push({
+            name: "Alias Lance Index",
+            status: "warn",
+            message: `Could not inspect alias Lance index: ${error instanceof Error ? error.message : String(error)}`,
+          });
+        }
       }
 
       // Check 6: Disk space for the memory directory/filesystem

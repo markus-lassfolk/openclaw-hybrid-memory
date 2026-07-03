@@ -14,6 +14,7 @@ import { calculateExpiry, classifyDecay } from "../../utils/decay.js";
 import { createTransaction, type SqliteTransactionBeginMode } from "../../utils/sqlite-transaction.js";
 import { normalizedHash, serializeTags } from "../../utils/tags.js";
 import { resolveEntityForeignKeys } from "./entity-layer.js";
+import { enrichContactProfileFromStoredFact } from "../../services/contact-profile.js";
 
 const SQLITE_BUSY_STORE_MAX_RETRIES = 3;
 const SQLITE_BUSY_STORE_BACKOFF_BASE_MS = 50;
@@ -141,6 +142,8 @@ export type StoreFactContext = {
    * `vectorThreshold` configured.
    */
   vectorCandidates?: ReadonlyArray<{ id: string; score: number }>;
+  /** When false, skip structured contact profile enrichment on store (#2014). */
+  contactProfileEnrichment?: boolean;
 };
 
 export type StoredFactResult = {
@@ -574,6 +577,16 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
   }
   try {
     resolveEntityForeignKeys(ctx.db, id, loaded.entity);
+  } catch {
+    /* non-fatal */
+  }
+  try {
+    enrichContactProfileFromStoredFact(
+      ctx.db,
+      id,
+      { text: loaded.text, entity: loaded.entity, key: loaded.key, value: loaded.value },
+      { enabled: ctx.contactProfileEnrichment !== false },
+    );
   } catch {
     /* non-fatal */
   }

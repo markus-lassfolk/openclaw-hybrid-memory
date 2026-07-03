@@ -55,6 +55,7 @@ import type {
   LiveChangeFeedConfig,
   DocumentsConfig,
   EntityExtractionConfig,
+  ContactsConfig,
   FrequencyCaptureConfig,
   FrustrationDetectionConfig,
   FutureDateProtectionConfig,
@@ -675,6 +676,8 @@ export type HybridMemoryConfig = {
   graph: GraphConfig;
   /** Entity extraction hygiene: suppress common-noun pseudo-entities (#1190). */
   entityExtraction: EntityExtractionConfig;
+  /** Structured contact profiles — enrichment, import, dedup (#2014). */
+  contacts: ContactsConfig;
   /** Write-Ahead Log for crash resilience (default: enabled) */
   wal: WALConfig;
   /** Memory pressure diagnostic snapshots — Issue #1551 (default: disabled). */

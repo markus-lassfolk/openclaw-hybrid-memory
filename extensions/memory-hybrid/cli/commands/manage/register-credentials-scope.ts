@@ -409,7 +409,7 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
             if (vectorCleanup.attempted > 0) {
               if (vectorCleanup.failed > 0) {
                 console.error(
-                  `Warning: vector cleanup partial — deleted ${vectorCleanup.deleted}/${vectorCleanup.attempted}, failed ${vectorCleanup.failed}. Run 'hybrid-mem repair-vectors' to reconcile.`,
+                  `Warning: vector cleanup partial — deleted ${vectorCleanup.deleted}/${vectorCleanup.attempted}, failed ${vectorCleanup.failed}. Run 'hybrid-mem storage repair' to reconcile.`,
                 );
               } else {
                 console.log(`Cleaned up ${vectorCleanup.deleted} vector(s) from LanceDB.`);
@@ -420,7 +420,7 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
               subsystem: "cli",
               operation: "scope-prune-vector-cleanup",
             });
-            console.error(`Warning: vector cleanup failed: ${err}. Run 'hybrid-mem repair-vectors' to reconcile.`);
+            console.error(`Warning: vector cleanup failed: ${err}. Run 'hybrid-mem storage repair' to reconcile.`);
           }
         }
       }),

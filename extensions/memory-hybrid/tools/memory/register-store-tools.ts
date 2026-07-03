@@ -1327,7 +1327,9 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 stopWords: cfg.entityExtraction.stopWords,
               })
                 .then(({ mentions, detectedLang }) => {
-                  storeFactsDb.applyEntityEnrichment(entry.id, mentions, detectedLang);
+                  storeFactsDb.applyEntityEnrichment(entry.id, mentions, detectedLang, {
+                    requireSurname: cfg.contacts.requireSurname,
+                  });
                 })
                 .catch((err) => {
                   const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);

@@ -25,6 +25,7 @@ import {
 } from "../../../services/vector-backend-observability.js";
 import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
 import { deleteVectorsForFactIds, reconcileOrphanVectors } from "../../../services/vector-maintenance.js";
+import { runStorageRepairPipeline } from "../../../services/storage-repair-pipeline.js";
 import type { MemoryEntry } from "../../../types/memory.js";
 import { embedCallWithTimeoutAndRetry } from "../../../utils/embed-call.js";
 import { getEnv } from "../../../utils/env-manager.js";
@@ -1530,6 +1531,55 @@ function registerManageStorageMaintenanceOnParent(
     );
 
   mem
+    .command(names.rebuildAliases)
+    .description(
+      "Rebuild alias LanceDB from SQLite fact_aliases (use --re-embed after embedding model/dimension change)",
+    )
+    .option("--re-embed", "Re-embed alias text with the current embedding model and update SQLite blobs")
+    .option("--batch-size <n>", "Embedding batch hint for progress logging (default: 100)", "100")
+    .option("--json", "Emit JSON report")
+    .action(
+      withExit(
+        maybeWrap(
+          "rebuild-aliases",
+          names.rebuildAliases,
+          async (opts?: { reEmbed?: boolean; batchSize?: string; json?: boolean }) => {
+            if (!aliasDb) {
+              console.error("error: retrieval aliases are disabled or AliasDB is unavailable");
+              process.exitCode = 1;
+              return;
+            }
+            const batchSize = parseBoundedIntOption(opts?.batchSize, 100, 1, 500);
+            const before = await aliasDb.getLanceDiagnostics();
+            const result = await aliasDb.rebuildLanceFromSqlite(embeddings, {
+              reEmbed: opts?.reEmbed === true,
+              batchSize,
+            });
+            const after = await aliasDb.getLanceDiagnostics();
+            const report = {
+              before,
+              after,
+              ...result,
+            };
+            if (opts?.json) {
+              console.log(JSON.stringify(report, null, 2));
+              return;
+            }
+            console.log(
+              `rebuild-aliases: stored=${result.stored} skipped=${result.skipped} reEmbedded=${result.reEmbedded} ` +
+                `schemaValid=${after.schemaValid} configuredDim=${after.configuredDim} lanceDim=${after.lanceDim ?? "null"}`,
+            );
+            if (result.errors.length > 0) {
+              console.warn(`Errors: ${result.errors.length}`);
+              for (const err of result.errors.slice(0, 10)) console.warn(`  - ${err}`);
+              process.exitCode = 2;
+            }
+          },
+        ),
+      ),
+    );
+
+  mem
     .command(names.repair)
     .description(
       "Run an orchestrated vector lifecycle repair pipeline: reembed-vectorless, vectordb-optimize, reconcile orphans, and print a single report.",
@@ -1547,111 +1597,21 @@ function registerManageStorageMaintenanceOnParent(
           "repair-vectors",
           names.repair,
           async (opts?: { reconcilePolicy?: string; maxFixes?: string; json?: boolean }) => {
-            const resolveRepairBudget = (
-              policy: "conservative" | "balanced" | "aggressive",
-              maxFixes: number,
-            ): number => {
-              if (policy === "conservative") return 0;
-              if (policy === "balanced") return maxFixes;
-              return Math.max(maxFixes, 2000);
-            };
             const policyRaw = String(opts?.reconcilePolicy ?? "balanced")
               .trim()
               .toLowerCase();
             const policy = policyRaw === "conservative" || policyRaw === "aggressive" ? policyRaw : "balanced";
             const maxFixes = parseBoundedIntOption(opts?.maxFixes, 200, 0, 5000);
-            const report = {
+            const report = await runStorageRepairPipeline({
+              factsDb,
+              vectorDb,
+              embeddings,
               policy,
               maxFixes,
-              startedAt: nowIso(),
-              vectorlessBefore: factsDb.countVectorlessActiveFacts(),
-              reembedded: 0,
-              optimize: { compacted: 0, removedFragments: 0, freedBytes: 0 },
-              reconcile: {
-                vectorOrphans: 0,
-                vectorOrphansDeleted: 0,
-                sqliteOrphans: 0,
-                sqliteOrphansRebuilt: 0,
-                sqliteOrphansSkipped: 0,
-              },
-              vectorlessAfter: 0,
-              errors: [] as string[],
-            };
-
-            // Step 1: reembed vectorless facts
-            const candidates = factsDb.listVectorlessActiveFacts({ limit: Math.max(200, maxFixes) });
-            const allowedRebuilds = resolveRepairBudget(policy, maxFixes);
-            for (const fact of candidates.slice(0, allowedRebuilds)) {
-              try {
-                const vec = await embeddings.embed(fact.text);
-                await vectorDb.store({
-                  id: fact.id,
-                  text: fact.text,
-                  vector: vec,
-                  importance: 0.5,
-                  category: fact.category,
-                });
-                report.reembedded++;
-              } catch (err) {
-                report.errors.push(`reembed ${fact.id}: ${String(err)}`);
-              }
-            }
-
-            // Step 2: optimize
-            try {
-              report.optimize = await vectorDb.optimize();
-            } catch (err) {
-              report.errors.push(`optimize: ${String(err)}`);
-            }
-
-            // Step 3: reconcile and policy-based self-heal
-            try {
-              const vectorIds = await vectorDb.getAllIds();
-              const vectorIdSet = new Set(vectorIds);
-              const reconcileResult = await reconcileOrphanVectors(factsDb, vectorDb, {
-                operation: "vectordb-optimize-reconcile",
-              });
-              report.reconcile.vectorOrphans = reconcileResult.orphansFound;
-              report.reconcile.vectorOrphansDeleted = reconcileResult.orphanVectorsRemoved;
-              const sqliteIds = new Set(factsDb.getAllIds());
-              const sqliteOrphans = Array.from(sqliteIds).filter((id) => !vectorIdSet.has(id));
-              report.reconcile.sqliteOrphans = sqliteOrphans.length;
-
-              const rebuildLimit = Math.min(resolveRepairBudget(policy, maxFixes), sqliteOrphans.length);
-              for (const id of sqliteOrphans.slice(0, rebuildLimit)) {
-                try {
-                  const fact = factsDb.getById(id);
-                  if (!fact) {
-                    report.reconcile.sqliteOrphansSkipped++;
-                    continue;
-                  }
-                  const vec = await embeddings.embed(fact.text);
-                  await vectorDb.store({
-                    id: fact.id,
-                    text: fact.text,
-                    vector: vec,
-                    importance: fact.importance ?? 0.5,
-                    category: fact.category,
-                  });
-                  report.reconcile.sqliteOrphansRebuilt++;
-                } catch (err) {
-                  report.errors.push(`rebuild sqlite orphan ${id}: ${String(err)}`);
-                }
-              }
-              report.reconcile.sqliteOrphansSkipped += Math.max(0, sqliteOrphans.length - rebuildLimit);
-            } catch (err) {
-              report.errors.push(`reconcile: ${String(err)}`);
-            }
-
-            report.vectorlessAfter = factsDb.countVectorlessActiveFacts();
+              operation: "storage-repair",
+              resolvedSqlitePath: ctx.resolvedSqlitePath,
+            });
             const finishedAt = nowIso();
-            if (ctx.resolvedSqlitePath) {
-              appendVectorLifecycleAuditEvent(ctx.resolvedSqlitePath, {
-                event: "repair_vectors_completed",
-                ts: finishedAt,
-                details: report as unknown as Record<string, unknown>,
-              });
-            }
             if (opts?.json) {
               console.log(JSON.stringify({ ...report, finishedAt }, null, 2));
               return;

@@ -445,7 +445,9 @@ export async function runEntityEnrichmentForCli(
           stats.llmFailuresDelta++;
         } else {
           try {
-            factsDb.applyEntityEnrichment(id, extraction.mentions, extraction.detectedLang);
+            factsDb.applyEntityEnrichment(id, extraction.mentions, extraction.detectedLang, {
+              requireSurname: cfg.contacts.requireSurname,
+            });
           } catch (err) {
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {
               operation: "entity-enrichment:apply",

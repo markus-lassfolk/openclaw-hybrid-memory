@@ -27,6 +27,7 @@ import type {
   DigestWeeklyDeliveryConfig,
   DocumentsConfig,
   EntityExtractionConfig,
+  ContactsConfig,
   FrequencyCaptureConfig,
   FrustrationDetectionConfig,
   FrustrationSignalWeights,
@@ -60,6 +61,17 @@ export function parseEntityExtractionConfig(cfg: Record<string, unknown>): Entit
       ]
     : [];
   return { stopWords };
+}
+
+export function parseContactsConfig(cfg: Record<string, unknown>): ContactsConfig {
+  const raw = cfg.contacts as Record<string, unknown> | undefined;
+  const importPath =
+    typeof raw?.importPath === "string" && raw.importPath.trim() ? raw.importPath.trim() : null;
+  return {
+    profileEnrichment: raw?.profileEnrichment !== false,
+    requireSurname: raw?.requireSurname === true,
+    importPath,
+  };
 }
 
 function parseUnitInterval(value: unknown, fallback: number): number {

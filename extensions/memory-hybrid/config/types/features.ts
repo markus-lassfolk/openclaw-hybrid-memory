@@ -5,6 +5,16 @@ export type EntityExtractionConfig = {
   stopWords: string[];
 };
 
+/** Structured contact profiles: enrichment, import, dedup (#2014). */
+export type ContactsConfig = {
+  /** Merge email/phone/role from facts into contacts on store (default true). */
+  profileEnrichment: boolean;
+  /** Require surname (or org context) before NER creates a new PERSON contact (default false). */
+  requireSurname: boolean;
+  /** Default path for `contacts sync` (e.g. workspace/CONTACTS.md). */
+  importPath: string | null;
+};
+
 /** Graph-based spreading activation: auto-linking and traversal settings */
 export type GraphConfig = {
   enabled: boolean;

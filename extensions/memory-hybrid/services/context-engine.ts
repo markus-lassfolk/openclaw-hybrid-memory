@@ -686,6 +686,38 @@ async function resolveRegisterContextEngine(
   return null;
 }
 
+function registerHybridContextEngineWithRegistrar(
+  opts: ContextEngineOptions,
+  registerContextEngine: ContextEngineRegistrar,
+): boolean {
+  const engine = new HybridMemoryContextEngine(opts);
+  registerContextEngine("hybrid-memory", () => engine);
+  opts.logger.info?.("memory-hybrid: ContextEngine registered (id=hybrid-memory)");
+  return true;
+}
+
+/**
+ * Synchronous registration when `api.registerContextEngine` is available.
+ * Prefer this during plugin `register()` to avoid a cold-start race where the
+ * host resolves the context engine before async dynamic import completes.
+ */
+export function registerHybridContextEngineSync(opts: ContextEngineOptions): boolean {
+  if (typeof opts.registerContextEngine !== "function") {
+    return false;
+  }
+
+  try {
+    return registerHybridContextEngineWithRegistrar(opts, opts.registerContextEngine);
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "context-engine",
+      operation: "register",
+    });
+    opts.logger.warn?.(`memory-hybrid: ContextEngine registration failed (non-fatal): ${err}`);
+    return false;
+  }
+}
+
 /**
  * Attempt to register HybridMemoryContextEngine with the OpenClaw plugin SDK.
  *
@@ -696,6 +728,10 @@ async function resolveRegisterContextEngine(
  * Returns true if registration succeeded, false otherwise.
  */
 export async function registerHybridContextEngine(opts: ContextEngineOptions): Promise<boolean> {
+  if (typeof opts.registerContextEngine === "function") {
+    return registerHybridContextEngineSync(opts);
+  }
+
   try {
     const registerContextEngine = await resolveRegisterContextEngine(opts.registerContextEngine);
 
@@ -709,10 +745,7 @@ export async function registerHybridContextEngine(opts: ContextEngineOptions): P
       return false;
     }
 
-    const engine = new HybridMemoryContextEngine(opts);
-    registerContextEngine("hybrid-memory", () => engine);
-    opts.logger.info?.("memory-hybrid: ContextEngine registered (id=hybrid-memory)");
-    return true;
+    return registerHybridContextEngineWithRegistrar(opts, registerContextEngine);
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "context-engine",

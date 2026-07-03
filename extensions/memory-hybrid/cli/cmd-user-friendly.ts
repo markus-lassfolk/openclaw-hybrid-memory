@@ -66,7 +66,15 @@ export function registerUserFriendlyCommands(mem: Chainable, ctx: UserFriendlyCo
   registerIfMissing(mem, "setup", () => registerSetupCommand(mem, ctx.cfg, ctx.runConfigSet));
   registerIfMissing(mem, "providers", () => registerProvidersCommand(mem, ctx.cfg));
   registerIfMissing(mem, "doctor", () =>
-    registerDoctorCommand(mem, ctx.cfg, ctx.factsDb, ctx.vectorDb, ctx.wal ?? null, ctx.resolvedSqlitePath),
+    registerDoctorCommand(
+      mem,
+      ctx.cfg,
+      ctx.factsDb,
+      ctx.vectorDb,
+      ctx.wal ?? null,
+      ctx.resolvedSqlitePath,
+      ctx.aliasDb ?? null,
+    ),
   );
   registerIfMissing(mem, "health", () =>
     registerHealthCommand(mem, ctx.cfg, ctx.factsDb, ctx.vectorDb, ctx.wal ?? null),

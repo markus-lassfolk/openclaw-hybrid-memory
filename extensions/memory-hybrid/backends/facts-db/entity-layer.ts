@@ -43,14 +43,57 @@ export type OrganizationRow = {
   aliasesJson: string | null;
 };
 
+export type ProfileUpdatedBy = "ner" | "import" | "agent" | "manual" | "fact_store";
+
 export type ContactRow = {
   id: string;
   normalizedKey: string;
   displayName: string;
   email: string | null;
+  phone: string | null;
+  mobile: string | null;
+  role: string | null;
+  boardStatus: string | null;
   notes: string | null;
   aliasesJson: string | null;
   primaryOrgId: string | null;
+  profileSource: string | null;
+  profileUpdatedBy: ProfileUpdatedBy | null;
+  updatedAt: number;
+};
+
+export type ContactProfileMergeInput = {
+  email?: string | null;
+  phone?: string | null;
+  mobile?: string | null;
+  role?: string | null;
+  boardStatus?: string | null;
+  notes?: string | null;
+  displayName?: string | null;
+  primaryOrgId?: string | null;
+  profileSource?: string | null;
+  profileUpdatedBy?: ProfileUpdatedBy;
+  /** When true, overwrite existing profile fields; otherwise fill empty only. */
+  supersede?: boolean;
+};
+
+export type ContactUpsertOptions = {
+  requireSurname?: boolean;
+  allowPrefixMatch?: boolean;
+};
+
+export type ContactUpsertResult = {
+  contactId: string | null;
+  created: boolean;
+  skipped?: boolean;
+};
+
+const PROFILE_FIELD_RANK: Record<ProfileUpdatedBy, number> = {
+  manual: 100,
+  import: 90,
+  agent: 80,
+  fact_store: 70,
+  ner: 50,
 };
 
 export type EntityEnrichmentBacklogByTier = {
@@ -313,7 +356,7 @@ export function migrateEntityLayerTables(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_fem_label ON fact_entity_mentions(label);
   `);
 
-  const version = readSchemaVersion(db, "entity_layer");
+  let version = readSchemaVersion(db, "entity_layer");
   if (version < 1) {
     runVersionedSchemaMigration(db, "entity_layer", 1, () => {
       const hasDuplicates = db
@@ -350,6 +393,22 @@ export function migrateEntityLayerTables(db: DatabaseSync): void {
     });
   }
 
+  version = readSchemaVersion(db, "entity_layer");
+  if (version < 2) {
+    runVersionedSchemaMigration(db, "entity_layer", 2, () => {
+      const cols = db.prepare("PRAGMA table_info(contacts)").all() as Array<{ name: string }>;
+      const add = (name: string, ddl: string) => {
+        if (!cols.some((c) => c.name === name)) db.exec(ddl);
+      };
+      add("phone", "ALTER TABLE contacts ADD COLUMN phone TEXT");
+      add("mobile", "ALTER TABLE contacts ADD COLUMN mobile TEXT");
+      add("role", "ALTER TABLE contacts ADD COLUMN role TEXT");
+      add("board_status", "ALTER TABLE contacts ADD COLUMN board_status TEXT");
+      add("profile_source", "ALTER TABLE contacts ADD COLUMN profile_source TEXT");
+      add("profile_updated_by", "ALTER TABLE contacts ADD COLUMN profile_updated_by TEXT");
+    });
+  }
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS org_fact_links (
       org_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -363,7 +422,7 @@ export function migrateEntityLayerTables(db: DatabaseSync): void {
   `);
 }
 
-function upsertOrganization(db: DatabaseSync, displayName: string): { id: string; created: boolean } | null {
+export function upsertOrganization(db: DatabaseSync, displayName: string): { id: string; created: boolean } | null {
   const canonicalKey = normalizeEntityKey(displayName);
   if (!canonicalKey) {
     return null;
@@ -387,6 +446,76 @@ function upsertOrganization(db: DatabaseSync, displayName: string): { id: string
      VALUES (?, ?, ?, NULL, ?, ?)`,
   ).run(id, canonicalKey, displayName.trim(), now, now);
   return { id, created: true };
+}
+
+function hasSurname(normalizedKey: string): boolean {
+  return normalizedKey.includes(" ");
+}
+
+/** Lookup contact id by normalized key or unique prefix match (read-only, no create). */
+export function findContactIdByNameQuery(db: DatabaseSync, displayName: string): string | null {
+  const nk = normalizeEntityKey(displayName);
+  if (!nk) return null;
+  const exact = db.prepare(`SELECT id FROM contacts WHERE normalized_key = ? LIMIT 1`).get(nk) as
+    | { id: string }
+    | undefined;
+  if (exact) return exact.id;
+  return findUniquePrefixContact(db, nk);
+}
+
+function findUniquePrefixContact(db: DatabaseSync, normalizedKey: string): string | null {
+  const esc = escapeLikeLiteralForBackslashEscape(normalizedKey);
+  const rows = db
+    .prepare(
+      `SELECT id, normalized_key FROM contacts
+       WHERE normalized_key = ? OR normalized_key LIKE ? ESCAPE '\\'
+       ORDER BY length(normalized_key) DESC
+       LIMIT 2`,
+    )
+    .all(normalizedKey, `${esc} %`) as Array<{ id: string; normalized_key: string }>;
+  if (rows.length === 1) return rows[0].id;
+  if (rows.length === 2 && rows.some((r) => r.normalized_key === normalizedKey)) {
+    return rows.find((r) => r.normalized_key === normalizedKey)?.id ?? null;
+  }
+  return null;
+}
+
+/** Resolve an existing contact or create one, with optional prefix dedup (#2014). */
+export function resolveContactForUpsert(
+  db: DatabaseSync,
+  displayName: string,
+  primaryOrgId: string | null,
+  options: ContactUpsertOptions = {},
+): ContactUpsertResult {
+  const nk = normalizeEntityKey(displayName);
+  if (!nk) return { contactId: null, created: false, skipped: true };
+
+  if (options.allowPrefixMatch) {
+    const prefixMatch = findUniquePrefixContact(db, nk);
+    if (prefixMatch) {
+      const now = Math.floor(Date.now() / 1000);
+      if (primaryOrgId) {
+        db.prepare(
+          "UPDATE contacts SET primary_org_id = COALESCE(primary_org_id, ?), updated_at = ?, display_name = ? WHERE id = ?",
+        ).run(primaryOrgId, now, displayName.trim(), prefixMatch);
+      } else {
+        db.prepare("UPDATE contacts SET updated_at = ?, display_name = ? WHERE id = ?").run(
+          now,
+          displayName.trim(),
+          prefixMatch,
+        );
+      }
+      return { contactId: prefixMatch, created: false };
+    }
+  }
+
+  if (options.requireSurname && !hasSurname(nk) && !primaryOrgId) {
+    return { contactId: null, created: false, skipped: true };
+  }
+
+  const upsert = upsertContact(db, displayName, primaryOrgId);
+  if (!upsert) return { contactId: null, created: false, skipped: true };
+  return { contactId: upsert.id, created: upsert.created };
 }
 
 function upsertContact(
@@ -421,10 +550,183 @@ function upsertContact(
   }
   const id = randomUUID();
   db.prepare(
-    `INSERT INTO contacts (id, normalized_key, display_name, email, notes, aliases_json, primary_org_id, created_at, updated_at)
-     VALUES (?, ?, ?, NULL, NULL, NULL, ?, ?, ?)`,
+    `INSERT INTO contacts (
+      id, normalized_key, display_name, email, phone, mobile, role, board_status, notes,
+      aliases_json, primary_org_id, profile_source, profile_updated_by, created_at, updated_at
+    ) VALUES (?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, NULL, 'ner', ?, ?)`,
   ).run(id, nk, displayName.trim(), primaryOrgId, now, now);
   return { id, created: true };
+}
+
+function parseAliases(json: string | null): string[] {
+  if (!json) return [];
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function shouldOverwriteField(
+  existingUpdatedBy: ProfileUpdatedBy | null,
+  incomingUpdatedBy: ProfileUpdatedBy,
+  supersede: boolean,
+): boolean {
+  if (supersede) return true;
+  const existingRank = existingUpdatedBy ? PROFILE_FIELD_RANK[existingUpdatedBy] : 0;
+  return PROFILE_FIELD_RANK[incomingUpdatedBy] > existingRank;
+}
+
+/** Merge structured profile fields into a contact row (#2014). */
+export function mergeContactProfileFields(
+  db: DatabaseSync,
+  contactId: string,
+  input: ContactProfileMergeInput,
+): boolean {
+  const row = db.prepare(`SELECT * FROM contacts WHERE id = ?`).get(contactId) as Record<string, unknown> | undefined;
+  if (!row) return false;
+
+  const incomingBy = input.profileUpdatedBy ?? "fact_store";
+  const supersede = input.supersede === true;
+  const existingBy = (row.profile_updated_by as ProfileUpdatedBy | null) ?? null;
+  const now = Math.floor(Date.now() / 1000);
+  let changed = false;
+
+  const next: Record<string, string | null> = {
+    email: (row.email as string | null) ?? null,
+    phone: (row.phone as string | null) ?? null,
+    mobile: (row.mobile as string | null) ?? null,
+    role: (row.role as string | null) ?? null,
+    board_status: (row.board_status as string | null) ?? null,
+    notes: (row.notes as string | null) ?? null,
+    display_name: row.display_name as string,
+    primary_org_id: (row.primary_org_id as string | null) ?? null,
+    profile_source: (row.profile_source as string | null) ?? null,
+    profile_updated_by: existingBy,
+  };
+
+  const setIf = (field: keyof ContactProfileMergeInput, column: keyof typeof next): void => {
+    const value = input[field];
+    if (value == null || value === "") return;
+    const current = next[column];
+    if (current && !shouldOverwriteField(existingBy, incomingBy, supersede)) return;
+    if (current !== value) {
+      next[column] = String(value);
+      changed = true;
+    }
+  };
+
+  setIf("email", "email");
+  setIf("phone", "phone");
+  setIf("mobile", "mobile");
+  setIf("role", "role");
+  setIf("boardStatus", "board_status");
+  setIf("notes", "notes");
+  setIf("displayName", "display_name");
+  if (input.primaryOrgId && (!next.primary_org_id || supersede)) {
+    next.primary_org_id = input.primaryOrgId;
+    changed = true;
+  }
+  if (input.profileSource) {
+    next.profile_source = input.profileSource;
+    changed = true;
+  }
+  if (changed) {
+    next.profile_updated_by = incomingBy;
+    db.prepare(
+      `UPDATE contacts SET
+        email = ?, phone = ?, mobile = ?, role = ?, board_status = ?, notes = ?,
+        display_name = ?, primary_org_id = ?, profile_source = ?, profile_updated_by = ?, updated_at = ?
+       WHERE id = ?`,
+    ).run(
+      next.email,
+      next.phone,
+      next.mobile,
+      next.role,
+      next.board_status,
+      next.notes,
+      next.display_name,
+      next.primary_org_id,
+      next.profile_source,
+      next.profile_updated_by,
+      now,
+      contactId,
+    );
+  }
+  return changed;
+}
+
+function resolveContactId(db: DatabaseSync, query: string): string | null {
+  const trimmed = query.trim();
+  if (!trimmed) return null;
+  const byId = db.prepare(`SELECT id FROM contacts WHERE id = ?`).get(trimmed) as { id: string } | undefined;
+  if (byId) return byId.id;
+  const nk = normalizeEntityKey(trimmed);
+  const byKey = db.prepare(`SELECT id FROM contacts WHERE normalized_key = ?`).get(nk) as { id: string } | undefined;
+  return byKey?.id ?? null;
+}
+
+export type MergeContactsSummary = {
+  canonicalId: string;
+  duplicateId: string;
+  mentionsReassigned: number;
+  factsReassigned: number;
+  mergedAliases: string[];
+};
+
+/** Merge duplicate contact rows; reassign mentions and entity FKs (#2014). */
+export function mergeContacts(db: DatabaseSync, canonicalQuery: string, duplicateQuery: string): MergeContactsSummary {
+  const canonicalId = resolveContactId(db, canonicalQuery);
+  const duplicateId = resolveContactId(db, duplicateQuery);
+  if (!canonicalId || !duplicateId) {
+    throw new Error("mergeContacts: canonical and duplicate contacts must resolve to existing rows");
+  }
+  if (canonicalId === duplicateId) {
+    throw new Error("mergeContacts: canonical and duplicate must be different contacts");
+  }
+
+  const canonical = db.prepare(`SELECT * FROM contacts WHERE id = ?`).get(canonicalId) as Record<string, unknown>;
+  const duplicate = db.prepare(`SELECT * FROM contacts WHERE id = ?`).get(duplicateId) as Record<string, unknown>;
+
+  mergeContactProfileFields(db, canonicalId, {
+    email: (duplicate.email as string | null) ?? null,
+    phone: (duplicate.phone as string | null) ?? null,
+    mobile: (duplicate.mobile as string | null) ?? null,
+    role: (duplicate.role as string | null) ?? null,
+    boardStatus: (duplicate.board_status as string | null) ?? null,
+    notes: (duplicate.notes as string | null) ?? null,
+    displayName: (duplicate.display_name as string) ?? null,
+    primaryOrgId: (duplicate.primary_org_id as string | null) ?? null,
+    profileSource: (duplicate.profile_source as string | null) ?? "merge",
+    profileUpdatedBy: "manual",
+    supersede: false,
+  });
+
+  const aliases = new Set(parseAliases((canonical.aliases_json as string | null) ?? null));
+  aliases.add(duplicate.display_name as string);
+  aliases.add(duplicate.normalized_key as string);
+  db.prepare(`UPDATE contacts SET aliases_json = ?, updated_at = ? WHERE id = ?`).run(
+    JSON.stringify([...aliases]),
+    Math.floor(Date.now() / 1000),
+    canonicalId,
+  );
+
+  const mentions = db
+    .prepare(`UPDATE fact_entity_mentions SET contact_id = ? WHERE contact_id = ?`)
+    .run(canonicalId, duplicateId);
+  const facts = db
+    .prepare(`UPDATE facts SET entity_contact_id = ? WHERE entity_contact_id = ?`)
+    .run(canonicalId, duplicateId);
+  db.prepare(`DELETE FROM contacts WHERE id = ?`).run(duplicateId);
+
+  return {
+    canonicalId,
+    duplicateId,
+    mentionsReassigned: mentions.changes ?? 0,
+    factsReassigned: facts.changes ?? 0,
+    mergedAliases: [...aliases],
+  };
 }
 
 export function replaceFactEntityMentions(
@@ -440,7 +742,7 @@ export function replaceFactEntityMentions(
     detectedLang: string | null;
     source: string;
   }>,
-  options: { preserveEnrichmentTimestamp?: boolean } = {},
+  options: { preserveEnrichmentTimestamp?: boolean; requireSurname?: boolean; allowContactPrefixMatch?: boolean } = {},
 ): void {
   const tx = createTransaction(db, () => {
     db.prepare("DELETE FROM fact_entity_mentions WHERE fact_id = ?").run(factId);
@@ -474,10 +776,13 @@ export function replaceFactEntityMentions(
           insOrgLink.run(org.id, factId, now);
         }
       } else if (m.label === "PERSON") {
-        const con = upsertContact(db, m.surfaceText, null);
-        if (con) {
-          contactId = con.id;
-          personRows.push({ surface: m.surfaceText, contactId: con.id });
+        const con = resolveContactForUpsert(db, m.surfaceText, null, {
+          requireSurname: options.requireSurname === true,
+          allowPrefixMatch: options.allowContactPrefixMatch !== false,
+        });
+        if (con.contactId) {
+          contactId = con.contactId;
+          personRows.push({ surface: m.surfaceText, contactId: con.contactId });
         }
       }
 
@@ -515,6 +820,11 @@ export function replaceFactEntityMentions(
     }
   });
   tx();
+}
+
+export function getContactById(db: DatabaseSync, contactId: string): ContactRow | null {
+  const row = db.prepare(`SELECT * FROM contacts WHERE id = ?`).get(contactId) as Record<string, unknown> | undefined;
+  return row ? rowToContact(row) : null;
 }
 
 export function getOrganizationByKeyOrName(db: DatabaseSync, query: string): OrganizationRow | null {
@@ -584,9 +894,16 @@ function rowToContact(row: Record<string, unknown>): ContactRow {
     normalizedKey: row.normalized_key as string,
     displayName: row.display_name as string,
     email: (row.email as string | null) ?? null,
+    phone: (row.phone as string | null) ?? null,
+    mobile: (row.mobile as string | null) ?? null,
+    role: (row.role as string | null) ?? null,
+    boardStatus: (row.board_status as string | null) ?? null,
     notes: (row.notes as string | null) ?? null,
     aliasesJson: (row.aliases_json as string | null) ?? null,
     primaryOrgId: (row.primary_org_id as string | null) ?? null,
+    profileSource: (row.profile_source as string | null) ?? null,
+    profileUpdatedBy: (row.profile_updated_by as ProfileUpdatedBy | null) ?? null,
+    updatedAt: Number(row.updated_at ?? 0),
   };
 }
 

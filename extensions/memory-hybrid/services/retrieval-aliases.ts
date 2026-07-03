@@ -147,6 +147,76 @@ class AliasVectorIndex {
     return this.schemaValid;
   }
 
+  getConfiguredVectorDim(): number {
+    return this.vectorDim;
+  }
+
+  async getSchemaDiagnostics(): Promise<{
+    schemaValid: boolean;
+    configuredDim: number;
+    lanceDim: number | null;
+  }> {
+    await this.ensureInitialized();
+    let lanceDim: number | null = null;
+    try {
+      const schema = await this.table?.schema();
+      const vectorField = schema?.fields.find(
+        (f: { type?: { typeId?: number; listSize?: number } }) =>
+          typeof f.type?.typeId === "number" && f.type.typeId === 16,
+      );
+      const actualDim = (vectorField?.type as { listSize?: number } | undefined)?.listSize;
+      if (typeof actualDim === "number") lanceDim = actualDim;
+    } catch {
+      /* best-effort */
+    }
+    return {
+      schemaValid: this.schemaValid,
+      configuredDim: this.vectorDim,
+      lanceDim,
+    };
+  }
+
+  async replaceAllRows(
+    rows: Array<{ id: string; factId: string; aliasText: string; vector: number[] }>,
+  ): Promise<number> {
+    if (this.closed) {
+      throw new Error("AliasVectorIndex is closed");
+    }
+    if (!this.db) {
+      this.db = await lancedb.connect(this.dbPath);
+    }
+    const tables = await this.db.tableNames();
+    if (tables.includes(ALIAS_LANCE_TABLE)) {
+      try {
+        await this.db.dropTable(ALIAS_LANCE_TABLE);
+      } catch (err) {
+        if (!(err instanceof Error) || !/not found/i.test(err.message)) {
+          throw err;
+        }
+      }
+    }
+    this.table = null;
+    this.schemaValid = true;
+    this.initPromise = null;
+    await this.doInitialize();
+    if (rows.length === 0) return 0;
+
+    const batchSize = 200;
+    let stored = 0;
+    for (let offset = 0; offset < rows.length; offset += batchSize) {
+      const batch = rows.slice(offset, offset + batchSize).map((entry) => ({
+        id: entry.id,
+        factId: entry.factId.toLowerCase(),
+        aliasText: entry.aliasText,
+        vector: entry.vector,
+        createdAt: Math.floor(Date.now() / 1000),
+      }));
+      await this.getTable().add(batch);
+      stored += batch.length;
+    }
+    return stored;
+  }
+
   private getTable(): lancedb.Table {
     if (!this.table) {
       throw new Error("AliasVectorIndex not initialized. Call ensureInitialized() first.");
@@ -461,6 +531,115 @@ export class AliasDB {
       .map(([factId, score]) => ({ factId, score }))
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);
+  }
+
+  getConfiguredVectorDim(): number {
+    return this.aliasIndex.getConfiguredVectorDim();
+  }
+
+  async getLanceDiagnostics(): Promise<{
+    schemaValid: boolean;
+    configuredDim: number;
+    lanceDim: number | null;
+    sqliteAliasRows: number;
+  }> {
+    if (this.sqliteClosed) {
+      return {
+        schemaValid: false,
+        configuredDim: this.aliasIndex.getConfiguredVectorDim(),
+        lanceDim: null,
+        sqliteAliasRows: 0,
+      };
+    }
+    const lance = await this.aliasIndex.getSchemaDiagnostics();
+    return {
+      ...lance,
+      sqliteAliasRows: this.count(),
+    };
+  }
+
+  /**
+   * Rebuild alias LanceDB from SQLite `fact_aliases` rows (optionally re-embedding alias text).
+   */
+  async rebuildLanceFromSqlite(
+    embeddings: EmbeddingProvider,
+    opts?: { reEmbed?: boolean; batchSize?: number },
+  ): Promise<{ stored: number; skipped: number; reEmbedded: number; errors: string[] }> {
+    if (this.sqliteClosed) {
+      throw new Error("AliasDB is closed");
+    }
+    if (!this.tryEnter()) {
+      throw new Error("AliasDB is closing");
+    }
+
+    const configuredDim = this.getConfiguredVectorDim();
+    const batchSize = Math.max(1, opts?.batchSize ?? 100);
+    const rowsForLance: Array<{ id: string; factId: string; aliasText: string; vector: number[] }> = [];
+    let skipped = 0;
+    let reEmbedded = 0;
+    const errors: string[] = [];
+
+    try {
+      const stmt = this.db.prepare("SELECT id, factId, aliasText, embedding FROM fact_aliases");
+      const pendingUpdates: Array<{ id: string; factId: string; aliasText: string; vector: number[] }> = [];
+
+      for (const row of stmt.iterate() as Iterable<{ id: string; factId: string; aliasText: string; embedding: Buffer }>) {
+        let vector: number[] | null = null;
+        if (!opts?.reEmbed && row.embedding.byteLength % 4 === 0) {
+          const floats = new Float32Array(
+            row.embedding.buffer.slice(row.embedding.byteOffset, row.embedding.byteOffset + row.embedding.byteLength),
+          );
+          if (floats.length === configuredDim) {
+            vector = Array.from(floats);
+          }
+        }
+        if (vector == null) {
+          if (!opts?.reEmbed) {
+            skipped++;
+            continue;
+          }
+          try {
+            vector = await embeddings.embed(row.aliasText);
+            reEmbedded++;
+            pendingUpdates.push({
+              id: row.id,
+              factId: row.factId,
+              aliasText: row.aliasText,
+              vector,
+            });
+          } catch (err) {
+            errors.push(`re-embed ${row.id}: ${String(err)}`);
+            skipped++;
+            continue;
+          }
+        }
+        rowsForLance.push({
+          id: row.id,
+          factId: row.factId,
+          aliasText: row.aliasText,
+          vector,
+        });
+      }
+
+      if (opts?.reEmbed) {
+        for (const update of pendingUpdates) {
+          try {
+            const floatArray = Float32Array.from(update.vector);
+            const blob = Buffer.from(floatArray.buffer.slice(0));
+            this.db
+              .prepare("UPDATE fact_aliases SET embedding = ? WHERE id = ?")
+              .run(blob, update.id);
+          } catch (err) {
+            errors.push(`sqlite update ${update.id}: ${String(err)}`);
+          }
+        }
+      }
+
+      const stored = await this.aliasIndex.replaceAllRows(rowsForLance);
+      return { stored, skipped, reEmbedded, errors };
+    } finally {
+      this.leave();
+    }
   }
 
   /**

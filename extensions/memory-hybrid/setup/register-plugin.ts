@@ -570,6 +570,18 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
 
   const runtime = newRuntime;
 
+  // ContextEngine Plugin Slot (Issue #273) — register immediately after runtime bootstrap
+  // so the host's first resolve attempt wins the cold-start race (before tools/CLI/hooks).
+  registerContextEngineBestEffort({
+    runtime,
+    logger: logApi.logger,
+    pluginVersion: versionInfo.pluginVersion,
+    registerContextEngine:
+      typeof api.registerContextEngine === "function"
+        ? api.registerContextEngine.bind(api)
+        : undefined,
+  });
+
   // Phase 2.6 / Phase 3: Single plugin context satisfying MemoryPluginAPI (stable internal API).
   const pluginContext: MemoryPluginAPI = {
     factsDb: runtime.factsDb,
@@ -681,18 +693,6 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     });
     throw err;
   }
-
-  // ContextEngine Plugin Slot (Issue #273) -- feature-detected, non-fatal if unavailable
-
-  registerContextEngineBestEffort({
-    runtime,
-    logger: logApi.logger,
-    pluginVersion: versionInfo.pluginVersion,
-    registerContextEngine:
-      typeof api.registerContextEngine === "function"
-        ? api.registerContextEngine.bind(api)
-        : undefined,
-  });
 
   // Lifecycle Hooks (issueStore may be null; issue-related behavior is gated inside hooks)
   try {

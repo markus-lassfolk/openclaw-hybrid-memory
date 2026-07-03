@@ -80,10 +80,14 @@ export function registerDirectoryTools(runtime: MemoryToolRuntime): void {
           if (operation === "list_contacts") {
             const prefix = typeof params.name_prefix === "string" ? params.name_prefix : "";
             const rows = factsDb.listContactsByNamePrefix(prefix, cap);
-            const lines = rows.map(
-              (c) =>
-                `- ${c.displayName} (id=${c.id})${c.primaryOrgId ? ` [org: ${c.primaryOrgId}]` : ""}${c.email ? ` email=${c.email}` : ""}`,
-            );
+            const lines = rows.map((c) => {
+              const org = c.primaryOrgId ? ` org=${c.primaryOrgId}` : "";
+              const email = c.email ? ` email=${c.email}` : "";
+              const role = c.role ? ` role=${c.role}` : "";
+              const board = c.boardStatus ? ` board=${c.boardStatus}` : "";
+              const updated = c.updatedAt ? ` updated=${c.updatedAt}` : "";
+              return `- ${c.displayName} (id=${c.id})${org}${email}${role}${board}${updated}`;
+            });
             return {
               content: [
                 {
@@ -116,13 +120,28 @@ export function registerDirectoryTools(runtime: MemoryToolRuntime): void {
             }
             const people = factsDb.listContactsForOrganization(org.id, cap);
             const factIds = factsDb.listFactIdsLinkedToOrg(org.id, cap);
+            const boardPeople = people.filter((p) => p.boardStatus === "board");
+            const mgmtPeople = people.filter((p) => p.boardStatus === "management");
+            const otherPeople = people.filter((p) => p.boardStatus !== "board" && p.boardStatus !== "management");
+            const formatPerson = (p: (typeof people)[number]) =>
+              `- ${p.displayName} (id=${p.id})${p.email ? ` email=${p.email}` : ""}${p.role ? ` role=${p.role}` : ""}`;
+            const peopleLines = [
+              ...(boardPeople.length
+                ? [`Board (${boardPeople.length}):`, ...boardPeople.map(formatPerson)]
+                : []),
+              ...(mgmtPeople.length
+                ? [`Management (${mgmtPeople.length}):`, ...mgmtPeople.map(formatPerson)]
+                : []),
+              ...(otherPeople.length
+                ? [`Other (${otherPeople.length}):`, ...otherPeople.map(formatPerson)]
+                : []),
+            ];
             const factSummaries = factIds.map((id) => {
               const f = factsDb.getById(id);
               return f
                 ? { id: f.id, text: f.text.slice(0, 240), category: f.category }
                 : { id, text: "(missing)", category: "?" };
             });
-            const peopleLines = people.map((p) => `- ${p.displayName} (contact id=${p.id})`);
             const factLines = factSummaries.map((f) => `- [${f.id}] ${f.text}${f.text.length >= 240 ? "…" : ""}`);
             return {
               content: [

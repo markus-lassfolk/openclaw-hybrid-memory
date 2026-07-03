@@ -1,5 +1,9 @@
 import type { PluginRuntime } from "../api/plugin-runtime.js";
-import type { ContextEngineRegistrar } from "../services/context-engine.js";
+import {
+  registerHybridContextEngine,
+  registerHybridContextEngineSync,
+  type ContextEngineRegistrar,
+} from "../services/context-engine.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
 type ContextEngineRegistrationRuntime = Pick<
@@ -7,50 +11,58 @@ type ContextEngineRegistrationRuntime = Pick<
   "factsDb" | "vectorDb" | "wal" | "embeddings" | "cfg" | "injectedFactIdsBySession"
 >;
 
-type ContextEngineRegistrar = (opts: {
-  factsDb: ContextEngineRegistrationRuntime["factsDb"];
-  vectorDb: ContextEngineRegistrationRuntime["vectorDb"];
-  wal: ContextEngineRegistrationRuntime["wal"];
-  embeddings: ContextEngineRegistrationRuntime["embeddings"];
-  cfg: ContextEngineRegistrationRuntime["cfg"];
-  injectedFactIdsBySession: ContextEngineRegistrationRuntime["injectedFactIdsBySession"];
+function buildContextEngineOptions(args: {
+  runtime: ContextEngineRegistrationRuntime;
   logger: { warn?: (message: string) => void };
   pluginVersion: string;
-}) => unknown;
+  registerContextEngine?: ContextEngineRegistrar;
+}) {
+  const { runtime, logger, pluginVersion, registerContextEngine } = args;
+  return {
+    factsDb: runtime.factsDb,
+    vectorDb: runtime.vectorDb,
+    wal: runtime.wal,
+    embeddings: runtime.embeddings,
+    cfg: runtime.cfg,
+    injectedFactIdsBySession: runtime.injectedFactIdsBySession,
+    logger,
+    pluginVersion,
+    registerContextEngine,
+  };
+}
 
-type ContextEngineLoader = () => Promise<{
-  registerHybridContextEngine: ContextEngineRegistrar;
-}>;
+function reportContextEngineRegistrationFailure(
+  err: unknown,
+  logger: { warn?: (message: string) => void },
+): void {
+  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+    subsystem: "registration",
+    operation: "plugin-register:context-engine",
+  });
+  logger.warn?.(`memory-hybrid: ContextEngine registration skipped: ${err}`);
+}
 
 export function registerContextEngineBestEffort(args: {
   runtime: ContextEngineRegistrationRuntime;
   logger: { warn?: (message: string) => void };
   pluginVersion: string;
   registerContextEngine?: ContextEngineRegistrar;
-  loadContextEngine?: ContextEngineLoader;
 }): void {
-  const { runtime, logger, pluginVersion, registerContextEngine } = args;
-  const loadContextEngine = args.loadContextEngine ?? (() => import("../services/context-engine.js"));
+  const opts = buildContextEngineOptions(args);
 
-  void loadContextEngine()
-    .then(({ registerHybridContextEngine }) =>
-      registerHybridContextEngine({
-        factsDb: runtime.factsDb,
-        vectorDb: runtime.vectorDb,
-        wal: runtime.wal,
-        embeddings: runtime.embeddings,
-        cfg: runtime.cfg,
-        injectedFactIdsBySession: runtime.injectedFactIdsBySession,
-        logger,
-        pluginVersion,
-        registerContextEngine,
-      }),
-    )
-    .catch((err: unknown) => {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "registration",
-        operation: "plugin-register:context-engine",
-      });
-      logger.warn?.(`memory-hybrid: ContextEngine registration skipped: ${err}`);
-    });
+  // Sync path: host exposes api.registerContextEngine — register before tools/CLI/hooks
+  // so the first host resolve attempt sees hybrid-memory (cold-start race #273).
+  if (typeof args.registerContextEngine === "function") {
+    try {
+      registerHybridContextEngineSync(opts);
+    } catch (err: unknown) {
+      reportContextEngineRegistrationFailure(err, args.logger);
+    }
+    return;
+  }
+
+  // Async fallback for older hosts that only export registerContextEngine from the SDK.
+  void registerHybridContextEngine(opts).catch((err: unknown) => {
+    reportContextEngineRegistrationFailure(err, args.logger);
+  });
 }

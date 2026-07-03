@@ -70,7 +70,9 @@ import {
   listFactIdsForOrg as entityLayerListFactIdsForOrg,
   listFactsNeedingEnrichment as entityLayerListFactsNeedingEnrichment,
   getOrganizationByKeyOrName as lookupOrganizationByKeyOrName,
+  mergeContacts as mergeContactsImpl,
   replaceFactEntityMentions,
+  type MergeContactsSummary,
 } from "./entity-layer.js";
 import {
   deleteEpisode as deleteEpisodeImpl,
@@ -538,7 +540,12 @@ export class FactsDB extends FactsDBLayer2 {
   // --- Entity layer: NER mentions, organizations, contacts (#985–#987) ---
 
   /** Replace stored NER rows for a fact (typically after LLM extraction). */
-  applyEntityEnrichment(factId: string, mentions: ExtractedMention[], detectedLang: string): void {
+  applyEntityEnrichment(
+    factId: string,
+    mentions: ExtractedMention[],
+    detectedLang: string,
+    options?: { requireSurname?: boolean; allowContactPrefixMatch?: boolean },
+  ): void {
     runWithSqliteBusyRetry(this.liveDb, () =>
       replaceFactEntityMentions(
         this.liveDb,
@@ -553,8 +560,16 @@ export class FactsDB extends FactsDBLayer2 {
           detectedLang,
           source: "llm",
         })),
+        {
+          requireSurname: options?.requireSurname === true,
+          allowContactPrefixMatch: options?.allowContactPrefixMatch !== false,
+        },
       ),
     );
+  }
+
+  mergeContacts(canonicalQuery: string, duplicateQuery: string): MergeContactsSummary {
+    return mergeContactsImpl(this.liveDb, canonicalQuery, duplicateQuery);
   }
 
   /** Resolve an organization by canonical key or fuzzy display name. */
