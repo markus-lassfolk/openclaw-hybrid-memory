@@ -117,8 +117,8 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | `credentials prune [--yes] [--only-flags ...]` | Remove flagged entries (default: dry-run; use `--yes` to apply). |
 | `contacts list [--prefix <name>] [--limit <n>] [--json]` | List contacts (id, name, role, org, email). Issue #2014. |
 | `contacts suggest-merges [--json]` | List unambiguous partial-name duplicate candidates (e.g. "Daniel" vs. "Daniel Thunberg"). |
-| `contacts merge <fromId> <intoId>` | Merge `fromId` into `intoId`: repoints NER mentions, folds in profile fields (manual wins conflicts), deletes `fromId`. |
-| `contacts import [--from <path>] [--dry-run] [--embed]` | Upsert organizations/contacts/roster facts from a `CONTACTS.md`-style roster file. Idempotent. `--from` defaults to `contacts.importPath`; `--embed` is a no-op (roster facts embed via the normal store path). See [CONFIGURATION.md](CONFIGURATION.md#contacts-profile-enrichment-2014) for the file format. |
+| `contacts merge <fromId> <intoId>` | Merge `fromId` into `intoId` (each arg accepts a contact id **or** a name): repoints NER mentions and `entity_contact_id` FKs, folds in profile fields (manual wins conflicts), deletes `fromId`. |
+| `contacts import [--from <path>] [--dry-run] [--embed] [--no-part-of]` | Upsert organizations/contacts/roster facts from a `CONTACTS.md`-style roster file (plus a per-org summary roster fact and `PART_OF` links from each person's roster fact to it). Idempotent. `--from` defaults to `contacts.importPath`; `--embed` is a no-op (roster facts embed via the normal store path); `--no-part-of` skips the PART_OF links. See [CONFIGURATION.md](CONFIGURATION.md#contacts-profile-enrichment-2014) for the file format. |
 | `contacts sync [--from <path>] [--force]` | Re-run `contacts import` only if the file's mtime changed since the last sync. `--from` defaults to `contacts.importPath`. |
 | `scope list` | List all scopes present in memory (from facts). |
 | `scope stats` | Show fact counts by scope (global, user, agent, session). |

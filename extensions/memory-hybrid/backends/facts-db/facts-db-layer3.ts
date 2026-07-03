@@ -79,6 +79,7 @@ import {
   listFactsNeedingEnrichment as entityLayerListFactsNeedingEnrichment,
   getOrganizationByKeyOrName as lookupOrganizationByKeyOrName,
   mergeContacts as entityLayerMergeContacts,
+  resolveContactId as entityLayerResolveContactId,
   replaceFactEntityMentions,
   upsertContact as entityLayerUpsertContact,
   upsertOrganization as entityLayerUpsertOrganization,
@@ -635,6 +636,11 @@ export class FactsDB extends FactsDBLayer2 {
 
   getContactById(id: string): ContactRow | null {
     return entityLayerGetContactById(this.liveDb, id);
+  }
+
+  /** Resolve a contact id or display-name query to a contact id (`contacts merge` CLI). */
+  resolveContactId(query: string): string | null {
+    return entityLayerResolveContactId(this.liveDb, query);
   }
 
   getOrganizationById(id: string): OrganizationRow | null {

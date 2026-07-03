@@ -811,6 +811,21 @@ export function getContactById(db: DatabaseSync, id: string): ContactRow | null 
   return row ? rowToContact(row) : null;
 }
 
+/**
+ * Resolve a contact query to a contact id (#2014): accepts either a raw contact id or a
+ * display-name query (matched on `normalized_key`). Returns null if it matches no contact.
+ */
+export function resolveContactId(db: DatabaseSync, query: string): string | null {
+  const trimmed = query.trim();
+  if (!trimmed) return null;
+  const byId = db.prepare("SELECT id FROM contacts WHERE id = ?").get(trimmed) as { id: string } | undefined;
+  if (byId) return byId.id;
+  const nk = normalizeEntityKey(trimmed);
+  if (!nk) return null;
+  const byKey = db.prepare("SELECT id FROM contacts WHERE normalized_key = ?").get(nk) as { id: string } | undefined;
+  return byKey?.id ?? null;
+}
+
 /** Priority order for arbitrating conflicting profile-field writes (#2014): higher wins ties. */
 const CONTACT_SOURCE_PRIORITY: Record<string, number> = { manual: 3, agent: 2, import: 2, ner: 1 };
 
