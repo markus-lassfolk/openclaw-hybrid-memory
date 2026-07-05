@@ -23,6 +23,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.52] - 2026-07-05
+
+### Fixed
+
+- **`--include`/`--force` skip-check had a blind spot for a wrong-tier or misspelled step name:** the #2031 fix in `maintenance cycle/nightly/full --include x --force` filtered the orchestrator's step results down to the requested names before checking whether any of them ran; a name that belongs to a tier not requested (e.g. `cycle --include <nightly-only-step> --force`) or that `--exclude` also removed never produces a result at all, so the filtered list was empty and the check silently never fired — reintroducing the exact false-success bug #2031 closed, just one step quieter. The check now looks up each requested name individually and reports a step with no result as "no result (wrong tier, excluded, or unregistered runner)".
+- **`--max-runtime-min 0` deferred every step instead of running with no budget:** `"0"` is a truthy, finite numeric string, so it produced a zero-minute `maxRuntimeMs`, which the orchestrator's "time budget exceeded" check treats as already exceeded before the first step starts — deferring every step, including the one a `maintenance step <name>` invocation was meant to run. A non-positive `--max-runtime-min` is now treated the same as "no budget", consistent with how a non-positive guard interval is already treated elsewhere in the orchestrator.
+- **`passive-observer` per-session progress could flood the maintenance log:** the #2032 progress line logged unconditionally for every session with unread content; a multi-agent backlog could emit hundreds of lines in one run. Progress is now throttled to the same ~60s cadence as the orchestrator's existing per-step heartbeat.
+
+### Changed
+
+- Lock-owner detail (pid/host/held-duration/staleness/path) was formatted independently in the orchestrator's `skipped_guard` summary and in `maintenance status`'s lock listing; both now call a single shared `formatStepLockDetail()` in `cron-guard.ts` so the two surfaces can't drift out of sync.
+- Corrected `maintenance status`'s `-v, --verbose` option description: active/stale maintenance locks are (and always were) shown unconditionally whenever present, not gated behind `--verbose` as the earlier wording implied — only the "no strict findings" log-health detail line is verbose-gated.
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.7.52**.
+
+---
+
 ## [2026.7.51] - 2026-07-05
 
 ### Fixed

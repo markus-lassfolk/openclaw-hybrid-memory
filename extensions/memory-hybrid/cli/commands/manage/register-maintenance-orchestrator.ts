@@ -60,9 +60,15 @@ export function registerMaintenanceOrchestratorCommands(maintenance: Chainable, 
       backfillDecayMarker: backfillMarker,
       scanOverrides: { force: opts?.force, full: opts?.full },
     });
+    // `> 0` (not just finite) — "0" is a truthy, finite string that would otherwise produce a
+    // zero-minute budget, which the orchestrator's `elapsed >= maxRuntimeMs` check treats as
+    // already-exceeded before the first step runs, deferring every step including the one the
+    // operator asked for. Treat a non-positive value the same as "no budget", consistent with
+    // guardIntervalMs <= 0 meaning "always eligible" elsewhere in this file.
+    const parsedMaxRuntimeMin = opts?.maxRuntimeMin ? Number(opts.maxRuntimeMin) : undefined;
     const maxRuntimeMs =
-      opts?.maxRuntimeMin && Number.isFinite(Number(opts.maxRuntimeMin))
-        ? Number(opts.maxRuntimeMin) * 60_000
+      parsedMaxRuntimeMin !== undefined && Number.isFinite(parsedMaxRuntimeMin) && parsedMaxRuntimeMin > 0
+        ? parsedMaxRuntimeMin * 60_000
         : undefined;
 
     const isJsonMode = opts?.json || !!opts?.summaryOut?.trim() || !!process.env.HM_SUMMARY?.trim();
@@ -119,12 +125,23 @@ export function registerMaintenanceOrchestratorCommands(maintenance: Chainable, 
     // (which can legitimately skip by cadence) keeps its existing exit-0-on-skip behavior.
     const includeNames = parseStepList(opts?.include);
     if ((opts?.force || opts?.full) && includeNames?.length && !opts?.allowSkip) {
-      const selected = result.steps.filter((s) => includeNames.includes(s.name));
-      const didNotRun = selected.length > 0 && selected.every((s) => s.status.startsWith("skipped"));
+      // Look up each requested name individually rather than filtering result.steps down to the
+      // matches — a name that belongs to a tier not requested (e.g. `cycle --include <nightly-step>
+      // --force`) or that --exclude also removed never produces a step result at all, so it would
+      // otherwise vanish from `selected` entirely and slip past the "every(...)" check below with a
+      // false "didn't run" report never firing (an even quieter version of the bug #2031 closes).
+      const requested = includeNames.map((name) => ({ name, result: result.steps.find((s) => s.name === name) }));
+      const didNotRun = requested.every((r) => !r.result || r.result.status.startsWith("skipped"));
       if (didNotRun) {
+        const detail = requested
+          .map((r) =>
+            r.result
+              ? `${r.name}: ${r.result.status} — ${r.result.summary}`
+              : `${r.name}: no result (wrong tier, excluded, or unregistered runner)`,
+          )
+          .join("; ");
         console.error(
-          `maintenance ${result.tierLabel}: selected step(s) did not run ` +
-            `(${selected.map((s) => `${s.name}: ${s.status} — ${s.summary}`).join("; ")}). ` +
+          `maintenance ${result.tierLabel}: selected step(s) did not run (${detail}). ` +
             "Pass --allow-skip to treat this as a non-strict status check.",
         );
         if (!process.exitCode) process.exitCode = 3;

@@ -57,7 +57,10 @@ export function registerMaintenanceHealthCommands(maintenance: Chainable, cfg: H
     .command("status")
     .description("Show maintenance cron job health: nightly cycle, weekly backup, and any reliability issues.")
     .option("--json", "Output as JSON")
-    .option("-v, --verbose", "Also show per-finding log-health detail and active/stale maintenance locks")
+    .option(
+      "-v, --verbose",
+      "Also show log-health detail when there are no strict findings (active/stale locks are always shown when present)",
+    )
     .action(
       withExit(async (opts?: { json?: boolean; verbose?: boolean }) => {
         const openclawDir = join(homedir(), ".openclaw");
