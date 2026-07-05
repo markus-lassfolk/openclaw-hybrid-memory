@@ -29,20 +29,30 @@ export function logStorageSyncMetrics(state: VerifyRunState, snapshot: StorageSy
   log("\n───── Storage sync metrics ─────");
   log(`${OK} ${formatStorageSyncSummary(snapshot)}`);
   if (snapshot.hasIdSetDrift) {
-    log(`${FAIL} ID-set drift: vectorOrphans=${snapshot.vectorOrphans.length} sqliteOrphans=${snapshot.sqliteOrphans.length}`);
+    log(
+      `${FAIL} ID-set drift: vectorOrphans=${snapshot.vectorOrphans.length} sqliteOrphans=${snapshot.sqliteOrphans.length}`,
+    );
     // Previously this FAIL line never touched allOk/issues, so a snapshot with real orphan drift
-    // still let verify (and verify --fix, when the repair below couldn't fully clear it) exit 0 (#2049).
+    // still let verify exit 0 (#2049). Points at `--reconcile --fix` (not plain `--fix`) — orphan
+    // deletion/rebuild stays gated behind the explicit --reconcile opt-in (see
+    // applyStorageStructuralFixIfNeeded below).
     state.allOk = false;
     state.issues.push(
-      `Storage sync ID-set drift: ${snapshot.vectorOrphans.length} vector orphan(s), ${snapshot.sqliteOrphans.length} sqlite orphan(s). Run \`${STORAGE_REPAIR_REMEDIATION}\` or \`openclaw hybrid-mem verify --fix\`.`,
+      `Storage sync ID-set drift: ${snapshot.vectorOrphans.length} vector orphan(s), ${snapshot.sqliteOrphans.length} sqlite orphan(s). Run \`openclaw hybrid-mem verify --reconcile --fix\` or \`${STORAGE_REPAIR_REMEDIATION}\`.`,
     );
   }
+  // duplicateIdExtraRows > 0 is one of hasStructuralDrift's own trigger conditions (see
+  // storage-sync-diagnostics.ts) — only report it as a separate issue when hasStructuralDrift's own
+  // line below won't already cover it, so one root cause doesn't produce two overlapping bullets in
+  // verify's Issues section.
   if (snapshot.duplicateIdExtraRows > 0) {
     log(`${WARN_LINE} Duplicate Lance IDs in listing: ${snapshot.duplicateIdExtraRows} extra row reference(s)`);
-    state.allOk = false;
-    state.issues.push(
-      `Storage sync: ${snapshot.duplicateIdExtraRows} duplicate Lance ID row reference(s). Run \`${STORAGE_OPTIMIZE_REMEDIATION}\` or \`${STORAGE_REPAIR_REMEDIATION}\`.`,
-    );
+    if (!snapshot.hasStructuralDrift) {
+      state.allOk = false;
+      state.issues.push(
+        `Storage sync: ${snapshot.duplicateIdExtraRows} duplicate Lance ID row reference(s). Run \`${STORAGE_OPTIMIZE_REMEDIATION}\` or \`${STORAGE_REPAIR_REMEDIATION}\`.`,
+      );
+    }
   }
   if (snapshot.hasEmbeddingDrift) {
     log(
@@ -80,9 +90,7 @@ export async function runAliasStorageDiagnostics(state: VerifyRunState): Promise
     log(
       `${FAIL} Alias Lance schema mismatch or invalid (configured dim=${diag.configuredDim}, lance dim=${lanceDimLabel}, sqliteRows=${diag.sqliteAliasRows})`,
     );
-    log(
-      `  → Run \`${STORAGE_REBUILD_ALIASES_REMEDIATION}\` (add \`--re-embed\` after embedding model change).`,
-    );
+    log(`  → Run \`${STORAGE_REBUILD_ALIASES_REMEDIATION}\` (add \`--re-embed\` after embedding model change).`);
     state.issues.push(`Alias LanceDB schema mismatch (configured=${diag.configuredDim}, lance=${lanceDimLabel})`);
     if (opts.fix) {
       try {
@@ -117,12 +125,16 @@ export async function applyStorageStructuralFixIfNeeded(
   state: VerifyRunState,
   snapshot: StorageSyncSnapshot,
 ): Promise<StorageSyncSnapshot> {
-  // Previously gated on `hasStructuralDrift` alone, but that flag is defined as `!hasIdSetDrift &&
-  // (...)` (see storage-sync-diagnostics.ts) — i.e. it is *false by definition* whenever vector/sqlite
-  // orphans exist. That meant the repair pipeline below (which reconciles orphans AND rebuilds sqlite
-  // orphans, not just "structural" drift) never ran for the exact large-drift case it's meant to fix,
-  // so `verify --fix` reported exit 0 while `health` kept failing DB sync (#2049).
-  if (!state.opts.fix || !storageSyncSnapshotHasDrift(snapshot)) {
+  // Gated on `hasStructuralDrift` alone, NOT the broader `storageSyncSnapshotHasDrift` (#2049 review
+  // finding): the repair below reconciles/deletes orphan vectors and rebuilds sqlite-orphan vectors —
+  // the same destructive/expensive operation `runVerifyReconcileSection` (reconcile.ts) deliberately
+  // gates behind an explicit `--reconcile` flag, with its own conservative/balanced/aggressive budget
+  // policy. Triggering that same repair from plain `--fix` alone (no `--reconcile`) would silently
+  // bypass that opt-in gate. ID-set drift is still surfaced as a failing, actionable issue by
+  // `logStorageSyncMetrics` above (pointing at `--reconcile --fix`); this function only auto-repairs
+  // pure row-count/duplicate-listing drift with no orphans (hasStructuralDrift is defined as
+  // `!hasIdSetDrift && (...)` in storage-sync-diagnostics.ts, so it never overlaps with real orphans).
+  if (!state.opts.fix || !snapshot.hasStructuralDrift) {
     return snapshot;
   }
 

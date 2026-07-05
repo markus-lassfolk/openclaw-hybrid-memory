@@ -126,9 +126,13 @@ export async function runVerifyLlmModelsSection(state: VerifyRunState): Promise<
   const excludedDisabled = (configured: string[], enabled: string[]) => configured.filter((m) => !enabled.includes(m));
   const fmtExcludedLine = (label: string, configured: string[], enabled: string[]): string | null => {
     const excluded = excludedDisabled(configured, enabled);
-    return excluded.length > 0 ? `    ${label} (configured, excluded — disabled provider): ${excluded.join(", ")}` : null;
+    return excluded.length > 0
+      ? `    ${label} (configured, excluded — disabled provider): ${excluded.join(", ")}`
+      : null;
   };
-  tableLog("  Effective tier lists (first model in each tier wins when that tier is selected; disabled providers already excluded):");
+  tableLog(
+    "  Effective tier lists (first model in each tier wins when that tier is selected; disabled providers already excluded):",
+  );
   tableLog(
     `    nano:    ${fmtTierList(tierNanoEnabled)}${nanoExplicitConfigured ? "" : "  — llm.nano unset; nano tier reuses the default list"}`,
   );
@@ -190,7 +194,7 @@ export async function runVerifyLlmModelsSection(state: VerifyRunState): Promise<
   tableLog(
     dreamOverride
       ? `    Dream cycle + MEMORY_INDEX.md: nightlyCycle.model="${dreamOverride}" (overrides default tier for that pipeline).`
-      : `    Dream cycle + MEMORY_INDEX.md: uses maintenance tier first choice (${tierMaintenance[0] ?? "—"}) unless nightlyCycle.model is set.`,
+      : `    Dream cycle + MEMORY_INDEX.md: uses maintenance tier first choice (${tierMaintenanceEnabled[0] ?? "—"}) unless nightlyCycle.model is set.`,
   );
   tableLog(
     "    Embeddings / re-index: embedding.model + embedding.* (not llm tiers). Chat LLM spend is separate from embedding API spend.",
@@ -216,7 +220,7 @@ export async function runVerifyLlmModelsSection(state: VerifyRunState): Promise<
         distillMainEffective,
         dreamEffective,
         getLLMModelPreference(cronCfg, extractionTier)[0] ?? "—",
-        tierHeavy[0] ?? "—",
+        tierHeavyEnabled[0] ?? "—",
       ].filter((m, i, arr) => m !== "—" && arr.indexOf(m) === i);
       for (const sampleModel of sampleModels) {
         const effective = getEffectiveModelLimits({

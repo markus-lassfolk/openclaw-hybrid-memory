@@ -433,17 +433,18 @@ function resolveCatalogEntry(...candidates: Array<string | undefined>): Maintena
  * `readOpenClawCronStore` normalizes SQLite-backed cron rows (2026.6.8+) to `job.id`/`job.name`;
  * it never sets `job.pluginJobId` (that field only appears on the legacy JSON store format). A
  * caller that only checks `job.pluginJobId === pluginJobId` therefore always misses on a modern
- * SQLite-backed install, even though the job is present under `job.id`/`job.name` (#2050 — this is
- * why `cron-health` reported the nightly job "missing" while `maintenance inventory`, which already
- * falls back through `resolveCatalogEntry(pluginJobId, name, ...)`, found it fine).
+ * SQLite-backed install, even though the job is present under `job.id` (#2050). `job.id` is
+ * sufficient here — `cron-jobs.ts` sets `id` to the same `pluginJobId` value at creation/normalize
+ * time for every plugin-managed job — so this deliberately does NOT fall back to matching on the
+ * job's plain `name` (unlike `parseGatewayJobs`'s `resolveCatalogEntry` below, which needs the
+ * broader fallback for inventory's full-catalog display): a name-based fallback here would let an
+ * unrelated, user-created cron job that merely happens to share a catalog job's `name` (e.g.
+ * "maintenance-nightly") be reported as satisfying this health check.
  */
 export function jobMatchesPluginJobId(rawJob: Record<string, unknown>, pluginJobId: string): boolean {
   const rawPluginJobId = typeof rawJob.pluginJobId === "string" ? rawJob.pluginJobId : undefined;
   const rawId = typeof rawJob.id === "string" ? rawJob.id : undefined;
-  const name = typeof rawJob.name === "string" ? rawJob.name : undefined;
-  if (rawPluginJobId === pluginJobId || rawId === pluginJobId) return true;
-  const entry = resolveCatalogEntry(rawPluginJobId, rawId, name);
-  return entry != null && entry.pluginJobId === pluginJobId;
+  return rawPluginJobId === pluginJobId || rawId === pluginJobId;
 }
 
 function describeGatewaySchedule(schedule: unknown): {

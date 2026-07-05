@@ -320,7 +320,9 @@ export function runConfigViewForCli(
     // resolveDistillDefaultModel (not tierFirst) so this matches what cmd-distill.ts actually runs —
     // distill.defaultModel can override the tier result, and this line used to ignore that (#2047).
     const distillMainPassResolved = resolveDistillDefaultModel(cfg, mainDistillTier);
-    log(`  distill main pass: tier=${mainDistillTier} -> ${distillMainPassResolved.model} (source=${distillMainPassResolved.source})`);
+    log(
+      `  distill main pass: tier=${mainDistillTier} -> ${distillMainPassResolved.model} (source=${distillMainPassResolved.source})`,
+    );
     log(`  distill extraction (directives/reinforcement): tier=${extTier} -> ${tierFirst(extTier)}`);
     const dreamDefault = tierFirst("maintenance");
     log(
