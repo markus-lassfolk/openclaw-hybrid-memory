@@ -5,7 +5,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { readStepGuardTimestampMs, stepGuardEligible } from "../../../services/cron-guard.js";
+import { stepGuardEligible } from "../../../services/cron-guard.js";
 import {
   effectiveCadenceLabel,
   formatMaintenanceSummary,
