@@ -466,6 +466,46 @@ function stepSemanticBlocksGuard(semantic?: string): boolean {
   return semanticOutcomeBlocksOrchestratorGuard(semantic);
 }
 
+/** Heartbeat cadence for per-step progress lines during long CPU/LLM-bound steps (#2026). */
+const ORCHESTRATOR_STEP_HEARTBEAT_MS = 60_000;
+
+/**
+ * Run a maintenance step while emitting per-step start/heartbeat/finish lines (#2026).
+ *
+ * Long CPU- or LLM-bound steps (e.g. distill, dream-cycle, self-correction) previously ran
+ * log-silent for minutes, making a live run indistinguishable from a hung one to operators and
+ * the stale-run detector. This wrapper emits:
+ *   - `maintenance-orchestrator: <step> — start`
+ *   - `maintenance-orchestrator: <step> — still running after <N>s` every ORCHESTRATOR_STEP_HEARTBEAT_MS
+ *   - `maintenance-orchestrator: <step> — complete in <N>s`
+ *
+ * The lines advance the wrapper-log mtime (resetting the analyzer's staleness signal) and match the
+ * analyzer's progress/still-running regexes, so a live step is classified as running rather than stale.
+ */
+async function runStepWithHeartbeat<T>(
+  stepName: string,
+  emit: boolean,
+  logger: MaintenanceOrchestratorContext["logger"],
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (!emit || !logger?.info) return fn();
+  const started = Date.now();
+  logger.info(`maintenance-orchestrator: ${stepName} — start`);
+  const heartbeat = setInterval(() => {
+    const elapsedSec = Math.floor((Date.now() - started) / 1000);
+    logger.info?.(`maintenance-orchestrator: ${stepName} — still running after ${elapsedSec}s`);
+  }, ORCHESTRATOR_STEP_HEARTBEAT_MS);
+  heartbeat.unref?.();
+  try {
+    const result = await fn();
+    const elapsedSec = Math.floor((Date.now() - started) / 1000);
+    logger.info?.(`maintenance-orchestrator: ${stepName} — complete in ${elapsedSec}s`);
+    return result;
+  } finally {
+    clearInterval(heartbeat);
+  }
+}
+
 export async function runMaintenanceOrchestrator(
   ctx: MaintenanceOrchestratorContext,
   options: OrchestratorRunOptions,
@@ -651,7 +691,7 @@ export async function runMaintenanceOrchestrator(
 
     const stepStarted = Date.now();
     try {
-      const summary = await runner();
+      const summary = await runStepWithHeartbeat(step.name, options.verbose !== false, logger, () => runner());
       const meta = parseStepRunnerMetadata(summary);
       if (step.name === "reflect-rules" && reflectRulesStepSummaryIndicatesFailure(summary)) {
         logger?.warn?.(`maintenance-orchestrator: ${step.name} semantic failure (summary diagnostics): ${summary}`);

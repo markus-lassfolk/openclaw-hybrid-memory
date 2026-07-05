@@ -325,10 +325,13 @@ function extractJobFromPath(path: string, suffix: string): string {
   return extractJobName(file);
 }
 
+// The `maintenance-orchestrator: <step> — start|still running after Ns|complete` alternative matches
+// the generic per-step heartbeat the orchestrator emits for every step (#2026), so a live CPU/LLM-bound
+// step is recognized as progressing rather than mislabeled as a stale/hung empty-exit run.
 const DREAM_CYCLE_PROGRESS_MARKER_RE =
-  /(?:\[dream-cycle\].*(?:start|still running after|complete)|memory-hybrid:\s*(?:dream-cycle|reflect-meta(?:-collapse)?|build-languages|backfill-decay|reembed-vectorless|enrich-entities)\s*[—-].*(?:start|still running after|complete|episodic consolidation progress)|Dream cycle complete:|Extract-implicit:|Closed-loop analysis:|Cross-agent learning:|Tool effectiveness:|Cost log:)/im;
+  /(?:\[dream-cycle\].*(?:start|still running after|complete)|memory-hybrid:\s*(?:dream-cycle|reflect-meta(?:-collapse)?|build-languages|backfill-decay|reembed-vectorless|enrich-entities)\s*[—-].*(?:start|still running after|complete|episodic consolidation progress)|maintenance-orchestrator:\s*\S+\s*[—-]\s*(?:start|still running after \d+s|complete)|Dream cycle complete:|Extract-implicit:|Closed-loop analysis:|Cross-agent learning:|Tool effectiveness:|Cost log:)/im;
 const DREAM_CYCLE_STILL_RUNNING_RE =
-  /(?:\[dream-cycle\].*still running after \d+s|memory-hybrid:\s*(?:dream-cycle|reflect-meta(?:-collapse)?|build-languages|backfill-decay|reembed-vectorless|enrich-entities)\s*[—-].*still running after \d+s)/im;
+  /(?:\[dream-cycle\].*still running after \d+s|memory-hybrid:\s*(?:dream-cycle|reflect-meta(?:-collapse)?|build-languages|backfill-decay|reembed-vectorless|enrich-entities)\s*[—-].*still running after \d+s|maintenance-orchestrator:\s*\S+\s*[—-]\s*still running after \d+s)/im;
 
 function logHasDreamCycleProgress(logContent: string): boolean {
   if (!logContent) return false;
@@ -391,6 +394,81 @@ function buildOrchestrationSyntheticStep(params: {
     logContent,
     line: `${line}; ${markerBits.join("; ")}`,
   };
+}
+
+/**
+ * A single run recorded in an aggregate `<job>.cron.log` via an `HM_RUN_SUMMARY` line (#2025).
+ * Aggregate cron logs accumulate one summary line per run, each referencing that run's own
+ * per-run `.exit.txt` ledger — the aggregate file itself has no sibling `.exit.txt`.
+ */
+interface CronAggregateRun {
+  runId: string;
+  status: string;
+  job: string | null;
+  exitPath: string | null;
+  occurredAtMs: number;
+}
+
+/** Parse the `YYYYMMDDTHHMMSSZ` prefix of an HM run id into epoch ms (0 if unparseable). */
+function parseRunIdTimestampMs(runId: string): number {
+  const m = runId.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z/);
+  if (!m) return 0;
+  const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6]));
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+/** Extract `HM_RUN_SUMMARY` run entries from an aggregate cron log (#2025). */
+export function parseCronAggregateRuns(logContent: string): CronAggregateRun[] {
+  if (!logContent || !logContent.includes("HM_RUN_SUMMARY")) return [];
+  const runs: CronAggregateRun[] = [];
+  for (const line of logContent.split("\n")) {
+    if (!line.includes("HM_RUN_SUMMARY")) continue;
+    const get = (k: string): string | null => {
+      const m = line.match(new RegExp(`\\b${k}=(\\S+)`));
+      return m ? m[1] : null;
+    };
+    const runId = get("run_id");
+    if (!runId) continue;
+    runs.push({
+      runId,
+      status: (get("status") ?? "").toUpperCase(),
+      job: get("job"),
+      exitPath: get("exit"),
+      occurredAtMs: parseRunIdTimestampMs(runId),
+    });
+  }
+  return runs;
+}
+
+/**
+ * For an aggregate `<job>.cron.log`, validate each in-window run's referenced `.exit.txt` ledger (#2025).
+ * Returns `null` when the aggregate is healthy (every in-window run has a resolvable exit ledger, or no
+ * run references a missing one) so the caller suppresses the spurious missing-exit-ledger anomaly.
+ * Otherwise returns the most-recent run whose referenced ledger is genuinely missing, so the finding is
+ * pegged to that exact run id/timestamp rather than the aggregate file's current mtime.
+ */
+function findCronAggregateMissingLedgerRun(
+  logPath: string,
+  logContent: string,
+  cutoff: number,
+): CronAggregateRun | null {
+  const runs = parseCronAggregateRuns(logContent);
+  if (runs.length === 0) return null;
+  const resolveExit = (run: CronAggregateRun): string | null => {
+    if (!run.exitPath) return null;
+    if (existsSync(run.exitPath)) return run.exitPath;
+    // Tolerate relocated/copied log bundles: check for the same basename next to the aggregate log.
+    const local = join(dirname(logPath), basename(run.exitPath));
+    return existsSync(local) ? local : null;
+  };
+  const missing = runs
+    .filter((r) => r.occurredAtMs >= cutoff)
+    // Only runs that reference an exit ledger which does NOT exist are genuine anomalies. Runs whose
+    // referenced ledger exists are already analyzed via the per-run .exit.txt files; runs without any
+    // exit= reference are left to other detectors rather than flagged from the aggregate.
+    .filter((r) => r.exitPath != null && resolveExit(r) === null);
+  if (missing.length === 0) return null;
+  return missing.sort((a, b) => a.occurredAtMs - b.occurredAtMs).at(-1) ?? null;
 }
 
 export function collectMaintenanceSteps(
@@ -534,6 +612,27 @@ export function collectMaintenanceSteps(
     if (seenExit.has(exitPath) || existsSync(exitPath)) continue;
     const logContent = safeRead(logPath);
     const job = extractJobFromPath(logPath, ".log");
+    // Aggregate `<job>.cron.log` files never have a sibling `<job>.cron.exit.txt`; instead each run
+    // records an HM_RUN_SUMMARY line pointing at its own per-run `.exit.txt` ledger. Validate those
+    // per-run ledgers rather than blindly flagging the aggregate as missing-exit-ledger (#2025).
+    if (basename(logPath).endsWith(".cron.log") && logContent.includes("HM_RUN_SUMMARY")) {
+      const missingRun = findCronAggregateMissingLedgerRun(logPath, logContent, cutoff);
+      if (!missingRun) continue; // Every in-window run has a valid exit ledger — healthy, no anomaly.
+      const syntheticStep = buildOrchestrationSyntheticStep({
+        job: missingRun.job ?? job,
+        exitPath: missingRun.exitPath ?? exitPath,
+        logPath,
+        logContent,
+        nowMs,
+        staleThresholdMs,
+        // Peg the finding to the specific run's timestamp/id, not the aggregate file's current mtime.
+        latestActivityMs: missingRun.occurredAtMs || logMtime,
+        kind: "missing-exit-ledger",
+      });
+      syntheticStep.line += `; run_id=${missingRun.runId}`;
+      steps.push(syntheticStep);
+      continue;
+    }
     steps.push(
       buildOrchestrationSyntheticStep({
         job,

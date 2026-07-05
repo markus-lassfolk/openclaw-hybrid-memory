@@ -6,7 +6,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   classifyStoreDedupeMode,
   filterDistillVectorCandidates,
+  filterWriteVectorCandidates,
   resolveDistillVectorCandidates,
+  resolveWriteVectorCandidates,
 } from "../cli/vector-dedupe-helpers.js";
 import { DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
 import { _testing } from "../index.js";
@@ -144,6 +146,102 @@ describe("vector-dedupe-helpers", () => {
 
     expect(filtered).toEqual([{ id: scoped.id, score: 0.92 }]);
     expect(filterDistillVectorCandidates([{ entry: { id: scoped.id }, score: 0.92 }], db, null)).toEqual([]);
+  });
+
+  it("filterWriteVectorCandidates keeps only same-source, in-scope live facts (#2027)", () => {
+    dir = mkdtempSync(join(tmpdir(), "write-vector-dedupe-"));
+    db = new FactsDB(join(dir, "facts.db"));
+    const convo = db.store({
+      text: "User likes tea",
+      importance: 0.6,
+      source: "conversation",
+      category: "other",
+      entity: null,
+      key: null,
+      value: null,
+    });
+    const distilled = db.store({
+      text: "Distilled fact",
+      importance: 0.6,
+      source: "distillation",
+      category: "other",
+      entity: null,
+      key: null,
+      value: null,
+    });
+
+    const filtered = filterWriteVectorCandidates(
+      [
+        { entry: { id: convo.id }, score: 0.97 },
+        { entry: { id: distilled.id }, score: 0.99 },
+      ],
+      db,
+      { source: "conversation", embeddingModelName: null },
+    );
+    // Only the conversation-source neighbour survives; the distillation one is filtered out.
+    expect(filtered).toEqual([{ id: convo.id, score: 0.97 }]);
+  });
+
+  it("resolveWriteVectorCandidates returns source-filtered candidates for the live store path (#2027)", async () => {
+    dir = mkdtempSync(join(tmpdir(), "resolve-write-vector-dedupe-"));
+    db = new FactsDB(join(dir, "facts.db"));
+    const convo = db.store({
+      text: "User likes tea",
+      importance: 0.6,
+      source: "conversation",
+      category: "other",
+      entity: null,
+      key: null,
+      value: null,
+    });
+    const vectorDb = {
+      search: vi.fn().mockResolvedValue([{ entry: { id: convo.id }, score: 0.96 }]),
+      getLastSearchFailReason: vi.fn().mockReturnValue(null),
+    };
+
+    const result = await resolveWriteVectorCandidates({
+      fuzzyDedupe: true,
+      vector: [0.1, 0.2],
+      vectorDb,
+      factsDb: db,
+      source: "conversation",
+      embeddingModelName: null,
+    });
+
+    expect(vectorDb.search).toHaveBeenCalledOnce();
+    expect(result.vectorSearchDegraded).toBe(false);
+    expect(result.vectorCandidates).toEqual([{ id: convo.id, score: 0.96 }]);
+  });
+
+  it("resolveWriteVectorCandidates degrades gracefully when vector search throws (#2027)", async () => {
+    const vectorDb = {
+      search: vi.fn().mockRejectedValue(new Error("lance down")),
+      getLastSearchFailReason: vi.fn().mockReturnValue(null),
+    };
+    const result = await resolveWriteVectorCandidates({
+      fuzzyDedupe: true,
+      vector: [0.1],
+      vectorDb,
+      factsDb: { getById: () => null },
+      source: "conversation",
+      embeddingModelName: null,
+    });
+    expect(result.vectorSearchDegraded).toBe(true);
+    expect(result.vectorCandidates).toBeUndefined();
+  });
+
+  it("resolveWriteVectorCandidates skips vector work when fuzzyDedupe is disabled (#2027)", async () => {
+    const vectorDb = { search: vi.fn(), getLastSearchFailReason: vi.fn() };
+    const result = await resolveWriteVectorCandidates({
+      fuzzyDedupe: false,
+      vector: [0.1],
+      vectorDb,
+      factsDb: { getById: () => null },
+      source: "conversation",
+      embeddingModelName: null,
+    });
+    expect(vectorDb.search).not.toHaveBeenCalled();
+    expect(result.vectorCandidates).toBeUndefined();
   });
 
   it("classifyStoreDedupeMode distinguishes vector and degraded lexical paths", () => {

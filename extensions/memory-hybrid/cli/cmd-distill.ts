@@ -80,6 +80,7 @@ import {
   classifyStoreDedupeMode,
   resolveDistillVectorCandidates,
 } from "./vector-dedupe-helpers.js";
+import { startDistillProgress } from "./distill-progress.js";
 
 // Constants used only by distill functions
 const FULL_DISTILL_MAX_DAYS = 90;
@@ -521,13 +522,27 @@ export async function runDistillForCli(
     };
 
     let batchFailures = 0;
+    // Preserve the first concrete batch failure cause so maintenance surfaces the real reason
+    // (model/error kind/message) instead of only `semantic=partial` (#2024).
+    let batchFailureReason: string | undefined;
     let lengthRetriesAtCursor = 0;
     const maxLengthRetriesPerCursor = 8;
+
+    // Operator progress/heartbeat (#2029): emit a start marker + periodic block-count heartbeat so a
+    // long LLM-bound batch is distinguishable from a hung run. Only counts/status are logged.
+    const distillProgress = startDistillProgress({
+      verbose: !!opts.verbose,
+      logger,
+      sessions: filesToProcess.length,
+      totalBlocks: blocks.length,
+      getState: () => ({ batch: batchNum, processedBlocks }),
+    });
 
     while (cursorBlock < blocks.length) {
       if (maintenanceRunDeadlineReached()) {
         sink.warn("memory-hybrid: distill: maintenance run deadline reached; stopping batch loop");
         batchFailures++;
+        batchFailureReason ??= `batch ${batchNum + 1} aborted: maintenance run deadline reached before completion`;
         break;
       }
       batchNum++;
@@ -567,6 +582,7 @@ export async function runDistillForCli(
             `memory-hybrid: distill batch ${batchNum} input (~${inputTokens} tokens) exceeds primary limit (${primaryInputLimit}) with no compatible fallbacks`,
           );
           batchFailures++;
+          batchFailureReason ??= `batch ${batchNum} input (~${inputTokens} tokens) exceeds primary model ${model} limit (${primaryInputLimit}) and all fallbacks were context-incompatible${skippedFallbacks.length > 0 ? ` (skipped: ${skippedFallbacks.join(", ")})` : ""}`;
           break;
         }
         callModel = callFallbacks[0];
@@ -731,6 +747,7 @@ export async function runDistillForCli(
         sink.warn(`memory-hybrid: distill batch ${batchNum} failed: ${e}`);
         capturePluginError(e, { subsystem: "cli", operation: "runDistillForCli:llm-batch" });
         batchFailures++;
+        batchFailureReason ??= `batch ${batchNum} ${kind} error on model ${failureModel}: ${e.message}`;
         if (!adaptiveEnabled) {
           nonAdaptiveBatchFactor = 1;
           nonAdaptiveOutFactor = 1;
@@ -738,6 +755,13 @@ export async function runDistillForCli(
         break;
       }
     }
+    distillProgress.done({
+      status: batchFailures > 0 || truncatedBatches > 0 ? "partial" : allFacts.length === 0 ? "empty" : "ok",
+      extracted: allFacts.length,
+      processedBlocks,
+      batchFailures,
+      truncatedBatches,
+    });
     progress.done();
     if (truncatedBatches > 0) {
       sink.warn(
@@ -1018,18 +1042,28 @@ export async function runDistillForCli(
         `memory-hybrid: distill DEGRADED — vector neighbour search unavailable${usedHasDuplicateFallback ? "; used hasDuplicate fallback where applicable" : ""}`,
       );
     }
-    return withDistillJobRun({
-      sessionsScanned: filesToProcess.length,
-      factsExtracted: allFacts.length,
-      stored,
-      dedupSkipped: skipped,
-      dryRun: false,
-      semanticEmpty,
-      partialFailure: batchFailures > 0 || truncatedBatches > 0,
-      batchFailures,
-      dedupeDegraded,
-      distillDedupeMode,
-    });
+    const partialFailure = batchFailures > 0 || truncatedBatches > 0;
+    const resolvedFailureReason =
+      batchFailureReason ??
+      (truncatedBatches > 0
+        ? `${truncatedBatches} batch(es) hit finish=length (output truncated); consider resetting adaptive limits or smaller --days`
+        : undefined);
+    return withDistillJobRun(
+      {
+        sessionsScanned: filesToProcess.length,
+        factsExtracted: allFacts.length,
+        stored,
+        dedupSkipped: skipped,
+        dryRun: false,
+        semanticEmpty,
+        partialFailure,
+        batchFailures,
+        batchFailureReason: resolvedFailureReason,
+        dedupeDegraded,
+        distillDedupeMode,
+      },
+      partialFailure ? { reason: resolvedFailureReason } : undefined,
+    );
   } finally {
     if (shouldAcquireLock && !opts.dryRun) clearScanLock(SCAN_TYPE);
   }

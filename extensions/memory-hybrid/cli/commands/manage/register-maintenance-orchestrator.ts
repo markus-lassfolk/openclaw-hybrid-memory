@@ -156,6 +156,38 @@ export function registerMaintenanceOrchestratorCommands(maintenance: Chainable, 
       ),
   );
 
+  // `maintenance step <name>` runs exactly one named step in isolation (#2028). Named `step` (singular)
+  // to avoid colliding with the `maintenance run` JobRun-inspection group and the `steps` list command.
+  commonOptions(
+    maintenance
+      .command("step <step>")
+      .description(
+        "Run exactly one named maintenance step in isolation (bypasses that step's cadence guard). Use `maintenance steps` to list valid names.",
+      )
+      .action(
+        withExit(async (step: string, opts, cmd?: CommanderOptsParent) => {
+          const stepName = step?.trim();
+          const validNames = listMaintenanceSteps().map((s) => s.name);
+          if (!stepName || !validNames.includes(stepName)) {
+            console.error(`Unknown maintenance step: ${stepName || "(none)"}`);
+            console.error(`Valid steps (${validNames.length}):`);
+            for (const name of validNames) console.error(`  ${name}`);
+            process.exitCode = 1;
+            return;
+          }
+          // Force so the targeted step actually runs even if its cadence guard has not expired (this
+          // command is an explicit "run this step now" diagnostic). include=[step] across both tiers
+          // means the orchestrator executes ONLY that step and no unrelated stages (#2028).
+          await runTier(["cycle", "nightly"], {
+            ...opts,
+            include: stepName,
+            force: true,
+            verbose: !!opts?.verbose || readHybridMemVerbose(cmd),
+          });
+        }),
+      ),
+  );
+
   maintenance
     .command("steps")
     .description("List registered maintenance steps with tier, guard interval, and cadence")

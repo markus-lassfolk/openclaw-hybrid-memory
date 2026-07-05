@@ -410,7 +410,10 @@ export function buildCliMaintenanceRunners(
     const r = await b.runDistill({ dryRun: false, verbose, days: maxCatchUpDays, ...scanFlags }, sink);
     const summary = `stored=${r.stored} sessions=${r.sessionsScanned} jobRunId=${r.jobRunId ?? "-"} semantic=${r.semanticOutcome ?? "unknown"}`;
     if (r.partialFailure) {
-      throw new Error(`distill partial failure (${summary})`);
+      // Surface the concrete batch cause (model/error kind/message) in the ledger instead of only
+      // `semantic=partial`, so health state points at the real distill failure (#2024).
+      const cause = r.batchFailureReason ? ` cause=${r.batchFailureReason}` : "";
+      throw new Error(`distill partial failure (${summary}${cause})`);
     }
     assertSemanticOutcomeDoesNotBlockStep("distill", r.semanticOutcome, summary);
     return summary;

@@ -160,6 +160,57 @@ describe("maintenance-orchestrator", () => {
     expect(summary.counts.ok).toBe(1);
   });
 
+  it("emits per-step start/complete heartbeat lines when verbose (#2026)", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const infoLines: string[] = [];
+    const runners = new Map<string, () => Promise<string>>([["prune", async () => "pruned=1"]]);
+    await runMaintenanceOrchestrator(
+      {
+        cfg: minimalCfg(),
+        runners,
+        openclawDir,
+        logger: { info: (m: string) => infoLines.push(m), warn: () => {} },
+      },
+      { tiers: ["cycle"], force: true, verbose: true, include: ["prune"] },
+    );
+    expect(infoLines).toContain("maintenance-orchestrator: prune — start");
+    expect(infoLines.some((l) => /^maintenance-orchestrator: prune — complete in \d+s$/.test(l))).toBe(true);
+  });
+
+  it("does not emit per-step heartbeat lines when verbose is false (#2026)", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const infoLines: string[] = [];
+    const runners = new Map<string, () => Promise<string>>([["prune", async () => "pruned=1"]]);
+    await runMaintenanceOrchestrator(
+      {
+        cfg: minimalCfg(),
+        runners,
+        openclawDir,
+        logger: { info: (m: string) => infoLines.push(m), warn: () => {} },
+      },
+      { tiers: ["cycle"], force: true, verbose: false, include: ["prune"] },
+    );
+    expect(infoLines.some((l) => l.includes("prune — start"))).toBe(false);
+  });
+
+  it("runs exactly one included step across both tiers and no unrelated steps (#2028 `maintenance run <step>`)", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const called: string[] = [];
+    const runners = new Map<string, () => Promise<string>>([
+      ["prune", async () => (called.push("prune"), "pruned=1")],
+      ["compact", async () => (called.push("compact"), "ok")],
+      ["distill", async () => (called.push("distill"), "ok")],
+    ]);
+    // This mirrors what the `maintenance run prune` CLI delegates to: both tiers, include=[step], force.
+    const result = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["cycle", "nightly"], force: true, verbose: false, include: ["prune"] },
+    );
+    expect(called).toEqual(["prune"]);
+    expect(result.steps.map((s) => s.name)).toEqual(["prune"]);
+    expect(result.steps[0].status).toBe("ok");
+  });
+
   it("writes step guard on success", async () => {
     openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
     const runners = new Map<string, () => Promise<string>>([["prune", async () => "done"]]);

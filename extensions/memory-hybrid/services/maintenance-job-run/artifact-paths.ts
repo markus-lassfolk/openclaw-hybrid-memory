@@ -27,7 +27,18 @@ export function resolveOrchestratorJobFromEnv(): string | undefined {
 
 export function buildJobRunId(command: string, fingerprint: string): string {
   const safeCmd = command.replace(/[^a-z0-9-]+/gi, "-").replace(/^-+|-+$/g, "");
-  const fp = fingerprint.slice(0, 8);
+  // Sanitize the fingerprint the same way as the command before truncating so raw separators
+  // (colons, dots) and mid-token boolean truncation cannot produce misleading ids like
+  // `job-distill-::14:fal` (#2024). Collapse non-alphanumeric runs to single dashes, then cap.
+  // Keep the 8-char cap: purely-alphanumeric fingerprints (e.g. hex hashes used by batch/
+  // self-correction job-runs) are unchanged by the sanitize, so their checkpoint/artifact dir
+  // names stay stable across upgrade — only the malformed separator/boolean cases change.
+  const fp =
+    fingerprint
+      .replace(/[^a-z0-9]+/gi, "-")
+      .replace(/^-+/g, "")
+      .slice(0, 8)
+      .replace(/-+$/g, "") || "0";
   return `job-${safeCmd}-${fp}`;
 }
 

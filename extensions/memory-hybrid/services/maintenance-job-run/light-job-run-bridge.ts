@@ -10,6 +10,8 @@ export type LightJobRunParams = {
   partialFailure?: boolean;
   inputsProcessed?: number;
   outputsProduced?: number;
+  /** Concrete failure cause persisted into the job-run summary's semanticReason (#2024). */
+  reason?: string;
 };
 
 export function resolveLightJobRunOutcome(params: LightJobRunParams): JobRunSemanticOutcome {
@@ -42,6 +44,6 @@ export function finishLightJobRun(
     semanticOutcome === "skipped" ||
     semanticOutcome === "success_with_review";
   jobRun.endPhase("run", phaseOk ? "completed" : "failed");
-  const jobRunId = finishBatchJobRun(jobRun, semanticOutcome, { clearCheckpoint: true });
+  const jobRunId = finishBatchJobRun(jobRun, semanticOutcome, { clearCheckpoint: true, reason: params.reason });
   return { jobRunId, semanticOutcome };
 }

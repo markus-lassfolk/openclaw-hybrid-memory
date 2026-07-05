@@ -31,6 +31,7 @@ import {
   isCanonicalMaintenanceLog,
   isUnderAuxiliaryDir,
   maintenanceRules,
+  parseCronAggregateRuns,
   persistMaintenanceFindings,
   pluginVersionGte,
   reportGlitchTipFindings,
@@ -658,6 +659,62 @@ describe("maintenance log analyzer", () => {
     expect(steps).toHaveLength(1);
     expect(steps[0].step).toBe("orchestration-missing-exit-ledger");
     expect(steps[0].job).toBe("nightly-memory-sweep");
+  });
+
+  it("does not flag aggregate .cron.log runs whose HM_RUN_SUMMARY exit ledger exists (#2025)", () => {
+    const root = tmpRoot();
+    const runExit = join(root, "hybrid-mem-backup-20260705T040001Z-30251.exit.txt");
+    writeFileSync(runExit, "2026-07-05T04:00:35Z backup exit=0\n");
+    const logPath = join(root, "hybrid-mem-backup.cron.log");
+    writeFileSync(
+      logPath,
+      [
+        "HM_RUN_SUMMARY status=SUCCESS job=hybrid-mem-backup run_id=20260705T040001Z-30251 duration_s=37 step_exit=0 validation_exit=0 guard_updated=yes " +
+          `log=${logPath} exit=${runExit}`,
+        "SUCCESS: hybrid-mem-backup",
+        `HM_EXIT=${runExit}`,
+        "2026-07-05T04:00:35Z backup exit=0",
+      ].join("\n"),
+    );
+
+    const nowMs = Date.UTC(2026, 6, 5, 5, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
+    // The aggregate .cron.log must not be reported as missing-exit-ledger — its run has a real ledger.
+    expect(steps.some((s) => s.step === "orchestration-missing-exit-ledger")).toBe(false);
+    const findings = analyzeMaintenanceSteps(steps);
+    expect(findings.some((f) => f.ruleId === "orchestration-missing-exit-ledger")).toBe(false);
+  });
+
+  it("flags the specific aggregate run whose exit ledger is missing, pegged to its run id (#2025)", () => {
+    const root = tmpRoot();
+    // Referenced per-run exit ledger deliberately NOT created → genuinely missing.
+    const missingExit = join(root, "hybrid-mem-backup-20260705T040001Z-30251.exit.txt");
+    const logPath = join(root, "hybrid-mem-backup.cron.log");
+    writeFileSync(
+      logPath,
+      "HM_RUN_SUMMARY status=SUCCESS job=hybrid-mem-backup run_id=20260705T040001Z-30251 duration_s=37 step_exit=0 validation_exit=0 guard_updated=yes " +
+        `log=${logPath} exit=${missingExit}\n`,
+    );
+
+    const nowMs = Date.UTC(2026, 6, 5, 5, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
+    const missing = steps.find((s) => s.step === "orchestration-missing-exit-ledger");
+    expect(missing).toBeDefined();
+    expect(missing?.job).toBe("hybrid-mem-backup");
+    expect(missing?.line).toContain("run_id=20260705T040001Z-30251");
+    // Occurred-at is pegged to the run id timestamp (04:00:01Z), not nowMs (05:00Z).
+    expect(missing?.occurredAt).toBe(Math.floor(Date.UTC(2026, 6, 5, 4, 0, 1) / 1000));
+  });
+
+  it("parseCronAggregateRuns extracts run id, status and exit path (#2025)", () => {
+    const runs = parseCronAggregateRuns(
+      "HM_RUN_SUMMARY status=SUCCESS job=hybrid-mem-backup run_id=20260705T040001Z-30251 step_exit=0 validation_exit=0 guard_updated=yes log=/l/x.log exit=/l/x.exit.txt\nunrelated line\n",
+    );
+    expect(runs).toHaveLength(1);
+    expect(runs[0].runId).toBe("20260705T040001Z-30251");
+    expect(runs[0].status).toBe("SUCCESS");
+    expect(runs[0].job).toBe("hybrid-mem-backup");
+    expect(runs[0].exitPath).toBe("/l/x.exit.txt");
   });
 
   it("ignores stale manual exit rows even when the files were touched recently", () => {

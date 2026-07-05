@@ -233,6 +233,11 @@ export type DistillCliResult = {
   semanticEmpty?: boolean;
   partialFailure?: boolean;
   batchFailures?: number;
+  /**
+   * Concrete underlying cause of a batch failure (model/error kind/message), preserved so
+   * maintenance ledger/health state surfaces the real reason instead of only `semantic=partial` (#2024).
+   */
+  batchFailureReason?: string;
   jobRunId?: string;
   semanticOutcome?: string;
   dedupeDegraded?: boolean;
