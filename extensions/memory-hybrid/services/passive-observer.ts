@@ -105,6 +105,8 @@ export function isPassiveObserverTranscriptCandidate(basename: string): boolean 
 const MAX_MSG_LENGTH = 500;
 /** Hard cap on bytes read per session per run to avoid unbounded JSONL reads. */
 const MAX_JSONL_BYTES_PER_RUN = 2_000_000;
+/** Per-session progress log throttle, matching the orchestrator's per-step heartbeat cadence (#2032). */
+const PASSIVE_OBSERVER_PROGRESS_LOG_INTERVAL_MS = 60_000;
 
 /**
  * Extract readable text from a raw JSONL transcript chunk.
@@ -491,6 +493,10 @@ export async function runPassiveObserver(
   // ---------------------------------------------------------------------------
   // Phase 3: process each session that has new content.
   // ---------------------------------------------------------------------------
+  // Progress is throttled to the same cadence as the orchestrator's per-step heartbeat (#2026's
+  // ORCHESTRATOR_STEP_HEARTBEAT_MS) so a large multi-agent backlog logs a couple dozen lines over
+  // the default 15-minute step budget instead of one line per session (#2032).
+  let lastProgressLogMs = 0;
   for (const [sessionIdx, { filePath, sessionId, fileBytelen, cursor }] of sessions.entries()) {
     if (maintenanceRunDeadlineReached()) {
       // Deadline stops mid-run are counted as an error so the caller's summary (and
@@ -505,10 +511,14 @@ export async function runPassiveObserver(
       break;
     }
     if (cursor >= fileBytelen) continue; // Nothing new
-    logger.info(
-      `memory-hybrid: passive-observer — progress: session ${sessionIdx + 1}/${sessions.length} (${sessionId}) ` +
-        `chunksProcessed=${result.chunksProcessed} factsExtracted=${result.factsExtracted} factsStored=${result.factsStored}`,
-    );
+    const progressNowMs = Date.now();
+    if (lastProgressLogMs === 0 || progressNowMs - lastProgressLogMs >= PASSIVE_OBSERVER_PROGRESS_LOG_INTERVAL_MS) {
+      lastProgressLogMs = progressNowMs;
+      logger.info(
+        `memory-hybrid: passive-observer — progress: session ${sessionIdx + 1}/${sessions.length} (${sessionId}) ` +
+          `chunksProcessed=${result.chunksProcessed} factsExtracted=${result.factsExtracted} factsStored=${result.factsStored}`,
+      );
+    }
 
     let rawBuf: Buffer;
     let segmentEnd = fileBytelen;

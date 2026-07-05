@@ -223,6 +223,40 @@ describe("maintenance cycle/nightly/full --include --force share the same skip p
 
     expect(process.exitCode).toBeFalsy();
   });
+
+  it("exits non-zero when the requested --include name never produces a step result at all (wrong tier or typo)", async () => {
+    // e.g. `cycle --include <nightly-only-step> --force`: the orchestrator's tier+include filter
+    // drops the step before it ever runs, so result.steps is empty for that name — a blind spot in
+    // a naive "filter result.steps down to the requested names" check (round-2 review finding).
+    const nowIso = new Date().toISOString();
+    runMaintenanceOrchestratorMock.mockResolvedValue({
+      tierLabel: "cycle",
+      steps: [],
+      exitCode: 0,
+      summaryLine: "Maintenance cycle — 0 steps",
+      runId: "job-test-run",
+      startedAt: nowIso,
+      finishedAt: nowIso,
+      durationMs: 5,
+    });
+
+    const mem = new Command("hybrid-mem");
+    mem.exitOverride();
+    const maintenance = mem.command("maintenance");
+    registerMaintenanceOrchestratorCommands(maintenance, makeMinimalBindings());
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const errLines: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errLines.push(args.map((a) => String(a)).join(" "));
+    });
+
+    await mem.parseAsync(["maintenance", "cycle", "--include", "some-nightly-only-step", "--force"], {
+      from: "user",
+    });
+
+    expect(process.exitCode).toBe(3);
+    expect(errLines.some((l) => l.includes("no result (wrong tier, excluded, or unregistered runner)"))).toBe(true);
+  });
 });
 
 describe("maintenance step <step> bounds runtime by default (#2032)", () => {
@@ -265,6 +299,27 @@ describe("maintenance step <step> bounds runtime by default (#2032)", () => {
     expect(runMaintenanceOrchestratorMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ maxRuntimeMs: 5 * 60_000 }),
+    );
+  });
+
+  it("treats --max-runtime-min 0 as no budget instead of an immediately-exceeded zero-minute budget", async () => {
+    // "0" is a truthy, finite numeric string — without an explicit > 0 check it would produce
+    // maxRuntimeMs=0, which the orchestrator's `elapsed >= maxRuntimeMs` check treats as already
+    // exceeded before the first step runs, deferring every step (round-2 review finding).
+    const stepName = listMaintenanceSteps()[0]?.name as string;
+    mockOrchestratorResult({ stepName, status: "ok", summary: "done" });
+
+    const mem = new Command("hybrid-mem");
+    mem.exitOverride();
+    const maintenance = mem.command("maintenance");
+    registerMaintenanceOrchestratorCommands(maintenance, makeMinimalBindings());
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await mem.parseAsync(["maintenance", "step", stepName, "--force", "--max-runtime-min", "0"], { from: "user" });
+
+    expect(runMaintenanceOrchestratorMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ maxRuntimeMs: undefined }),
     );
   });
 });
