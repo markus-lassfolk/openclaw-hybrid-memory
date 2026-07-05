@@ -768,7 +768,8 @@ export function createPluginService(ctx: PluginServiceContext) {
               },
               api.logger,
             );
-            const summary = `stored=${result.factsStored} scanned=${result.sessionsScanned} errors=${result.errors} semantic=${result.errors > 0 ? "partial" : "success"}`;
+            const semantic = result.errors > 0 ? "partial" : result.deadlineStopped ? "monitoring" : "success";
+            const summary = `stored=${result.factsStored} scanned=${result.sessionsScanned} errors=${result.errors} semantic=${semantic}`;
             if (result.errors > 0) {
               throw new Error(`passive-observer errors=${result.errors} (${summary})`);
             }

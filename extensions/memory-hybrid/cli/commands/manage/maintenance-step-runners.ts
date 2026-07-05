@@ -71,9 +71,10 @@ function reflectRulesDiagnosticsIndicateFailure(
   if (d.zeroRulesReason === "insufficient_patterns" || d.zeroRulesReason === "valid_no_actionable_rules") {
     return false;
   }
-  if (d.zeroRulesReason === "invalid_response_format" && d.status === "degraded" && (d.modelResponseChars ?? 0) > 0) {
-    return false;
-  }
+  // invalid_response_format means the model responded but its output could not be parsed at all — a
+  // real pipeline break (prompt drift, provider format change), not "nothing to extract". This used
+  // to be tolerated as a one-off flake and reported as semantic=success, which silently hid a broken
+  // week's worth of rule extraction (#2043) — treat it the same as any other degraded run.
   if (d.status === "degraded") return true;
   if (d.status === "ok") return false;
   return !d.parseSuccess || rulesStored === 0;

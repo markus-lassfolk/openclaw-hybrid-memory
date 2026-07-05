@@ -160,4 +160,25 @@ describe("isEntityEnrichmentHardFailure (#2009)", () => {
       isEntityEnrichmentHardFailure({ llmFailures: 0, stopReason: "time_budget" }),
     ).toBe(false);
   });
+
+  it("tolerates a low llmFailures rate on a budget-limited stop with real progress (#2043)", () => {
+    expect(isEntityEnrichmentHardFailure({ processed: 90, llmFailures: 2, stopReason: "time_budget" })).toBe(
+      false,
+    );
+    expect(entityEnrichmentSemanticStatus({ processed: 90, llmFailures: 2, stopReason: "time_budget" })).toBe(
+      "monitoring",
+    );
+  });
+
+  it("still fails a budget-limited stop when the failure rate is high", () => {
+    expect(isEntityEnrichmentHardFailure({ processed: 10, llmFailures: 5, stopReason: "time_budget" })).toBe(
+      true,
+    );
+  });
+
+  it("reports monitoring (not success) for a clean budget-limited stop with remaining work", () => {
+    expect(entityEnrichmentSemanticStatus({ processed: 25, llmFailures: 0, stopReason: "time_budget" })).toBe(
+      "monitoring",
+    );
+  });
 });

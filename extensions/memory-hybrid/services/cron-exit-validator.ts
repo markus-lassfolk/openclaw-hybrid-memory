@@ -801,16 +801,9 @@ function collectMaintenanceTelemetryIssues(params: {
   const reflectParseFailed = /\bparse[_\s-]?success\s*[=:]\s*(false|0)\b/i.test(reflectRulesLog);
   const reflectStored = parsePositiveMetric(reflectRulesLog, "stored");
   const reflectInsufficientPatterns = /\bzero_rules_reason\s*[=:]\s*insufficient_patterns\b/i.test(reflectRulesLog);
-  const reflectDegradedFlake =
-    /\bzero_rules_reason\s*[=:]\s*invalid_response_format\b/i.test(reflectRulesLog) &&
-    /\bstatus\s*[=:]\s*degraded\b/i.test(reflectRulesLog) &&
-    (parsePositiveMetric(reflectRulesLog, "model_response_chars") ?? 0) > 0;
-  if (
-    reflectRulesDetected &&
-    (reflectParseFailed || reflectStored === 0) &&
-    !reflectInsufficientPatterns &&
-    !reflectDegradedFlake
-  ) {
+  // invalid_response_format is a genuine parse failure, not a benign flake — it must surface here too
+  // instead of being waved through, consistent with the orchestrator-side fix for #2043.
+  if (reflectRulesDetected && (reflectParseFailed || reflectStored === 0) && !reflectInsufficientPatterns) {
     addMaintenanceIssue(
       issues,
       buildMaintenanceIssue({

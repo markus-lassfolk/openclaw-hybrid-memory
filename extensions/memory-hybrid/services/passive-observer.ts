@@ -76,6 +76,10 @@ interface ObserverRunResult {
   factsStored: number;
   factsReinforced: number;
   errors: number;
+  /** Set when the maintenance-run deadline cut the scan short with no per-session errors (#2043) —
+   * a truncated-but-healthy run, distinct from `errors`, so callers can report it as a non-blocking
+   * "monitoring" outcome instead of a hard failure. */
+  deadlineStopped: boolean;
 }
 
 // Track consecutive failures across runs to prevent infinite retries on bad session files.
@@ -373,6 +377,7 @@ export async function runPassiveObserver(
     factsStored: 0,
     factsReinforced: 0,
     errors: 0,
+    deadlineStopped: false,
   };
 
   const explicitSessionsDir = config.sessionsDir ?? opts.proceduresSessionsDir;
@@ -524,13 +529,13 @@ export async function runPassiveObserver(
     // report a false-positive truncated/errored run when there was actually no work left to lose.
     if (cursor >= fileBytelen) continue; // Nothing new
     if (maintenanceRunDeadlineReached()) {
-      // Deadline stops mid-run are counted as an error so the caller's summary (and
-      // assertPassiveObserverSummaryDoesNotBlock) surface a truncated run as a failure
-      // instead of a silent "ok" that hides unprocessed sessions (#2032).
-      result.errors++;
+      // Deadline stops mid-run are surfaced via deadlineStopped (not errors) so the caller's summary
+      // reports a truncated-but-healthy run as a non-blocking "monitoring" outcome rather than a hard
+      // failure indistinguishable from a real per-session error (#2043, refining #2032's original fix).
+      result.deadlineStopped = true;
       logger.warn(
         "memory-hybrid: passive-observer — maintenance run deadline reached; stopping session scan " +
-          `(processed ${sessionIdx}/${sessions.length} sessions, sessionsScanned=${result.sessionsScanned}, ` +
+          `(processed ${sessionIdx}/${sessions.length} sessions, sessionsDiscovered=${sessions.length}, ` +
           `chunksProcessed=${result.chunksProcessed}, factsStored=${result.factsStored})`,
       );
       break;
@@ -613,7 +618,7 @@ export async function runPassiveObserver(
           `memory-hybrid: passive-observer — maintenance run deadline reached; deferring session ${sessionId}`,
         );
         deadlineStopped = true;
-        result.errors++;
+        result.deadlineStopped = true;
         break;
       }
       if (!chunk.trim()) continue;

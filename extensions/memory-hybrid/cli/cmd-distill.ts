@@ -456,6 +456,11 @@ export async function runDistillForCli(
     let cursorBlock = 0;
     let shrinkBudget = 8;
     let truncatedBatches = 0;
+    // Once the primary model times out/connection-errors once this run, every subsequent batch skips
+    // straight to the fallback chain instead of re-paying the primary's full retry+timeout cost first
+    // (#2043) — a stalled primary otherwise burns ~90s/batch on a call that's already shown it won't
+    // succeed, leaving the fallback too little of the deadline to ever complete a single block.
+    let primaryUnavailableThisRun = false;
     let nonAdaptiveBatchFactor = 1;
     let nonAdaptiveOutFactor = 1;
     const minBatchForModel = Math.max(2048, promptTokens + 256);
@@ -608,7 +613,14 @@ export async function runDistillForCli(
         logger.warn?.(
           `memory-hybrid: distill batch ${batchNum} primary ${model} cannot fit ~${inputTokens} tokens (limit ${primaryInputLimit}); using ${callModel} first`,
         );
+      } else if (primaryUnavailableThisRun && callFallbacks.length > 0) {
+        callModel = callFallbacks[0];
+        callFallbacks = callFallbacks.slice(1);
+        logger.info?.(
+          `memory-hybrid: distill batch ${batchNum} skipping primary ${model} (timed out earlier this run); using ${callModel} first`,
+        );
       }
+      const usedPrimaryThisAttempt = callModel === model;
       try {
         const detail = await chatCompleteWithRetryDetailed({
           model: callModel,
@@ -742,6 +754,12 @@ export async function runDistillForCli(
           typeof (e as Error & { lastAttemptedModel?: string }).lastAttemptedModel === "string"
             ? (e as Error & { lastAttemptedModel: string }).lastAttemptedModel
             : model;
+        // chatCompleteWithRetryDetailed only throws after every model in the chain (primary + all
+        // fallbackModels passed to this call) has failed, so a timeout/connection error while the
+        // primary was in the chain means the primary itself is confirmed down for this run.
+        if (usedPrimaryThisAttempt && (isTimeout || isConn)) {
+          primaryUnavailableThisRun = true;
+        }
         shrinkForRetry(kind, failureModel);
         const retryAfterMs = parseRetryAfterMs(e);
         if ((isRateLimit || isQuota) && retryAfterMs != null && retryAfterMs > 0) {

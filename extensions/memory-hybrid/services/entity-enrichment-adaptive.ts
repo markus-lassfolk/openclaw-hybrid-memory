@@ -254,25 +254,48 @@ export type EntityEnrichmentOutcomeInput = {
 };
 
 /**
+ * Tolerated LLM-failure rate for a budget-limited stop with real progress (#2043). Deliberately low
+ * (5%) — it exists to absorb the occasional transient provider blip on a large run (e.g. 2/90), not
+ * to mask a meaningfully elevated failure rate (e.g. 2/20 remains a hard failure).
+ */
+const BUDGET_STOP_LLM_FAILURE_TOLERANCE_RATIO = 0.05;
+
+function isEntityEnrichmentBudgetStop(stopReason: string): boolean {
+  return stopReason === "time_budget" || stopReason === "provider_budget";
+}
+
+/**
  * True when enrichment should fail maintenance/CLI guards (#2009).
  * Healthy bounded catch-up (`stopReason=exhausted`, `processed>0`, `llmFailures=0`)
  * is not a hard failure — only LLM errors or zero-progress budget stops are.
+ *
+ * A deadline/provider-budget stop with real progress and only a small fraction of LLM
+ * failures (e.g. 2 of 90) is expected, resumable, checkpointed work, not a pipeline
+ * failure — only a failure rate above the tolerance (or any failures on a run that
+ * wasn't budget-limited) counts as a hard failure (#2043).
  */
 export function isEntityEnrichmentHardFailure(input: EntityEnrichmentOutcomeInput): boolean {
   const llmFailures = input.llmFailures ?? 0;
   const processed = input.processed;
   const stopReason = input.stopReason ?? "completed";
-  if (llmFailures > 0) return true;
-  if (
-    processed === 0 &&
-    (stopReason === "exhausted" || stopReason === "time_budget" || stopReason === "provider_budget")
-  ) {
+  const isBudgetStop = isEntityEnrichmentBudgetStop(stopReason);
+  if (processed === 0 && (stopReason === "exhausted" || isBudgetStop)) {
+    return true;
+  }
+  if (llmFailures > 0) {
+    if (isBudgetStop && processed && llmFailures / processed <= BUDGET_STOP_LLM_FAILURE_TOLERANCE_RATIO) {
+      return false;
+    }
     return true;
   }
   return false;
 }
 
-/** Summary semantic token for enrich-entities logs (#2009). */
-export function entityEnrichmentSemanticStatus(input: EntityEnrichmentOutcomeInput): "partial" | "success" {
-  return isEntityEnrichmentHardFailure(input) ? "partial" : "success";
+/** Summary semantic token for enrich-entities logs (#2009, #2043). */
+export function entityEnrichmentSemanticStatus(input: EntityEnrichmentOutcomeInput): "partial" | "monitoring" | "success" {
+  if (isEntityEnrichmentHardFailure(input)) return "partial";
+  const stopReason = input.stopReason ?? "completed";
+  // A budget-limited stop is resumable, checkpointed work-in-progress — surface it distinctly from a
+  // clean "nothing left to do" success so operators can tell the run didn't finish (#2043).
+  return isEntityEnrichmentBudgetStop(stopReason) ? "monitoring" : "success";
 }
