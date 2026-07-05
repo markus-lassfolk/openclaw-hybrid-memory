@@ -5,7 +5,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { atomicWriteFile } from "../../../utils/atomic-write.js";
+import { readStepGuardTimestampMs, stepGuardEligible } from "../../../services/cron-guard.js";
 import {
   effectiveCadenceLabel,
   formatMaintenanceSummary,
@@ -14,7 +14,7 @@ import {
   runMaintenanceOrchestrator,
   toOrchestratorRunSummary,
 } from "../../../services/maintenance-orchestrator.js";
-import { readStepGuardTimestampMs, stepGuardEligible } from "../../../services/cron-guard.js";
+import { atomicWriteFile } from "../../../utils/atomic-write.js";
 import { formatTimestampUtcFromMs } from "../../../utils/dates.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
@@ -44,6 +44,7 @@ export function registerMaintenanceOrchestratorCommands(maintenance: Chainable, 
       maxRuntimeMin?: string;
       json?: boolean;
       summaryOut?: string;
+      allowSkip?: boolean;
     },
   ) => {
     const verbose = !!opts?.verbose;
@@ -109,6 +110,28 @@ export function registerMaintenanceOrchestratorCommands(maintenance: Chainable, 
       for (const line of lines) console.log(line);
     }
     if (result.exitCode !== 0) process.exitCode = result.exitCode;
+
+    // An explicit, forced --include run (whether via the dedicated `step <name>` command or
+    // `cycle`/`nightly`/`full --include x,y --force`) is a targeted "run this now and verify it"
+    // diagnostic — computeExitCode() treats "skipped" as benign because it's normal cadence-guard
+    // behavior in an ordinary full/nightly run, so it doesn't cover "the step(s) I explicitly asked
+    // for didn't execute" (#2031). Scoped to include+force so ordinary unforced --include automation
+    // (which can legitimately skip by cadence) keeps its existing exit-0-on-skip behavior.
+    const includeNames = parseStepList(opts?.include);
+    if ((opts?.force || opts?.full) && includeNames?.length && !opts?.allowSkip) {
+      const selected = result.steps.filter((s) => includeNames.includes(s.name));
+      const didNotRun = selected.length > 0 && selected.every((s) => s.status.startsWith("skipped"));
+      if (didNotRun) {
+        console.error(
+          `maintenance ${result.tierLabel}: selected step(s) did not run ` +
+            `(${selected.map((s) => `${s.name}: ${s.status} — ${s.summary}`).join("; ")}). ` +
+            "Pass --allow-skip to treat this as a non-strict status check.",
+        );
+        if (!process.exitCode) process.exitCode = 3;
+      }
+    }
+
+    return result;
   };
 
   const commonOptions = (cmd: Chainable) =>
@@ -121,7 +144,11 @@ export function registerMaintenanceOrchestratorCommands(maintenance: Chainable, 
       .option("--exclude <steps>", "Comma-separated step names to skip")
       .option("--max-runtime-min <n>", "Optional time budget in minutes")
       .option("--json", "Emit orchestrator run summary as JSON")
-      .option("--summary-out <path>", "Write orchestrator run summary JSON to path");
+      .option("--summary-out <path>", "Write orchestrator run summary JSON to path")
+      .option(
+        "--allow-skip",
+        "With --include --force: exit 0 even if the selected step(s) didn't execute (locked/gated/guarded)",
+      );
 
   commonOptions(
     maintenance
@@ -158,34 +185,42 @@ export function registerMaintenanceOrchestratorCommands(maintenance: Chainable, 
 
   // `maintenance step <name>` runs exactly one named step in isolation (#2028). Named `step` (singular)
   // to avoid colliding with the `maintenance run` JobRun-inspection group and the `steps` list command.
+  //
+  // Bounded by default (#2032): this command is meant for isolated diagnostic/verification runs, so
+  // unlike cycle/nightly/full it caps runtime unless the operator overrides --max-runtime-min. Long
+  // CPU/LLM-bound steps (e.g. passive-observer scanning a large first-run backlog) already consult the
+  // orchestrator-wide deadline between sessions/chunks, so this cap actually bounds wall-clock time.
+  const DEFAULT_STEP_MAX_RUNTIME_MIN = "15";
+
   commonOptions(
     maintenance
       .command("step <step>")
       .description(
         "Run exactly one named maintenance step in isolation (bypasses that step's cadence guard). Use `maintenance steps` to list valid names.",
-      )
-      .action(
-        withExit(async (step: string, opts, cmd?: CommanderOptsParent) => {
-          const stepName = step?.trim();
-          const validNames = listMaintenanceSteps().map((s) => s.name);
-          if (!stepName || !validNames.includes(stepName)) {
-            console.error(`Unknown maintenance step: ${stepName || "(none)"}`);
-            console.error(`Valid steps (${validNames.length}):`);
-            for (const name of validNames) console.error(`  ${name}`);
-            process.exitCode = 1;
-            return;
-          }
-          // Force so the targeted step actually runs even if its cadence guard has not expired (this
-          // command is an explicit "run this step now" diagnostic). include=[step] across both tiers
-          // means the orchestrator executes ONLY that step and no unrelated stages (#2028).
-          await runTier(["cycle", "nightly"], {
-            ...opts,
-            include: stepName,
-            force: true,
-            verbose: !!opts?.verbose || readHybridMemVerbose(cmd),
-          });
-        }),
       ),
+  ).action(
+    withExit(async (step: string, opts, cmd?: CommanderOptsParent) => {
+      const stepName = step?.trim();
+      const validNames = listMaintenanceSteps().map((s) => s.name);
+      if (!stepName || !validNames.includes(stepName)) {
+        console.error(`Unknown maintenance step: ${stepName || "(none)"}`);
+        console.error(`Valid steps (${validNames.length}):`);
+        for (const name of validNames) console.error(`  ${name}`);
+        process.exitCode = 1;
+        return;
+      }
+      // Force so the targeted step actually runs even if its cadence guard has not expired (this
+      // command is an explicit "run this step now" diagnostic). include=[step] across both tiers
+      // means the orchestrator executes ONLY that step and no unrelated stages (#2028). runTier()
+      // itself checks whether this forced, explicitly-included step actually executed (#2031).
+      await runTier(["cycle", "nightly"], {
+        ...opts,
+        include: stepName,
+        force: true,
+        maxRuntimeMin: opts?.maxRuntimeMin ?? DEFAULT_STEP_MAX_RUNTIME_MIN,
+        verbose: !!opts?.verbose || readHybridMemVerbose(cmd),
+      });
+    }),
   );
 
   maintenance

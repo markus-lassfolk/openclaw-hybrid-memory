@@ -19,8 +19,8 @@
  *   runner processes the queue on startup.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, hostname as osHostname } from "node:os";
 import { join } from "node:path";
 
 import { readOpenClawCronStore, writeOpenClawCronStore } from "./openclaw-cron-store.js";
@@ -64,6 +64,42 @@ function getStepLockFilePath(stepName: string, openclawDir?: string): string {
 /** Lock files older than this are treated as abandoned by a crashed process, not a live run. */
 export const STEP_LOCK_STALE_MS = 30 * 60 * 1000;
 
+interface StepLockPayload {
+  lockedAtMs: number;
+  pid?: number;
+  hostname?: string;
+}
+
+/** Owner metadata for a lock file this process is about to (re)write (#2031). */
+function serializeLockPayload(nowMs: number): string {
+  return JSON.stringify({ lockedAtMs: nowMs, pid: process.pid, hostname: osHostname() } satisfies StepLockPayload);
+}
+
+/**
+ * Parse a lock file's contents. Accepts the current JSON payload as well as the legacy bare
+ * epoch-ms number written by pre-#2031 versions, so an in-place upgrade with a live lock file
+ * from the old format doesn't get misread as corrupt.
+ */
+function parseLockPayload(raw: string): StepLockPayload | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (/^\d+$/.test(trimmed)) {
+    const lockedAtMs = Number(trimmed);
+    return Number.isFinite(lockedAtMs) ? { lockedAtMs } : null;
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as Partial<StepLockPayload>;
+    if (typeof parsed.lockedAtMs !== "number" || !Number.isFinite(parsed.lockedAtMs)) return null;
+    return {
+      lockedAtMs: parsed.lockedAtMs,
+      pid: typeof parsed.pid === "number" ? parsed.pid : undefined,
+      hostname: typeof parsed.hostname === "string" ? parsed.hostname : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Acquire a real cross-process/cross-invocation lock for a maintenance step, so two orchestrator
  * runs starting near-simultaneously (a manual CLI run overlapping the gateway's own tick, or a
@@ -80,15 +116,15 @@ export function acquireStepLock(stepName: string, openclawDir?: string, nowMs = 
   mkdirSync(guardDir, { recursive: true });
   const lockPath = getStepLockFilePath(stepName, openclawDir);
   try {
-    writeFileSync(lockPath, String(nowMs), { encoding: "utf-8", flag: "wx" });
+    writeFileSync(lockPath, serializeLockPayload(nowMs), { encoding: "utf-8", flag: "wx" });
     return true;
   } catch {
     // Lock file already exists — check whether it's stale (abandoned by a crashed process).
     try {
-      const raw = readFileSync(lockPath, "utf-8").trim();
-      const lockedAtMs = Number(raw);
-      if (!Number.isFinite(lockedAtMs) || nowMs - lockedAtMs <= STEP_LOCK_STALE_MS) {
-        return false; // held by a live (or recent) run
+      const raw = readFileSync(lockPath, "utf-8");
+      const payload = parseLockPayload(raw);
+      if (!payload || nowMs - payload.lockedAtMs <= STEP_LOCK_STALE_MS) {
+        return false; // held by a live (or recent) run, or unreadable — fail closed
       }
     } catch {
       return false; // couldn't read the lock file — fail closed, don't run concurrently
@@ -97,7 +133,7 @@ export function acquireStepLock(stepName: string, openclawDir?: string, nowMs = 
     // failed `wx` above and this write), but the window is a single fs call and the consequence
     // of losing that race is a harmless re-run of an idempotent step, not corruption.
     try {
-      writeFileSync(lockPath, String(nowMs), "utf-8");
+      writeFileSync(lockPath, serializeLockPayload(nowMs), "utf-8");
       return true;
     } catch {
       return false;
@@ -111,6 +147,71 @@ export function releaseStepLock(stepName: string, openclawDir?: string): void {
   } catch {
     /* non-fatal — worst case a stale lock sits until STEP_LOCK_STALE_MS passes */
   }
+}
+
+export interface StepLockInfo {
+  stepName: string;
+  lockPath: string;
+  lockedAtMs: number;
+  ageMs: number;
+  pid?: number;
+  hostname?: string;
+  stale: boolean;
+}
+
+/** Read a single step's lock metadata, if a lock file is currently present (#2031). */
+export function readStepLockInfo(stepName: string, openclawDir?: string, nowMs = Date.now()): StepLockInfo | null {
+  const lockPath = getStepLockFilePath(stepName, openclawDir);
+  if (!existsSync(lockPath)) return null;
+  try {
+    const payload = parseLockPayload(readFileSync(lockPath, "utf-8"));
+    if (!payload) return null;
+    const ageMs = Math.max(0, nowMs - payload.lockedAtMs);
+    return {
+      stepName,
+      lockPath,
+      lockedAtMs: payload.lockedAtMs,
+      ageMs,
+      pid: payload.pid,
+      hostname: payload.hostname,
+      stale: ageMs > STEP_LOCK_STALE_MS,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * List every step lock file currently present under the guard dir, live or stale (#2031/#2033).
+ * Used by `maintenance status --verbose` to surface a lock that would block `maintenance step --force`
+ * instead of leaving operators to discover it only when a targeted run reports `skipped_guard`.
+ */
+export function listActiveStepLocks(openclawDir?: string, nowMs = Date.now()): StepLockInfo[] {
+  const guardDir = getGuardDir(openclawDir);
+  if (!existsSync(guardDir)) return [];
+  let entries: string[];
+  try {
+    entries = readdirSync(guardDir);
+  } catch {
+    return [];
+  }
+  const locks: StepLockInfo[] = [];
+  for (const f of entries) {
+    if (!f.startsWith("step--") || !f.endsWith(".lock")) continue;
+    const stepName = f.slice("step--".length, -".lock".length);
+    const info = readStepLockInfo(stepName, openclawDir, nowMs);
+    if (info) locks.push(info);
+  }
+  return locks;
+}
+
+/**
+ * Single canonical rendering of lock owner metadata, shared by the orchestrator's `skipped_guard`
+ * summary and `maintenance status`'s lock listing so the two surfaces can't drift out of sync (#2031).
+ */
+export function formatStepLockDetail(info: StepLockInfo | null): string {
+  if (!info) return "lock metadata unavailable";
+  return `pid=${info.pid ?? "unknown"} host=${info.hostname ?? "unknown"} held=${Math.round(info.ageMs / 1000)}s stale=${info.stale} lock=${info.lockPath}`;
 }
 
 export function stepGuardEligible(

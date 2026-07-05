@@ -3,8 +3,8 @@
  * Cycle tier: gateway-native tick. Nightly tier: consolidated cron + CLI.
  */
 
-import type { HybridMemoryConfig } from "../config.js";
 import type { DatabaseSync } from "node:sqlite";
+import type { HybridMemoryConfig } from "../config.js";
 import { nowIso } from "../utils/dates.js";
 import {
   clearMaintenanceRunDeadline,
@@ -13,21 +13,23 @@ import {
   setMaintenanceRunDeadlineMs,
 } from "../utils/maintenance-run-deadline.js";
 import { is429OrWrapped } from "./chat.js";
-import { generateOrchestratorRunId } from "./maintenance-job-run/orchestrator-summary.js";
+import {
+  acquireStepLock,
+  formatStepLockDetail,
+  readStepGuardTimestampMs,
+  readStepLockInfo,
+  releaseStepLock,
+  stepGuardEligible,
+  writeStepGuardTimestampMs,
+} from "./cron-guard.js";
 import { recordMaintenanceStepRun } from "./maintenance-audit-journal.js";
+import { generateOrchestratorRunId } from "./maintenance-job-run/orchestrator-summary.js";
 import {
   parseSemanticTokenFromSummary,
   reflectRulesStepSummaryIndicatesFailure,
   semanticOutcomeBlocksOrchestratorGuard,
 } from "./maintenance-job-run/semantic-outcome.js";
 import type { JobRunSemanticOutcome } from "./maintenance-job-run/types.js";
-import {
-  acquireStepLock,
-  readStepGuardTimestampMs,
-  releaseStepLock,
-  stepGuardEligible,
-  writeStepGuardTimestampMs,
-} from "./cron-guard.js";
 
 export type StepTier = "cycle" | "nightly";
 export type StepLlmTier = "none" | "nano" | "maintenance" | "default" | "heavy" | "embed" | "local";
@@ -559,111 +561,52 @@ export async function runMaintenanceOrchestrator(
 
   setMaintenanceRunDeadlineMs(runDeadlineMs);
   try {
-  for (const step of steps) {
-    if (maxRuntimeMs !== undefined && Date.now() - startedAtMs >= maxRuntimeMs) {
-      pushStepResult({
-        name: step.name,
-        status: "deferred",
-        summary: "time budget exceeded",
-        durationMs: 0,
-      });
-      continue;
-    }
-
-    if (step.featureGate && !step.featureGate(cfg)) {
-      pushStepResult({
-        name: step.name,
-        status: "skipped_gate",
-        summary: "feature disabled",
-        durationMs: 0,
-      });
-      continue;
-    }
-
-    if (step.oneTimeMarkerPath && ctx.oneTimeMarkerExists?.(step.oneTimeMarkerPath)) {
-      pushStepResult({
-        name: step.name,
-        status: "skipped_guard",
-        summary: "one-time marker exists",
-        durationMs: 0,
-      });
-      continue;
-    }
-
-    if (!dependenciesMet(step, completedThisRun, openclawDir)) {
-      pushStepResult({
-        name: step.name,
-        status: "skipped_dep",
-        summary: `waiting for ${step.dependsOn?.join(", ")} in this run`,
-        durationMs: 0,
-      });
-      continue;
-    }
-
-    const guardMs = resolveStepGuardIntervalMs(step, cfg);
-    if (!options.force && guardMs > 0) {
-      const guard = stepGuardEligible(step.name, guardMs, openclawDir);
-      if (!guard.eligible) {
-        const agoH = guard.lastRunMs ? Math.round((Date.now() - guard.lastRunMs) / HOUR_MS) : 0;
+    for (const step of steps) {
+      if (maxRuntimeMs !== undefined && Date.now() - startedAtMs >= maxRuntimeMs) {
         pushStepResult({
           name: step.name,
-          status: "skipped_guard",
-          summary: `guard (ran ${agoH}h ago)`,
+          status: "deferred",
+          summary: "time budget exceeded",
           durationMs: 0,
         });
         continue;
       }
-    }
 
-    const runner = runners.get(step.name);
-    if (!runner) {
-      pushStepResult({
-        name: step.name,
-        status: "skipped_missing_runner",
-        summary: "no runner registered",
-        durationMs: 0,
-      });
-      continue;
-    }
-
-    if (deferRemainingLlm && isLlmProviderStep(step.llmTier)) {
-      pushStepResult({
-        name: step.name,
-        status: "deferred",
-        summary: "rate-limit circuit breaker",
-        durationMs: 0,
-      });
-      continue;
-    }
-
-    if (options.dryRun) {
-      pushStepResult({
-        name: step.name,
-        status: "ok",
-        summary: "dry-run (would execute)",
-        durationMs: 0,
-      });
-      completedThisRun.add(step.name);
-      continue;
-    }
-
-    if (lastWasLlmStep && isLlmProviderStep(step.llmTier) && llmCooldownMs > 0 && !maintenanceRunDeadlineReached()) {
-      const remaining = remainingMaintenanceRunMs();
-      const cooldownMs = Number.isFinite(remaining)
-        ? Math.min(llmCooldownMs, Math.max(0, Math.floor(remaining)))
-        : llmCooldownMs;
-      if (cooldownMs > 0) {
-        await sleep(cooldownMs);
+      if (step.featureGate && !step.featureGate(cfg)) {
+        pushStepResult({
+          name: step.name,
+          status: "skipped_gate",
+          summary: "feature disabled",
+          durationMs: 0,
+        });
+        continue;
       }
-      // Re-check eligibility after the cooldown sleep: another process (a manual CLI run, or a
-      // double-fired cron trigger) could have run and completed this step entirely inside the
-      // sleep window. acquireStepLock below only prevents *concurrent* execution — it does
-      // nothing to stop this process from re-running a step that already finished sequentially
-      // just before it woke up, since the lock is free again by the time it wakes.
+
+      if (step.oneTimeMarkerPath && ctx.oneTimeMarkerExists?.(step.oneTimeMarkerPath)) {
+        pushStepResult({
+          name: step.name,
+          status: "skipped_guard",
+          summary: "one-time marker exists",
+          durationMs: 0,
+        });
+        continue;
+      }
+
+      if (!dependenciesMet(step, completedThisRun, openclawDir)) {
+        pushStepResult({
+          name: step.name,
+          status: "skipped_dep",
+          summary: `waiting for ${step.dependsOn?.join(", ")} in this run`,
+          durationMs: 0,
+        });
+        continue;
+      }
+
+      const guardMs = resolveStepGuardIntervalMs(step, cfg);
       if (!options.force && guardMs > 0) {
-        const recheck = stepGuardEligible(step.name, guardMs, openclawDir);
-        if (!recheck.eligible) {
-          const agoH = recheck.lastRunMs ? Math.round((Date.now() - recheck.lastRunMs) / HOUR_MS) : 0;
+        const guard = stepGuardEligible(step.name, guardMs, openclawDir);
+        if (!guard.eligible) {
+          const agoH = guard.lastRunMs ? Math.round((Date.now() - guard.lastRunMs) / HOUR_MS) : 0;
           pushStepResult({
             name: step.name,
             status: "skipped_guard",
@@ -673,118 +616,182 @@ export async function runMaintenanceOrchestrator(
           continue;
         }
       }
-    }
 
-    // Real cross-process mutex on top of stepGuardEligible's cadence-only check above — prevents
-    // two orchestrator invocations that start near-simultaneously (a manual CLI run overlapping
-    // the gateway's own tick, or a double-fired cron trigger) from executing the same step
-    // concurrently (duplicate LLM calls, duplicate decay/prune passes).
-    if (!acquireStepLock(step.name, openclawDir)) {
-      pushStepResult({
-        name: step.name,
-        status: "skipped_guard",
-        summary: "locked by a concurrent maintenance run",
-        durationMs: 0,
-      });
-      continue;
-    }
-
-    const stepStarted = Date.now();
-    try {
-      const summary = await runStepWithHeartbeat(step.name, options.verbose !== false, logger, () => runner());
-      const meta = parseStepRunnerMetadata(summary);
-      if (step.name === "reflect-rules" && reflectRulesStepSummaryIndicatesFailure(summary)) {
-        logger?.warn?.(`maintenance-orchestrator: ${step.name} semantic failure (summary diagnostics): ${summary}`);
+      const runner = runners.get(step.name);
+      if (!runner) {
         pushStepResult({
           name: step.name,
-          status: "failed",
-          summary,
-          durationMs: Date.now() - stepStarted,
-          ...meta,
-          semanticOutcome: meta.semanticOutcome ?? "failed",
+          status: "skipped_missing_runner",
+          summary: "no runner registered",
+          durationMs: 0,
         });
-        lastWasLlmStep = isLlmProviderStep(step.llmTier);
         continue;
       }
-      if (stepSemanticBlocksGuard(meta.semanticOutcome)) {
-        logger?.warn?.(`maintenance-orchestrator: ${step.name} semantic failure (${meta.semanticOutcome}): ${summary}`);
+
+      if (deferRemainingLlm && isLlmProviderStep(step.llmTier)) {
         pushStepResult({
           name: step.name,
-          status: "failed",
-          summary,
-          durationMs: Date.now() - stepStarted,
-          ...meta,
+          status: "deferred",
+          summary: "rate-limit circuit breaker",
+          durationMs: 0,
         });
-        lastWasLlmStep = isLlmProviderStep(step.llmTier);
         continue;
       }
-      if (!options.dryRun && guardMs >= 0) {
-        writeStepGuardTimestampMs(step.name, Date.now(), openclawDir);
+
+      if (options.dryRun) {
+        pushStepResult({
+          name: step.name,
+          status: "ok",
+          summary: "dry-run (would execute)",
+          durationMs: 0,
+        });
+        completedThisRun.add(step.name);
+        continue;
       }
-      pushStepResult({
-        name: step.name,
-        status: "ok",
-        summary,
-        durationMs: Date.now() - stepStarted,
-        ...meta,
-      });
-      completedThisRun.add(step.name);
-      consecutiveRateLimitErrors = 0;
-      lastWasLlmStep = isLlmProviderStep(step.llmTier);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (isRateLimitError(err)) {
-        consecutiveRateLimitErrors++;
-        if (consecutiveRateLimitErrors >= rateLimitMaxRetries) {
-          deferRemainingLlm = true;
+
+      if (lastWasLlmStep && isLlmProviderStep(step.llmTier) && llmCooldownMs > 0 && !maintenanceRunDeadlineReached()) {
+        const remaining = remainingMaintenanceRunMs();
+        const cooldownMs = Number.isFinite(remaining)
+          ? Math.min(llmCooldownMs, Math.max(0, Math.floor(remaining)))
+          : llmCooldownMs;
+        if (cooldownMs > 0) {
+          await sleep(cooldownMs);
         }
-        logger?.warn?.(`maintenance-orchestrator: ${step.name} rate-limited: ${message}`);
+        // Re-check eligibility after the cooldown sleep: another process (a manual CLI run, or a
+        // double-fired cron trigger) could have run and completed this step entirely inside the
+        // sleep window. acquireStepLock below only prevents *concurrent* execution — it does
+        // nothing to stop this process from re-running a step that already finished sequentially
+        // just before it woke up, since the lock is free again by the time it wakes.
+        if (!options.force && guardMs > 0) {
+          const recheck = stepGuardEligible(step.name, guardMs, openclawDir);
+          if (!recheck.eligible) {
+            const agoH = recheck.lastRunMs ? Math.round((Date.now() - recheck.lastRunMs) / HOUR_MS) : 0;
+            pushStepResult({
+              name: step.name,
+              status: "skipped_guard",
+              summary: `guard (ran ${agoH}h ago)`,
+              durationMs: 0,
+            });
+            continue;
+          }
+        }
+      }
+
+      // Real cross-process mutex on top of stepGuardEligible's cadence-only check above — prevents
+      // two orchestrator invocations that start near-simultaneously (a manual CLI run overlapping
+      // the gateway's own tick, or a double-fired cron trigger) from executing the same step
+      // concurrently (duplicate LLM calls, duplicate decay/prune passes).
+      if (!acquireStepLock(step.name, openclawDir)) {
+        // Surface enough lock metadata (owner pid/host, hold duration, lock path) for an operator to
+        // verify whether this is a real concurrent run or an abandoned lock (#2031).
+        const lockDetail = formatStepLockDetail(readStepLockInfo(step.name, openclawDir));
         pushStepResult({
           name: step.name,
-          status: "rate_limited",
-          summary: message,
-          durationMs: Date.now() - stepStarted,
+          status: "skipped_guard",
+          summary: `locked by a concurrent maintenance run (${lockDetail})`,
+          durationMs: 0,
         });
-      } else {
-        logger?.warn?.(`maintenance-orchestrator: ${step.name} failed: ${message}`);
-        const meta = parseStepRunnerMetadata(message);
+        continue;
+      }
+
+      const stepStarted = Date.now();
+      try {
+        const summary = await runStepWithHeartbeat(step.name, options.verbose !== false, logger, () => runner());
+        const meta = parseStepRunnerMetadata(summary);
+        if (step.name === "reflect-rules" && reflectRulesStepSummaryIndicatesFailure(summary)) {
+          logger?.warn?.(`maintenance-orchestrator: ${step.name} semantic failure (summary diagnostics): ${summary}`);
+          pushStepResult({
+            name: step.name,
+            status: "failed",
+            summary,
+            durationMs: Date.now() - stepStarted,
+            ...meta,
+            semanticOutcome: meta.semanticOutcome ?? "failed",
+          });
+          lastWasLlmStep = isLlmProviderStep(step.llmTier);
+          continue;
+        }
+        if (stepSemanticBlocksGuard(meta.semanticOutcome)) {
+          logger?.warn?.(
+            `maintenance-orchestrator: ${step.name} semantic failure (${meta.semanticOutcome}): ${summary}`,
+          );
+          pushStepResult({
+            name: step.name,
+            status: "failed",
+            summary,
+            durationMs: Date.now() - stepStarted,
+            ...meta,
+          });
+          lastWasLlmStep = isLlmProviderStep(step.llmTier);
+          continue;
+        }
+        if (!options.dryRun && guardMs >= 0) {
+          writeStepGuardTimestampMs(step.name, Date.now(), openclawDir);
+        }
         pushStepResult({
           name: step.name,
-          status: "failed",
-          summary: message,
+          status: "ok",
+          summary,
           durationMs: Date.now() - stepStarted,
           ...meta,
         });
+        completedThisRun.add(step.name);
+        consecutiveRateLimitErrors = 0;
+        lastWasLlmStep = isLlmProviderStep(step.llmTier);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (isRateLimitError(err)) {
+          consecutiveRateLimitErrors++;
+          if (consecutiveRateLimitErrors >= rateLimitMaxRetries) {
+            deferRemainingLlm = true;
+          }
+          logger?.warn?.(`maintenance-orchestrator: ${step.name} rate-limited: ${message}`);
+          pushStepResult({
+            name: step.name,
+            status: "rate_limited",
+            summary: message,
+            durationMs: Date.now() - stepStarted,
+          });
+        } else {
+          logger?.warn?.(`maintenance-orchestrator: ${step.name} failed: ${message}`);
+          const meta = parseStepRunnerMetadata(message);
+          pushStepResult({
+            name: step.name,
+            status: "failed",
+            summary: message,
+            durationMs: Date.now() - stepStarted,
+            ...meta,
+          });
+        }
+        lastWasLlmStep = isLlmProviderStep(step.llmTier);
+      } finally {
+        releaseStepLock(step.name, openclawDir);
       }
-      lastWasLlmStep = isLlmProviderStep(step.llmTier);
-    } finally {
-      releaseStepLock(step.name, openclawDir);
     }
-  }
 
-  const { summaryLine, lines } = formatMaintenanceSummary(tierLabel, results);
-  if (options.verbose !== false) {
-    logger?.info?.(summaryLine);
-    for (const line of lines) logger?.info?.(line);
-  }
+    const { summaryLine, lines } = formatMaintenanceSummary(tierLabel, results);
+    if (options.verbose !== false) {
+      logger?.info?.(summaryLine);
+      for (const line of lines) logger?.info?.(line);
+    }
 
-  const finishedAt = nowIso();
-  return {
-    tierLabel,
-    steps: results,
-    exitCode: computeExitCode(results),
-    summaryLine,
-    runId,
-    startedAt: startedAtIso,
-    finishedAt,
-    durationMs: Date.now() - startedAtMs,
-  };
+    const finishedAt = nowIso();
+    return {
+      tierLabel,
+      steps: results,
+      exitCode: computeExitCode(results),
+      summaryLine,
+      runId,
+      startedAt: startedAtIso,
+      finishedAt,
+      durationMs: Date.now() - startedAtMs,
+    };
   } finally {
     clearMaintenanceRunDeadline();
   }
 }
 
-export { toOrchestratorRunSummary, generateOrchestratorRunId } from "./maintenance-job-run/orchestrator-summary.js";
+export { generateOrchestratorRunId, toOrchestratorRunSummary } from "./maintenance-job-run/orchestrator-summary.js";
 
 export async function runMaintenanceTiers(
   ctx: MaintenanceOrchestratorContext,

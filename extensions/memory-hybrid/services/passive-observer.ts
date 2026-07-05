@@ -21,28 +21,28 @@ import { categoryToEventType } from "../backends/event-log.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryCategory, ReinforcementConfig } from "../config.js";
-import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
-import { chunkTextByChars } from "../utils/text.js";
 import { nowIso } from "../utils/dates.js";
-import { LLMRetryError, chatCompleteWithRetry, resolveMaintenanceChatTimeoutMs } from "./chat.js";
-import { CostFeature } from "./cost-feature-labels.js";
-import type { EmbeddingProvider } from "./embeddings.js";
-import { shouldSuppressEmbeddingError } from "./embeddings.js";
-import { capturePluginError } from "./error-reporter.js";
 import {
   capTimeoutByMaintenanceRunDeadline,
   getMaintenanceRunAbortSignal,
   maintenanceRunDeadlineReached,
 } from "../utils/maintenance-run-deadline.js";
+import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
+import { chunkTextByChars } from "../utils/text.js";
+import { runCaptureStoreWithDedupWindow } from "./capture-dedup.js";
+import { chatCompleteWithRetry, LLMRetryError, resolveMaintenanceChatTimeoutMs } from "./chat.js";
+import { CostFeature } from "./cost-feature-labels.js";
+import type { EmbeddingProvider } from "./embeddings.js";
+import { shouldSuppressEmbeddingError } from "./embeddings.js";
+import { capturePluginError } from "./error-reporter.js";
+import type { ProvenanceService } from "./provenance.js";
 import {
   isSubstantiveMemoryText,
   prepareMemoryMetadataForStorage,
   prepareMemoryTextForStorage,
 } from "./recalled-context-assembler.js";
-import type { ProvenanceService } from "./provenance.js";
-import { cleanupEvictedVector } from "./vector-maintenance.js";
-import { runCaptureStoreWithDedupWindow } from "./capture-dedup.js";
 import { dotProductSimilarity, normalizeVector } from "./reflection.js";
+import { cleanupEvictedVector } from "./vector-maintenance.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -491,12 +491,24 @@ export async function runPassiveObserver(
   // ---------------------------------------------------------------------------
   // Phase 3: process each session that has new content.
   // ---------------------------------------------------------------------------
-  for (const { filePath, sessionId, fileBytelen, cursor } of sessions) {
+  for (const [sessionIdx, { filePath, sessionId, fileBytelen, cursor }] of sessions.entries()) {
     if (maintenanceRunDeadlineReached()) {
-      logger.warn("memory-hybrid: passive-observer — maintenance run deadline reached; stopping session scan");
+      // Deadline stops mid-run are counted as an error so the caller's summary (and
+      // assertPassiveObserverSummaryDoesNotBlock) surface a truncated run as a failure
+      // instead of a silent "ok" that hides unprocessed sessions (#2032).
+      result.errors++;
+      logger.warn(
+        "memory-hybrid: passive-observer — maintenance run deadline reached; stopping session scan " +
+          `(processed ${sessionIdx}/${sessions.length} sessions, sessionsScanned=${result.sessionsScanned}, ` +
+          `chunksProcessed=${result.chunksProcessed}, factsStored=${result.factsStored})`,
+      );
       break;
     }
     if (cursor >= fileBytelen) continue; // Nothing new
+    logger.info(
+      `memory-hybrid: passive-observer — progress: session ${sessionIdx + 1}/${sessions.length} (${sessionId}) ` +
+        `chunksProcessed=${result.chunksProcessed} factsExtracted=${result.factsExtracted} factsStored=${result.factsStored}`,
+    );
 
     let rawBuf: Buffer;
     let segmentEnd = fileBytelen;
@@ -771,28 +783,24 @@ export async function runPassiveObserver(
           scopeTarget: dedupScopeTarget,
         };
 
-        const txResult = runCaptureStoreWithDedupWindow(
-          factsDb,
-          dedupWindow,
-          dedupInput,
-          () =>
-            factsDb.storeWithResult({
-              text: storedText,
-              category: storedCategory,
-              importance: identity ? Math.max(fact.importance, 0.9) : fact.importance,
-              confidence: 0.6,
-              entity: null,
-              key: null,
-              value: null,
-              source: "passive-observer",
-              decayClass: identity ? "permanent" : "session",
-              scope: identity ? "global" : "session",
-              scopeTarget: identity ? undefined : sessionId,
-              tags: ["passive-observer"],
-              provenanceSession: sessionId,
-              extractionMethod: "passive",
-              extractionConfidence: fact.importance,
-            }),
+        const txResult = runCaptureStoreWithDedupWindow(factsDb, dedupWindow, dedupInput, () =>
+          factsDb.storeWithResult({
+            text: storedText,
+            category: storedCategory,
+            importance: identity ? Math.max(fact.importance, 0.9) : fact.importance,
+            confidence: 0.6,
+            entity: null,
+            key: null,
+            value: null,
+            source: "passive-observer",
+            decayClass: identity ? "permanent" : "session",
+            scope: identity ? "global" : "session",
+            scopeTarget: identity ? undefined : sessionId,
+            tags: ["passive-observer"],
+            provenanceSession: sessionId,
+            extractionMethod: "passive",
+            extractionConfidence: fact.importance,
+          }),
         );
         if (txResult.skipped) {
           continue;

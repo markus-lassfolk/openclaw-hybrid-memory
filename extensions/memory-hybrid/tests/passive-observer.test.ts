@@ -24,6 +24,7 @@ import {
   runPassiveObserver,
   saveCursors,
 } from "../services/passive-observer.js";
+import { clearMaintenanceRunDeadline, setMaintenanceRunDeadlineMs } from "../utils/maintenance-run-deadline.js";
 
 /** Mock factsDb.storeWithResult wired to an optional store spy (passive-observer uses storeWithResult). */
 function mockFactsDbStore(overrides: Record<string, unknown> = {}) {
@@ -435,6 +436,37 @@ describe("runPassiveObserver", () => {
 
     expect(result.sessionsScanned).toBe(1);
     expect(result.chunksProcessed).toBe(0);
+  });
+
+  it("counts a run truncated by the maintenance run deadline as errored, not silently ok (#2032)", async () => {
+    writeFileSync(
+      join(sessionsDir, "session-1.jsonl"),
+      `${JSON.stringify({ message: { role: "user", content: "Hello, this session has new content." } })}\n`,
+    );
+
+    setMaintenanceRunDeadlineMs(Date.now() - 1);
+    try {
+      const cfg = makeConfig({ sessionsDir });
+      const logger = makeLogger();
+      const result = await runPassiveObserver(
+        makeFactsDb() as never,
+        makeVectorDb() as never,
+        makeEmbeddings() as never,
+        makeOpenAI(),
+        cfg,
+        ["fact"],
+        { model: "test-model", dbDir: tmpDir },
+        logger,
+      );
+
+      // A deadline-truncated run must be visible as an error, not returned as a clean "ok" that
+      // silently hides unprocessed sessions from the caller's summary/assertions.
+      expect(result.errors).toBeGreaterThan(0);
+      expect(result.chunksProcessed).toBe(0);
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("maintenance run deadline reached"));
+    } finally {
+      clearMaintenanceRunDeadline();
+    }
   });
 
   it("respects minImportance threshold — skips low-importance facts", async () => {

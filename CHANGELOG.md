@@ -23,6 +23,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.51] - 2026-07-05
+
+### Fixed
+
+- **`maintenance step <name> --force` no longer exits 0 when the selected step didn't run (#2031):** a targeted step blocked by a lock, feature gate, or dependency reported `skipped_guard`/`skipped_gate`/`skipped_dep` while still exiting 0, so a verification harness could believe a step had been tested when the orchestrator only skipped it. `maintenance step <name>` now exits non-zero when the selected step didn't execute (pass `--allow-skip` to treat this as a non-strict status check), and the lock-skip summary now includes the lock owner's pid, hostname, hold duration, staleness, and lock path so an operator can tell a real concurrent run from an abandoned lock.
+- **`passive-observer --force` had no bounded runtime or mid-run progress (#2032):** a first-run backlog across many agents' sessions could keep a targeted `maintenance step passive-observer --force --verbose` run going for 12+ minutes with only generic `still running after Ns` heartbeats. `maintenance step <name>` now defaults `--max-runtime-min` to 15 (overridable) for these isolated diagnostic runs, passive-observer logs per-session phase/counter progress (`session N/M ... chunksProcessed=... factsStored=...`), and a run truncated by the maintenance-run deadline is now counted as an error instead of returning a silent "ok" that hides unprocessed sessions.
+- **`maintenance status` no longer claims "All maintenance jobs healthy" while log analysis is failing (#2033):** cron-cadence freshness and `analyze-maintenance-logs`'s strict findings were reported independently, so an operator could see a green `status` and miss a recent strict failure from the same window. `status` now folds in a 24h log-health check (via the same analyzer `analyze-maintenance-logs` already uses) and no longer prints the unconditional healthy line when strict findings exist; the text and `--json` output both distinguish scheduler freshness from log/semantic health. `status` also now lists any active/stale maintenance step locks, since those are exactly what would make a subsequent `maintenance step --force` report `skipped_guard`.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.7.51**.
+
+---
+
 ## [2026.7.50] - 2026-07-05
 
 ### Fixed

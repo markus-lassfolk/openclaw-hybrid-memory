@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -7,7 +7,7 @@ import {
   runMaintenanceOrchestrator,
   toOrchestratorRunSummary,
 } from "../services/maintenance-orchestrator.js";
-import { readStepGuardTimestampMs, writeStepGuardTimestampMs } from "../services/cron-guard.js";
+import { acquireStepLock, readStepGuardTimestampMs, writeStepGuardTimestampMs } from "../services/cron-guard.js";
 import type { HybridMemoryConfig } from "../config.js";
 
 function minimalCfg(): HybridMemoryConfig {
@@ -38,6 +38,24 @@ describe("maintenance-orchestrator", () => {
     const prune = result.steps.find((s) => s.name === "prune");
     expect(prune?.status).toBe("skipped_guard");
     expect(result.exitCode).toBe(0);
+  });
+
+  it("surfaces lock owner metadata (pid/host/held) in the skipped_guard summary when a step is locked (#2031)", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    expect(acquireStepLock("prune", openclawDir)).toBe(true);
+    const runners = new Map<string, () => Promise<string>>([["prune", async () => "ok"]]);
+
+    const result = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["cycle"], verbose: false, include: ["prune"], force: true },
+    );
+
+    const prune = result.steps.find((s) => s.name === "prune");
+    expect(prune?.status).toBe("skipped_guard");
+    expect(prune?.summary).toContain("locked by a concurrent maintenance run");
+    expect(prune?.summary).toMatch(/pid=\d+/);
+    expect(prune?.summary).toContain(`host=${hostname()}`);
+    expect(prune?.summary).toMatch(/held=\d+s/);
   });
 
   it("re-checks the step guard after the inter-LLM-step cooldown sleep, skipping a step a concurrent run just completed", async () => {
