@@ -23,6 +23,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.56] - 2026-07-05
+
+### Fixed
+
+- **`--max-runtime-min` bypassed the default cap on an empty string (#2031 follow-up):** `??` only falls back on null/undefined, so `--max-runtime-min=""` (e.g. a script interpolating an unset variable) silently produced no time budget at all for `maintenance step <name>`, instead of the intended 15-minute default.
+- **`passive-observer` could report a false-positive truncated run (#2032 follow-up):** the maintenance-run deadline was checked before confirming a session actually had pending content, so hitting the deadline while only already-caught-up trailing sessions remained still reported an errored/truncated run even though no work was actually lost. The pending-content check now runs first.
+- **`distill`'s heartbeat couldn't distinguish a retried batch from new content (#2038):** on failure, distill shrinks the batch and retries the *same* block range without advancing its cursor, but the heartbeat's "batch N" counter still incremented every attempt — so "batch 1, batch 2, batch 3" in the logs looked like forward progress through 1268 blocks when it was actually the same stuck range being retried 3 times. The heartbeat now also reports the block index the current attempt starts at, so an operator can see it staying constant across "batch" numbers.
+- **`enrich-entities` and `extract-implicit` only surfaced the generic orchestrator heartbeat (#2038):** unlike `distill` and `passive-observer`, a `maintenance step enrich-entities`/`extract-implicit --force --verbose` run showed no counters of its own for the whole step duration. Both functions already accepted an `onProgress` callback; the maintenance step-runner registrations now wire a throttled-logging callback into it (same ~60s cadence as `passive-observer`'s progress log), so long runs report `processed=N/M`-style counters instead of only "still running after Ns".
+
+### Notes
+
+- Retroactively closed #2032 and #2033: both were already fixed by #2034 (shipped in 2026.7.51) and refined by later PRs in this series, but the PR bodies referenced the issues by number without a closing keyword, so they never auto-closed.
+- #2038's remaining acceptance criteria (distill completing within a tight default verification budget, or exposing a dedicated smoke-test work limit) are not addressed here: every step run via `maintenance step <name>` is already bounded to a 15-minute default (overridable via `--max-runtime-min`, e.g. `--max-runtime-min 4` for a ~240s smoke check) and exits non-zero with an actionable reason when that budget is exceeded — operators who need a tighter check should pass that flag explicitly.
+- An initial hypothesis attributing distill's stuck-batch symptom to a stale `MiniMax-M2.7-highspeed` context-window catalog entry was investigated and **rejected**: `tests/m27-live-catalog-limits.test.ts` empirically verified against the live API (dated after the release notes that motivated the hypothesis) shows `-highspeed` matches full `MiniMax-M2.7`'s 262k input / 128k output ceiling, so no catalog change was made.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.7.56**.
+
+---
+
 ## [2026.7.55] - 2026-07-05
 
 ### Changed

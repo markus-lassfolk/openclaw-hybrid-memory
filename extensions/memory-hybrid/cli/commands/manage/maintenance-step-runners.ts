@@ -3,36 +3,42 @@
  */
 
 import { existsSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { EventBus } from "../../../backends/event-bus.js";
 import type { FactsDB } from "../../../backends/facts-db.js";
 import type { VectorDB } from "../../../backends/vector-db.js";
 import type { HybridMemoryConfig } from "../../../config.js";
-import { getDefaultCronModel, getCronModelConfig } from "../../../config.js";
-import { CrystallizationProposer } from "../../../services/crystallization-proposer.js";
+import { getCronModelConfig, getDefaultCronModel } from "../../../config.js";
+import { runAutoClassify } from "../../../services/auto-classifier.js";
 import {
   DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD,
   ORCHESTRATOR_CONTRADICTION_DEGRADED_CONSECUTIVE_THRESHOLD,
   runContradictionMaintenanceAutoStep,
 } from "../../../services/contradiction-progress-summary.js";
-import { syncLifecycleFromGitHub } from "../../../services/lifecycle/github-adapter.js";
-import { runAnalyzeMaintenanceLogs } from "./register-analyze-maintenance-logs.js";
-import { buildAuditHealthReport } from "./storage-stats-helpers.js";
-import { recordStorageGrowthSample } from "./storage-stats-helpers.js";
-import { runPendingDigestAutopilotCron } from "../../../services/pending-digest-autopilot-cron.js";
-import { buildPendingReviewDigestReport } from "../../../services/pending-review-digest.js";
-import { reconcileOrphanVectors } from "../../../services/vector-maintenance.js";
-import { sweepAll } from "../../../services/sensor-sweep.js";
-import { runAutoClassify } from "../../../services/auto-classifier.js";
+import { CrystallizationProposer } from "../../../services/crystallization-proposer.js";
 import {
   entityEnrichmentSemanticStatus,
   isEntityEnrichmentHardFailure,
 } from "../../../services/entity-enrichment-adaptive.js";
-import { runPassiveObserver } from "../../../services/passive-observer.js";
-import { deleteVectorsForFactIds } from "../../../services/vector-maintenance.js";
+import { syncLifecycleFromGitHub } from "../../../services/lifecycle/github-adapter.js";
+import {
+  parseSemanticTokenFromSummary,
+  semanticOutcomeBlocksOrchestratorGuard,
+  semanticOutcomeIsPartialFailure,
+} from "../../../services/maintenance-job-run/index.js";
 import type { MaintenanceStepRunner } from "../../../services/maintenance-orchestrator.js";
+import { runPassiveObserver } from "../../../services/passive-observer.js";
+import { runPendingDigestAutopilotCron } from "../../../services/pending-digest-autopilot-cron.js";
+import { buildPendingReviewDigestReport } from "../../../services/pending-review-digest.js";
+import { sweepAll } from "../../../services/sensor-sweep.js";
+import { deleteVectorsForFactIds, reconcileOrphanVectors } from "../../../services/vector-maintenance.js";
+import { nowIso } from "../../../utils/dates.js";
+import { maintenanceRunDeadlineReached } from "../../../utils/maintenance-run-deadline.js";
+import { cleanupImplicitFeedbackDuplicates } from "../../cmd-feedback.js";
+import { resolveScanMaintenanceOverrides, type ScanMaintenanceOverrideInput } from "../../maintenance-overrides.js";
 import type { ManageBindings } from "./bindings.js";
+import { extractImplicitSemanticOutcome, isGracefulExtractImplicitPartial } from "./dream-cycle-followup.js";
 import {
   buildDreamCycleFollowUpDepsFromBindings,
   runClosedLoopAnalysisStep,
@@ -43,16 +49,8 @@ import {
   runExtractImplicitStep,
   runToolEffectivenessStep,
 } from "./dream-cycle-followup-steps.js";
-import { extractImplicitSemanticOutcome, isGracefulExtractImplicitPartial } from "./dream-cycle-followup.js";
-import { cleanupImplicitFeedbackDuplicates } from "../../cmd-feedback.js";
-import { resolveScanMaintenanceOverrides, type ScanMaintenanceOverrideInput } from "../../maintenance-overrides.js";
-import { nowIso } from "../../../utils/dates.js";
-import { maintenanceRunDeadlineReached } from "../../../utils/maintenance-run-deadline.js";
-import {
-  parseSemanticTokenFromSummary,
-  semanticOutcomeBlocksOrchestratorGuard,
-  semanticOutcomeIsPartialFailure,
-} from "../../../services/maintenance-job-run/index.js";
+import { runAnalyzeMaintenanceLogs } from "./register-analyze-maintenance-logs.js";
+import { buildAuditHealthReport, recordStorageGrowthSample } from "./storage-stats-helpers.js";
 
 function reflectRulesDiagnosticsIndicateFailure(
   d:
@@ -117,6 +115,27 @@ function scanForceFlags(opts: BuildCliRunnersOptions): { force?: boolean; full?:
   return { force: true, full: true };
 }
 
+/**
+ * Throttled step-progress logger, matching the ~60s cadence passive-observer already uses
+ * (logThrottledObserverProgress in services/passive-observer.ts) — used by long LLM-tier steps that
+ * otherwise only surface the orchestrator's generic "still running after Ns" heartbeat, leaving an
+ * operator unable to tell live forward progress from a hang (#2038).
+ */
+function makeThrottledStepProgressLogger(
+  logger: { info?: (s: string) => void } | undefined,
+  stepName: string,
+  intervalMs = 60_000,
+): (message: string) => void {
+  let lastLogMs = 0;
+  return (message: string) => {
+    if (!logger?.info) return;
+    const nowMs = Date.now();
+    if (lastLogMs !== 0 && nowMs - lastLogMs < intervalMs) return;
+    lastLogMs = nowMs;
+    logger.info(`memory-hybrid: ${stepName} — progress: ${message}`);
+  };
+}
+
 function noopLog(): void {}
 
 async function runSensorSweepForCli(b: ManageBindings): Promise<string> {
@@ -124,7 +143,7 @@ async function runSensorSweepForCli(b: ManageBindings): Promise<string> {
   const eventBusPath = b.resolvedSqlitePath ? join(dirname(b.resolvedSqlitePath), "event-bus.db") : null;
   if (!eventBusPath) return "skipped (no event bus path)";
 
-  let eventBus: EventBus = b.eventBus ?? new EventBus(eventBusPath);
+  const eventBus: EventBus = b.eventBus ?? new EventBus(eventBusPath);
   const ownsBus = !b.eventBus;
   try {
     const r = await sweepAll(eventBus, b.cfg.sensorSweep, b.factsDb, {
@@ -435,11 +454,18 @@ export function buildCliMaintenanceRunners(
   });
 
   set("enrich-entities", async () => {
+    const logger = (b as unknown as { logger?: { info?: (s: string) => void; warn?: (s: string) => void } }).logger;
+    const logProgress = makeThrottledStepProgressLogger(logger, "enrich-entities");
     const r = await b.runEntityEnrichment({
       limit: 200,
       dryRun: false,
       adaptiveCatchUp: true,
       verbose,
+      onProgress: (p) =>
+        logProgress(
+          `processed=${p.processed}/${p.total} factsEnriched=${p.factsEnriched} mentions=${p.mentions} ` +
+            `accepted=${p.accepted} rejected=${p.rejected} llmFailures=${p.llmFailures}`,
+        ),
     });
     const summary = formatEntityEnrichmentSummary(r);
     assertEntityEnrichmentNotPartial(r, summary);
@@ -448,11 +474,18 @@ export function buildCliMaintenanceRunners(
 
   set("extract-implicit", async () => {
     if (b.runExtractImplicitFeedback) {
+      const logger = (b as unknown as { logger?: { info?: (s: string) => void; warn?: (s: string) => void } }).logger;
+      const logProgress = makeThrottledStepProgressLogger(logger, "extract-implicit");
       const res = await b.runExtractImplicitFeedback({
         dryRun: false,
         includeClosedLoop: false,
         verbose,
         ...scanFlags,
+        onProgress: (snap) =>
+          logProgress(
+            `stage=${snap.stage} sessions=${snap.sessionsVisited}/${snap.sessionsDiscovered} ` +
+              `processed=${snap.sessionsProcessed} signalsExtracted=${snap.signalsExtracted}`,
+          ),
       });
       const summary = formatExtractImplicitSummary(res);
       assertExtractImplicitNotPartial(res, summary);
@@ -950,7 +983,7 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
     );
   }
 
-  runners.  set("evolution-pass", async () => {
+  runners.set("evolution-pass", async () => {
     if (typeof deps.factsDb.getRawDb !== "function") return "skipped (factsDb unavailable)";
     const { runEvolutionPass } = await import("../../../services/evolution-pass.js");
     const { resolveReflectionModelAndFallbacks } = await import("../../../config/index.js");

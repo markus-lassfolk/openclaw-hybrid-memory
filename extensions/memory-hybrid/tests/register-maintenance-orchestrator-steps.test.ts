@@ -390,4 +390,25 @@ describe("maintenance step <step> bounds runtime by default (#2032)", () => {
       expect.objectContaining({ maxRuntimeMs: undefined }),
     );
   });
+
+  it("falls back to the 15-minute default when --max-runtime-min is an empty string (round-5 review finding)", async () => {
+    // `??` only falls back on null/undefined; an empty string (e.g. a script interpolating an
+    // unset variable as --max-runtime-min="$VAR") would otherwise slip through as "" and resolve to
+    // no budget at all in runTier, silently defeating the intended default cap.
+    const stepName = listMaintenanceSteps()[0]?.name as string;
+    mockOrchestratorResult({ stepName, status: "ok", summary: "done" });
+
+    const mem = new Command("hybrid-mem");
+    mem.exitOverride();
+    const maintenance = mem.command("maintenance");
+    registerMaintenanceOrchestratorCommands(maintenance, makeMinimalBindings());
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await mem.parseAsync(["maintenance", "step", stepName, "--force", "--max-runtime-min", ""], { from: "user" });
+
+    expect(runMaintenanceOrchestratorMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ maxRuntimeMs: 15 * 60_000 }),
+    );
+  });
 });

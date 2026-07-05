@@ -510,6 +510,10 @@ export async function runPassiveObserver(
     );
   };
   for (const [sessionIdx, { filePath, sessionId, fileBytelen, cursor }] of sessions.entries()) {
+    // Check for pending content BEFORE the deadline (round-5 review finding): an already-caught-up
+    // trailing session costs nothing to skip, so it shouldn't be able to trip the deadline check and
+    // report a false-positive truncated/errored run when there was actually no work left to lose.
+    if (cursor >= fileBytelen) continue; // Nothing new
     if (maintenanceRunDeadlineReached()) {
       // Deadline stops mid-run are counted as an error so the caller's summary (and
       // assertPassiveObserverSummaryDoesNotBlock) surface a truncated run as a failure
@@ -522,7 +526,6 @@ export async function runPassiveObserver(
       );
       break;
     }
-    if (cursor >= fileBytelen) continue; // Nothing new
     logThrottledObserverProgress(sessionIdx, sessionId);
 
     let rawBuf: Buffer;
