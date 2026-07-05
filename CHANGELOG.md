@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.54] - 2026-07-05
+
+### Fixed
+
+- **`passive-observer` progress logging went silent for the entire span of a single multi-chunk session:** the throttle added for #2032 was only re-checked once per session (at the top of the outer loop), so a session with many chunks — each a full LLM round-trip via `chatCompleteWithRetry` plus an embedding call — could run for its entire multi-minute duration with zero progress lines, reproducing the exact "live run indistinguishable from a hung one" problem this logging exists to close. The throttle is now also re-checked inside the per-chunk loop.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.7.54**.
+
+---
+
 ## [2026.7.53] - 2026-07-05
 
 ### Fixed

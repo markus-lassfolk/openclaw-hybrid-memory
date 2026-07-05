@@ -602,6 +602,20 @@ export async function runPassiveObserver(
       if (!chunk.trim()) continue;
       chunksAttempted++;
       result.chunksProcessed++;
+      // Re-check the throttle here too, not just at the top of the session loop (#2032 follow-up):
+      // a single session with many chunks (each a full LLM round-trip via chatCompleteWithRetry
+      // plus an embedding call) can otherwise run for its entire duration between two per-session
+      // log lines, silently reproducing the "live run indistinguishable from a hung one" problem
+      // this progress logging was added to close.
+      const chunkProgressNowMs = Date.now();
+      if (chunkProgressNowMs - lastProgressLogMs >= PASSIVE_OBSERVER_PROGRESS_LOG_INTERVAL_MS) {
+        lastProgressLogMs = chunkProgressNowMs;
+        logger.info(
+          `memory-hybrid: passive-observer — progress: session ${sessionIdx + 1}/${sessions.length} (${sessionId}) ` +
+            `chunk ${chunksAttempted}/${chunks.length} chunksProcessed=${result.chunksProcessed} ` +
+            `factsExtracted=${result.factsExtracted} factsStored=${result.factsStored}`,
+        );
+      }
 
       const filledPrompt = fillPrompt(prompt, {
         categories: allCategories.join(", "),
