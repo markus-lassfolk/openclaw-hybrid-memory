@@ -23,6 +23,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.50] - 2026-07-05
+
+### Fixed
+
+- **distill partial failure now surfaces the concrete cause (#2024):** the batch loop captured only `partialFailure`, so the ledger showed `distill partial failure (… semantic=partial)` with no root cause. The first concrete batch-failure reason (error kind + model + message, or maintenance-deadline / context-overflow) is now captured, persisted into the job-run `semanticReason`, and folded into the step-runner throw. `buildJobRunId` fingerprints are sanitized so run ids can no longer be malformed like `job-distill-::14:fal` (cap kept at 8 chars so hash-fingerprinted checkpoint dirs stay stable across upgrade).
+- **`analyze-maintenance-logs` false-positive missing-exit-ledger (#2025):** aggregate `<job>.cron.log` files have no sibling `.exit.txt`; each run records an `HM_RUN_SUMMARY` referencing its own per-run ledger. The analyzer now validates each in-window run's `exit=` path, suppressing the anomaly when the ledger exists and flagging a genuinely-missing one pegged to its exact run id/timestamp.
+- **`maintenance full --verbose` CPU-active but log-silent (#2026):** each orchestrator step now emits `start` / `still running after Ns` / `complete` heartbeat lines; the analyzer's progress regexes were broadened to recognize the generic `maintenance-orchestrator:` marker so a live CPU/LLM-bound step is classified as running rather than stale/hung.
+- **store dedupe vectorThreshold plumbed on the live path (#2027):** the `memory_store` write path now resolves source/scope-filtered vector neighbour candidates from the already-computed embedding and passes them into write-time dedupe, so the configured `vectorThreshold` actually runs instead of silently degrading to lexical-only. Write-time vector dedupe is skipped when an explicit `supersedes` is provided so a near-identical correction cannot be swallowed as a dedupe no-op.
+
+### Added
+
+- **`maintenance step <name>` (#2028):** run exactly one named maintenance step in isolation (bypasses that step's cadence guard; inherits `--verbose`/`--json`). Unknown names exit non-zero and print the valid step list. Named `step` to avoid colliding with the `maintenance run` JobRun-inspection group and the `steps` list command.
+- **Verbose distill progress/heartbeat (#2029):** distill emits a start marker, a periodic block-count heartbeat, and a final status/counter summary in verbose runs so a long LLM-bound batch is distinguishable from a hung one. Only counts/status are logged — never raw fact text.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.7.50**.
+
+---
+
 ## [2026.7.33] - 2026-07-03
 
 ### Fixed
