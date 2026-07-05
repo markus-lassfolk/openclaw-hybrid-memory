@@ -38,7 +38,7 @@ const DEFAULT_CONFIG: ImplicitFeedbackConfig = {
   maxSessionsPerRun: 50,
   maxSignalsPerRun: 100,
   maxTrajectoriesPerRun: 50,
-  maxWallClockSeconds: 300,
+  maxWallClockSeconds: 240,
 };
 
 // ---------------------------------------------------------------------------

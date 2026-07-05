@@ -37,6 +37,7 @@ import { nowIso } from "../../../utils/dates.js";
 import {
   formatRemainingMaintenanceRunSecLabel,
   maintenanceRunDeadlineReached,
+  runUntilMaintenanceDeadline,
 } from "../../../utils/maintenance-run-deadline.js";
 import { cleanupImplicitFeedbackDuplicates } from "../../cmd-feedback.js";
 import { resolveScanMaintenanceOverrides, type ScanMaintenanceOverrideInput } from "../../maintenance-overrides.js";
@@ -640,16 +641,11 @@ export function buildCliMaintenanceRunners(
     const candidates = b.factsDb.listVectorlessActiveFacts({ limit: 200 });
     let reembedded = 0;
     let failures = 0;
-    let deadlineHit = false;
-    for (const fact of candidates.slice(0, 200)) {
-      // This per-fact embed loop had no deadline check (#2041 review finding) — a large vectorless
-      // backlog could otherwise run past the step's runtime budget with no graceful stop, the same
-      // class of bug the rest of this file already guards distill/enrich-entities/passive-observer/
-      // extract-implicit against.
-      if (maintenanceRunDeadlineReached()) {
-        deadlineHit = true;
-        break;
-      }
+    // This per-fact embed loop had no deadline check (#2041 review finding) — a large vectorless
+    // backlog could otherwise run past the step's runtime budget with no graceful stop, the same
+    // class of bug the rest of this file already guards distill/enrich-entities/passive-observer/
+    // extract-implicit against.
+    const { truncatedAt } = await runUntilMaintenanceDeadline(candidates.slice(0, 200), async (fact) => {
       try {
         const vec = await b.embeddings.embed(fact.text);
         await b.vectorDb.store({
@@ -663,7 +659,8 @@ export function buildCliMaintenanceRunners(
       } catch {
         failures++;
       }
-    }
+    });
+    const deadlineHit = truncatedAt >= 0;
     const reconcile = await reconcileOrphanVectors(b.factsDb, b.vectorDb, { operation: "orchestrator-repair-vectors" });
     const partial = failures > 0 || reconcile.failed > 0 || deadlineHit;
     const summary = `reembedded=${reembedded}/${candidates.length} failures=${failures} orphans=${reconcile.orphansFound} orphan_cleanup_failed=${reconcile.failed} deadlineHit=${deadlineHit} semantic=${partial ? "partial" : "success"}`;
@@ -829,14 +826,9 @@ export function buildCliMaintenanceRunners(
     const candidates = b.factsDb.listVectorlessActiveFacts({ limit: 1000 });
     let embedded = 0;
     let failures = 0;
-    let deadlineHit = false;
-    for (const fact of candidates) {
-      // See repair-vectors above (#2041 review finding): a large vectorless backlog (up to 1000
-      // candidates here) had no deadline check, so it could run past the step's runtime budget.
-      if (maintenanceRunDeadlineReached()) {
-        deadlineHit = true;
-        break;
-      }
+    // See repair-vectors above (#2041 review finding): a large vectorless backlog (up to 1000
+    // candidates here) had no deadline check, so it could run past the step's runtime budget.
+    const { truncatedAt } = await runUntilMaintenanceDeadline(candidates, async (fact) => {
       try {
         const vec = await b.embeddings.embed(fact.text);
         await b.vectorDb.store({
@@ -850,7 +842,8 @@ export function buildCliMaintenanceRunners(
       } catch {
         failures++;
       }
-    }
+    });
+    const deadlineHit = truncatedAt >= 0;
     const summary = `embedded=${embedded}/${candidates.length} failures=${failures} deadlineHit=${deadlineHit} semantic=${failures > 0 || deadlineHit ? "partial" : "success"}`;
     if (failures > 0 || deadlineHit) {
       throw new Error(`reembed-vectorless partial failure (${summary})`);
