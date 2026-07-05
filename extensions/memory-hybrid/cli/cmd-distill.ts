@@ -536,6 +536,12 @@ export async function runDistillForCli(
     };
 
     let batchFailures = 0;
+    // batchFailures also counts deadline stops (below) so cursor-advancement stays conservative — a
+    // truncated run must not skip unprocessed sessions. hardBatchFailures counts only genuine
+    // implementation/model errors, so the step's semantic outcome can distinguish "ran out of time
+    // with real progress" (monitoring, non-blocking) from an actual failure (partial, blocking) (#2043).
+    let hardBatchFailures = 0;
+    let deadlineTruncated = false;
     // Preserve the first concrete batch failure cause so maintenance surfaces the real reason
     // (model/error kind/message) instead of only `semantic=partial` (#2024).
     let batchFailureReason: string | undefined;
@@ -544,6 +550,7 @@ export async function runDistillForCli(
 
     if (filesScanTruncatedAt >= 0) {
       batchFailures++;
+      deadlineTruncated = true;
       batchFailureReason ??= `session scan aborted: maintenance run deadline reached at ${filesScanTruncatedAt}/${filesToProcess.length} sessions read`;
     }
 
@@ -565,6 +572,7 @@ export async function runDistillForCli(
       if (maintenanceRunDeadlineReached()) {
         sink.warn("memory-hybrid: distill: maintenance run deadline reached; stopping batch loop");
         batchFailures++;
+        deadlineTruncated = true;
         batchFailureReason ??= `batch ${batchNum + 1} aborted: maintenance run deadline reached before completion`;
         break;
       }
@@ -605,6 +613,7 @@ export async function runDistillForCli(
             `memory-hybrid: distill batch ${batchNum} input (~${inputTokens} tokens) exceeds primary limit (${primaryInputLimit}) with no compatible fallbacks`,
           );
           batchFailures++;
+          hardBatchFailures++;
           batchFailureReason ??= `batch ${batchNum} input (~${inputTokens} tokens) exceeds primary model ${model} limit (${primaryInputLimit}) and all fallbacks were context-incompatible${skippedFallbacks.length > 0 ? ` (skipped: ${skippedFallbacks.join(", ")})` : ""}`;
           break;
         }
@@ -781,6 +790,7 @@ export async function runDistillForCli(
         sink.warn(`memory-hybrid: distill batch ${batchNum} failed: ${e}`);
         capturePluginError(e, { subsystem: "cli", operation: "runDistillForCli:llm-batch" });
         batchFailures++;
+        hardBatchFailures++;
         batchFailureReason ??= `batch ${batchNum} ${kind} error on model ${failureModel}: ${e.message}`;
         if (!adaptiveEnabled) {
           nonAdaptiveBatchFactor = 1;
@@ -1081,7 +1091,11 @@ export async function runDistillForCli(
         `memory-hybrid: distill DEGRADED — vector neighbour search unavailable${usedHasDuplicateFallback ? "; used hasDuplicate fallback where applicable" : ""}`,
       );
     }
-    const partialFailure = batchFailures > 0 || truncatedBatches > 0;
+    // Only genuine implementation/model errors (hardBatchFailures) and output-truncation quality
+    // issues fail the step. A run that stopped solely because the maintenance-run deadline was
+    // reached — with no other error — is resumable, checkpointed work-in-progress, not a failure (#2043).
+    const partialFailure = hardBatchFailures > 0 || truncatedBatches > 0;
+    const deadlineLimitedOnly = !partialFailure && deadlineTruncated;
     const resolvedFailureReason =
       batchFailureReason ??
       (truncatedBatches > 0
@@ -1101,7 +1115,11 @@ export async function runDistillForCli(
         dedupeDegraded,
         distillDedupeMode,
       },
-      partialFailure ? { reason: resolvedFailureReason } : undefined,
+      partialFailure
+        ? { reason: resolvedFailureReason }
+        : deadlineLimitedOnly
+          ? { monitoring: true, reason: batchFailureReason }
+          : undefined,
     );
   } finally {
     if (shouldAcquireLock && !opts.dryRun) clearScanLock(SCAN_TYPE);

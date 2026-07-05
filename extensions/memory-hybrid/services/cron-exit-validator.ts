@@ -801,9 +801,21 @@ function collectMaintenanceTelemetryIssues(params: {
   const reflectParseFailed = /\bparse[_\s-]?success\s*[=:]\s*(false|0)\b/i.test(reflectRulesLog);
   const reflectStored = parsePositiveMetric(reflectRulesLog, "stored");
   const reflectInsufficientPatterns = /\bzero_rules_reason\s*[=:]\s*insufficient_patterns\b/i.test(reflectRulesLog);
+  // "valid_no_actionable_rules" means the model ran fine and legitimately found nothing to extract —
+  // not a failure. maintenance-step-runners.ts and semantic-outcome.ts already exempt this reason
+  // alongside insufficient_patterns; this check was missing it, so a healthy run could be flagged here
+  // while the orchestrator/CLI paths correctly treated it as success.
+  const reflectValidNoActionableRules = /\bzero_rules_reason\s*[=:]\s*valid_no_actionable_rules\b/i.test(
+    reflectRulesLog,
+  );
   // invalid_response_format is a genuine parse failure, not a benign flake — it must surface here too
   // instead of being waved through, consistent with the orchestrator-side fix for #2043.
-  if (reflectRulesDetected && (reflectParseFailed || reflectStored === 0) && !reflectInsufficientPatterns) {
+  if (
+    reflectRulesDetected &&
+    (reflectParseFailed || reflectStored === 0) &&
+    !reflectInsufficientPatterns &&
+    !reflectValidNoActionableRules
+  ) {
     addMaintenanceIssue(
       issues,
       buildMaintenanceIssue({
