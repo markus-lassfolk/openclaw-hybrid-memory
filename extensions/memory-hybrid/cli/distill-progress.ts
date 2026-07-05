@@ -12,10 +12,16 @@
 export const DISTILL_HEARTBEAT_INTERVAL_MS = 30_000;
 
 export interface DistillProgressState {
-  /** 1-based index of the batch currently being processed. */
+  /** 1-based index of the batch/retry attempt currently in flight — increments on every retry,
+   *  including a shrink-and-retry of the SAME block range, so it is not itself proof of forward
+   *  progress (#2038). */
   batch: number;
   /** Blocks fully processed so far. */
   processedBlocks: number;
+  /** Block index the current batch/retry starts at. Unchanged across repeated retries of the same
+   *  batch — surfacing it lets an operator tell "batch N is new content" from "batch N is a
+   *  relabeled retry of the same still-stuck block range" (#2038). */
+  cursorBlock: number;
 }
 
 export interface DistillDoneSummary {
@@ -56,10 +62,11 @@ export function startDistillProgress(opts: {
   const startedMs = Date.now();
   log(`memory-hybrid: distill start — sessions=${opts.sessions} blocks=${opts.totalBlocks}`);
   const heartbeat = setInterval(() => {
-    const { batch, processedBlocks } = opts.getState();
+    const { batch, processedBlocks, cursorBlock } = opts.getState();
     const elapsedSec = Math.floor((Date.now() - startedMs) / 1000);
     log(
-      `memory-hybrid: distill — still running: batch ${batch} processed ${processedBlocks}/${opts.totalBlocks} blocks (elapsed ${elapsedSec}s)`,
+      `memory-hybrid: distill — still running: batch ${batch} (block ${cursorBlock}/${opts.totalBlocks}) ` +
+        `processed ${processedBlocks}/${opts.totalBlocks} blocks (elapsed ${elapsedSec}s)`,
     );
   }, opts.intervalMs ?? DISTILL_HEARTBEAT_INTERVAL_MS);
   heartbeat.unref?.();

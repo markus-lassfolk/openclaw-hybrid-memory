@@ -242,7 +242,11 @@ export function registerMaintenanceOrchestratorCommands(maintenance: Chainable, 
         ...opts,
         include: stepName,
         force: true,
-        maxRuntimeMin: opts?.maxRuntimeMin ?? DEFAULT_STEP_MAX_RUNTIME_MIN,
+        // `??` only falls back on null/undefined — an empty string (e.g. from a script
+        // interpolating an unset variable as `--max-runtime-min="$VAR"`) is neither, so it would
+        // silently pass through as "", which runTier's `opts?.maxRuntimeMin ? ... : undefined`
+        // then treats as no budget at all, defeating the intended default cap (round-5 review finding).
+        maxRuntimeMin: opts?.maxRuntimeMin?.trim() || DEFAULT_STEP_MAX_RUNTIME_MIN,
         verbose: !!opts?.verbose || readHybridMemVerbose(cmd),
       });
     }),

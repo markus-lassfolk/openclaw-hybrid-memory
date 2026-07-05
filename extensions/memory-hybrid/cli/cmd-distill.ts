@@ -20,21 +20,15 @@ import {
 } from "../config.js";
 import {
   ADAPTIVE_MODEL_LIMITS_VERSION,
-  adaptiveFailureShrinkRatios,
   type AdaptiveFailureKind,
+  adaptiveFailureShrinkRatios,
   getEffectiveModelLimits,
   loadAdaptiveModelLimits,
   recordAdaptiveFailure,
   recordAdaptiveSuccess,
   saveAdaptiveModelLimits,
 } from "../services/adaptive-model-limits.js";
-import { tryParseCredentialForVault, isStructuredCredentialCandidate } from "../services/auto-capture.js";
-import {
-  buildCredentialPointerText,
-  ensureCredentialVaultPointer,
-  abortCredentialVaultWriteOnPointerDedupe,
-  rollbackVaultCredentialWrite,
-} from "../services/credential-vault-pointer.js";
+import { isStructuredCredentialCandidate, tryParseCredentialForVault } from "../services/auto-capture.js";
 import {
   chatCompleteWithRetryDetailed,
   distillBatchTokenLimit,
@@ -47,40 +41,43 @@ import {
   resolveMaintenanceChatTimeoutMs,
 } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import { preFilterSessions } from "../services/session-pre-filter.js";
-import { cleanupEvictedVector } from "../services/vector-maintenance.js";
-import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
-import { formatDateUtc, formatTimestampUtcFromMs, nowIso } from "../utils/dates.js";
-import { getEnv } from "../utils/env-manager.js";
 import {
-  capTimeoutByMaintenanceRunDeadline,
-  getMaintenanceRunAbortSignal,
-  maintenanceRunDeadlineReached,
-} from "../utils/maintenance-run-deadline.js";
-import { redactMaintenancePrivateText } from "../utils/maintenance-privacy.js";
-import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
-import { loadPrompt } from "../utils/prompt-loader.js";
-import { extractTags } from "../utils/tags.js";
-import { chunkSessionText, estimateTokens } from "../utils/text.js";
-import { getMaxMtime } from "./cmd-extract.js";
-import { buildPreFilterConfig, createProgressReporter } from "./cmd-install.js";
-import { extractTextFromSessionJsonl } from "./distill-session-jsonl.js";
-import type { HandlerContext } from "./handlers.js";
+  abortCredentialVaultWriteOnPointerDedupe,
+  buildCredentialPointerText,
+  ensureCredentialVaultPointer,
+  rollbackVaultCredentialWrite,
+} from "../services/credential-vault-pointer.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import type { MaintenanceJobRun } from "../services/maintenance-job-run/job-run.js";
 import {
   createLightJobRun,
   finishLightJobRun,
   type LightJobRunParams,
 } from "../services/maintenance-job-run/light-job-run-bridge.js";
-import type { MaintenanceJobRun } from "../services/maintenance-job-run/job-run.js";
+import { preFilterSessions } from "../services/session-pre-filter.js";
+import { cleanupEvictedVector } from "../services/vector-maintenance.js";
+import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
+import { formatDateUtc, formatTimestampUtcFromMs, nowIso } from "../utils/dates.js";
+import { getEnv } from "../utils/env-manager.js";
+import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
+import { redactMaintenancePrivateText } from "../utils/maintenance-privacy.js";
+import {
+  capTimeoutByMaintenanceRunDeadline,
+  getMaintenanceRunAbortSignal,
+  maintenanceRunDeadlineReached,
+} from "../utils/maintenance-run-deadline.js";
+import { loadPrompt } from "../utils/prompt-loader.js";
+import { extractTags } from "../utils/tags.js";
+import { chunkSessionText, estimateTokens } from "../utils/text.js";
+import { getMaxMtime } from "./cmd-extract.js";
+import { buildPreFilterConfig, createProgressReporter } from "./cmd-install.js";
+import { startDistillProgress } from "./distill-progress.js";
+import { extractTextFromSessionJsonl } from "./distill-session-jsonl.js";
+import type { HandlerContext } from "./handlers.js";
 import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 import type { DistillCliResult, DistillCliSink, DistillWindowResult, RecordDistillResult } from "./types.js";
-import {
-  classifyStoreDedupeMode,
-  resolveDistillVectorCandidates,
-} from "./vector-dedupe-helpers.js";
-import { startDistillProgress } from "./distill-progress.js";
+import { classifyStoreDedupeMode, resolveDistillVectorCandidates } from "./vector-dedupe-helpers.js";
 
 // Constants used only by distill functions
 const FULL_DISTILL_MAX_DAYS = 90;
@@ -535,7 +532,7 @@ export async function runDistillForCli(
       logger,
       sessions: filesToProcess.length,
       totalBlocks: blocks.length,
-      getState: () => ({ batch: batchNum, processedBlocks }),
+      getState: () => ({ batch: batchNum, processedBlocks, cursorBlock }),
     });
 
     while (cursorBlock < blocks.length) {
@@ -603,9 +600,7 @@ export async function runDistillForCli(
           feature: CostFeature.distillCli,
           thinkingMode: resolveDistillThinkingMode(cfg),
           timeoutMsPerModel: (m) =>
-            capTimeoutByMaintenanceRunDeadline(
-              resolveMaintenanceChatTimeoutMs(m, resolveDistillThinkingMode(cfg)),
-            ),
+            capTimeoutByMaintenanceRunDeadline(resolveMaintenanceChatTimeoutMs(m, resolveDistillThinkingMode(cfg))),
           signal: getMaintenanceRunAbortSignal(),
         });
         const outputTruncated = detail.finishReason?.toLowerCase() === "length";
