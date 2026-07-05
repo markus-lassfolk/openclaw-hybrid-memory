@@ -23,6 +23,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.61] - 2026-07-05
+
+### Fixed
+
+A full code-review pass (8 parallel finder angles + verification) over the 2026.7.60 fixes below found and corrected three issues before merge:
+
+- **The #2049 fix's repair-trigger condition was initially widened to include ID-set drift**, which would have let plain `verify --fix` (no `--reconcile`) silently delete/rebuild orphan vectors — bypassing the existing, deliberate `--reconcile` opt-in gate (with its own conservative/balanced/aggressive budget policy) that `verify --reconcile --fix` already provides for that exact destructive/expensive operation. Reverted `applyStorageStructuralFixIfNeeded`'s trigger to pure structural (non-orphan) drift only (`hasStructuralDrift`, unchanged from before 2026.7.60); ID-set drift is still reported as a failing issue pointing at `verify --reconcile --fix`. Also fixed a duplicate-issue overlap where `duplicateIdExtraRows` and `hasStructuralDrift` could both fire for the same root cause.
+- **The #2050 fix's `jobMatchesPluginJobId()` initially fell back to matching a job's plain `name`** against the maintenance job catalog (mirroring `maintenance inventory`'s existing lookup), which could let an unrelated, user-created cron job that happens to share a catalog job's name (e.g. "maintenance-nightly") be reported as satisfying `cron-health`'s check. Simplified to check `pluginJobId`/`id` only — confirmed via `cron-jobs.ts` that `id` is always set to the canonical `pluginJobId` for plugin-managed jobs, so the name fallback was both unnecessary and a false-positive risk.
+- **`verify`'s "Dream cycle + MEMORY_INDEX.md" line and an adaptive-sizing sample-model entry (`llm-models.ts`) still read the unfiltered, includes-disabled-providers tier list** — the same #2048 bug pattern, left in place a few lines below that fix. Both now use the filtered list, matching `dreamEffective` (which was already correct).
+- **`doctor`'s `withTimeout()` checks could race a hung LanceDB/WAL call but never cancel it**, and `doctor`'s action was never wrapped in `withExit` (no `process.exit`), so the CLI process could still hang even after printing a correct, bounded report. Wrapped the action in the existing `withExit()` helper (already used by other CLI commands) so a real `openclaw hybrid-mem doctor` invocation actually terminates, without affecting tests that invoke the handler directly in-process. Also corrected the `DOCTOR_CHECK_TIMEOUT_MS` doc comment: synchronous `node:sqlite` calls (e.g. the fact-count check) block the JS thread and can't be preempted by `Promise.race`; those are bounded separately by SQLite's own 30s busy-handler, not by the 15s value introduced in 2026.7.60.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.7.61**.
+
+---
+
 ## [2026.7.60] - 2026-07-05
 
 ### Fixed
@@ -33,13 +50,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **`verify --fix`/`verify` never surfaced SQLite/LanceDB ID-set drift (vector/sqlite orphans, duplicate Lance IDs) as a failure, and the exit code silently stayed 0 while `health` kept failing DB sync (#2049):** `logStorageSyncMetrics` detected and printed this drift but never touched `state.allOk`/`state.issues`, so `verify` (and `verify --fix`) reported success regardless. Fixed by marking `allOk=false` with an actionable remediation command (`verify --reconcile --fix` — orphan deletion/rebuild stays behind that explicit, budget-gated opt-in, same as before) whenever ID-set drift, embedding drift, structural drift, or duplicate Lance IDs are detected, and by re-checking the post-repair snapshot so drift remaining after a budget-limited `--fix` pass is reported honestly instead of a bare exit 0.
 - **`maintenance cron-health` reported the nightly job missing on modern (SQLite-backed) cron stores (#2050):** `readOpenClawCronStore()` normalizes 2026.6.8+ SQLite cron rows to `job.id` and never populates `job.pluginJobId` (that field is legacy-JSON-store-only), but `cron-health`'s lookup only checked `job.pluginJobId === id`, so it always reported the job missing even though `cron-jobs.ts` sets `job.id` to the same canonical id at creation/normalize time. `cron-health` now also checks `job.id === id` via a new `jobMatchesPluginJobId()` helper (`maintenance-inventory.ts`).
 - **`doctor` could hang indefinitely behind a wedged LanceDB/WAL lock (#2051):** the LanceDB/WAL-touching checks (vector DB connectivity, storage-sync snapshot, alias Lance diagnostics, WAL read/write probes) had no bound, so a lock left behind by a stuck maintenance run left `doctor` itself hanging instead of diagnosing the problem. Each of those checks is now wrapped in a 15s `withTimeout()` and reports a bounded, actionable failure pointing at a possible stuck maintenance/distill process; `doctor`'s action is now wrapped in the existing `withExit()` helper so the CLI process actually terminates afterward instead of hanging behind an abandoned native call that `withTimeout` can race but not cancel. (Purely-synchronous `node:sqlite` calls, e.g. the basic fact-count check, are unaffected by `withTimeout` — they're bounded separately by SQLite's own 30s busy-handler.)
-
-### Code review follow-up (same PR)
-
-A full review pass over the six fixes above found and corrected three issues before merge:
-- The #2049 fix's repair-trigger condition was initially widened to include ID-set drift, which would have let plain `verify --fix` (no `--reconcile`) silently delete/rebuild orphan vectors — bypassing the existing, deliberate `--reconcile` opt-in gate (with its own conservative/balanced/aggressive budget policy) that `verify --reconcile --fix` already provides for that exact operation. Reverted to trigger only on pure structural (non-orphan) drift; ID-set drift is still reported as a failing issue pointing at `--reconcile --fix`.
-- The #2050 fix's `jobMatchesPluginJobId()` initially fell back to matching a job's plain `name` against the maintenance job catalog (mirroring `maintenance inventory`'s existing lookup), which could let an unrelated, user-created cron job that happens to share a catalog job's name (e.g. "maintenance-nightly") be reported as satisfying the health check. Simplified to check `pluginJobId`/`id` only, which is sufficient since `cron-jobs.ts` always sets `id` to the canonical `pluginJobId` for plugin-managed jobs.
-- `verify`'s "Dream cycle + MEMORY_INDEX.md" and adaptive-sizing sample-model lines (`llm-models.ts`) still read the unfiltered, includes-disabled-providers tier list — the same #2048 bug pattern, left in place two lines below the fix. Both now use the filtered list.
 
 ### Changed
 
