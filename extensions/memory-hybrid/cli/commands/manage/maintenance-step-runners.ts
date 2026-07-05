@@ -437,12 +437,13 @@ export function buildCliMaintenanceRunners(
   set("distill", async () => {
     if (!b.runDistill) throw new Error("distill unavailable");
     const r = await b.runDistill({ dryRun: false, verbose, days: maxCatchUpDays, ...scanFlags }, sink);
-    const summary = `stored=${r.stored} sessions=${r.sessionsScanned} jobRunId=${r.jobRunId ?? "-"} semantic=${r.semanticOutcome ?? "unknown"}`;
+    // Surface the concrete cause (model/error kind/message, or a deadline-truncation reason) in the
+    // ledger instead of only `semantic=partial`/`semantic=monitoring`, so health state and operators
+    // watching a monitoring-only run can see why it didn't finish (#2024, #2043).
+    const cause = r.batchFailureReason ? ` cause=${r.batchFailureReason}` : "";
+    const summary = `stored=${r.stored} sessions=${r.sessionsScanned} jobRunId=${r.jobRunId ?? "-"} semantic=${r.semanticOutcome ?? "unknown"}${cause}`;
     if (r.partialFailure) {
-      // Surface the concrete batch cause (model/error kind/message) in the ledger instead of only
-      // `semantic=partial`, so health state points at the real distill failure (#2024).
-      const cause = r.batchFailureReason ? ` cause=${r.batchFailureReason}` : "";
-      throw new Error(`distill partial failure (${summary}${cause})`);
+      throw new Error(`distill partial failure (${summary})`);
     }
     assertSemanticOutcomeDoesNotBlockStep("distill", r.semanticOutcome, summary);
     return summary;

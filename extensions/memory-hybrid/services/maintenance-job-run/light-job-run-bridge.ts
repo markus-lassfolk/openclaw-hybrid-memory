@@ -8,6 +8,10 @@ export type LightJobRunParams = {
   dryRun?: boolean;
   semanticEmpty?: boolean;
   partialFailure?: boolean;
+  /** Set when the only reason the run didn't finish is a maintenance-run-deadline stop with no other
+   * implementation error — reported as non-blocking "monitoring" instead of "partial" (#2043). Ignored
+   * when partialFailure is also set. */
+  monitoring?: boolean;
   inputsProcessed?: number;
   outputsProduced?: number;
   /** Concrete failure cause persisted into the job-run summary's semanticReason (#2024). */
@@ -18,6 +22,7 @@ export function resolveLightJobRunOutcome(params: LightJobRunParams): JobRunSema
   if (params.skipped) return "skipped";
   if (params.dryRun) return "skipped";
   if (params.partialFailure) return "partial";
+  if (params.monitoring) return "monitoring";
   if (params.semanticEmpty) return "failed_semantic_empty";
   const inputs = params.inputsProcessed ?? 0;
   const outputs = params.outputsProduced ?? 0;
@@ -42,7 +47,8 @@ export function finishLightJobRun(
     semanticOutcome === "success" ||
     semanticOutcome === "empty" ||
     semanticOutcome === "skipped" ||
-    semanticOutcome === "success_with_review";
+    semanticOutcome === "success_with_review" ||
+    semanticOutcome === "monitoring";
   jobRun.endPhase("run", phaseOk ? "completed" : "failed");
   const jobRunId = finishBatchJobRun(jobRun, semanticOutcome, { clearCheckpoint: true, reason: params.reason });
   return { jobRunId, semanticOutcome };

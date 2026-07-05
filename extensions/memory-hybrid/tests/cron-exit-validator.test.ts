@@ -701,6 +701,26 @@ error: unknown command 'bar'
       expect(second.reportableIssues[0]?.fingerprint.join(":")).toBe(first.reportableIssues[0]?.fingerprint.join(":"));
     });
 
+    it("does not flag reflect-rules zero_rules_reason=valid_no_actionable_rules as a semantic failure (#2043)", () => {
+      // The model ran fine and legitimately found nothing to extract — maintenance-step-runners.ts and
+      // semantic-outcome.ts already treat this as success; this validator must agree.
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "weekly-reflection-20260508T021500Z-111.exit.txt");
+      const logPath = join(tmpDir, "reflect.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z reflect-rules exit=0\n");
+      writeFileSync(
+        logPath,
+        "reflect-rules — diagnostics: model_response_chars=1200 parse_success=true parsed_candidates=0 " +
+          "rejected_duplicates=0 rejected_low_confidence=0 stored=0 status=ok zero_rules_reason=valid_no_actionable_rules\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["reflect-rules"]);
+
+      expect(
+        result.reportableIssues.some((i) => i.stepName === "reflect-rules" && i.failureCategory === "semantic_failure"),
+      ).toBe(false);
+    });
+
     it("detects self-correction failed_partial semantic failures", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "self-correction-partial.exit.txt");

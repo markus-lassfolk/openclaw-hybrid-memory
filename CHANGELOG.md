@@ -23,6 +23,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.59] - 2026-07-05
+
+### Fixed
+
+- **`distill` still reported a hard `failed` status for a deadline-limited stop with real progress (#2043 follow-up):** 2026.7.58 fixed distill's wasted retries on a known-bad primary model, but a code-review pass over that PR found the step's *semantic outcome* was never touched — a run that stopped solely because the maintenance-run deadline was reached (with no other model/batch error) still incremented the same `batchFailures` counter used for genuine errors, so it always resolved to `semantic=partial` and failed the orchestrator step, reproducing the exact symptom #2043 reported. `cmd-distill.ts` now tracks genuine implementation/model errors (`hardBatchFailures`) separately from deadline-only stops (`deadlineTruncated`); a deadline-only stop with no hard failure now reports `semantic=monitoring` (non-blocking) via a new `monitoring` flag on the shared `LightJobRunParams`/`resolveLightJobRunOutcome` bridge (`services/maintenance-job-run/light-job-run-bridge.ts`), while cursor-advancement and "last successful run" bookkeeping remain conservative (still gated on any stoppage, deadline or error, exactly as before).
+- **`cron-exit-validator`'s reflect-rules check was missing the `valid_no_actionable_rules` exemption (#2043 follow-up):** `maintenance-step-runners.ts` and `semantic-outcome.ts` both exempt `zero_rules_reason=insufficient_patterns` and `zero_rules_reason=valid_no_actionable_rules` from failure (the model ran fine and legitimately found nothing to extract), but `cron-exit-validator.ts`'s post-hoc log check only exempted `insufficient_patterns` — a pre-existing inconsistency surfaced by the same code-review pass. A healthy `valid_no_actionable_rules` run could be flagged as a semantic failure by this validator while the orchestrator and CLI paths correctly treated it as success. Both reasons are now exempted consistently across all three copies of this check.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.7.59**.
+
+---
+
 ## [2026.7.58] - 2026-07-05
 
 ### Fixed
