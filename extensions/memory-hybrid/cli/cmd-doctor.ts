@@ -28,6 +28,18 @@ import {
   STORAGE_REPAIR_REMEDIATION,
 } from "../services/storage-sync-diagnostics.js";
 import { workspaceRootForCli } from "./config-feature-summaries.js";
+import { withTimeout } from "../utils/timeout.js";
+
+/**
+ * Bound for each SQLite/LanceDB/WAL-touching check below (#2051). These calls can hang
+ * indefinitely if a maintenance run left LanceDB/SQLite wedged with a stale lock (the exact
+ * scenario `doctor` is supposed to help diagnose) — without a bound, `doctor` itself hangs behind
+ * that same lock instead of reporting it, which is worse than useless during an incident.
+ */
+const DOCTOR_CHECK_TIMEOUT_MS = 15_000;
+const DOCTOR_CHECK_TIMED_OUT = Symbol("doctor-check-timed-out");
+const doctorTimeoutFix =
+  "Check for a stuck `openclaw hybrid-mem maintenance`/distill process (ps/top) holding a SQLite/LanceDB lock; stop it, then retry.";
 
 interface DiagnosticCheck {
   name: string;
@@ -75,13 +87,26 @@ export function registerDoctorCommand(
 
       // Check 2: Vector database
       try {
-        const vectorIds = await vectorDb.getAllIds();
-        const vectorCount = vectorIds.length;
-        checks.push({
-          name: "Vector Database (LanceDB)",
-          status: "pass",
-          message: `Connected successfully (${vectorCount} vectors)`,
-        });
+        const vectorIds = await withTimeout(
+          DOCTOR_CHECK_TIMEOUT_MS,
+          () => vectorDb.getAllIds(),
+          DOCTOR_CHECK_TIMED_OUT,
+        );
+        if (vectorIds === DOCTOR_CHECK_TIMED_OUT) {
+          checks.push({
+            name: "Vector Database (LanceDB)",
+            status: "fail",
+            message: `Timed out after ${DOCTOR_CHECK_TIMEOUT_MS / 1000}s waiting for LanceDB`,
+            fix: doctorTimeoutFix,
+          });
+        } else {
+          const vectorCount = vectorIds.length;
+          checks.push({
+            name: "Vector Database (LanceDB)",
+            status: "pass",
+            message: `Connected successfully (${vectorCount} vectors)`,
+          });
+        }
       } catch (error) {
         checks.push({
           name: "Vector Database (LanceDB)",
@@ -138,8 +163,19 @@ export function registerDoctorCommand(
 
       // Check 5: Database synchronization (unified metrics)
       try {
-        const snapshot = await collectStorageSyncSnapshot(factsDb, vectorDb);
-        if (!snapshot) {
+        const snapshot = await withTimeout(
+          DOCTOR_CHECK_TIMEOUT_MS,
+          () => collectStorageSyncSnapshot(factsDb, vectorDb),
+          DOCTOR_CHECK_TIMED_OUT,
+        );
+        if (snapshot === DOCTOR_CHECK_TIMED_OUT) {
+          checks.push({
+            name: "Database Sync",
+            status: "fail",
+            message: `Timed out after ${DOCTOR_CHECK_TIMEOUT_MS / 1000}s collecting Lance/SQLite sync metrics`,
+            fix: doctorTimeoutFix,
+          });
+        } else if (!snapshot) {
           checks.push({
             name: "Database Sync",
             status: "warn",
@@ -184,8 +220,19 @@ export function registerDoctorCommand(
 
       if (cfg.aliases?.enabled && aliasDb) {
         try {
-          const aliasDiag = await aliasDb.getLanceDiagnostics();
-          if (aliasDiag.schemaValid && aliasDiag.lanceDim === aliasDiag.configuredDim) {
+          const aliasDiag = await withTimeout(
+            DOCTOR_CHECK_TIMEOUT_MS,
+            () => aliasDb.getLanceDiagnostics(),
+            DOCTOR_CHECK_TIMED_OUT,
+          );
+          if (aliasDiag === DOCTOR_CHECK_TIMED_OUT) {
+            checks.push({
+              name: "Alias Lance Index",
+              status: "fail",
+              message: `Timed out after ${DOCTOR_CHECK_TIMEOUT_MS / 1000}s inspecting alias Lance index`,
+              fix: doctorTimeoutFix,
+            });
+          } else if (aliasDiag.schemaValid && aliasDiag.lanceDim === aliasDiag.configuredDim) {
             checks.push({
               name: "Alias Lance Index",
               status: "pass",
@@ -280,26 +327,45 @@ export function registerDoctorCommand(
           });
         }
 
+        let walTimedOut = false;
         try {
-          const { entries: allEntries, hadCorruption } = await wal.readAllRecoverable();
-          const validEntries = await wal.getValidEntries();
-          const staleEntries = Math.max(0, allEntries.length - validEntries.length);
-          const walSizeBytes =
-            breaker.walPath && existsSync(breaker.walPath) ? Math.max(0, statSync(breaker.walPath).size) : 0;
-          const walStatus: "pass" | "warn" =
-            hadCorruption || staleEntries > 0 || walSizeBytes > WAL_SIZE_WARN_BYTES ? "warn" : "pass";
-          const corruptionNote = hadCorruption ? ", corruption detected" : "";
-          checks.push({
-            name: "WAL Journal",
-            status: walStatus,
-            message: `${validEntries.length} pending, ${staleEntries} stale${corruptionNote}, ${formatBytes(walSizeBytes)} at ${walPath}`,
-            fix:
-              walStatus === "warn"
-                ? hadCorruption
-                  ? "Run: openclaw hybrid-mem verify --fix"
-                  : "Investigate replay blockers and run maintenance; clear stale WAL entries after root cause is fixed"
-                : undefined,
-          });
+          const walRead = await withTimeout(
+            DOCTOR_CHECK_TIMEOUT_MS,
+            async () => {
+              const { entries: allEntries, hadCorruption } = await wal.readAllRecoverable();
+              const validEntries = await wal.getValidEntries();
+              return { allEntries, hadCorruption, validEntries };
+            },
+            DOCTOR_CHECK_TIMED_OUT,
+          );
+          if (walRead === DOCTOR_CHECK_TIMED_OUT) {
+            walTimedOut = true;
+            checks.push({
+              name: "WAL Journal",
+              status: "fail",
+              message: `Timed out after ${DOCTOR_CHECK_TIMEOUT_MS / 1000}s inspecting WAL`,
+              fix: doctorTimeoutFix,
+            });
+          } else {
+            const { allEntries, hadCorruption, validEntries } = walRead;
+            const staleEntries = Math.max(0, allEntries.length - validEntries.length);
+            const walSizeBytes =
+              breaker.walPath && existsSync(breaker.walPath) ? Math.max(0, statSync(breaker.walPath).size) : 0;
+            const walStatus: "pass" | "warn" =
+              hadCorruption || staleEntries > 0 || walSizeBytes > WAL_SIZE_WARN_BYTES ? "warn" : "pass";
+            const corruptionNote = hadCorruption ? ", corruption detected" : "";
+            checks.push({
+              name: "WAL Journal",
+              status: walStatus,
+              message: `${validEntries.length} pending, ${staleEntries} stale${corruptionNote}, ${formatBytes(walSizeBytes)} at ${walPath}`,
+              fix:
+                walStatus === "warn"
+                  ? hadCorruption
+                    ? "Run: openclaw hybrid-mem verify --fix"
+                    : "Investigate replay blockers and run maintenance; clear stale WAL entries after root cause is fixed"
+                  : undefined,
+            });
+          }
         } catch (error) {
           checks.push({
             name: "WAL Journal",
@@ -309,7 +375,7 @@ export function registerDoctorCommand(
           });
         }
 
-        if (!breaker.persistentDisabled) {
+        if (!breaker.persistentDisabled && !walTimedOut) {
           const probeId = randomUUID();
           const probeEntry: WALEntry = {
             id: probeId,
@@ -319,13 +385,29 @@ export function registerDoctorCommand(
             data: { text: "doctor-wal-durability-probe", probe: "doctor-wal-durability" },
           };
           try {
-            await wal.write(probeEntry);
-            await wal.remove(probeId);
-            checks.push({
-              name: "WAL Durability",
-              status: "pass",
-              message: "WAL write/remove round-trip verified",
-            });
+            const wrote = await withTimeout(
+              DOCTOR_CHECK_TIMEOUT_MS,
+              async () => {
+                await wal.write(probeEntry);
+                await wal.remove(probeId);
+                return true;
+              },
+              DOCTOR_CHECK_TIMED_OUT,
+            );
+            if (wrote === DOCTOR_CHECK_TIMED_OUT) {
+              checks.push({
+                name: "WAL Durability",
+                status: "fail",
+                message: `Timed out after ${DOCTOR_CHECK_TIMEOUT_MS / 1000}s on WAL write/remove probe`,
+                fix: doctorTimeoutFix,
+              });
+            } else {
+              checks.push({
+                name: "WAL Durability",
+                status: "pass",
+                message: "WAL write/remove round-trip verified",
+              });
+            }
           } catch (error) {
             checks.push({
               name: "WAL Durability",

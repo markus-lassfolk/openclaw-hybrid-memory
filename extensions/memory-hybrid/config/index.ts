@@ -420,4 +420,37 @@ export function resolveReflectionModelAndFallbacks(
   return { defaultModel, fallbackModels: chain.length > 0 ? chain : undefined };
 }
 
+/**
+ * Resolve the main distill pass's default model, giving `distill.defaultModel` (legacy override)
+ * precedence over `distill.modelTier` only when its provider is enabled. This is the single place
+ * both `cmd-distill.ts` (actual routing) and `config`/`verify` (reporting) call, so the two can never
+ * disagree again — previously `cmd-distill.ts` let `distill.defaultModel` win unconditionally while
+ * `config`/`verify` reported only the `distill.modelTier` result, silently routing to a disabled
+ * provider (e.g. Google) without any indication in `config`/`verify` output (#2047).
+ */
+export function resolveDistillDefaultModel(
+  cfg: HybridMemoryConfig,
+  tier: CronModelTier,
+): { model: string; source: string; skippedDefaultModelReason?: string } {
+  const cronCfg = getCronModelConfig(cfg);
+  const tierResolved = resolveReflectionModelAndFallbacks(cfg, tier);
+  const tierSource = `distill.modelTier=${tier}`;
+  const rawDefaultModel = cfg.distill?.defaultModel?.trim();
+  if (!rawDefaultModel) {
+    return { model: tierResolved.defaultModel, source: tierSource };
+  }
+  const disabledSet = getDisabledProviderSet(cronCfg);
+  const allowed = filterModelsByDisabled([rawDefaultModel], disabledSet);
+  if (allowed.length > 0) {
+    return { model: allowed[0], source: "distill.defaultModel" };
+  }
+  return {
+    model: tierResolved.defaultModel,
+    source: tierSource,
+    skippedDefaultModelReason:
+      `distill.defaultModel=${rawDefaultModel} ignored — provider "${inferProviderFromModel(rawDefaultModel)}" ` +
+      "is disabled (llm.disabledProviders); using distill.modelTier instead",
+  };
+}
+
 // resolveMiniMaxThinkingMode lives in thinking-mode.ts (re-exported above).

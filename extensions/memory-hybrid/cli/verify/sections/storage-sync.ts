@@ -14,24 +14,52 @@ import { runStorageRepairPipeline, runStorageStructuralRepair } from "../../../s
 import { capturePluginError } from "../../../services/error-reporter.js";
 import type { VerifyRunState } from "../verify-run-state.js";
 
+/** True when the sync snapshot shows any drift a repair pass should address (#2049). */
+export function storageSyncSnapshotHasDrift(snapshot: StorageSyncSnapshot): boolean {
+  return (
+    snapshot.hasIdSetDrift ||
+    snapshot.hasEmbeddingDrift ||
+    snapshot.hasStructuralDrift ||
+    snapshot.duplicateIdExtraRows > 0
+  );
+}
+
 export function logStorageSyncMetrics(state: VerifyRunState, snapshot: StorageSyncSnapshot): void {
   const { log, OK, FAIL, WARN_LINE } = state;
   log("\n───── Storage sync metrics ─────");
   log(`${OK} ${formatStorageSyncSummary(snapshot)}`);
   if (snapshot.hasIdSetDrift) {
     log(`${FAIL} ID-set drift: vectorOrphans=${snapshot.vectorOrphans.length} sqliteOrphans=${snapshot.sqliteOrphans.length}`);
+    // Previously this FAIL line never touched allOk/issues, so a snapshot with real orphan drift
+    // still let verify (and verify --fix, when the repair below couldn't fully clear it) exit 0 (#2049).
+    state.allOk = false;
+    state.issues.push(
+      `Storage sync ID-set drift: ${snapshot.vectorOrphans.length} vector orphan(s), ${snapshot.sqliteOrphans.length} sqlite orphan(s). Run \`${STORAGE_REPAIR_REMEDIATION}\` or \`openclaw hybrid-mem verify --fix\`.`,
+    );
   }
   if (snapshot.duplicateIdExtraRows > 0) {
     log(`${WARN_LINE} Duplicate Lance IDs in listing: ${snapshot.duplicateIdExtraRows} extra row reference(s)`);
+    state.allOk = false;
+    state.issues.push(
+      `Storage sync: ${snapshot.duplicateIdExtraRows} duplicate Lance ID row reference(s). Run \`${STORAGE_OPTIMIZE_REMEDIATION}\` or \`${STORAGE_REPAIR_REMEDIATION}\`.`,
+    );
   }
   if (snapshot.hasEmbeddingDrift) {
     log(
       `${FAIL} Embedding drift: canonicalEmbeddings=${snapshot.canonicalEmbeddings} vs lanceRows=${snapshot.lanceRowCount}`,
     );
+    state.allOk = false;
+    state.issues.push(
+      `Storage sync embedding drift: canonicalEmbeddings=${snapshot.canonicalEmbeddings} vs lanceRows=${snapshot.lanceRowCount}. Run \`${STORAGE_REPAIR_REMEDIATION}\`.`,
+    );
   }
   if (snapshot.hasStructuralDrift) {
     log(
       `${WARN_LINE} Structural drift detected (row counts differ but ID orphan sets are empty). Try \`${STORAGE_OPTIMIZE_REMEDIATION}\` or \`${STORAGE_REPAIR_REMEDIATION}\`.`,
+    );
+    state.allOk = false;
+    state.issues.push(
+      `Storage structural drift (row counts differ). Run \`${STORAGE_OPTIMIZE_REMEDIATION}\` or \`${STORAGE_REPAIR_REMEDIATION}\`.`,
     );
   }
 }
@@ -89,7 +117,12 @@ export async function applyStorageStructuralFixIfNeeded(
   state: VerifyRunState,
   snapshot: StorageSyncSnapshot,
 ): Promise<StorageSyncSnapshot> {
-  if (!state.opts.fix || !snapshot.hasStructuralDrift) {
+  // Previously gated on `hasStructuralDrift` alone, but that flag is defined as `!hasIdSetDrift &&
+  // (...)` (see storage-sync-diagnostics.ts) — i.e. it is *false by definition* whenever vector/sqlite
+  // orphans exist. That meant the repair pipeline below (which reconciles orphans AND rebuilds sqlite
+  // orphans, not just "structural" drift) never ran for the exact large-drift case it's meant to fix,
+  // so `verify --fix` reported exit 0 while `health` kept failing DB sync (#2049).
+  if (!state.opts.fix || !storageSyncSnapshotHasDrift(snapshot)) {
     return snapshot;
   }
 
@@ -134,6 +167,19 @@ export async function applyStorageStructuralFixIfNeeded(
   const refreshed = await collectStorageSyncSnapshot(state.factsDb, state.vectorDb);
   if (refreshed) {
     log(`${OK} After repair: ${formatStorageSyncSummary(refreshed)}`);
+    // A repair pass is budget-limited (reconcileMaxFixes / policy) and can legitimately leave drift
+    // behind on a large backlog — report that honestly instead of a bare exit 0 that contradicts
+    // `health` failing DB sync right after (#2049's core complaint).
+    if (storageSyncSnapshotHasDrift(refreshed)) {
+      state.allOk = false;
+      state.issues.push(
+        `Storage sync drift remains after \`verify --fix\` (vectorOrphans=${refreshed.vectorOrphans.length}, ` +
+          `sqliteOrphans=${refreshed.sqliteOrphans.length}, duplicateIdExtraRows=${refreshed.duplicateIdExtraRows}). ` +
+          `Re-run \`${STORAGE_REPAIR_REMEDIATION}\` directly with a higher --max-fixes, or an aggressive policy, to finish the repair.`,
+      );
+    } else {
+      fixes.push("Storage sync drift fully resolved after repair");
+    }
     return refreshed;
   }
   return snapshot;

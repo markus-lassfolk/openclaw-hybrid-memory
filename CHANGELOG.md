@@ -23,6 +23,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.60] - 2026-07-05
+
+### Fixed
+
+- **Distill's in-flight-abort deadline stop was misclassified as a hard error (#2046):** the batch loop passes `getMaintenanceRunAbortSignal()` into the LLM call so it can be aborted when the orchestrator-wide deadline fires mid-call, but the resulting error landed in the generic `catch` block and was counted as `hardBatchFailures` (kind=`other`) instead of the existing `deadlineTruncated` classification — turning an expected, resumable deadline stop into a hard `distill partial failure`. The catch block now checks `maintenanceRunDeadlineReached()` first and routes to the non-blocking deadline path, matching the pre-batch check that already handles this correctly. `maintenance step <name>`'s hidden 4-minute default runtime budget (unaffected by `--force`) is now documented in its `--help` description, with a pointer to `--max-runtime-min` for clearing a full backlog in one run.
+- **`distill.defaultModel` silently overrode `distill.modelTier` and disagreed with `config`/`verify` reporting (#2047):** `cmd-distill.ts` let `distill.defaultModel` win over the tier-resolved model unconditionally — including models from a disabled provider — while `config`/`verify` only ever reported the `distill.modelTier` result, so the two could name completely different models. Added `resolveDistillDefaultModel()` (`config/index.ts`) as the single resolver both the real run and `config`/`verify` now call; it also refuses to hand a disabled provider's model to `distill.defaultModel`, falling through to the tier result and surfacing a warning instead.
+- **`verify` showed disabled-provider models as members of the "Effective tier lists" (#2048):** that summary line (and the "First choice per tier" line) was built from `getLLMModelPreferenceUnfiltered()`, which intentionally does not exclude `llm.disabledProviders` — so a disabled Gemini/Azure model configured in `llm.default`/`llm.heavy` still appeared as if it were part of the live fallback chain. The summary now uses the filtered `getLLMModelPreference()` result, with configured-but-disabled candidates broken out onto their own clearly-labeled line.
+- **`verify --fix` did not repair SQLite/LanceDB ID-set drift (vector/sqlite orphans, duplicate Lance IDs) (#2049):** the repair pass was gated on `snapshot.hasStructuralDrift`, which is defined as `!hasIdSetDrift && (...)` — i.e. it is false by definition whenever orphans exist, so the exact repair pipeline that reconciles orphans and rebuilds sqlite-orphan vectors never ran for that case, and `verify --fix` exited 0 while `health` kept failing DB sync. The repair now triggers on any drift type, `verify` now marks `allOk=false` with an actionable remediation command whenever drift metrics or duplicate IDs are detected, and the post-repair snapshot is checked so remaining drift after a budget-limited pass is reported honestly instead of a bare exit 0.
+- **`maintenance cron-health` reported the nightly job missing on modern (SQLite-backed) cron stores (#2050):** `readOpenClawCronStore()` normalizes 2026.6.8+ SQLite cron rows to `job.id`/`job.name` and never populates `job.pluginJobId` (that field is legacy-JSON-store-only), but `cron-health`'s lookup only checked `job.pluginJobId === id`, so it always reported the job missing even when `maintenance inventory` (which already falls back through name/id matching) found it fine. `cron-health` now uses the same `jobMatchesPluginJobId()` matcher (exported from `maintenance-inventory.ts`) that already backs `inventory`.
+- **`doctor` could hang indefinitely behind a wedged SQLite/LanceDB lock (#2051):** the SQLite/LanceDB/WAL-touching checks (vector DB connectivity, storage-sync snapshot, alias Lance diagnostics, WAL read/write probes) had no bound, so a lock left behind by a stuck maintenance run left `doctor` itself hanging instead of diagnosing the problem. Each of those checks is now wrapped in a 15s `withTimeout()`; a check that times out is reported as a failed diagnostic pointing at a possible stuck maintenance/distill process, and `doctor` still returns within a bounded time.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.7.60**.
+
+---
+
 ## [2026.7.59] - 2026-07-05
 
 ### Fixed

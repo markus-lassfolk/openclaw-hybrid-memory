@@ -426,6 +426,26 @@ function resolveCatalogEntry(...candidates: Array<string | undefined>): Maintena
   return null;
 }
 
+/**
+ * True when `rawJob` (a raw gateway cron job record, as returned by `readOpenClawCronStore`) is the
+ * job identified by canonical id `pluginJobId` (e.g. "hybrid-mem:maintenance-nightly").
+ *
+ * `readOpenClawCronStore` normalizes SQLite-backed cron rows (2026.6.8+) to `job.id`/`job.name`;
+ * it never sets `job.pluginJobId` (that field only appears on the legacy JSON store format). A
+ * caller that only checks `job.pluginJobId === pluginJobId` therefore always misses on a modern
+ * SQLite-backed install, even though the job is present under `job.id`/`job.name` (#2050 — this is
+ * why `cron-health` reported the nightly job "missing" while `maintenance inventory`, which already
+ * falls back through `resolveCatalogEntry(pluginJobId, name, ...)`, found it fine).
+ */
+export function jobMatchesPluginJobId(rawJob: Record<string, unknown>, pluginJobId: string): boolean {
+  const rawPluginJobId = typeof rawJob.pluginJobId === "string" ? rawJob.pluginJobId : undefined;
+  const rawId = typeof rawJob.id === "string" ? rawJob.id : undefined;
+  const name = typeof rawJob.name === "string" ? rawJob.name : undefined;
+  if (rawPluginJobId === pluginJobId || rawId === pluginJobId) return true;
+  const entry = resolveCatalogEntry(rawPluginJobId, rawId, name);
+  return entry != null && entry.pluginJobId === pluginJobId;
+}
+
 function describeGatewaySchedule(schedule: unknown): {
   schedule: string | null;
   scheduleKind: MaintenanceInventoryJob["scheduleKind"];

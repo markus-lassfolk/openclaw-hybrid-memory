@@ -20,6 +20,7 @@ import {
   getCronModelConfig,
   getDefaultCronModel,
   getLLMModelPreference,
+  resolveDistillDefaultModel,
   resolveReflectionModelAndFallbacks,
   hybridConfigSchema,
 } from "../config.js";
@@ -316,7 +317,10 @@ export function runConfigViewForCli(
     const first = (arr: string[]) => (arr.length > 0 ? arr[0] : "—");
     const tierFirst = (tier: "nano" | "maintenance" | "default" | "heavy") =>
       first(getLLMModelPreference(cronCfg, tier));
-    log(`  distill main pass: tier=${mainDistillTier} -> ${tierFirst(mainDistillTier)}`);
+    // resolveDistillDefaultModel (not tierFirst) so this matches what cmd-distill.ts actually runs —
+    // distill.defaultModel can override the tier result, and this line used to ignore that (#2047).
+    const distillMainPassResolved = resolveDistillDefaultModel(cfg, mainDistillTier);
+    log(`  distill main pass: tier=${mainDistillTier} -> ${distillMainPassResolved.model} (source=${distillMainPassResolved.source})`);
     log(`  distill extraction (directives/reinforcement): tier=${extTier} -> ${tierFirst(extTier)}`);
     const dreamDefault = tierFirst("maintenance");
     log(
@@ -337,11 +341,18 @@ export function runConfigViewForCli(
     const mainDistillTierRaw = cfg.distill?.modelTier ?? "maintenance";
     const mainDistillTier = effectiveDistillMainModelTier(mainDistillTierRaw);
     const distillResolved = resolveReflectionModelAndFallbacks(cfg, mainDistillTier);
-    const distillModel = distillResolved.defaultModel ?? getDefaultCronModel(getCronModelConfig(cfg), mainDistillTier);
+    // resolveDistillDefaultModel, not distillResolved.defaultModel, for the reported primary model:
+    // distill.defaultModel can override the tier's resolved model, and this line previously ignored
+    // that override entirely, disagreeing with what cmd-distill.ts actually runs (#2047).
+    const distillDefaultResolved = resolveDistillDefaultModel(cfg, mainDistillTier);
+    const distillModel = distillDefaultResolved.model;
     const distillFallbacks = distillResolved.fallbackModels ?? [];
     log(
-      `  distill: distill.modelTier=${mainDistillTierRaw}${mainDistillTierRaw !== mainDistillTier ? ` -> ${mainDistillTier}` : ""} (primary=${distillModel}${distillFallbacks.length ? `; +${distillFallbacks.length} fallback(s)` : ""})`,
+      `  distill: distill.modelTier=${mainDistillTierRaw}${mainDistillTierRaw !== mainDistillTier ? ` -> ${mainDistillTier}` : ""} (primary=${distillModel}, source=${distillDefaultResolved.source}${distillFallbacks.length ? `; +${distillFallbacks.length} fallback(s)` : ""})`,
     );
+    if (distillDefaultResolved.skippedDefaultModelReason) {
+      log(`    note: ${distillDefaultResolved.skippedDefaultModelReason}`);
+    }
     const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
     const extractionResolved = resolveReflectionModelAndFallbacks(cfg, extractionTier);
     const extractionModel =
@@ -379,8 +390,7 @@ export function runConfigViewForCli(
       if (!statePath) throw new Error("no adaptive maintenance state path");
       const state = loadAdaptiveModelLimits(statePath);
       const mainDistillTier = effectiveDistillMainModelTier(cfg.distill?.modelTier);
-      const distillResolved = resolveReflectionModelAndFallbacks(cfg, mainDistillTier);
-      const model = distillResolved.defaultModel ?? getDefaultCronModel(getCronModelConfig(cfg), mainDistillTier);
+      const model = resolveDistillDefaultModel(cfg, mainDistillTier).model;
       const effective = getEffectiveModelLimits({
         state,
         model,

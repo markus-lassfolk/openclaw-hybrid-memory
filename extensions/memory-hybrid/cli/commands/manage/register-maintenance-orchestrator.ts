@@ -235,7 +235,9 @@ export function registerMaintenanceOrchestratorCommands(maintenance: Chainable, 
     maintenance
       .command("step <step>")
       .description(
-        "Run exactly one named maintenance step in isolation (bypasses that step's cadence guard). Use `maintenance steps` to list valid names.",
+        `Run exactly one named maintenance step in isolation (bypasses that step's cadence guard). Use \`maintenance steps\` to list valid names. ` +
+          `Defaults to a ${DEFAULT_STEP_MAX_RUNTIME_MIN}-minute runtime budget even with --force (#2046) — a large backlog (e.g. distill) ` +
+          `will stop partway and report a non-blocking, resumable partial result; pass --max-runtime-min <n> to clear a full backlog in one run.`,
       ),
   ).action(
     withExit(async (step: string, opts, cmd?: CommanderOptsParent) => {
