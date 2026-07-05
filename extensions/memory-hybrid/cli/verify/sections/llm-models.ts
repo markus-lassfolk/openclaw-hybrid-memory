@@ -19,6 +19,7 @@ import {
   getLLMModelPreference,
   getLLMModelPreferenceUnfiltered,
   getProvidersWithKeys,
+  resolveDistillDefaultModel,
 } from "../../../config.js";
 import { resolveSecretRef } from "../../../config/parsers/core.js";
 import { getEffectiveModelLimits, loadAdaptiveModelLimits } from "../../../services/adaptive-model-limits.js";
@@ -90,10 +91,22 @@ export async function runVerifyLlmModelsSection(state: VerifyRunState): Promise<
   const gatewayAvailable = Boolean(
     gatewayPort && Number(gatewayPort) >= 1 && Number(gatewayPort) <= 65535 && gatewayToken,
   );
+  // Unfiltered = raw configured list (includes disabled-provider models); used for the per-row
+  // "Tier(s)" column below, where the adjacent "Enabled" column already disambiguates disabled rows.
   const tierNano = getLLMModelPreferenceUnfiltered(cronCfg, "nano");
   const tierMaintenance = getLLMModelPreferenceUnfiltered(cronCfg, "maintenance");
   const tierDefault = getLLMModelPreferenceUnfiltered(cronCfg, "default");
   const tierHeavy = getLLMModelPreferenceUnfiltered(cronCfg, "heavy");
+  // Filtered = what getLLMModelPreference() actually hands every runtime call site — i.e. the real
+  // "first model wins" chain with llm.disabledProviders already excluded (#2048). The "Effective tier
+  // lists" summary below previously used the unfiltered lists, so a disabled Gemini/Azure model still
+  // configured in llm.default/llm.heavy showed up there — and tagged with that tier in the per-row
+  // table — as if it remained part of the live fallback chain, when getLLMModelPreference() (what
+  // distill/reflect/etc. actually call) had already dropped it.
+  const tierNanoEnabled = getLLMModelPreference(cronCfg, "nano");
+  const tierMaintenanceEnabled = getLLMModelPreference(cronCfg, "maintenance");
+  const tierDefaultEnabled = getLLMModelPreference(cronCfg, "default");
+  const tierHeavyEnabled = getLLMModelPreference(cronCfg, "heavy");
   const nanoExplicitConfigured =
     Array.isArray(cronCfg.llm?.nano) && cronCfg.llm.nano.some((m) => typeof m === "string" && m.trim().length > 0);
   const maintenanceExplicitConfigured =
@@ -110,25 +123,50 @@ export async function runVerifyLlmModelsSection(state: VerifyRunState): Promise<
     return tags.join(", ");
   }
   const fmtTierList = (arr: string[]) => (arr.length > 0 ? arr.join(", ") : "(none)");
-  tableLog("  Effective tier lists (first model in each tier wins when that tier is selected):");
+  const excludedDisabled = (configured: string[], enabled: string[]) => configured.filter((m) => !enabled.includes(m));
+  const fmtExcludedLine = (label: string, configured: string[], enabled: string[]): string | null => {
+    const excluded = excludedDisabled(configured, enabled);
+    return excluded.length > 0
+      ? `    ${label} (configured, excluded — disabled provider): ${excluded.join(", ")}`
+      : null;
+  };
   tableLog(
-    `    nano:    ${fmtTierList(tierNano)}${nanoExplicitConfigured ? "" : "  — llm.nano unset; nano tier reuses the default list"}`,
+    "  Effective tier lists (first model in each tier wins when that tier is selected; disabled providers already excluded):",
   );
   tableLog(
-    `    maintenance: ${fmtTierList(tierMaintenance)}${maintenanceExplicitConfigured ? "" : "  — llm.maintenance unset; maintenance tier reuses the default list"}`,
+    `    nano:    ${fmtTierList(tierNanoEnabled)}${nanoExplicitConfigured ? "" : "  — llm.nano unset; nano tier reuses the default list"}`,
   );
-  tableLog(`    default: ${fmtTierList(tierDefault)}`);
-  tableLog(`    heavy:   ${fmtTierList(tierHeavy)}`);
   tableLog(
-    `    First choice per tier: nano=${tierNano[0] ?? "—"} | maintenance=${tierMaintenance[0] ?? "—"} | default=${tierDefault[0] ?? "—"} | heavy=${tierHeavy[0] ?? "—"}`,
+    `    maintenance: ${fmtTierList(tierMaintenanceEnabled)}${maintenanceExplicitConfigured ? "" : "  — llm.maintenance unset; maintenance tier reuses the default list"}`,
+  );
+  tableLog(`    default: ${fmtTierList(tierDefaultEnabled)}`);
+  tableLog(`    heavy:   ${fmtTierList(tierHeavyEnabled)}`);
+  for (const line of [
+    fmtExcludedLine("nano", tierNano, tierNanoEnabled),
+    fmtExcludedLine("maintenance", tierMaintenance, tierMaintenanceEnabled),
+    fmtExcludedLine("default", tierDefault, tierDefaultEnabled),
+    fmtExcludedLine("heavy", tierHeavy, tierHeavyEnabled),
+  ]) {
+    if (line) tableLog(line);
+  }
+  tableLog(
+    `    First choice per tier: nano=${tierNanoEnabled[0] ?? "—"} | maintenance=${tierMaintenanceEnabled[0] ?? "—"} | default=${tierDefaultEnabled[0] ?? "—"} | heavy=${tierHeavyEnabled[0] ?? "—"}`,
   );
   const distillMainTierRaw = cfg.distill?.modelTier ?? "maintenance";
   const distillMainRequestedHeavy = distillMainTierRaw === "heavy";
   const effectiveDistillMainTierValue = effectiveDistillMainModelTier(distillMainTierRaw);
-  const distillMainEffective = getLLMModelPreference(cronCfg, effectiveDistillMainTierValue)[0] ?? "—";
+  // Same resolver cmd-distill.ts uses for the actual run (#2047) — previously this line only
+  // resolved distill.modelTier and ignored distill.defaultModel, so verify could report
+  // "tier=maintenance -> minimax/..." while the real run used a completely different
+  // distill.defaultModel (including, silently, one from a disabled/unauthenticated provider).
+  const distillDefaultResolved = resolveDistillDefaultModel(cfg, effectiveDistillMainTierValue);
+  const distillMainEffective = distillDefaultResolved.model || "—";
   tableLog(
-    `    Distill main pass: distill.modelTier=${distillMainTierRaw}${distillMainRequestedHeavy ? " (clamped to maintenance)" : ""} -> ${distillMainEffective}; --model overrides one run.`,
+    `    Distill main pass: distill.modelTier=${distillMainTierRaw}${distillMainRequestedHeavy ? " (clamped to maintenance)" : ""} -> ${distillMainEffective} (source=${distillDefaultResolved.source}); --model overrides one run.`,
   );
+  if (distillDefaultResolved.skippedDefaultModelReason) {
+    state.warnings.push(`verify: ${distillDefaultResolved.skippedDefaultModelReason}`);
+  }
   const dreamOverride =
     typeof cfg.nightlyCycle?.model === "string" && cfg.nightlyCycle.model.trim().length > 0
       ? cfg.nightlyCycle.model.trim()
@@ -156,7 +194,7 @@ export async function runVerifyLlmModelsSection(state: VerifyRunState): Promise<
   tableLog(
     dreamOverride
       ? `    Dream cycle + MEMORY_INDEX.md: nightlyCycle.model="${dreamOverride}" (overrides default tier for that pipeline).`
-      : `    Dream cycle + MEMORY_INDEX.md: uses maintenance tier first choice (${tierMaintenance[0] ?? "—"}) unless nightlyCycle.model is set.`,
+      : `    Dream cycle + MEMORY_INDEX.md: uses maintenance tier first choice (${tierMaintenanceEnabled[0] ?? "—"}) unless nightlyCycle.model is set.`,
   );
   tableLog(
     "    Embeddings / re-index: embedding.model + embedding.* (not llm tiers). Chat LLM spend is separate from embedding API spend.",
@@ -182,7 +220,7 @@ export async function runVerifyLlmModelsSection(state: VerifyRunState): Promise<
         distillMainEffective,
         dreamEffective,
         getLLMModelPreference(cronCfg, extractionTier)[0] ?? "—",
-        tierHeavy[0] ?? "—",
+        tierHeavyEnabled[0] ?? "—",
       ].filter((m, i, arr) => m !== "—" && arr.indexOf(m) === i);
       for (const sampleModel of sampleModels) {
         const effective = getEffectiveModelLimits({

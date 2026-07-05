@@ -12,9 +12,8 @@ import type { MemoryCategory } from "../config.js";
 import {
   describeMaintenanceFallbackPolicy,
   effectiveDistillMainModelTier,
-  getCronModelConfig,
-  getDefaultCronModel,
   isValidCategory,
+  resolveDistillDefaultModel,
   resolveDistillThinkingMode,
   resolveReflectionModelAndFallbacks,
 } from "../config.js";
@@ -296,7 +295,6 @@ export async function runDistillForCli(
       }
     }
 
-    const cronCfgDistill = getCronModelConfig(cfg);
     // CRITICAL FIX (#1205/#1216): Clamp distill main tier to never use "heavy" to prevent
     // silently starting expensive maintenance on GPT-5.5/O3/etc. when llm.heavy[0] is expensive.
     // Operators who want heavy tier for distill must pass --model explicitly; distill.modelTier
@@ -310,15 +308,19 @@ export async function runDistillForCli(
     }
     const tierPrefWithSources = resolveTierPreferenceWithSources(cfg, distillMainTier);
     const tierResolved = resolveReflectionModelAndFallbacks(cfg, distillMainTier);
-    const model =
-      opts.model ??
-      cfg.distill?.defaultModel ??
-      tierResolved.defaultModel ??
-      getDefaultCronModel(cronCfgDistill, distillMainTier);
+    // Single shared resolver (config.ts) so this actual routing decision can never disagree with
+    // what `config`/`verify` report as the effective model/source again (#2047) — it also refuses to
+    // silently hand distill.defaultModel a model from a disabled provider, falling through to the
+    // distill.modelTier result instead.
+    const distillDefaultResolved = resolveDistillDefaultModel(cfg, distillMainTier);
+    if (distillDefaultResolved.skippedDefaultModelReason) {
+      logger.warn?.(`memory-hybrid: ${distillDefaultResolved.skippedDefaultModelReason}`);
+    }
+    const model = opts.model ?? distillDefaultResolved.model;
     const tierSrcIdx = tierPrefWithSources.models.indexOf(model);
     const modelSource = opts.model
       ? "--model"
-      : cfg.distill?.defaultModel === model
+      : distillDefaultResolved.source === "distill.defaultModel"
         ? "distill.defaultModel"
         : tierSrcIdx >= 0
           ? (tierPrefWithSources.sources[tierSrcIdx] ?? "built-in")
@@ -745,6 +747,19 @@ export async function runDistillForCli(
         progress.update(processedBlocks);
       } catch (err) {
         const e = err instanceof Error ? err : new Error(String(err));
+        // The in-flight call above passes getMaintenanceRunAbortSignal() as `signal`; if the
+        // orchestrator-wide deadline fires mid-call, that abort surfaces here as a plain rejected
+        // promise, not a special error type. Without this check it fell through to the generic
+        // `kind: "other"` branch below, which counts toward hardBatchFailures and turns an expected,
+        // resumable deadline stop into a hard "distill partial failure" (#2046) — the same case the
+        // pre-batch `maintenanceRunDeadlineReached()` check above already treats as non-blocking.
+        if (maintenanceRunDeadlineReached()) {
+          sink.warn(`memory-hybrid: distill batch ${batchNum} aborted: maintenance run deadline reached`);
+          batchFailures++;
+          deadlineTruncated = true;
+          batchFailureReason ??= `batch ${batchNum} aborted: maintenance run deadline reached before completion`;
+          break;
+        }
         const isContext = isContextLengthError(e);
         const isRateLimit = is429OrWrapped(e);
         const isQuota = is403QuotaOrRateLimitLike(e);

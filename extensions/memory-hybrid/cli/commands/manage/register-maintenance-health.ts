@@ -9,6 +9,7 @@ import type { HybridMemoryConfig } from "../../../config.js";
 import { formatStepLockDetail, listActiveStepLocks } from "../../../services/cron-guard.js";
 import {
   collectMaintenanceInventory,
+  jobMatchesPluginJobId,
   renderMaintenanceInventoryMarkdown,
   renderMaintenanceInventoryText,
 } from "../../../services/maintenance-inventory.js";
@@ -308,7 +309,11 @@ export function registerMaintenanceHealthCommands(maintenance: Chainable, cfg: H
         let healthy = true;
 
         for (const id of criticalJobs) {
-          const job = jobs.find((j) => j && j.pluginJobId === id);
+          // jobMatchesPluginJobId, not a bare `j.pluginJobId === id` check (#2050): SQLite-backed
+          // cron stores (2026.6.8+) never populate `pluginJobId` on the raw job record, only
+          // `id`/`name`, so the old strict check always reported this job "missing" on modern
+          // installs even when gateway cron had it configured and running.
+          const job = jobs.find((j) => j && jobMatchesPluginJobId(j as Record<string, unknown>, id));
           if (!job) {
             console.warn(`⚠ Maintenance job missing: ${id}. Run: hybrid-mem install`);
             healthy = false;
