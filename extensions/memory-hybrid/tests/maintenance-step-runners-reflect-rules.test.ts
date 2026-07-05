@@ -15,7 +15,10 @@ function minimalBindings(runReflectionRules: ManageBindings["runReflectionRules"
 }
 
 describe("maintenance-step-runners reflect-rules", () => {
-  it("does not throw for tolerated invalid_response_format flake with model output", async () => {
+  it("throws for invalid_response_format even when the model returned output (#2043)", async () => {
+    // invalid_response_format means the model responded but its output couldn't be parsed at all — a
+    // real pipeline break, not a benign "nothing to extract" case. It used to be tolerated as a
+    // one-off flake and reported as semantic=success, hiding a broken extraction run.
     const runReflectionRules = vi.fn().mockResolvedValue({
       rulesStored: 0,
       rulesExtracted: 0,
@@ -29,11 +32,7 @@ describe("maintenance-step-runners reflect-rules", () => {
     const runner = buildCliMaintenanceRunners(minimalBindings(runReflectionRules)).get("reflect-rules");
     expect(runner).toBeDefined();
 
-    const summary = await runner!();
-
-    expect(summary).toContain("zero_rules_reason=invalid_response_format");
-    expect(summary).toContain("model_response_chars=128");
-    expect(summary).toContain("semantic=success");
+    await expect(runner!()).rejects.toThrow(/reflect-rules semantic failure/);
   });
 
   it("throws for genuine reflect-rules semantic failures", async () => {

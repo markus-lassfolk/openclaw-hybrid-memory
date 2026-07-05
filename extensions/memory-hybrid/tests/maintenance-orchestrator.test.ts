@@ -486,7 +486,10 @@ describe("maintenance-orchestrator", () => {
     expect(result.exitCode).toBe(1);
   });
 
-  it("accepts reflect-rules tolerated invalid_response_format flake without aborting nightly", async () => {
+  it("fails reflect-rules on invalid_response_format instead of tolerating it as a flake (#2043)", async () => {
+    // invalid_response_format means the model responded but its output couldn't be parsed — a real
+    // pipeline break, not a benign "nothing to extract" case. This used to be waved through as
+    // semantic=success (masking the failure); it must now surface as a failed step.
     openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
     const flakeSummary =
       "rulesStored=0 rulesExtracted=0 parse_success=false zero_rules_reason=invalid_response_format status=degraded model_response_chars=128 semantic=success";
@@ -506,10 +509,9 @@ describe("maintenance-orchestrator", () => {
     );
     expect(result.steps).toHaveLength(3);
     const reflectRules = result.steps.find((s) => s.name === "reflect-rules");
-    expect(reflectRules?.status).toBe("ok");
-    expect(reflectRules?.semanticOutcome).toBe("success");
+    expect(reflectRules?.status).toBe("failed");
     expect(result.steps.find((s) => s.name === "reflect-meta")?.status).toBe("ok");
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode).toBe(1);
   });
 
   it("fails reflect-rules when runner summary has parse_success=false without semantic token", async () => {

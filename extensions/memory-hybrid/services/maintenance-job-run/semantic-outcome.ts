@@ -101,11 +101,8 @@ function parseMetricFromMaintenanceSummary(summary: string, key: string): number
 export function reflectRulesStepSummaryIndicatesFailure(summary: string): boolean {
   if (/\bzero_rules_reason=valid_no_actionable_rules\b/i.test(summary)) return false;
   if (/\bzero_rules_reason=insufficient_patterns\b/i.test(summary)) return false;
-  const degradedFlake =
-    /\bzero_rules_reason=invalid_response_format\b/i.test(summary) &&
-    /\bstatus=degraded\b/i.test(summary) &&
-    (parseMetricFromMaintenanceSummary(summary, "model_response_chars") ?? 0) > 0;
-  if (degradedFlake) return false;
+  // invalid_response_format is a genuine parse failure (the model responded but its output couldn't
+  // be parsed), not a benign "nothing to extract" case — it must not be waved through as success (#2043).
   if (/\bstatus=ok\b/i.test(summary) && !/\bparse_success=false\b/i.test(summary)) return false;
   const parseFailed = /\bparse_success=false\b/i.test(summary);
   const rulesStored =

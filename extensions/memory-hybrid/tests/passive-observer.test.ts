@@ -438,7 +438,7 @@ describe("runPassiveObserver", () => {
     expect(result.chunksProcessed).toBe(0);
   });
 
-  it("counts a run truncated by the maintenance run deadline as errored, not silently ok (#2032)", async () => {
+  it("counts a run truncated by the maintenance run deadline as deadlineStopped, not silently ok (#2032, refined #2043)", async () => {
     writeFileSync(
       join(sessionsDir, "session-1.jsonl"),
       `${JSON.stringify({ message: { role: "user", content: "Hello, this session has new content." } })}\n`,
@@ -459,9 +459,12 @@ describe("runPassiveObserver", () => {
         logger,
       );
 
-      // A deadline-truncated run must be visible as an error, not returned as a clean "ok" that
-      // silently hides unprocessed sessions from the caller's summary/assertions.
-      expect(result.errors).toBeGreaterThan(0);
+      // A deadline-truncated run must be visible via deadlineStopped, not returned as a clean "ok"
+      // that silently hides unprocessed sessions from the caller's summary/assertions — but it's also
+      // not a real per-session error, so it must not be conflated with `errors` (#2043): a truncated-
+      // but-healthy run should surface as a non-blocking "monitoring" outcome, not a hard failure.
+      expect(result.deadlineStopped).toBe(true);
+      expect(result.errors).toBe(0);
       expect(result.chunksProcessed).toBe(0);
       expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("maintenance run deadline reached"));
     } finally {

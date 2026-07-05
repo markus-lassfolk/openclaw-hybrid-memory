@@ -23,6 +23,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.58] - 2026-07-05
+
+### Fixed
+
+- **`passive-observer` reported a deadline-limited stop as a hard failure (#2043):** a maintenance-run-deadline stop mid-scan incremented the same `errors` counter used for real per-session failures (stat/read errors), so a healthy truncated run (`stored=54 scanned=487 errors=1`) was indistinguishable from an actual error and always failed the step. `ObserverRunResult` now tracks `deadlineStopped` separately from `errors`; a deadline-only stop reports `semantic=monitoring` (non-blocking) instead of `semantic=partial`, while real per-session errors still fail the step as before (`services/passive-observer.ts`, `setup/plugin-service.ts`, `setup/cli-context/cli-services.ts`).
+- **`distill` made zero progress across multiple batches before exhausting its deadline (#2043):** every batch retried the primary model from scratch even after it had already timed out earlier in the same run, burning ~90s of retry/fallback cost per batch on a model already known to be unavailable and leaving the fallback too little of the remaining budget to ever complete a block. `runDistillForCli` now remembers a primary timeout/connection-error for the rest of the run and routes subsequent batches straight to the fallback chain (`cli/cmd-distill.ts`).
+- **`enrich-entities` failed on a healthy, mostly-successful, budget-limited stop (#2043):** any nonzero `llmFailures` unconditionally counted as a hard failure, so a run that processed 90 facts with 2 transient LLM errors (`stopReason=time_budget`) failed the step exactly like a run that made no progress at all. `isEntityEnrichmentHardFailure` now tolerates a small LLM-failure rate (≤5%) on a budget-limited stop with real progress, and `entityEnrichmentSemanticStatus` reports a clean budget-limited stop as `monitoring` (resumable, checkpointed) rather than `success` or a hard failure (`services/entity-enrichment-adaptive.ts`).
+- **`reflect-rules` reported `semantic=success` despite a real model-output parse failure (#2043):** `zero_rules_reason=invalid_response_format` (the model responded but its output couldn't be parsed at all) was explicitly exempted from failure whenever `status=degraded` and the model returned some output — silently reporting a broken week's rule extraction as `ok`. This carve-out is removed from all three places it was duplicated (`cli/commands/manage/maintenance-step-runners.ts`, `services/maintenance-job-run/semantic-outcome.ts`, `services/cron-exit-validator.ts`); `invalid_response_format` is now treated the same as any other degraded run, while the legitimate "nothing to extract" cases (`insufficient_patterns`, `valid_no_actionable_rules`) remain non-failing.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.7.58**.
+
+---
+
 ## [2026.7.57] - 2026-07-05
 
 ### Fixed
