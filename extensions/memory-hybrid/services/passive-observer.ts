@@ -495,8 +495,20 @@ export async function runPassiveObserver(
   // ---------------------------------------------------------------------------
   // Progress is throttled to the same cadence as the orchestrator's per-step heartbeat (#2026's
   // ORCHESTRATOR_STEP_HEARTBEAT_MS) so a large multi-agent backlog logs a couple dozen lines over
-  // the default 15-minute step budget instead of one line per session (#2032).
+  // the default 15-minute step budget instead of one line per session (#2032). Shared by both the
+  // per-session and per-chunk call sites below so the throttle condition and log format can't drift
+  // out of sync between them (round-5 review finding).
   let lastProgressLogMs = 0;
+  const logThrottledObserverProgress = (idx: number, sid: string, extra?: string): void => {
+    const nowMs = Date.now();
+    if (lastProgressLogMs !== 0 && nowMs - lastProgressLogMs < PASSIVE_OBSERVER_PROGRESS_LOG_INTERVAL_MS) return;
+    lastProgressLogMs = nowMs;
+    const suffix = extra ? ` ${extra}` : "";
+    logger.info(
+      `memory-hybrid: passive-observer — progress: session ${idx + 1}/${sessions.length} (${sid})${suffix} ` +
+        `chunksProcessed=${result.chunksProcessed} factsExtracted=${result.factsExtracted} factsStored=${result.factsStored}`,
+    );
+  };
   for (const [sessionIdx, { filePath, sessionId, fileBytelen, cursor }] of sessions.entries()) {
     if (maintenanceRunDeadlineReached()) {
       // Deadline stops mid-run are counted as an error so the caller's summary (and
@@ -511,14 +523,7 @@ export async function runPassiveObserver(
       break;
     }
     if (cursor >= fileBytelen) continue; // Nothing new
-    const progressNowMs = Date.now();
-    if (lastProgressLogMs === 0 || progressNowMs - lastProgressLogMs >= PASSIVE_OBSERVER_PROGRESS_LOG_INTERVAL_MS) {
-      lastProgressLogMs = progressNowMs;
-      logger.info(
-        `memory-hybrid: passive-observer — progress: session ${sessionIdx + 1}/${sessions.length} (${sessionId}) ` +
-          `chunksProcessed=${result.chunksProcessed} factsExtracted=${result.factsExtracted} factsStored=${result.factsStored}`,
-      );
-    }
+    logThrottledObserverProgress(sessionIdx, sessionId);
 
     let rawBuf: Buffer;
     let segmentEnd = fileBytelen;
@@ -607,15 +612,7 @@ export async function runPassiveObserver(
       // plus an embedding call) can otherwise run for its entire duration between two per-session
       // log lines, silently reproducing the "live run indistinguishable from a hung one" problem
       // this progress logging was added to close.
-      const chunkProgressNowMs = Date.now();
-      if (chunkProgressNowMs - lastProgressLogMs >= PASSIVE_OBSERVER_PROGRESS_LOG_INTERVAL_MS) {
-        lastProgressLogMs = chunkProgressNowMs;
-        logger.info(
-          `memory-hybrid: passive-observer — progress: session ${sessionIdx + 1}/${sessions.length} (${sessionId}) ` +
-            `chunk ${chunksAttempted}/${chunks.length} chunksProcessed=${result.chunksProcessed} ` +
-            `factsExtracted=${result.factsExtracted} factsStored=${result.factsStored}`,
-        );
-      }
+      logThrottledObserverProgress(sessionIdx, sessionId, `chunk ${chunksAttempted}/${chunks.length}`);
 
       const filledPrompt = fillPrompt(prompt, {
         categories: allCategories.join(", "),
