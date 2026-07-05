@@ -19,9 +19,9 @@ import {
   remainingDeadlineMs,
   resolveTrajectoryLlmBudgetMs,
   runWithConcurrencyLimit,
-  trajectoryCallTimeoutMs,
   TRAJECTORY_LLM_MIN_BUDGET_MS,
   TRAJECTORY_PER_CALL_BUDGET_MS,
+  trajectoryCallTimeoutMs,
 } from "../cli/cmd-feedback.js";
 import {
   cleanupImplicitFeedbackDuplicates,
@@ -1632,7 +1632,7 @@ describe("ImplicitFeedbackConfig — trajectoryLLMAnalysis", () => {
     expect(result.maxSessionsPerRun).toBe(50);
     expect(result.maxSignalsPerRun).toBe(100);
     expect(result.maxTrajectoriesPerRun).toBe(50);
-    expect(result.maxWallClockSeconds).toBe(300);
+    expect(result.maxWallClockSeconds).toBe(240);
   });
 
   it("parseImplicitFeedbackConfig respects trajectoryLLMAnalysis: true", async () => {

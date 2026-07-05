@@ -215,7 +215,21 @@ export function registerMaintenanceOrchestratorCommands(maintenance: Chainable, 
   // unlike cycle/nightly/full it caps runtime unless the operator overrides --max-runtime-min. Long
   // CPU/LLM-bound steps (e.g. passive-observer scanning a large first-run backlog) already consult the
   // orchestrator-wide deadline between sessions/chunks, so this cap actually bounds wall-clock time.
-  const DEFAULT_STEP_MAX_RUNTIME_MIN = "15";
+  //
+  // 4 minutes, not 15 (#2041): a 15-minute default meant `maintenance step <name> --force --verbose`
+  // — the exact invocation a verification harness runs per step — could legitimately still be doing
+  // bounded, deadline-respecting work at the 5-minute mark, so an external supervisor wrapping each
+  // selected step in a fixed 300s timeout (a common, reasonable harness convention) kills the process
+  // before the step's own graceful stop ever gets a chance to run, turning an actionable partial/failed
+  // result into an opaque `exit=124`. distill/enrich-entities/extract-implicit/passive-observer all
+  // already abort in-flight LLM calls and stop their batch/session/chunk loops promptly once the
+  // orchestrator-wide deadline fires (`maintenanceRunDeadlineReached()` / `getMaintenanceRunAbortSignal()`
+  // in maintenance-run-deadline.ts), so shrinking this single default is enough to make every
+  // registered step's isolated verification run finish — completed or actionably failed — inside a
+  // 300s external window, without touching cycle/nightly/full's unbounded production behavior.
+  // Operators who want the previous 15-minute (or longer) budget for a real backlog-clearing run
+  // still pass --max-runtime-min explicitly.
+  const DEFAULT_STEP_MAX_RUNTIME_MIN = "4";
 
   commonOptions(
     maintenance

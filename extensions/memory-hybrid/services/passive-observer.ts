@@ -24,6 +24,7 @@ import type { MemoryCategory, ReinforcementConfig } from "../config.js";
 import { nowIso } from "../utils/dates.js";
 import {
   capTimeoutByMaintenanceRunDeadline,
+  formatRemainingMaintenanceRunSecLabel,
   getMaintenanceRunAbortSignal,
   maintenanceRunDeadlineReached,
 } from "../utils/maintenance-run-deadline.js";
@@ -494,10 +495,10 @@ export async function runPassiveObserver(
   // Phase 3: process each session that has new content.
   // ---------------------------------------------------------------------------
   // Progress is throttled to the same cadence as the orchestrator's per-step heartbeat (#2026's
-  // ORCHESTRATOR_STEP_HEARTBEAT_MS) so a large multi-agent backlog logs a couple dozen lines over
-  // the default 15-minute step budget instead of one line per session (#2032). Shared by both the
-  // per-session and per-chunk call sites below so the throttle condition and log format can't drift
-  // out of sync between them (round-5 review finding).
+  // ORCHESTRATOR_STEP_HEARTBEAT_MS) so a large multi-agent backlog logs a handful of lines over the
+  // step's runtime budget (4 minutes by default for `maintenance step <name>`, #2041) instead of one
+  // line per session (#2032). Shared by both the per-session and per-chunk call sites below so the
+  // throttle condition and log format can't drift out of sync between them (round-5 review finding).
   let lastProgressLogMs = 0;
   const logThrottledObserverProgress = (idx: number, sid: string, extra?: string): void => {
     const nowMs = Date.now();
@@ -506,9 +507,17 @@ export async function runPassiveObserver(
     const suffix = extra ? ` ${extra}` : "";
     logger.info(
       `memory-hybrid: passive-observer — progress: session ${idx + 1}/${sessions.length} (${sid})${suffix} ` +
-        `chunksProcessed=${result.chunksProcessed} factsExtracted=${result.factsExtracted} factsStored=${result.factsStored}`,
+        `chunksProcessed=${result.chunksProcessed} factsExtracted=${result.factsExtracted} factsStored=${result.factsStored} ` +
+        `deadlineRemaining=${formatRemainingMaintenanceRunSecLabel()}`,
     );
   };
+  // Unthrottled start marker (#2041): the throttled progress line above only fires every ~60s, so a
+  // verification harness with a tighter external timeout than that could kill the process before a
+  // single progress line — including the configured deadline — is ever emitted. This one line always
+  // fires immediately so the budget is visible even under a very tight external window.
+  logger.info(
+    `memory-hybrid: passive-observer start — sessions=${sessions.length} deadlineRemaining=${formatRemainingMaintenanceRunSecLabel()}`,
+  );
   for (const [sessionIdx, { filePath, sessionId, fileBytelen, cursor }] of sessions.entries()) {
     // Check for pending content BEFORE the deadline (round-5 review finding): an already-caught-up
     // trailing session costs nothing to skip, so it shouldn't be able to trip the deadline check and

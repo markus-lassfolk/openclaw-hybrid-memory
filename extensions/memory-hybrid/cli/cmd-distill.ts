@@ -387,7 +387,22 @@ export async function runDistillForCli(
         };
     const safeInitialBatchTokenLimit = Math.min(primaryLimits.batchTokenLimit, primaryCatalogBatchLimit);
     const maxSessionTokens = opts.maxSessionTokens ?? Math.max(256, safeInitialBatchTokenLimit - promptTokens - 256);
+    // Reading + chunking every candidate session is synchronous CPU/file-I/O work with no LLM calls,
+    // so it never previously consulted the maintenance-run deadline; a large enough backlog (e.g. a
+    // wide --days catch-up window after an upgrade) could in principle burn a meaningful slice of a
+    // tight verification budget here before the batch loop below ever gets a chance to check it (#2041
+    // review finding). Bail out with the same actionable-failure shape as a mid-batch deadline stop
+    // rather than silently under-reporting how many sessions were actually scanned.
+    let filesScanTruncatedAt = -1;
     for (let i = 0; i < filesToProcess.length; i++) {
+      if (maintenanceRunDeadlineReached()) {
+        filesScanTruncatedAt = i;
+        sink.warn(
+          "memory-hybrid: distill: maintenance run deadline reached while scanning sessions; " +
+            `stopping at ${i}/${filesToProcess.length}`,
+        );
+        break;
+      }
       const { path: fp } = filesToProcess[i];
       try {
         const text = extractTextFromSessionJsonl(fp);
@@ -525,6 +540,11 @@ export async function runDistillForCli(
     let lengthRetriesAtCursor = 0;
     const maxLengthRetriesPerCursor = 8;
 
+    if (filesScanTruncatedAt >= 0) {
+      batchFailures++;
+      batchFailureReason ??= `session scan aborted: maintenance run deadline reached at ${filesScanTruncatedAt}/${filesToProcess.length} sessions read`;
+    }
+
     // Operator progress/heartbeat (#2029): emit a start marker + periodic block-count heartbeat so a
     // long LLM-bound batch is distinguishable from a hung run. Only counts/status are logged.
     const distillProgress = startDistillProgress({
@@ -535,7 +555,11 @@ export async function runDistillForCli(
       getState: () => ({ batch: batchNum, processedBlocks, cursorBlock }),
     });
 
-    while (cursorBlock < blocks.length) {
+    // filesScanTruncatedAt < 0 guard: the deadline can only move further into the past, never later,
+    // so if the scan phase above already recorded a deadline-truncation failure, this loop's own
+    // check on its first iteration would always also be true — re-entering would just double-count
+    // batchFailures and log a second, spurious "stopping batch loop" line for a batch that never ran.
+    while (filesScanTruncatedAt < 0 && cursorBlock < blocks.length) {
       if (maintenanceRunDeadlineReached()) {
         sink.warn("memory-hybrid: distill: maintenance run deadline reached; stopping batch loop");
         batchFailures++;

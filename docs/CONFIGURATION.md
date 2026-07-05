@@ -1641,7 +1641,7 @@ Defaults are **enabled** (opt-out). You can also control whether these signals f
             "maxSessionsPerRun": 50,
             "maxSignalsPerRun": 100,
             "maxTrajectoriesPerRun": 50,
-            "maxWallClockSeconds": 300,
+            "maxWallClockSeconds": 240,
             "trajectoryLLMAnalysis": false
           }
         }
@@ -1664,7 +1664,7 @@ Defaults are **enabled** (opt-out). You can also control whether these signals f
 | `maxSessionsPerRun` | `50` | Maximum session transcripts processed per incremental run before deferring the rest |
 | `maxSignalsPerRun` | `100` | Maximum implicit signals processed per incremental run before deferring remaining sessions |
 | `maxTrajectoriesPerRun` | `50` | Maximum trajectories built per incremental run before deferring remaining sessions |
-| `maxWallClockSeconds` | `300` | Soft wall-clock budget for each incremental run; once exceeded, remaining sessions are deferred and later cleanup/closed-loop phases are skipped for that run |
+| `maxWallClockSeconds` | `240` | Soft wall-clock budget for each incremental run; once exceeded, remaining sessions are deferred and later cleanup/closed-loop phases are skipped for that run |
 | `trajectoryLLMAnalysis` | `false` | Use LLM-based trajectory analysis instead of heuristic lesson extraction |
 
 ---

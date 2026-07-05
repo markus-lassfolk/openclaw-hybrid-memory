@@ -2,11 +2,12 @@
  * Dream-cycle follow-up stages extracted for independent orchestrator scheduling.
  */
 
-import type { HybridMemoryConfig } from "../../../config.js";
 import type { FactsDB } from "../../../backends/facts-db.js";
+import type { HybridMemoryConfig } from "../../../config.js";
 import type { ChangeFeed } from "../../../services/change-feed.js";
 import { runCrystallizationProposalCycle } from "../../../services/crystallization-maintenance.js";
 import { getEffectivenessReport, runClosedLoopAnalysis } from "../../../services/feedback-effectiveness.js";
+import { maintenanceRunDeadlineReached } from "../../../utils/maintenance-run-deadline.js";
 import {
   assessContinuousVerificationResult,
   extractImplicitSemanticOutcome,
@@ -79,6 +80,11 @@ export async function runClosedLoopAnalysisStep(deps: DreamCycleFollowUpDeps, ve
   const clReport = await runClosedLoopAnalysis(deps.factsDb, deps.cfg.closedLoop ?? { enabled: true }, {
     verbose,
     logger: () => {},
+    // Without this, a large 30-day backlog of candidate rows ran to completion regardless of the
+    // orchestrator's step runtime budget, even though runClosedLoopAnalysis already supports bailing
+    // out early via wallClockCheck (#2041 review finding — the same class of bug as distill/
+    // enrich-entities/extract-implicit/passive-observer, which already wire this deadline through).
+    wallClockCheck: () => maintenanceRunDeadlineReached(),
   });
   const summary = `${clReport.rulesAnalyzed} rules measured, ${clReport.deprecated} deprecated, ${clReport.boosted} boosted semantic=${clReport.interrupted ? "partial" : "success"}`;
   if (clReport.interrupted) {

@@ -334,7 +334,7 @@ describe("maintenance step <step> bounds runtime by default (#2032)", () => {
     process.exitCode = 0;
   });
 
-  it("passes a default 15-minute maxRuntimeMs when --max-runtime-min is not given", async () => {
+  it("passes a default 4-minute maxRuntimeMs when --max-runtime-min is not given (#2041)", async () => {
     const stepName = listMaintenanceSteps()[0]?.name as string;
     mockOrchestratorResult({ stepName, status: "ok", summary: "done" });
 
@@ -348,7 +348,7 @@ describe("maintenance step <step> bounds runtime by default (#2032)", () => {
 
     expect(runMaintenanceOrchestratorMock).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ maxRuntimeMs: 15 * 60_000 }),
+      expect.objectContaining({ maxRuntimeMs: 4 * 60_000 }),
     );
   });
 
@@ -391,7 +391,7 @@ describe("maintenance step <step> bounds runtime by default (#2032)", () => {
     );
   });
 
-  it("falls back to the 15-minute default when --max-runtime-min is an empty string (round-5 review finding)", async () => {
+  it("falls back to the 4-minute default when --max-runtime-min is an empty string (round-5 review finding)", async () => {
     // `??` only falls back on null/undefined; an empty string (e.g. a script interpolating an
     // unset variable as --max-runtime-min="$VAR") would otherwise slip through as "" and resolve to
     // no budget at all in runTier, silently defeating the intended default cap.
@@ -408,7 +408,7 @@ describe("maintenance step <step> bounds runtime by default (#2032)", () => {
 
     expect(runMaintenanceOrchestratorMock).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ maxRuntimeMs: 15 * 60_000 }),
+      expect.objectContaining({ maxRuntimeMs: 4 * 60_000 }),
     );
   });
 });

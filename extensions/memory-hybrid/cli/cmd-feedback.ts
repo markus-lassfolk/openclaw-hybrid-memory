@@ -23,32 +23,28 @@ import { chatCompleteWithRetryDetailed } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { runCrossAgentLearning } from "../services/cross-agent-learning.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { resolveExtractSessionFilePaths } from "../services/extract-session-paths.js";
 import { getEffectivenessReport, runClosedLoopAnalysis } from "../services/feedback-effectiveness.js";
 import { classifyAndFilterCorrectionIncidents } from "../services/feedback-signal-classifier.js";
 import { extractImplicitSignals, parseSessionTurns } from "../services/implicit-feedback-extract.js";
 import { getModeCostEstimates } from "../services/model-pricing.js";
+import type { CorrectionIncident } from "../services/self-correction-extract.js";
 import {
   computeToolEffectiveness,
   formatToolEffectivenessReport,
   generateMonthlyReport,
   ToolEffectivenessStore,
 } from "../services/tool-effectiveness.js";
-import {
-  analyzeTrajectoriesWithLLM,
-  buildTrajectories,
-  serializeTrajectory,
-} from "../services/trajectory-tracker.js";
+import { analyzeTrajectoriesWithLLM, buildTrajectories, serializeTrajectory } from "../services/trajectory-tracker.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
+import { formatDateUtc, formatTimestampUtc, formatTimestampUtcFromMs, nowSec } from "../utils/dates.js";
+import { getEnv } from "../utils/env-manager.js";
+import { getMaintenanceRunAbortSignal, maintenanceRunDeadlineReached } from "../utils/maintenance-run-deadline.js";
 import { loadPrompt } from "../utils/prompt-loader.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
-import type { CorrectionIncident } from "../services/self-correction-extract.js";
-import { getEnv } from "../utils/env-manager.js";
-import { formatDateUtc, nowSec, formatTimestampUtcFromMs, formatTimestampUtc } from "../utils/dates.js";
 import { runSelfCorrectionRunForCli } from "./cmd-selfcorrection.js";
-import { resolveExtractSessionFilePaths } from "../services/extract-session-paths.js";
 import type { HandlerContext } from "./handlers.js";
 import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
-import { getMaintenanceRunAbortSignal, maintenanceRunDeadlineReached } from "../utils/maintenance-run-deadline.js";
 
 const IMPLICIT_FEEDBACK_LESSON_TAGS = ["implicit-feedback", "trajectory", "feedback"];
 
@@ -740,7 +736,12 @@ export async function runExtractImplicitFeedbackForCli(
   const maxSessionsPerRun = implicitCfg.maxSessionsPerRun ?? 50;
   const maxSignalsPerRun = implicitCfg.maxSignalsPerRun ?? 100;
   const maxTrajectoriesPerRun = implicitCfg.maxTrajectoriesPerRun ?? 50;
-  const maxWallClockSeconds = implicitCfg.maxWallClockSeconds ?? 300;
+  // 240s, not 300 (#2041): an external verification harness commonly wraps a step in a fixed 300s
+  // timeout, so a soft internal deadline set to exactly that value leaves zero margin for this
+  // function's own graceful-stop path (final progress emit, trajectory/session bookkeeping, DB
+  // commit, process exit) to run before the external timeout kills the process with an opaque
+  // exit=124 instead of the actionable partial result this cap exists to produce.
+  const maxWallClockSeconds = implicitCfg.maxWallClockSeconds ?? 240;
   const startTimeMs = Date.now();
 
   const computeBacklogEstimates = (deferredSessions: number) => ({
@@ -1550,12 +1551,7 @@ export async function runExtractImplicitFeedbackForCli(
   progress.stage = "done";
   emitProgress();
 
-  if (
-    !opts.dryRun &&
-    implicitCfg.triggerSelfCorrectionRun &&
-    bridgeIncidents.length > 0 &&
-    !wallClockLimitReached()
-  ) {
+  if (!opts.dryRun && implicitCfg.triggerSelfCorrectionRun && bridgeIncidents.length > 0 && !wallClockLimitReached()) {
     if (implicitCfg.llmSignalAnalysis !== false) {
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
       try {
@@ -1583,12 +1579,7 @@ export async function runExtractImplicitFeedbackForCli(
     }
   }
 
-  if (
-    !opts.dryRun &&
-    implicitCfg.triggerSelfCorrectionRun &&
-    bridgeIncidents.length > 0 &&
-    !wallClockLimitReached()
-  ) {
+  if (!opts.dryRun && implicitCfg.triggerSelfCorrectionRun && bridgeIncidents.length > 0 && !wallClockLimitReached()) {
     const cap = implicitCfg.selfCorrectionBridgeMaxIncidents ?? 5;
     const incidents = bridgeIncidents.slice(0, cap);
     const workspace = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
