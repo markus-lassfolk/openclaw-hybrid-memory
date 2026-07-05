@@ -23,6 +23,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.53] - 2026-07-05
+
+### Fixed
+
+- **`--include`/`--force` skip-check only fired when *all* requested steps failed to run:** the #2031/#2032 diagnostic on `maintenance cycle/nightly/full --include x,y --force` used `every(...)` over the requested step names, so a partial run — e.g. two named steps where one ran fine and the other was locked — silently reported success. It now flags **any** requested step that didn't run.
+- **`deferred` status wasn't treated as "didn't run":** a requested step pushed as `deferred` (time budget exceeded, or preemptively deferred by the rate-limit circuit breaker before its runner was ever invoked) fell through to the generic exit code instead of the specific "selected step(s) did not run" diagnostic. `deferred` now joins the missing/`skipped_*` cases; `failed`/`rate_limited` are intentionally excluded since those did invoke the runner and are already reflected in the exit code.
+- Removed a pre-existing unused import (`readStepGuardTimestampMs`) in `register-maintenance-orchestrator.ts`, found during this review pass.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.7.53**.
+
+---
+
 ## [2026.7.52] - 2026-07-05
 
 ### Fixed
