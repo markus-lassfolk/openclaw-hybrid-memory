@@ -8,19 +8,19 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import * as chat from "../services/chat.js";
 import {
+  deriveObserverSessionKey,
   type ExtractedFact,
-  type PassiveObserverConfig,
   extractTextFromJsonlChunk,
   getCursorsPath,
   isIdentityFact,
   isPassiveObserverTranscriptCandidate,
-  loadCursors,
-  parseObserverResponse,
-  deriveObserverSessionKey,
   listPassiveObserverSessionFilePaths,
+  loadCursors,
+  type PassiveObserverConfig,
+  parseObserverResponse,
   runPassiveObserver,
   saveCursors,
 } from "../services/passive-observer.js";
@@ -469,6 +469,49 @@ describe("runPassiveObserver", () => {
     }
   });
 
+  it("re-checks the progress-log throttle inside the chunk loop, not just once per session (round-4 review finding)", async () => {
+    // A single session with many chunks (each a full LLM round-trip) previously logged progress
+    // only once, at the top of the session loop — silently going quiet for the entire multi-chunk
+    // span even though the 60s throttle interval had long since elapsed, reproducing the "live run
+    // indistinguishable from a hung one" problem this progress logging exists to close.
+    const longText = Array.from({ length: 8 }, (_, i) => `Message ${i}: ${"x".repeat(80)}`).join("\n");
+    writeFileSync(
+      join(sessionsDir, "long-session.jsonl"),
+      `${JSON.stringify({ message: { role: "user", content: longText } })}\n`,
+    );
+
+    vi.useFakeTimers();
+    try {
+      let callCount = 0;
+      vi.spyOn(chat, "chatCompleteWithRetry").mockImplementation(async () => {
+        callCount++;
+        vi.advanceTimersByTime(61_000); // exceed the 60s throttle interval on every chunk
+        return "[]";
+      });
+
+      const cfg = makeConfig({ sessionsDir, maxCharsPerChunk: 100 });
+      const logger = makeLogger();
+      await runPassiveObserver(
+        makeFactsDb() as never,
+        makeVectorDb() as never,
+        makeEmbeddings() as never,
+        makeOpenAI(),
+        cfg,
+        ["fact"],
+        { model: "test-model", dbDir: tmpDir },
+        logger,
+      );
+
+      expect(callCount).toBeGreaterThan(1); // sanity: the session actually split into multiple chunks
+      const progressLines = logger.info.mock.calls.map((c) => String(c[0])).filter((l) => l.includes("— progress:"));
+      // A progress line referencing a chunk index beyond the first proves the throttle re-fires
+      // inside the chunk loop, not only once when the session started.
+      expect(progressLines.some((l) => /chunk [2-9]\d*\/\d+/.test(l))).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("respects minImportance threshold — skips low-importance facts", async () => {
     const categories = ["fact", "preference", "decision", "entity", "pattern", "rule", "other"];
     const llmResponse = JSON.stringify([
@@ -516,11 +559,13 @@ describe("runPassiveObserver", () => {
     const factsDb = makeFactsDb({
       detectContradictions: vi.fn(),
       setEmbeddingModel: vi.fn(),
-      getById: vi.fn().mockImplementation((id: string) =>
-        id === "existing-fact-id"
-          ? { id, scope: "session", scopeTarget: "dedup-test", supersededAt: null, expiresAt: null }
-          : null,
-      ),
+      getById: vi
+        .fn()
+        .mockImplementation((id: string) =>
+          id === "existing-fact-id"
+            ? { id, scope: "session", scopeTarget: "dedup-test", supersededAt: null, expiresAt: null }
+            : null,
+        ),
     });
 
     const cfg = makeConfig({ sessionsDir });
@@ -759,11 +804,13 @@ describe("runPassiveObserver — LanceDB dedup (Issue #499)", () => {
     const vectorDb = makeVectorDb(matchResult);
     const factsDb = makeFactsDb({
       boostConfidence: vi.fn().mockReturnValue(true),
-      getById: vi.fn().mockImplementation((id: string) =>
-        id === matchedFactId
-          ? { id, scope: "session", scopeTarget: "reinforce-test", supersededAt: null, expiresAt: null }
-          : null,
-      ),
+      getById: vi
+        .fn()
+        .mockImplementation((id: string) =>
+          id === matchedFactId
+            ? { id, scope: "session", scopeTarget: "reinforce-test", supersededAt: null, expiresAt: null }
+            : null,
+        ),
     });
     const cfg = makeConfig({ sessionsDir });
 
