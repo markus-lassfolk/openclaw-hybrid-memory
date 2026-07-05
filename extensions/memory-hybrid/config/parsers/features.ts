@@ -4,13 +4,6 @@ import { pluginLogger } from "../../utils/logger.js";
 import { resolveOpenClawGatewayRootUrlFromEnv } from "../../utils/openclaw-gateway-http.js";
 import type { SectionDefinition, SectionTaxonomyOverrides } from "../skill-sections.js";
 import type { PersonaProposalsConfig, WorkshopConfig } from "../types/agents.js";
-import { type WikiIntegrationConfig, DEFAULT_WIKI_INTEGRATION_CONFIG } from "../types/wiki-integration.js";
-import {
-  type WorkboardConfig,
-  type WorkboardColumnMapping,
-  DEFAULT_WORKBOARD_CONFIG,
-  DEFAULT_WORKBOARD_COLUMNS,
-} from "../types/workboard.js";
 import { PERSONA_PROPOSAL_TARGET_FILES, type PersonaProposalTargetFile } from "../types/agents.js";
 import type {
   AliasesConfig,
@@ -47,6 +40,13 @@ import type {
   WorkflowTrackingConfig,
 } from "../types/features.js";
 import type { ErrorReportingConfig, MultiAgentConfig } from "../types/index.js";
+import { DEFAULT_WIKI_INTEGRATION_CONFIG, type WikiIntegrationConfig } from "../types/wiki-integration.js";
+import {
+  DEFAULT_WORKBOARD_COLUMNS,
+  DEFAULT_WORKBOARD_CONFIG,
+  type WorkboardColumnMapping,
+  type WorkboardConfig,
+} from "../types/workboard.js";
 
 export function parseEntityExtractionConfig(cfg: Record<string, unknown>): EntityExtractionConfig {
   const raw = cfg.entityExtraction as Record<string, unknown> | undefined;
@@ -857,7 +857,9 @@ export function parseImplicitFeedbackConfig(cfg: Record<string, unknown>): Impli
     maxWallClockSeconds:
       typeof raw?.maxWallClockSeconds === "number" && raw.maxWallClockSeconds >= 0
         ? Math.min(86400, Math.floor(raw.maxWallClockSeconds))
-        : 300,
+        : // 240s, not 300 (#2041): leaves margin below a common 300s external verification timeout
+          // instead of exactly matching it — see cmd-feedback.ts's runExtractImplicitFeedbackForCli.
+          240,
     trajectoryLLMAnalysis:
       topLevelTrajectoryLLMAnalysis !== undefined ? topLevelTrajectoryLLMAnalysis : raw?.trajectoryLLMAnalysis === true,
     llmSignalAnalysis: raw?.llmSignalAnalysis !== false,

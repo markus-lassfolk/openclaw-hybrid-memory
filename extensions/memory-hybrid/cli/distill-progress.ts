@@ -8,6 +8,8 @@
  * content leaks into operator logs.
  */
 
+import { formatRemainingMaintenanceRunSecLabel } from "../utils/maintenance-run-deadline.js";
+
 /** Verbose distill heartbeat cadence so long LLM-bound batches don't look hung (#2029). */
 export const DISTILL_HEARTBEAT_INTERVAL_MS = 30_000;
 
@@ -66,7 +68,8 @@ export function startDistillProgress(opts: {
     const elapsedSec = Math.floor((Date.now() - startedMs) / 1000);
     log(
       `memory-hybrid: distill — still running: batch ${batch} (block ${cursorBlock}/${opts.totalBlocks}) ` +
-        `processed ${processedBlocks}/${opts.totalBlocks} blocks (elapsed ${elapsedSec}s)`,
+        `processed ${processedBlocks}/${opts.totalBlocks} blocks (elapsed ${elapsedSec}s) ` +
+        `deadlineRemaining=${formatRemainingMaintenanceRunSecLabel()}`,
     );
   }, opts.intervalMs ?? DISTILL_HEARTBEAT_INTERVAL_MS);
   heartbeat.unref?.();

@@ -74,13 +74,49 @@ export function capTimeoutByMaintenanceRunDeadline(timeoutMs: number, nowMs: num
   return Math.min(timeoutMs, Math.max(1, Math.floor(remaining)));
 }
 
+/**
+ * Human-readable "time left before the orchestrator kills this step" label for progress/heartbeat
+ * logs (#2041's acceptance criterion that long-running steps surface their configured deadline/work
+ * budget, not just processed/total counters) — "unbounded" when no orchestrator-wide deadline is
+ * active (e.g. a standalone CLI invocation outside `maintenance step`/`cycle`/`nightly`/`full`).
+ */
+export function formatRemainingMaintenanceRunSecLabel(nowMs: number = Date.now()): string {
+  const remaining = remainingMaintenanceRunMs(nowMs);
+  return Number.isFinite(remaining) ? `${Math.max(0, Math.floor(remaining / 1000))}s` : "unbounded";
+}
+
+export type DeadlineAwareLoopResult = {
+  /** Index the loop stopped at because the maintenance-run deadline was reached, or -1 if every item ran. */
+  truncatedAt: number;
+};
+
+/**
+ * Run `fn` over `items` in order, checking the maintenance-run deadline before each one, instead of
+ * every call site hand-rolling its own "let flag = false; for (...) { if (deadlineReached) { flag =
+ * true; break } ... }" loop (#2041 review finding — `repair-vectors`, `reembed-vectorless`, and
+ * distill's session-scan phase each independently reimplemented this same pattern, with subtly
+ * different flag shapes: a boolean in the first two, a `-1`-sentinel index in the third). `fn` may be
+ * sync or async; the deadline is re-checked before each item, not mid-item, so an in-flight async `fn`
+ * call for the current item is allowed to finish (callers that need to abort in-flight LLM work should
+ * still pass `getMaintenanceRunAbortSignal()` into that call directly).
+ */
+export async function runUntilMaintenanceDeadline<T>(
+  items: readonly T[],
+  fn: (item: T, index: number) => void | Promise<void>,
+): Promise<DeadlineAwareLoopResult> {
+  for (const [i, item] of items.entries()) {
+    if (maintenanceRunDeadlineReached()) return { truncatedAt: i };
+    await fn(item, i);
+  }
+  return { truncatedAt: -1 };
+}
+
 /** Earliest deadline from an explicit step budget and the orchestrator run deadline. */
 export function resolveMaintenanceStepDeadlineMs(
   startedAtMs: number,
   stepBudgetSec: number | undefined,
 ): number | undefined {
-  const stepDeadline =
-    stepBudgetSec != null && stepBudgetSec > 0 ? startedAtMs + stepBudgetSec * 1000 : undefined;
+  const stepDeadline = stepBudgetSec != null && stepBudgetSec > 0 ? startedAtMs + stepBudgetSec * 1000 : undefined;
   const runDeadline = getMaintenanceRunDeadlineMs();
   if (stepDeadline == null && runDeadline == null) return undefined;
   if (stepDeadline == null) return runDeadline;
