@@ -23,6 +23,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.55] - 2026-07-05
+
+### Changed
+
+- **De-duplicated `passive-observer`'s progress-log throttle:** the per-session and per-chunk progress log call sites (added across #2032 and its follow-up) each re-implemented the same "compute now, compare against last-logged time, update, log" logic independently, risking the two drifting out of sync (e.g. one throttled correctly while the other floods again after an unrelated edit). Both now call a single shared `logThrottledObserverProgress()` closure. No behavior change.
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.7.55**.
+
+---
+
 ## [2026.7.54] - 2026-07-05
 
 ### Fixed
