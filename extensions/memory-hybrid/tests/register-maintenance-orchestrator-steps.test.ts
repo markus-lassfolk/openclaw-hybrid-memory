@@ -56,6 +56,23 @@ function mockOrchestratorResult(overrides: {
   });
 }
 
+function mockOrchestratorSteps(
+  steps: Array<{ name: string; status: string; summary: string }>,
+  exitCode: 0 | 1 | 2 = 0,
+) {
+  const nowIso = new Date().toISOString();
+  runMaintenanceOrchestratorMock.mockResolvedValue({
+    tierLabel: "full",
+    steps: steps.map((s) => ({ ...s, durationMs: 0 })),
+    exitCode,
+    summaryLine: `Maintenance full — ${steps.length} steps`,
+    runId: "job-test-run",
+    startedAt: nowIso,
+    finishedAt: nowIso,
+    durationMs: 5,
+  });
+}
+
 describe("maintenance steps CLI step count", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -256,6 +273,57 @@ describe("maintenance cycle/nightly/full --include --force share the same skip p
 
     expect(process.exitCode).toBe(3);
     expect(errLines.some((l) => l.includes("no result (wrong tier, excluded, or unregistered runner)"))).toBe(true);
+  });
+
+  it("flags a partial skip: only ONE of several --include'd steps failed to run (round-3 review finding)", async () => {
+    // A naive `.every(...)` over the requested names only fires when ALL of them failed to run,
+    // silently accepting the case where some (but not all) explicitly-requested steps didn't
+    // execute — exactly as false-success as the single-step case #2031 closes.
+    mockOrchestratorSteps([
+      { name: "prune", status: "ok", summary: "pruned=3 semantic=success" },
+      { name: "distill", status: "skipped_guard", summary: "locked by a concurrent maintenance run" },
+    ]);
+
+    const mem = new Command("hybrid-mem");
+    mem.exitOverride();
+    const maintenance = mem.command("maintenance");
+    registerMaintenanceOrchestratorCommands(maintenance, makeMinimalBindings());
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const errLines: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errLines.push(args.map((a) => String(a)).join(" "));
+    });
+
+    await mem.parseAsync(["maintenance", "cycle", "--include", "prune,distill", "--force"], { from: "user" });
+
+    expect(process.exitCode).toBe(3);
+    expect(errLines.some((l) => l.includes("distill: skipped_guard"))).toBe(true);
+    expect(errLines.some((l) => l.includes("prune"))).toBe(false);
+  });
+
+  it('flags a requested step whose status is "deferred" (time budget / rate-limit circuit breaker) as not run', async () => {
+    // "deferred" is pushed before the runner is ever invoked (time budget exceeded, or the
+    // rate-limit circuit breaker preemptively defers it) — it belongs in the same "didn't run"
+    // bucket as skipped_*, unlike "failed"/"rate_limited" which DID invoke the runner.
+    mockOrchestratorSteps(
+      [{ name: "self-correction-run", status: "deferred", summary: "rate-limit circuit breaker" }],
+      2,
+    );
+
+    const mem = new Command("hybrid-mem");
+    mem.exitOverride();
+    const maintenance = mem.command("maintenance");
+    registerMaintenanceOrchestratorCommands(maintenance, makeMinimalBindings());
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const errLines: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errLines.push(args.map((a) => String(a)).join(" "));
+    });
+
+    await mem.parseAsync(["maintenance", "full", "--include", "self-correction-run", "--force"], { from: "user" });
+
+    expect(process.exitCode).toBe(2); // computeExitCode()'s own deferred/rate_limited exit code stands
+    expect(errLines.some((l) => l.includes("self-correction-run: deferred — rate-limit circuit breaker"))).toBe(true);
   });
 });
 

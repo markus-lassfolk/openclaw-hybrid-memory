@@ -5,7 +5,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { readStepGuardTimestampMs, stepGuardEligible } from "../../../services/cron-guard.js";
+import { stepGuardEligible } from "../../../services/cron-guard.js";
 import {
   effectiveCadenceLabel,
   formatMaintenanceSummary,
@@ -128,12 +128,20 @@ export function registerMaintenanceOrchestratorCommands(maintenance: Chainable, 
       // Look up each requested name individually rather than filtering result.steps down to the
       // matches — a name that belongs to a tier not requested (e.g. `cycle --include <nightly-step>
       // --force`) or that --exclude also removed never produces a step result at all, so it would
-      // otherwise vanish from `selected` entirely and slip past the "every(...)" check below with a
-      // false "didn't run" report never firing (an even quieter version of the bug #2031 closes).
+      // otherwise vanish from a filtered list entirely and slip past a not-run check.
       const requested = includeNames.map((name) => ({ name, result: result.steps.find((s) => s.name === name) }));
-      const didNotRun = requested.every((r) => !r.result || r.result.status.startsWith("skipped"));
-      if (didNotRun) {
-        const detail = requested
+      // "didn't run" = no result at all, a skipped_* status, or "deferred" (pushed before the
+      // runner was ever invoked — time budget exceeded or the rate-limit circuit breaker
+      // preemptively deferred it). "failed"/"rate_limited" DID invoke the runner, so they're
+      // excluded here; those are already reflected in process.exitCode via computeExitCode() above.
+      // Flag ANY requested step that didn't run, not just when all of them didn't — a partial
+      // --include run where only one of several explicitly-named steps silently didn't execute is
+      // exactly the false-success #2031 closes for the single-step case.
+      const notRun = requested.filter(
+        (r) => !r.result || r.result.status.startsWith("skipped") || r.result.status === "deferred",
+      );
+      if (notRun.length > 0) {
+        const detail = notRun
           .map((r) =>
             r.result
               ? `${r.name}: ${r.result.status} — ${r.result.summary}`
