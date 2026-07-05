@@ -27,7 +27,15 @@ export function resolveOrchestratorJobFromEnv(): string | undefined {
 
 export function buildJobRunId(command: string, fingerprint: string): string {
   const safeCmd = command.replace(/[^a-z0-9-]+/gi, "-").replace(/^-+|-+$/g, "");
-  const fp = fingerprint.slice(0, 8);
+  // Sanitize the fingerprint the same way as the command before truncating so raw separators
+  // (colons, dots) and mid-token boolean truncation cannot produce misleading ids like
+  // `job-distill-::14:fal` (#2024). Collapse non-alphanumeric runs to single dashes, then cap.
+  const fp =
+    fingerprint
+      .replace(/[^a-z0-9]+/gi, "-")
+      .replace(/^-+/g, "")
+      .slice(0, 16)
+      .replace(/-+$/g, "") || "0";
   return `job-${safeCmd}-${fp}`;
 }
 

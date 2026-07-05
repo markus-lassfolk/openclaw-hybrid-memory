@@ -163,6 +163,7 @@ export type ManageContext = {
     dryRun?: boolean;
     skipped?: boolean;
     partialFailure?: boolean;
+    batchFailureReason?: string;
     jobRunId?: string;
     semanticOutcome?: string;
   }>;

@@ -7,6 +7,21 @@ import {
   resolveMaintenanceExitPathForSummary,
   resolveMaintenanceSummaryPath,
 } from "../services/maintenance-artifact-paths.js";
+import { buildJobRunId } from "../services/maintenance-job-run/artifact-paths.js";
+
+describe("buildJobRunId", () => {
+  it("sanitizes raw separators in the fingerprint instead of producing malformed ids (#2024)", () => {
+    // Regression: `::14:false` previously sliced to `::14:fal`, producing `job-distill-::14:fal`.
+    const id = buildJobRunId("distill", "::14:false");
+    expect(id).toBe("job-distill-14-false");
+    expect(id).not.toContain(":");
+  });
+
+  it("keeps ids stable and safe for typical fingerprints", () => {
+    expect(buildJobRunId("distill", "true:2026-01-01:3:false")).toBe("job-distill-true-2026-01-01");
+    expect(buildJobRunId("self correction", "::::")).toBe("job-self-correction-0");
+  });
+});
 
 describe("resolveMaintenanceSummaryPath", () => {
   it("finds summary in YYYYMMDD day subdir", () => {

@@ -56,6 +56,7 @@ import {
 import { extractTags } from "../../utils/tags.js";
 import type { MemoryToolRuntime } from "./runtime.js";
 import { resolveToolVaultBackends, resolveToolVaultWal } from "./vault-resolve.js";
+import { resolveWriteVectorCandidates } from "../../cli/vector-dedupe-helpers.js";
 
 export function registerStoreTools(runtime: MemoryToolRuntime): void {
   const {
@@ -1044,27 +1045,47 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
 
           const nowSec = Math.floor(Date.now() / 1000);
           const storeSessionId = api.context?.sessionId ?? null;
-          const storeResult = storeFactsDb.storeWithResult({
-            text: textToStore,
-            why: whyStored,
-            category: category as MemoryCategory,
-            importance,
-            entity: entity ?? null,
-            key: key ?? null,
-            value: value ?? null,
-            source: "conversation",
-            decayClass: paramDecayClass,
-            summary,
-            tags,
-            scope,
-            scopeTarget,
-            sourceSessions: storeSessionId ?? undefined,
-            provenanceSession: provenanceSessionId,
-            extractionMethod: "active",
-            extractionConfidence: importance,
-            decayFreezeUntil: decayFreezeUntil ?? undefined,
-            ...(supersedes?.trim() ? { validFrom: nowSec, supersedesId: supersedes.trim() } : {}),
-          });
+          // Plumb vector neighbour candidates into write-time dedupe so the configured vectorThreshold
+          // actually runs on the live store path instead of silently degrading to lexical-only (#2027).
+          // Reuses the already-computed embedding; candidates are source/scope filtered.
+          let storeVectorCandidates: ReadonlyArray<{ id: string; score: number }> | undefined;
+          if (cfg.store.fuzzyDedupe && vector) {
+            const resolvedCandidates = await resolveWriteVectorCandidates({
+              fuzzyDedupe: true,
+              vector,
+              vectorDb: storeVectorDb,
+              factsDb: storeFactsDb,
+              source: "conversation",
+              embeddingModelName: typeof embeddings.modelName === "string" ? embeddings.modelName : null,
+              candidateScope: scope,
+              candidateScopeTarget: scopeTarget,
+            });
+            storeVectorCandidates = resolvedCandidates.vectorCandidates;
+          }
+          const storeResult = storeFactsDb.storeWithResult(
+            {
+              text: textToStore,
+              why: whyStored,
+              category: category as MemoryCategory,
+              importance,
+              entity: entity ?? null,
+              key: key ?? null,
+              value: value ?? null,
+              source: "conversation",
+              decayClass: paramDecayClass,
+              summary,
+              tags,
+              scope,
+              scopeTarget,
+              sourceSessions: storeSessionId ?? undefined,
+              provenanceSession: provenanceSessionId,
+              extractionMethod: "active",
+              extractionConfidence: importance,
+              decayFreezeUntil: decayFreezeUntil ?? undefined,
+              ...(supersedes?.trim() ? { validFrom: nowSec, supersedesId: supersedes.trim() } : {}),
+            },
+            { vectorCandidates: storeVectorCandidates, warnContext: "memory-store" },
+          );
           const entry = storeResult.entry;
           if (!storeResult.skipped && storeResult.newlyStored === false && !storeResult.embeddingStale) {
             if (walEntryId) await removeStoreWal(storeWal, walEntryId);

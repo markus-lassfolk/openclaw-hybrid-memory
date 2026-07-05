@@ -160,6 +160,39 @@ describe("maintenance-orchestrator", () => {
     expect(summary.counts.ok).toBe(1);
   });
 
+  it("emits per-step start/complete heartbeat lines when verbose (#2026)", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const infoLines: string[] = [];
+    const runners = new Map<string, () => Promise<string>>([["prune", async () => "pruned=1"]]);
+    await runMaintenanceOrchestrator(
+      {
+        cfg: minimalCfg(),
+        runners,
+        openclawDir,
+        logger: { info: (m: string) => infoLines.push(m), warn: () => {} },
+      },
+      { tiers: ["cycle"], force: true, verbose: true, include: ["prune"] },
+    );
+    expect(infoLines).toContain("maintenance-orchestrator: prune — start");
+    expect(infoLines.some((l) => /^maintenance-orchestrator: prune — complete in \d+s$/.test(l))).toBe(true);
+  });
+
+  it("does not emit per-step heartbeat lines when verbose is false (#2026)", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const infoLines: string[] = [];
+    const runners = new Map<string, () => Promise<string>>([["prune", async () => "pruned=1"]]);
+    await runMaintenanceOrchestrator(
+      {
+        cfg: minimalCfg(),
+        runners,
+        openclawDir,
+        logger: { info: (m: string) => infoLines.push(m), warn: () => {} },
+      },
+      { tiers: ["cycle"], force: true, verbose: false, include: ["prune"] },
+    );
+    expect(infoLines.some((l) => l.includes("prune — start"))).toBe(false);
+  });
+
   it("writes step guard on success", async () => {
     openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
     const runners = new Map<string, () => Promise<string>>([["prune", async () => "done"]]);

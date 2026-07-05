@@ -82,6 +82,91 @@ export function filterDistillVectorCandidates(
     .slice(0, VECTOR_CANDIDATE_LIMIT);
 }
 
+/**
+ * Filter LanceDB neighbours to live facts of a given source/scope for write-time dedupe (#2027).
+ *
+ * `applyDedupe`'s vector path (non-project facts) trusts that candidates are already scope/source
+ * matched — it only compares cosine score against the threshold. So candidates fed to the store path
+ * MUST be pre-filtered here to the same source + scope + scopeTarget as the incoming fact, otherwise a
+ * high-similarity fact from a different source/scope could be wrongly treated as a duplicate.
+ */
+export function filterWriteVectorCandidates(
+  neighbors: VectorNeighbor[],
+  factsDb: { getById: (id: string) => VectorCandidateFact | null },
+  opts: {
+    source: string;
+    embeddingModelName: string | null;
+    candidateScope?: string;
+    candidateScopeTarget?: string | null;
+  },
+): VectorCandidate[] {
+  const scope = opts.candidateScope ?? "global";
+  const scopeTarget = opts.candidateScopeTarget ?? null;
+  return mapValidVectorCandidates(neighbors)
+    .filter((candidate) => {
+      const live = factsDb.getById(candidate.id);
+      return (
+        live != null &&
+        isLiveFact(live) &&
+        (live.source ?? null) === opts.source &&
+        (live.scope ?? "global") === scope &&
+        (live.scope === "global" ? null : (live.scopeTarget ?? null)) === scopeTarget &&
+        (opts.embeddingModelName == null ||
+          live.embeddingModel == null ||
+          live.embeddingModel === opts.embeddingModelName)
+      );
+    })
+    .slice(0, VECTOR_CANDIDATE_LIMIT);
+}
+
+/**
+ * Pre-compute vector neighbour candidates for a generic write-time store, source/scope filtered (#2027).
+ *
+ * Mirrors {@link resolveDistillVectorCandidates} but for arbitrary sources (e.g. the live `memory_store`
+ * path). Returns `undefined` candidates (and `vectorSearchDegraded=true`) when the vector search fails,
+ * so the caller falls back to lexical-only dedupe rather than throwing.
+ */
+export async function resolveWriteVectorCandidates(input: {
+  fuzzyDedupe: boolean;
+  vector: number[];
+  vectorDb: { search: (vector: number[], limit: number, minScore: number) => Promise<VectorNeighbor[]> };
+  factsDb: { getById: (id: string) => VectorCandidateFact | null };
+  source: string;
+  embeddingModelName: string | null;
+  candidateScope?: string;
+  candidateScopeTarget?: string | null;
+}): Promise<{ vectorCandidates?: VectorCandidate[]; vectorSearchDegraded: boolean }> {
+  if (!input.fuzzyDedupe || !Array.isArray(input.vector) || input.vector.length === 0) {
+    return { vectorSearchDegraded: false };
+  }
+  try {
+    const neighbors = await input.vectorDb.search(
+      input.vector,
+      VECTOR_CANDIDATE_OVERFETCH_LIMIT,
+      VECTOR_CANDIDATE_MIN_SCORE,
+    );
+    if (getVectorSearchFailReason(input.vectorDb)) {
+      return { vectorSearchDegraded: true };
+    }
+    return {
+      vectorCandidates: filterWriteVectorCandidates(neighbors, input.factsDb, {
+        source: input.source,
+        embeddingModelName: input.embeddingModelName,
+        candidateScope: input.candidateScope,
+        candidateScopeTarget: input.candidateScopeTarget,
+      }),
+      vectorSearchDegraded: false,
+    };
+  } catch (err) {
+    capturePluginError(err as Error, {
+      subsystem: "cli",
+      operation: "resolveWriteVectorCandidates:search",
+      severity: "info",
+    });
+    return { vectorSearchDegraded: true };
+  }
+}
+
 export type ResolveDistillVectorCandidatesResult = {
   vectorCandidates?: VectorCandidate[];
   vectorSearchDegraded: boolean;
