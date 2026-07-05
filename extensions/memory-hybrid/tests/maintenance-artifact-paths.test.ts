@@ -18,8 +18,14 @@ describe("buildJobRunId", () => {
   });
 
   it("keeps ids stable and safe for typical fingerprints", () => {
-    expect(buildJobRunId("distill", "true:2026-01-01:3:false")).toBe("job-distill-true-2026-01-01");
+    expect(buildJobRunId("distill", "true:2026-01-01:3:false")).toBe("job-distill-true-202");
     expect(buildJobRunId("self correction", "::::")).toBe("job-self-correction-0");
+  });
+
+  it("leaves purely-alphanumeric (hex hash) fingerprints byte-identical to the legacy 8-char slice", () => {
+    // Hash-fingerprinted job-runs (self-correction / batch) must keep stable checkpoint dir names
+    // across upgrade — sanitize is a no-op for hex, and the cap stays at 8 chars (#2024 review).
+    expect(buildJobRunId("self-correction", "a1b2c3d4e5f6a7b8")).toBe("job-self-correction-a1b2c3d4");
   });
 });
 

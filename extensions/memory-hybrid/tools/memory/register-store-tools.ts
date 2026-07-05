@@ -1048,8 +1048,14 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
           // Plumb vector neighbour candidates into write-time dedupe so the configured vectorThreshold
           // actually runs on the live store path instead of silently degrading to lexical-only (#2027).
           // Reuses the already-computed embedding; candidates are source/scope filtered.
+          //
+          // Skip when the caller passed an explicit `supersedes`: the intent is to replace a specific
+          // fact with this (usually near-identical) corrected text. Semantic vector dedupe would match
+          // the supersede target itself (cosine ≥ threshold), return skip, and drop the supersession —
+          // silently losing the update. An explicit supersede must always store, so we do not widen
+          // write-time fuzzy dedupe on that path (matches pre-#2027 behaviour for supersede writes).
           let storeVectorCandidates: ReadonlyArray<{ id: string; score: number }> | undefined;
-          if (cfg.store.fuzzyDedupe && vector) {
+          if (cfg.store.fuzzyDedupe && vector && !supersedes?.trim()) {
             const resolvedCandidates = await resolveWriteVectorCandidates({
               fuzzyDedupe: true,
               vector,

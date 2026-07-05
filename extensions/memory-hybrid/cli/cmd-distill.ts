@@ -80,6 +80,7 @@ import {
   classifyStoreDedupeMode,
   resolveDistillVectorCandidates,
 } from "./vector-dedupe-helpers.js";
+import { startDistillProgress } from "./distill-progress.js";
 
 // Constants used only by distill functions
 const FULL_DISTILL_MAX_DAYS = 90;
@@ -527,6 +528,16 @@ export async function runDistillForCli(
     let lengthRetriesAtCursor = 0;
     const maxLengthRetriesPerCursor = 8;
 
+    // Operator progress/heartbeat (#2029): emit a start marker + periodic block-count heartbeat so a
+    // long LLM-bound batch is distinguishable from a hung run. Only counts/status are logged.
+    const distillProgress = startDistillProgress({
+      verbose: !!opts.verbose,
+      logger,
+      sessions: filesToProcess.length,
+      totalBlocks: blocks.length,
+      getState: () => ({ batch: batchNum, processedBlocks }),
+    });
+
     while (cursorBlock < blocks.length) {
       if (maintenanceRunDeadlineReached()) {
         sink.warn("memory-hybrid: distill: maintenance run deadline reached; stopping batch loop");
@@ -744,6 +755,13 @@ export async function runDistillForCli(
         break;
       }
     }
+    distillProgress.done({
+      status: batchFailures > 0 || truncatedBatches > 0 ? "partial" : allFacts.length === 0 ? "empty" : "ok",
+      extracted: allFacts.length,
+      processedBlocks,
+      batchFailures,
+      truncatedBatches,
+    });
     progress.done();
     if (truncatedBatches > 0) {
       sink.warn(
