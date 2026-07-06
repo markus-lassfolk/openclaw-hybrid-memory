@@ -35,13 +35,28 @@ export const CAPTURE_FILTER_PATTERNS = [...SENSITIVE_PATTERNS.slice(0, 3), /toke
 /** Patterns that suggest a credential value - for auto-detect prompt to store */
 const CREDENTIAL_PATTERNS: Array<{ regex: RegExp; type: string; hint: string }> = [
   { regex: /Bearer\s+eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/i, type: "bearer", hint: "Bearer/JWT token" },
+  // Bare JWT (no "Bearer " prefix) — same shape, distinct entry since extractCredentialMatch
+  // strips a leading "Bearer " but a bare JWT has none to strip. Negative lookbehind avoids
+  // double-counting a JWT that's already matched by the "Bearer ..." pattern above.
+  {
+    regex: /(?<!Bearer\s)\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/,
+    type: "bearer",
+    hint: "Bare JWT token",
+  },
   { regex: /sk-[A-Za-z0-9]{20,}/, type: "api_key", hint: "OpenAI-style API key (sk-...)" },
   { regex: /ghp_[A-Za-z0-9]{36}/, type: "api_key", hint: "GitHub personal access token" },
   { regex: /gho_[A-Za-z0-9]{36}/, type: "api_key", hint: "GitHub OAuth token" },
   { regex: /xox[baprs]-[A-Za-z0-9-]{10,}/, type: "token", hint: "Slack token" },
+  { regex: /AKIA[0-9A-Z]{16}/, type: "api_key", hint: "AWS access key" },
+  { regex: /-----BEGIN [^-]*PRIVATE KEY-----/, type: "other", hint: "Private key block" },
+  {
+    regex: /\w+:\/\/[^\s:@]+:([^\s@]+)@[^\s/]+/,
+    type: "password",
+    hint: "Connection string with embedded password",
+  },
   { regex: /ssh\s+[\w@.-]+\s+[\w@.-]+/i, type: "ssh", hint: "SSH connection string" },
   {
-    regex: /[\w.-]+@[\w.-]+\.\w+.*(?:password|passwd|token|key)\s*[:=]\s*\S+/i,
+    regex: /[\w.-]+@[\w.-]+\.\w+.*(?:password|passwd|token|key)\s*[:=]\s*(\S+)/i,
     type: "password",
     hint: "Credentials with host/email",
   },
@@ -67,7 +82,11 @@ export function extractCredentialMatch(text: string): { type: string; secretValu
   for (const { regex, type } of CREDENTIAL_PATTERNS) {
     const match = regex.exec(text);
     if (match) {
-      const secretValue = match[0]
+      // Prefer a capture group when the pattern has one (the connection-string and
+      // host/email patterns isolate just the secret this way) — patterns without a group
+      // fall back to the whole match, unchanged from before.
+      const raw = match[1] ?? match[0];
+      const secretValue = raw
         .replace(/^Bearer\s+/i, "")
         .trim()
         .slice(0, MAX_SECRET_VALUE_LENGTH);

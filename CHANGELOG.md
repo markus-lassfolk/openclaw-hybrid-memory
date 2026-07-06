@@ -23,6 +23,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.70] - 2026-07-06
+
+### Fixed
+
+Loop iteration 6 of a self-paced review loop, expanded per user request to cover the full codebase (not just recent commits) for up to 10 more iterations or until diminishing returns. This iteration covered the core facts-db data layer and the credential auto-capture/vault path.
+
+- **Contact profile updates always stamped `source_date` to now, even when the update carried no `source`:** `applyContactProfileFields()` in `backends/facts-db/entity-layer.ts` unconditionally set `source_date = now` on every UPDATE, unlike the INSERT path which only sets it when a `source` is actually supplied — an update with no source info falsely implied the contact's original source had just been reconfirmed. Fixed to only stamp `source_date` when `source` is provided, mirroring the INSERT path.
+- **Entity-mention cleanup (`contacts audit`/`cleanup`) could remove a mention that ingestion correctly kept:** the substring-duplicate filter in `processEntityMentionsForFact()` only checked textual containment and offset nesting, missing the word-boundary check that the write-time equivalent (`isContainedByLongerMention`) already enforces — so a mention like "Ann" embedded inside a longer "Annabelle" mention (no real word boundary between them) was kept at write time but incorrectly deleted by a later audit/cleanup pass. Fixed the cleanup filter to reuse the same word-boundary-aware check. Updated one existing test whose fixture relied on the old, less precise behavior, and added a new test confirming a genuine word-boundary-contained substring is still correctly rejected.
+- **The credential auto-capture pattern list had real coverage gaps:** `CREDENTIAL_PATTERNS` in `services/auto-capture.ts` (used to gate whether text is credential-like enough to route to the encrypted vault instead of being stored as a plaintext fact) had no entries for AWS-style access keys, PEM private-key blocks, database connection strings with an embedded password, or a bare (non-`Bearer`-prefixed) JWT — even though a broader pattern list used elsewhere for capture-filtering already recognized most of these formats. Added all four as new vault-routing patterns.
+- **`extractCredentialMatch()` could extract far more than the actual secret for one pattern:** the "host/email + password|token|key" pattern had no capture group, so its greedy `.*` caused the extracted "secret" to span from an email address through to the real credential value (including any names or other text in between) — that whole span, not just the isolated token, got written into the encrypted vault. Fixed by adding capture groups to isolate just the secret for both this pattern and the new connection-string pattern. Added regression tests for all of the above using fabricated example values.
+
+### Deferred (found, need separate design confirmation before implementing)
+
+- **Orphaned credential-vault pointer can permanently block re-capturing a credential:** if `credential_delete`'s best-effort pointer-fact cleanup fails (silently logged only), a stale pointer fact survives with no backing vault entry; a later legitimate re-capture for the same service/type stores a fresh vault secret, but `abortCredentialVaultWriteOnPointerDedupe()`'s "pointer text unchanged = redundant" heuristic then deletes that fresh secret, since it can't distinguish "pointer is accurate" from "pointer is stale." The abort behavior itself is intentional and covered by an existing test for a different (legitimate) scenario, so the real fix belongs in making `credential_delete`'s cleanup reliable, not in loosening the abort check.
+- **Manual `credential_store`/`credential_get`/`credential_delete` tool calls don't normalize `service` the way auto-capture paths do:** `validateAndNormalizeServiceName()` is applied in `auto-capture.ts` and `credential-scanner.ts` but not in `tools/credential-tools.ts`, and the vault table has no case-insensitive collation — the same logical service captured via both paths can end up as two differently-cased rows, and `credential_delete` (exact match) would only remove one. Normalizing in `credential-tools.ts` would change accepted-input behavior for existing callers and needs its own test pass before landing.
+- **Tool-call credential scanning misses JSON-structured Bearer/JWT auth headers:** the tool-call scanner's only Bearer/JWT pattern requires literal `curl ... -H "Authorization: Bearer ..."` shell syntax, and the value-flattening helper it runs against drops object keys (so a JSON `{"headers":{"Authorization":"Bearer ..."}}` call loses the "Authorization" context entirely) — a token passed via a non-curl, JSON-structured tool call is never routed to the vault from this capture path.
+- **Two facts-db dedupe/merge concurrency races** in `backends/facts-db/crud.ts`: (1) the merge path reads the existing fact's text outside any lock and writes a precomputed merged string, so two concurrent merges into the same fact can silently discard one side's appended text (last-write-wins instead of both merging in); (2) the in-transaction dedupe recheck (added specifically to close the original insert race) treats a "merge" outcome identically to "skip," dropping the new text entirely instead of merging it. Both require a careful look at the transaction/locking model to fix without introducing a new race or deadlock risk.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.7.70**.
+
+---
+
 ## [2026.7.69] - 2026-07-06
 
 ### Fixed
