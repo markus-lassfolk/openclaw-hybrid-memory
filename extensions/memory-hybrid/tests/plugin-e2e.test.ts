@@ -898,6 +898,29 @@ describe("Advanced features e2e", () => {
     verificationStore.close();
   });
 
+  it("memory_store auto-enrolls a verification_tier:critical fact on the normal ADD path (loop iteration 11 regression)", async () => {
+    const verificationStore = new VerificationStore(factsDb.getRawDb(), {
+      backupPath: join(tmpDir, "verified-backup.json"),
+      reverificationDays: 30,
+    });
+    registerTools(buildE2EContext({ tmpDir, factsDb, vectorDb, cfg, api, verificationStore }) as never, api as never);
+    const storeTool = api.getTool("memory_store");
+    const statusTool = api.getTool("memory_verification_status");
+
+    const storeResult = (await storeTool?.execute("call-1", {
+      text: "Brand new critical fact, never seen before",
+      importance: 0.9,
+      category: "fact",
+      verification_tier: "critical",
+    })) as { details?: { id: string } };
+    const factId = storeResult.details?.id;
+    expect(factId).toBeDefined();
+
+    const statusResult = (await statusTool?.execute("call-2", { factId })) as { details?: { status: string } };
+    expect(statusResult.details?.status).toBe("verified");
+    verificationStore.close();
+  });
+
   it("memory_issue_create and memory_issue_list: create issue then list", async () => {
     const issueStore = new IssueStore(join(tmpDir, "issues.db"));
     registerTools(buildE2EContext({ tmpDir, factsDb, vectorDb, cfg, api, issueStore }) as never, api as never);

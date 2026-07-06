@@ -23,6 +23,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.75] - 2026-07-06
+
+### Fixed
+
+Loop iteration 11 of the full-codebase review loop.
+
+- **`memory_store`'s normal ADD path never enrolled new facts in the verification store.** The `maybeAutoVerify` auto-enrollment closure (`verification_tier: "critical"` or `cfg.verification.autoClassify`) was only invoked from the classify-before-write UPDATE branch, never from the far more common path where a brand-new fact is stored. Callers passing `verification_tier: "critical"` on a genuinely new fact got silent no-op behavior instead of the promised auto-verification. Fixed by invoking `maybeAutoVerify` on the ADD path too, mirroring the existing UPDATE-branch call. Regression test added, verified via `git stash` to fail without the fix and pass with it.
+- **`config-set`/`config-mode`/`config-set-help` CLI commands ignored `OPENCLAW_HOME`/`OPENCLAW_CONFIG` and always read/wrote `~/.openclaw/openclaw.json`**, unlike `verify` (and `config-view`'s config path, now aligned too), which already resolve the config path via the 3-way env-var chain. Operators running with a non-default `OPENCLAW_HOME` had their `config-set`/`config-mode` calls silently apply to the wrong file. Fixed by routing all four handlers through the existing `resolveOpenclawJsonPathForWorkspace()` helper instead of a hardcoded path. Regression test added, verified via `git stash` to fail without the fix and pass with it.
+- **`WorkboardRpcClient`'s HTTP/CLI transport pin never expired.** `createWorkboardRpcClient()` probes HTTP first, falls back to the `openclaw gateway call` CLI subprocess, then caches whichever transport answered — for the lifetime of the plugin process (the client is created once and reused by a long-running sync loop that can run for days/weeks). If HTTP was down at startup and later recovered, every subsequent call kept paying the CLI-subprocess cost forever instead of switching back. Fixed with a 5-minute TTL on the cached pin so a recovered transport is picked up on the next call after expiry, without adding retry logic for failure modes neither underlying transport actually produces (both `createWorkboardHttpRpcClient` and `createWorkboardGatewayCliRpcClient` already swallow their own errors and return null/empty results rather than throwing). Regression test added, verified via `git stash` to fail without the fix (stayed pinned to CLI past the TTL boundary) and pass with it.
+
+tsc clean; biome checked against each file's pre-existing baseline — zero net-new lint/format issues.
+
+---
+
 ## [2026.7.74] - 2026-07-06
 
 ### Fixed

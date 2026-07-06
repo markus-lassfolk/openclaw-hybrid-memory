@@ -124,4 +124,32 @@ describe("workboard-rpc-client (#1925)", () => {
     const client = createWorkboardHttpRpcClient("http://127.0.0.1:18789");
     expect(await client.isAvailable()).toBe(true);
   });
+
+  it("createWorkboardRpcClient re-probes after the pin's TTL expires instead of pinning forever (loop iteration 11 regression)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("not found", { status: 404 }) as Response);
+      mockSpawnJson({ cards: [] });
+
+      const client = createWorkboardRpcClient("http://127.0.0.1:18789");
+      await client.listCards();
+      // HTTP unavailable (404) -> falls back to CLI: one spawn for the isAvailable probe,
+      // one for the actual listCards call.
+      expect(spawnMock).toHaveBeenCalledTimes(2);
+
+      // Jump past the 5-minute pin TTL and let HTTP recover.
+      vi.setSystemTime(new Date("2026-01-01T00:06:00.000Z"));
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(JSON.stringify({ cards: [] }), { status: 200 }) as Response,
+      );
+
+      await client.listCards();
+      // Without the TTL fix, the client stays pinned to the CLI fallback forever and this
+      // call would add two more spawn invocations instead of switching back to HTTP.
+      expect(spawnMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

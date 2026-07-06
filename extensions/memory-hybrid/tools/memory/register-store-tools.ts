@@ -1123,6 +1123,11 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             });
             if (storeResult.newlyStored) {
               recordActiveStoreProvenance(entry.id, textToStore);
+              // Mirrors the classify-before-write UPDATE branch above — without this, the normal
+              // ADD path (the vast majority of memory_store calls) never enrolls a fact in
+              // verificationStore, so verification_tier:"critical" and cfg.verification.autoClassify
+              // silently no-op for every genuinely new fact.
+              maybeAutoVerify(entry.id, textToStore, entry.tags ?? tags, entry.entity, entry.key, entry.value);
             }
             // Only set once the write actually superseded the requested fact. When the write
             // dedupe-merged into a different existing fact (newlyStored === false), the caller's

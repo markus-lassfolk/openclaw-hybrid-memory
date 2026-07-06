@@ -8,9 +8,9 @@ import { getEnv } from "../utils/env-manager.js";
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { resolveOpenclawJsonPathForWorkspace } from "../utils/openclaw-workspace.js";
 import { findPluginRoot } from "../utils/plugin-root.js";
 import {
   type ConfigMode,
@@ -225,7 +225,7 @@ export function runConfigViewForCli(
   // Read raw config from file for keys where we show file vs parsed (optional toggles)
   let rawCfg: Record<string, unknown> = {};
   try {
-    const configPath = getEnv("OPENCLAW_CONFIG") || join(homedir(), ".openclaw", "openclaw.json");
+    const configPath = resolveOpenclawJsonPathForWorkspace();
     if (existsSync(configPath)) {
       const out = getPluginConfigFromFile(configPath);
       if ("config" in out) rawCfg = out.config;
@@ -439,8 +439,7 @@ export function runConfigViewForCli(
 export function runConfigSetHelpForCli(_ctx: HandlerContext, key: string): ConfigCliResult {
   const k = key.trim();
   if (!k) return { ok: false, error: "Key is required (e.g. autoCapture, credentials.enabled)" };
-  const openclawDir = join(homedir(), ".openclaw");
-  const configPath = join(openclawDir, "openclaw.json");
+  const configPath = resolveOpenclawJsonPathForWorkspace();
   const out = getPluginConfigFromFile(configPath);
   if ("error" in out) return { ok: false, error: out.error };
   const current = getNested(out.config, k);
@@ -482,8 +481,7 @@ export function runConfigModeForCli(_ctx: HandlerContext, mode: string): ConfigC
   if (!valid.includes(mode as ConfigMode)) {
     return { ok: false, error: `Invalid mode: ${mode}. Use one of: ${valid.join(", ")}` };
   }
-  const openclawDir = join(homedir(), ".openclaw");
-  const configPath = join(openclawDir, "openclaw.json");
+  const configPath = resolveOpenclawJsonPathForWorkspace();
   const out = getPluginConfigFromFile(configPath);
   if ("error" in out) return { ok: false, error: out.error };
   const preset = PRESET_OVERRIDES[mode as ConfigMode];
@@ -514,8 +512,7 @@ export function runConfigSetForCli(_ctx: HandlerContext, key: string, value: str
       error: "Key is required (e.g. nightlyCycle, extraction, credentials, errorReporting.botName, store.fuzzyDedupe)",
     };
   const k = key.trim();
-  const openclawDir = join(homedir(), ".openclaw");
-  const configPath = join(openclawDir, "openclaw.json");
+  const configPath = resolveOpenclawJsonPathForWorkspace();
   const out = getPluginConfigFromFile(configPath);
   if ("error" in out) return { ok: false, error: out.error };
   // When setting any errorReporting.* key, ensure errorReporting object exists and has required enabled/consent so schema validates
