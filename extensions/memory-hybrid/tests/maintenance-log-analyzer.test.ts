@@ -1185,6 +1185,29 @@ describe("maintenance log analyzer", () => {
     expect(existsSync(stalePath)).toBe(false);
   });
 
+  it("clearStaleLock keeps a live-but-unsignalable lock (EPERM must not be treated as dead, loop iteration 26 regression)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hm-lock-eperm-"));
+    const lock = join(dir, "eperm.lock");
+    const otherUsersPid = 123456;
+    writeFileSync(lock, `${otherUsersPid}\n`);
+
+    const killSpy = vi.spyOn(process, "kill").mockImplementation((pid) => {
+      if (pid === otherUsersPid) {
+        const err = new Error("Operation not permitted") as NodeJS.ErrnoException;
+        err.code = "EPERM";
+        throw err;
+      }
+      return true;
+    });
+    try {
+      const result = clearStaleLock(lock);
+      expect(result.ok).toBe(false);
+      expect(existsSync(lock)).toBe(true);
+    } finally {
+      killSpy.mockRestore();
+    }
+  });
+
   it("countPersistedSqliteBusySince counts SQLITE_BUSY rows in window (#1199)", () => {
     const dbPath = join(tmpRoot(), "busy-count.db");
     const now = Math.floor(Date.now() / 1000);

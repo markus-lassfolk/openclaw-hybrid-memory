@@ -2,11 +2,14 @@
  * Tests for session-observability service (Issue #1025)
  */
 
-import { describe, expect, it } from "vitest";
-import { buildSessionObservabilityReport } from "../services/session-observability.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import type { AuditEventInput, AuditStore } from "../backends/audit-store.js";
 import type { EventLog } from "../backends/event-log.js";
-import type { FactsDB } from "../backends/facts-db.js";
+import { FactsDB } from "../backends/facts-db.js";
+import { buildSessionObservabilityReport } from "../services/session-observability.js";
 
 // ---------------------------------------------------------------------------
 // Minimal mock factories
@@ -279,5 +282,56 @@ describe("AuditStore sessionId index", () => {
     expect(report.injection).toHaveProperty("blocksInjected");
     expect(report.injection).toHaveProperty("budgetTokens");
     expect(report.suppressions).toBeDefined();
+  });
+});
+
+describe("buildSessionObservabilityReport — episode timeline (loop iteration 26 regression)", () => {
+  let dir: string;
+  let factsDb: FactsDB;
+
+  afterEach(() => {
+    factsDb?.close();
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("populates episode_recorded entries from real episodes instead of a permanently-empty dead call", async () => {
+    dir = mkdtempSync(join(tmpdir(), "session-observability-episodes-"));
+    factsDb = new FactsDB(join(dir, "facts.db"));
+
+    factsDb.recordEpisode({
+      event: "deployed the service to production",
+      outcome: "success",
+      context: "release train",
+      scope: "session",
+      scopeTarget: "session-alpha",
+      sessionId: "session-alpha",
+      importance: 0.7,
+    });
+    // Episode from a different session must not leak into session-alpha's report.
+    factsDb.recordEpisode({
+      event: "unrelated episode from another session",
+      outcome: "success",
+      scope: "session",
+      scopeTarget: "session-beta",
+      sessionId: "session-beta",
+      importance: 0.7,
+    });
+
+    const eventLog = makeMockEventLog() as unknown as EventLog;
+    const report = await buildSessionObservabilityReport({
+      factsDb,
+      eventLog,
+      narrativesDb: null,
+      auditStore: null,
+      sessionId: "session-alpha",
+      agentId: null,
+      limit: 20,
+    });
+
+    const episodeEntries = report.timeline.filter((e) => e.kind === "episode_recorded");
+    expect(episodeEntries.some((e) => e.label === "deployed the service to production")).toBe(true);
+    expect(episodeEntries.some((e) => e.label === "unrelated episode from another session")).toBe(false);
+    expect(report.capture.episodesRecorded).toBe(episodeEntries.length);
+    expect(report.capture.episodesRecorded).toBeGreaterThan(0);
   });
 });

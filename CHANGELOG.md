@@ -23,6 +23,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.90] - 2026-07-06
+
+### Fixed
+
+Loop iteration 26 (sixth iteration of the third batch) of the full-codebase review loop — two parallel `services/` sweeps: skill-validation/maintenance, and session/embedding/document/entity-enrichment.
+
+- **`SkillValidator`'s security deny-rules never fired on indented code blocks.** All 14 `codeBlockOnly` `DENY_RULES` (`shell-eval`, `exec`, `spawn`, `rm-rf`, `credential-env-secret`, `curl-call`, `require-fs`, etc.) gate on `inCodeBlock`, which the fence-tracking loop only ever set via triple-backtick/tilde (` ``` `/`~~~`) fences — never via CommonMark's alternative 4-space/tab-indented code block syntax. A generated or malicious skill could bypass every one of these security checks (e.g. embed a `curl`+exfiltration command) simply by 4-space-indenting the dangerous line instead of fencing it. Fixed by adding a per-line indented-code check and gating the `DENY_RULES` loop (and the sibling `shell-subst` check) on `inCodeBlock || indentedCodeLine`, while leaving the fence-bookkeeping counters (`codeBlockLineCount`, `MAX_FENCED_BLOCK_LINES`) trained on true fences only.
+- **`clearStaleLock()` treated `EPERM` the same as `ESRCH` when checking if a lock's owning PID was still alive.** `process.kill(pid, 0)` throws `ESRCH` when the process doesn't exist but throws `EPERM` when the process exists and the caller merely lacks permission to signal it. The maintenance auto-fixer's `clearStaleLock()` caught both as "process gone" and deleted the lock file, creating a real concurrency race against a live process before a VACUUM/checkpoint runs. `services/task-queue-watchdog.ts` already has the correct pattern (`isPidAlive()`, which returns `true` on `EPERM`); `clearStaleLock()` now reuses it instead of duplicating the (wrong) logic.
+- **Session observability's episode timeline was permanently empty.** `buildSessionObservabilityReport()` tried to call `factsDb.getEpisodesBySession(...)` — a method that has never existed on `FactsDB` (repo-wide grep confirms the real API is `searchEpisodes(options)`). The optional-chained call always evaluated to `undefined`, so `episode_recorded` timeline entries and `captureSummary.episodesRecorded` were always empty/zero for every caller, silently, with no error (caught by the surrounding try/catch). Fixed by calling `factsDb.searchEpisodes({ since, limit })` and filtering by `sessionId` client-side (there's no session-scoped episode query; `Episode.timestamp` is Unix-seconds, unlike this file's millisecond timestamps elsewhere, so the fix also converts units correctly).
+
+Regression tests added for all three fixes, verified via `git stash` to fail without the fix and pass with it. tsc clean; biome checked against each file's pre-existing baseline — zero net-new lint/format issues.
+
+### Hardening (no regression test — could not construct an observable failure)
+
+- `entity-enrichment-cli.ts`'s concurrent adaptive-catchup path counted a fact dequeued-but-never-attempted (its own `processFact` deadline check fired after `nextIdx++`) as `=== undefined` (i.e. not attempted) only for genuinely untouched slots, while a fact that got as far as `results[idx] = null` was counted as attempted — asymmetric with the sequential path's `if (result == null) continue;`. Traced the surrounding control flow closely: every reachable path to a `null` result is tied to a deadline check that, by construction, also halts the run on the very next check (same synchronous turn, the worker's own next loop iteration, or the post-`Promise.all` aggregate check), so this asymmetry has no observable effect in the current code — changed `=== undefined` to `== null` to match the sequential path anyway, since a future code change that adds any other early-return-`null` reason to `processFact` would silently reactivate a real "index skips an unattempted fact" bug otherwise. Full existing `tests/entity-enrichment-cli.test.ts` suite (18 tests) re-verified passing; no new test added since none could be made to fail without the change.
+
 ## [2026.7.89] - 2026-07-06
 
 ### Fixed
