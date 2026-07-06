@@ -61,7 +61,10 @@ type VerificationInstallerContext = Pick<
   ToolsContext,
   "factsDb" | "verificationStore" | "cfg" | "currentAgentIdRef" | "buildToolScopeFilter"
 >;
-type IssueInstallerContext = Pick<ToolsContext, "issueStore" | "factsDb" | "cfg">;
+type IssueInstallerContext = Pick<
+  ToolsContext,
+  "issueStore" | "factsDb" | "cfg" | "currentAgentIdRef" | "buildToolScopeFilter"
+>;
 type WorkflowInstallerContext = Pick<ToolsContext, "workflowStore" | "cfg">;
 type CrystallizationInstallerContext = Pick<
   ToolsContext,
@@ -323,13 +326,28 @@ function installVerificationTools(ctx: VerificationInstallerContext, api: Clawdb
   }
 }
 
-function selectIssueToolsContext({ issueStore, factsDb, cfg }: ToolsContext): IssueInstallerContext {
-  return { issueStore, factsDb, cfg };
+function selectIssueToolsContext({
+  issueStore,
+  factsDb,
+  cfg,
+  currentAgentIdRef,
+  buildToolScopeFilter,
+}: ToolsContext): IssueInstallerContext {
+  return { issueStore, factsDb, cfg, currentAgentIdRef, buildToolScopeFilter };
 }
 
 function installIssueTools(ctx: IssueInstallerContext, api: ClawdbotPluginApi): void {
   if (ctx.issueStore) {
-    registerIssueTools({ issueStore: ctx.issueStore, factsDb: ctx.factsDb, cfg: ctx.cfg }, api);
+    registerIssueTools(
+      {
+        issueStore: ctx.issueStore,
+        factsDb: ctx.factsDb,
+        cfg: ctx.cfg,
+        currentAgentIdRef: ctx.currentAgentIdRef,
+        buildToolScopeFilter: ctx.buildToolScopeFilter,
+      },
+      api,
+    );
   }
 }
 

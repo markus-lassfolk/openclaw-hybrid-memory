@@ -23,6 +23,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.93] - 2026-07-06
+
+### Fixed
+
+Loop iteration 29 (ninth iteration of the third batch) of the full-codebase review loop — picks up the next deferred finding from iteration 27/28's multi-agent sweep.
+
+- **`tools/issue-tools.ts` had no scope-filter wiring at all**, unlike every other fact-touching tool subsystem (`graph-tools.ts`'s `memory_link` has an explicit "SECURITY" comment for this exact pattern; `tools/memory/*` threads a scope filter through every call). `IssueToolsContext` never received `currentAgentIdRef`/`buildToolScopeFilter` from `setup/tool-installers.ts`, so `memory_issue_link_fact` linked a caller-supplied `factId` with no existence or scope check whatsoever, and the auto-linking triggered by `memory_issue_create`/`memory_issue_update` (`services/issue-fact-correlation.ts`'s `autoLinkIssueToFacts`) searched and hydrated facts with no `scopeFilter` at all. In a multi-tenant deployment, either path could tie another tenant's fact into `issue.relatedFacts`, disclosed back to any caller via `memory_issue_list`/`memory_issue_get`. Fixed by wiring `currentAgentIdRef`/`buildToolScopeFilter` through the issue-tools installer (mirroring `graph-tools`/`provenance-tools`/`verification-tools`), threading a `scopeFilter` option through `autoLinkIssueToFacts`'s search and per-result `getById` re-check, and adding the same existence/scope guard `memory_link` already has to `memory_issue_link_fact`.
+
+Regression tests added (cross-tenant link rejection, own-scope sanity check, and an auto-link cross-tenant check), verified via `git stash` to fail without the fix and pass with it. tsc clean; biome clean (zero issues in the new test file, zero net-new in the touched source files against baseline). Full background vitest suite: only the 3 known pre-existing unrelated failures.
+
+### Deferred (carried over from iteration 27/28; still tracked for future iterations)
+
+- `backends/issue-store.ts`'s `transition()`/`update()` lacking compare-and-swap protection (cross-process race only).
+- `backends/facts-db/housekeeping.ts`'s `countBySource()` missing a scope predicate (cross-tenant document-ingestion dedupe/count leak).
+- `tools/memory/register-episode-tools.ts`'s inconsistent `scope`/`scopeTarget` derivation (episodes that become permanently unfindable).
+- `tools/memory/register-store-tools.ts`'s `storeActiveCanonicalVector` ignoring the `vault` parameter (cross-vault embedding leak/loss) and a merge-dedupe path storing a mismatched text/vector pair.
+- Lower-severity items: an off-by-one output-line overwrite in `tools/apitap-tools.ts`, an inverted enabled/disabled detection in an unwired ESPHome YAML converter, an entity-lookup pre-filter that doesn't fan out across vaults in `register-recall-tools.ts`.
+
 ## [2026.7.92] - 2026-07-06
 
 ### Fixed

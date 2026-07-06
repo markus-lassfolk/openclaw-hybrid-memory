@@ -16,6 +16,7 @@ import { isCompactVerbosity } from "../config.js";
 import type { IssueSeverity, IssueStatus } from "../types/issue-types.js";
 import { withErrorTracking } from "../utils/error-tracking.js";
 import { autoLinkIssueToFacts } from "../services/issue-fact-correlation.js";
+import type { BuildToolScopeFilterFn } from "../api/memory-plugin-api.js";
 
 const ISSUE_STATUSES = ["open", "diagnosed", "fix-attempted", "resolved", "verified", "wont-fix"] as const;
 
@@ -25,17 +26,27 @@ interface IssueToolsContext {
   issueStore: IssueStore;
   factsDb?: FactsDB | null;
   /** Optional config for verbosity-aware output (Issue #282). */
-  cfg?: Pick<HybridMemoryConfig, "verbosity">;
+  cfg?: Pick<HybridMemoryConfig, "verbosity" | "multiAgent" | "autoRecall">;
+  currentAgentIdRef?: { value: string | null };
+  buildToolScopeFilter?: BuildToolScopeFilterFn;
 }
 
 export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginApi): void {
-  const { issueStore, factsDb } = ctx;
+  const { issueStore, factsDb, currentAgentIdRef, buildToolScopeFilter } = ctx;
   const verbosity = ctx.cfg?.verbosity ?? "normal";
+
+  // SECURITY: issues are global (unscoped) records, but the facts auto-linked into them are not
+  // — without this, memory_issue_create/update's auto-link search and memory_issue_link_fact
+  // could tie another tenant's fact into issue.relatedFacts (disclosed back via
+  // memory_issue_list/get), the same recurring "missing scopeFilter" gap fixed elsewhere in this
+  // codebase. Falls back to no restriction only when this context predates scope wiring (tests).
+  const resolveScopeFilter = () =>
+    buildToolScopeFilter && ctx.cfg ? buildToolScopeFilter({}, currentAgentIdRef?.value ?? null, ctx.cfg) : undefined;
 
   const maybeAutoLink = (issue: import("../types/issue-types.js").Issue): void => {
     if (!factsDb) return;
     try {
-      autoLinkIssueToFacts(issue, factsDb, issueStore);
+      autoLinkIssueToFacts(issue, factsDb, issueStore, { scopeFilter: resolveScopeFilter() });
     } catch {
       /* non-fatal */
     }
@@ -256,6 +267,19 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         const { issueId, factId } = params as { issueId: string; factId: string };
+
+        if (factsDb) {
+          // SECURITY: verify the fact exists and is in the caller's scope before linking it —
+          // otherwise a caller could tie another tenant's fact into this issue's relatedFacts
+          // (mirrors memory_link's guard in graph-tools.ts).
+          const fact = factsDb.getById(factId, { scopeFilter: resolveScopeFilter() });
+          if (!fact) {
+            return {
+              content: [{ type: "text", text: `Fact not found: ${factId}` }],
+              details: { error: "fact_not_found", id: factId },
+            };
+          }
+        }
 
         withErrorTracking(() => issueStore.linkFact(issueId, factId), {
           subsystem: "issues",
