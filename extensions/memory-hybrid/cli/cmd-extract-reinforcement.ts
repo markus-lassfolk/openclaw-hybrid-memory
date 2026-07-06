@@ -18,6 +18,7 @@ import {
 } from "../services/batch-incident-analysis.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-maintenance-llm.js";
 import { maintenanceMaxOutputTokens } from "../services/chat.js";
+import { runMaintenanceHeartbeat } from "./commands/manage/maintenance-heartbeat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import {
   analyzeReinforcementIncidentBatchWithSplit,
@@ -42,7 +43,7 @@ import { findSimilarByEmbedding } from "../services/vector-search.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getEnv } from "../utils/env-manager.js";
 import { getReinforcementSignalRegex } from "../utils/language-keywords.js";
-import { redactMaintenancePrivateText } from "../utils/maintenance-privacy.js";
+import { maybeRedactMaintenanceFactText } from "../utils/maintenance-privacy.js";
 import { maintenanceRunDeadlineReached } from "../utils/maintenance-run-deadline.js";
 import { parseStructuredItemsAcceptingEmpty } from "../utils/llm-json-array.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
@@ -471,109 +472,127 @@ export async function runExtractReinforcementForCli(
           },
         };
 
-        for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-          if (maintenanceRunDeadlineReached()) {
-            logger.warn?.(
-              "memory-hybrid: extract-reinforcement stopped — maintenance run deadline reached",
-            );
-            break;
-          }
-          if (completedBatchIndexes.has(batchIndex)) continue;
-          const batch = batches[batchIndex];
-          const globalIncidentOffset = globalIncidentOffsetForBatch(batches, batchIndex);
-          const batchLabel = `batch ${batchIndex + 1}/${batches.length}`;
-          const result = await analyzeReinforcementIncidentBatchWithSplit({ ...analyzeDeps, batchLabel }, batch);
-
-          if (result.items === null) {
-            const trimmedRaw = (result.rawContent ?? "").trim();
-            const emptyArrayResponse =
-              trimmedRaw === "[]" ||
-              (() => {
-                try {
-                  const parsed = JSON.parse(trimmedRaw);
-                  return Array.isArray(parsed) && parsed.length === 0;
-                } catch {
-                  return false;
-                }
-              })();
-            if (emptyArrayResponse) {
-              if (batch.length === 0) {
-                completedBatchIndexes.add(batchIndex);
-                completedBatches = completedBatchIndexes.size;
-                persistBatchState();
-                if (batchDelayMs > 0 && batchIndex < batches.length - 1 && !maintenanceRunDeadlineReached()) {
-                  await new Promise((resolve) => setTimeout(resolve, batchDelayMs));
-                }
-                continue;
+        // Heartbeat spans the whole multi-batch loop (not just one batch) so a slow single-batch
+        // run — the case with the least "batch start" chatter — still emits a liveness signal at
+        // least every ~60s instead of going silent from "batch N/M start" until the LLM call returns.
+        let heartbeatBatchLabel: string | undefined;
+        await runMaintenanceHeartbeat(
+          SCAN_TYPE,
+          !!opts.verbose,
+          async () => {
+            for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+              if (maintenanceRunDeadlineReached()) {
+                logger.warn?.("memory-hybrid: extract-reinforcement stopped — maintenance run deadline reached");
+                break;
               }
-              const synthesized: ReinforcementRemediationItem[] = batch.map((_, localIdx) => ({
-                incidentIndex: localIdx,
-                remediationType: "NO_ACTION",
-                category: "",
-                severity: "",
-                remediationContent: "",
-              }));
-              const ordered = orderBatchItemsByIncidentIndex(batch.length, synthesized, logger, globalIncidentOffset);
+              if (completedBatchIndexes.has(batchIndex)) continue;
+              const batch = batches[batchIndex];
+              const globalIncidentOffset = globalIncidentOffsetForBatch(batches, batchIndex);
+              const batchLabel = `batch ${batchIndex + 1}/${batches.length}`;
+              heartbeatBatchLabel = batchLabel;
+              const result = await analyzeReinforcementIncidentBatchWithSplit({ ...analyzeDeps, batchLabel }, batch);
+
+              if (result.items === null) {
+                const trimmedRaw = (result.rawContent ?? "").trim();
+                const emptyArrayResponse =
+                  trimmedRaw === "[]" ||
+                  (() => {
+                    try {
+                      const parsed = JSON.parse(trimmedRaw);
+                      return Array.isArray(parsed) && parsed.length === 0;
+                    } catch {
+                      return false;
+                    }
+                  })();
+                if (emptyArrayResponse) {
+                  if (batch.length === 0) {
+                    completedBatchIndexes.add(batchIndex);
+                    completedBatches = completedBatchIndexes.size;
+                    persistBatchState();
+                    if (batchDelayMs > 0 && batchIndex < batches.length - 1 && !maintenanceRunDeadlineReached()) {
+                      await new Promise((resolve) => setTimeout(resolve, batchDelayMs));
+                    }
+                    continue;
+                  }
+                  const synthesized: ReinforcementRemediationItem[] = batch.map((_, localIdx) => ({
+                    incidentIndex: localIdx,
+                    remediationType: "NO_ACTION",
+                    category: "",
+                    severity: "",
+                    remediationContent: "",
+                  }));
+                  const ordered = orderBatchItemsByIncidentIndex(
+                    batch.length,
+                    synthesized,
+                    logger,
+                    globalIncidentOffset,
+                  );
+                  if (ordered === null) {
+                    diagnostics.parseFailures++;
+                    throw new Error(
+                      `Reinforcement analysis: ${batchLabel} empty [] response could not be mapped to incidents.`,
+                    );
+                  }
+                  const attached = attachOrderedItemsToIncidents<ReinforcementIncident, ReinforcementRemediationItem>(
+                    batch,
+                    ordered,
+                    globalIncidentOffset,
+                  );
+                  appendUniqueRemediationsByIncidentIndex(analysed, attached);
+                  completedBatchIndexes.add(batchIndex);
+                  completedBatches = completedBatchIndexes.size;
+                  persistBatchState();
+                  if (batchDelayMs > 0 && batchIndex < batches.length - 1 && !maintenanceRunDeadlineReached()) {
+                    await new Promise((resolve) => setTimeout(resolve, batchDelayMs));
+                  }
+                  continue;
+                }
+                diagnostics.parseFailures++;
+                const excerpt = (result.rawContent ?? "").slice(0, 240);
+                const parseError = new Error(
+                  `Reinforcement analysis: ${batchLabel} LLM response could not be parsed as a JSON array (repair failed). excerpt="${excerpt}"`,
+                );
+                (parseError as Error & { isParseFailure?: boolean }).isParseFailure = true;
+                throw parseError;
+              }
+
+              const ordered = orderBatchItemsByIncidentIndex(batch.length, result.items, logger, globalIncidentOffset);
               if (ordered === null) {
                 diagnostics.parseFailures++;
-                throw new Error(
-                  `Reinforcement analysis: ${batchLabel} empty [] response could not be mapped to incidents.`,
+                const coverageError = new Error(
+                  `Reinforcement analysis: ${batchLabel} incomplete (expected ${batch.length} remediation item(s), could not assign one per incident).`,
                 );
+                (coverageError as Error & { isParseFailure?: boolean }).isParseFailure = true;
+                throw coverageError;
               }
+
+              diagnostics.fallbacks += result.diagnostics.fallbacks;
+              diagnostics.parseFailures += result.diagnostics.parseFailures;
+              diagnostics.batchSplits += result.diagnostics.batchSplits;
+              diagnostics.truncations += result.diagnostics.truncations;
+              diagnostics.retries += result.diagnostics.retries;
+
               const attached = attachOrderedItemsToIncidents<ReinforcementIncident, ReinforcementRemediationItem>(
                 batch,
                 ordered,
                 globalIncidentOffset,
               );
-              appendUniqueRemediationsByIncidentIndex(analysed, attached);
+              const added = appendUniqueRemediationsByIncidentIndex(analysed, attached);
+              diagnostics.parsedItems += added;
               completedBatchIndexes.add(batchIndex);
               completedBatches = completedBatchIndexes.size;
               persistBatchState();
+
               if (batchDelayMs > 0 && batchIndex < batches.length - 1 && !maintenanceRunDeadlineReached()) {
                 await new Promise((resolve) => setTimeout(resolve, batchDelayMs));
               }
-              continue;
             }
-            diagnostics.parseFailures++;
-            const excerpt = (result.rawContent ?? "").slice(0, 240);
-            const parseError = new Error(
-              `Reinforcement analysis: ${batchLabel} LLM response could not be parsed as a JSON array (repair failed). excerpt="${excerpt}"`,
-            );
-            (parseError as Error & { isParseFailure?: boolean }).isParseFailure = true;
-            throw parseError;
-          }
-
-          const ordered = orderBatchItemsByIncidentIndex(batch.length, result.items, logger, globalIncidentOffset);
-          if (ordered === null) {
-            diagnostics.parseFailures++;
-            const coverageError = new Error(
-              `Reinforcement analysis: ${batchLabel} incomplete (expected ${batch.length} remediation item(s), could not assign one per incident).`,
-            );
-            (coverageError as Error & { isParseFailure?: boolean }).isParseFailure = true;
-            throw coverageError;
-          }
-
-          diagnostics.fallbacks += result.diagnostics.fallbacks;
-          diagnostics.parseFailures += result.diagnostics.parseFailures;
-          diagnostics.batchSplits += result.diagnostics.batchSplits;
-          diagnostics.truncations += result.diagnostics.truncations;
-          diagnostics.retries += result.diagnostics.retries;
-
-          const attached = attachOrderedItemsToIncidents<ReinforcementIncident, ReinforcementRemediationItem>(
-            batch,
-            ordered,
-            globalIncidentOffset,
-          );
-          const added = appendUniqueRemediationsByIncidentIndex(analysed, attached);
-          diagnostics.parsedItems += added;
-          completedBatchIndexes.add(batchIndex);
-          completedBatches = completedBatchIndexes.size;
-          persistBatchState();
-
-          if (batchDelayMs > 0 && batchIndex < batches.length - 1 && !maintenanceRunDeadlineReached()) {
-            await new Promise((resolve) => setTimeout(resolve, batchDelayMs));
-          }
-        }
+          },
+          {
+            progressSupplier: () =>
+              heartbeatBatchLabel ? `${heartbeatBatchLabel}; remediations_analysed=${analysed.length}` : undefined,
+          },
+        );
 
         analysedCount = analysed.length;
         if (completedBatchIndexes.size === batches.length) {
@@ -847,8 +866,10 @@ export async function runExtractReinforcementForCli(
           // Store standalone praise signal when similarity fallback found nothing.
           if (!reinforcedViaSimilarity && incident.confidence >= 0.55) {
             try {
-              const praiseText = redactMaintenancePrivateText(
+              const praiseText = maybeRedactMaintenanceFactText(
                 `[Reinforcement praise] User: "${incident.userMessage.slice(0, 180)}" — praised behavior: ${incident.agentBehavior.slice(0, 180)}`,
+                cfg.maintenance?.privacyRedaction,
+                { category: "preference", key: "reinforcement_praise" },
               );
               if (!factsDb.hasDuplicate(praiseText, "reinforcement-praise")) {
                 const storeResult = factsDb.storeWithResult(

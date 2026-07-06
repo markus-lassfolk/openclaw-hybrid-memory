@@ -457,6 +457,49 @@ describe("generate-proposals — JSON retry (#1824)", () => {
   });
 });
 
+describe("generate-proposals — progress heartbeat", () => {
+  it("logs a heartbeat start/complete around the LLM call when verbose=true", async () => {
+    const db = new FactsDB(":memory:");
+    const proposalsDb = new ProposalsDB(":memory:");
+    insertScopedPattern(db, "global", null, "User consistently prefers functional composition over OOP patterns");
+
+    const ctx = makeCtx(db, proposalsDb, {});
+
+    let resolveCall: (() => void) | undefined;
+    const pending = new Promise<void>((resolve) => {
+      resolveCall = resolve;
+    });
+    const chatSpy = vi.spyOn(chatService, "chatCompleteWithRetryDetailed").mockImplementation(async () => {
+      await pending;
+      return { content: "[]", modelUsed: "test-model", attemptChain: ["test-model"] };
+    });
+
+    const logs: string[] = [];
+    const logSpy = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    });
+
+    try {
+      const runPromise = runGenerateProposalsForCli(ctx, { dryRun: false, verbose: true }, { resolvePath: (f) => f });
+
+      // Flush microtasks so the heartbeat "start" line logs before the mocked (slow) LLM call resolves.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(logs.some((line) => line.includes("generate-proposals — start"))).toBe(true);
+      expect(logs.some((line) => line.includes("generate-proposals — complete"))).toBe(false);
+
+      resolveCall?.();
+      await runPromise;
+
+      expect(logs.some((line) => line.includes("generate-proposals — complete in"))).toBe(true);
+    } finally {
+      logSpy.mockRestore();
+      chatSpy.mockRestore();
+    }
+  });
+});
+
 describe("buildAuditHealthReport — preReportWarnings (#1809)", () => {
   it("surfaces a pre-report warning in the report warnings array", () => {
     const db = new FactsDB(":memory:");

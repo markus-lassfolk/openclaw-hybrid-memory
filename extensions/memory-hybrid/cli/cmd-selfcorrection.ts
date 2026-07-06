@@ -74,6 +74,7 @@ import { estimateTokens } from "../utils/text.js";
 import { gatherSessionFiles } from "./cmd-distill.js";
 import { getMaxMtime } from "./cmd-extract-sessions.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
+import { runMaintenanceHeartbeat } from "./commands/manage/maintenance-heartbeat.js";
 import { inferTargetFile } from "./cmd-store.js";
 import { resolvePipelineProposalTarget } from "./proposals.js";
 import { workshopStoresFromHandlerContext } from "../services/unified-proposals.js";
@@ -1136,25 +1137,40 @@ export async function runSelfCorrectionRunForCli(
         `memory-hybrid: self-correction-run batch mode: size=${batchSize} delayMs=${batchDelayMs} thinking=${thinkingMode} maxTokens=${maxTokens}`,
       );
 
-      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-        if (maintenanceRunDeadlineReached()) {
-          logger.warn?.(
-            `memory-hybrid: ${SCAN_TYPE} stopped — maintenance run deadline reached`,
-          );
-          break;
-        }
-        if (completedBatchIndexes.has(batchIndex)) continue;
-        const batch = batches[batchIndex];
-        const globalIncidentOffset = globalIncidentOffsetForBatch(batches, batchIndex);
-        batchesStarted++;
-        logger.info?.(
-          `memory-hybrid: ${SCAN_TYPE} batch ${batchIndex + 1}/${batches.length} start incidents=${batch.length}`,
-        );
-        await processBatchResult(batchIndex, batch, globalIncidentOffset);
-        if (batchDelayMs > 0 && batchIndex < batches.length - 1 && !maintenanceRunDeadlineReached()) {
-          await sleepSelfCorrectionBackoff(batchDelayMs);
-        }
-      }
+      // Heartbeat spans the whole multi-batch loop (not just one batch) so a slow single-batch
+      // run — the case with the least "batch start" chatter — still emits a liveness signal at
+      // least every ~60s instead of going silent from "batch N/M start" until the LLM call returns.
+      let heartbeatBatchLabel: string | undefined;
+      await runMaintenanceHeartbeat(
+        SCAN_TYPE,
+        !!opts.verbose,
+        async () => {
+          for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+            if (maintenanceRunDeadlineReached()) {
+              logger.warn?.(
+                `memory-hybrid: ${SCAN_TYPE} stopped — maintenance run deadline reached`,
+              );
+              break;
+            }
+            if (completedBatchIndexes.has(batchIndex)) continue;
+            const batch = batches[batchIndex];
+            const globalIncidentOffset = globalIncidentOffsetForBatch(batches, batchIndex);
+            batchesStarted++;
+            heartbeatBatchLabel = `batch ${batchIndex + 1}/${batches.length}`;
+            logger.info?.(
+              `memory-hybrid: ${SCAN_TYPE} ${heartbeatBatchLabel} start incidents=${batch.length}`,
+            );
+            await processBatchResult(batchIndex, batch, globalIncidentOffset);
+            if (batchDelayMs > 0 && batchIndex < batches.length - 1 && !maintenanceRunDeadlineReached()) {
+              await sleepSelfCorrectionBackoff(batchDelayMs);
+            }
+          }
+        },
+        {
+          progressSupplier: () =>
+            heartbeatBatchLabel ? `${heartbeatBatchLabel}; incidents_analysed=${analysed.length}` : undefined,
+        },
+      );
 
       if (
         maintenanceRunDeadlineReached() &&

@@ -1,7 +1,10 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { Command } from "commander";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ManageBindings } from "../cli/commands/manage/bindings.js";
+import { registerManageDigest } from "../cli/commands/manage/register-digest.js";
 import { type HybridMemoryConfig, hybridConfigSchema } from "../config.js";
 import { parseExitLine, validateMaintenanceExecution } from "../services/cron-exit-validator.js";
 import { runPendingDigestAutopilotCron } from "../services/pending-digest-autopilot-cron.js";
@@ -131,6 +134,58 @@ describe("pending digest autopilot cron wrapper", () => {
     );
   });
 
+  it("mirrors internal step-ledger progress to an onProgress sink without changing the hmLog artifact", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const progressLines: string[] = [];
+
+    const result = await runPendingDigestAutopilotCron({
+      cfg,
+      factsDb: factsDb(),
+      openclawHome: dir,
+      now: new Date("2026-05-13T08:20:00Z"),
+      onProgress: (line) => progressLines.push(line),
+    });
+
+    expect(result.summary.status).toBe("skipped");
+    expect(result.summary.skipReason).toBe("autopilot_disabled");
+
+    // The free-text run.* lines and every markStep step transition must reach the
+    // operator-facing sink (e.g. stdout via --verbose), not just the private hmLog file.
+    expect(progressLines.some((line) => line.startsWith("run.start run_id="))).toBe(true);
+    expect(progressLines.some((line) => line.startsWith("run.finish status=skipped"))).toBe(true);
+    expect(progressLines).toContainEqual(expect.stringMatching(/^step=guard-check status=ok reason=ok/));
+    expect(progressLines).toContainEqual(
+      expect.stringMatching(/^step=config-load status=skipped reason=autopilot_disabled/),
+    );
+    expect(progressLines).toContainEqual(
+      expect.stringMatching(/^step=persona-triage status=skipped reason=autopilot_disabled/),
+    );
+    expect(progressLines).toContainEqual(expect.stringMatching(/^step=summary-write status=ok reason=ok/));
+
+    // The private hmLog artifact must still receive every line unchanged, since other
+    // consumers (validate-cron-exit, other tests) depend on it continuing to see this content.
+    const hmLogContent = readFileSync(result.summary.artifacts.hmLog, "utf-8");
+    for (const line of progressLines) {
+      expect(hmLogContent).toContain(line);
+    }
+  });
+
+  it("stays silent by default when no onProgress sink is provided", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const result = await runPendingDigestAutopilotCron({
+      cfg,
+      factsDb: factsDb(),
+      openclawHome: dir,
+      now: new Date("2026-05-13T08:20:00Z"),
+    });
+    expect(result.summary.status).toBe("skipped");
+    // No onProgress wired: hmLog is still written (unaffected), just nothing extra happens.
+    const hmLogContent = readFileSync(result.summary.artifacts.hmLog, "utf-8");
+    expect(hmLogContent).toContain("step=guard-check status=ok reason=ok");
+  });
+
   it("runs dry-run safely, validates exit ledger compatibility, and stays quiet on no-op by default", async () => {
     const dir = newDir();
     seedLatestDigestSuccess(dir);
@@ -258,5 +313,54 @@ describe("pending digest autopilot cron wrapper", () => {
 
     expect(result.summary.status).toBe("skipped");
     expect(result.summary.skipReason).toBe("lock_already_held");
+  });
+
+  it("CLI: routes --verbose progress to stderr in --json mode so stdout stays pure JSON (#2055)", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const program = new Command("hybrid-mem");
+    program.exitOverride();
+    registerManageDigest(program as never, { cfg, factsDb: factsDb() } as ManageBindings);
+
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await program.parseAsync(["digest", "autopilot-cron", "--json", "--verbose"], { from: "user" });
+
+    const stdoutText = stdoutSpy.mock.calls.map((c) => String(c[0])).join("");
+    const stderrText = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
+
+    // stdout must contain exactly the final JSON summary — parseable as pure JSON, no progress
+    // lines mixed in — so a downstream consumer of --json output isn't broken by --verbose.
+    expect(() => JSON.parse(stdoutText)).not.toThrow();
+    expect(stdoutText).not.toContain("run.start");
+
+    // Progress lines go to stderr instead, so --verbose still gives an operator liveness signal.
+    expect(stderrText).toContain("run.start");
+
+    stdoutSpy.mockRestore();
+    stderrSpy.mockRestore();
+  });
+
+  it("CLI: routes --verbose progress to stdout when --json is not set", async () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const program = new Command("hybrid-mem");
+    program.exitOverride();
+    registerManageDigest(program as never, { cfg, factsDb: factsDb() } as ManageBindings);
+
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await program.parseAsync(["digest", "autopilot-cron", "--verbose"], { from: "user" });
+
+    const stdoutText = stdoutSpy.mock.calls.map((c) => String(c[0])).join("");
+    const stderrText = stderrSpy.mock.calls.map((c) => String(c[0])).join("");
+
+    expect(stdoutText).toContain("run.start");
+    expect(stderrText).not.toContain("run.start");
+
+    stdoutSpy.mockRestore();
+    stderrSpy.mockRestore();
   });
 });

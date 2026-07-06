@@ -6,7 +6,7 @@
  * a real network round-trip.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   parseGitHubEntity,
@@ -196,5 +196,64 @@ describe("syncLifecycleFromGitHub", () => {
     const after = db.getById(fact.id)!;
     expect(after.expiresAt ?? null).toBe(beforeExpires);
     expect(after.decayClass).toBe(beforeDecay);
+  });
+
+  it("logs the candidate row count up front via a real logger (silent-hang audit fix)", async () => {
+    db.store({
+      text: "PR fact about #123",
+      category: "fact",
+      importance: 0.5,
+      entity: "PR #123",
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const info = vi.fn();
+    const warn = vi.fn();
+    const gh = async (path: string): Promise<unknown> => FIXTURE[path] ?? null;
+
+    await syncLifecycleFromGitHub(db as never, {
+      config: { enabled: true, repos: ["openclaw/clawdbot"] },
+      gh,
+      logger: { info, warn },
+    });
+
+    expect(info).toHaveBeenCalledWith(expect.stringContaining("scanning 1 candidate row(s) across 1 repo(s)"));
+    // The pre-existing post-hoc summary line should still fire too.
+    expect(info).toHaveBeenCalledWith(expect.stringContaining("scanned=1 matched=1"));
+  });
+
+  it("calls onProgress periodically during the row-scan loop, driven off reportEvery", async () => {
+    const total = 12;
+    for (let i = 0; i < total; i++) {
+      db.store({
+        text: `PR fact about #${100 + i}`,
+        category: "fact",
+        importance: 0.5,
+        entity: `PR #${100 + i}`,
+        key: null,
+        value: null,
+        source: "test",
+      });
+    }
+    const gh = async (path: string): Promise<unknown> => {
+      const m = /pulls\/(\d+)$/.exec(path);
+      const number = m ? Number.parseInt(m[1], 10) : 0;
+      return { number, state: "open", closed_at: null };
+    };
+
+    const ticks: Array<{ scanned: number; total: number; matched: number }> = [];
+    const report = await syncLifecycleFromGitHub(db as never, {
+      config: { enabled: true, repos: ["openclaw/clawdbot"] },
+      gh,
+      reportEvery: 5,
+      onProgress: (progress) => ticks.push(progress),
+    });
+
+    expect(report.scanned).toBe(total);
+    // reportEvery=5 over 12 rows => ticks at 5, 10, and a final tick at 12 (last row).
+    expect(ticks.map((t) => t.scanned)).toEqual([5, 10, 12]);
+    expect(ticks.every((t) => t.total === total)).toBe(true);
+    expect(ticks[ticks.length - 1]?.matched).toBe(total);
   });
 });

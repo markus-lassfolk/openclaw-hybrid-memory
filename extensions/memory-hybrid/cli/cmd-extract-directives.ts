@@ -10,7 +10,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { getDirectiveSignalRegex } from "../utils/language-keywords.js";
-import { redactMaintenancePrivateText } from "../utils/maintenance-privacy.js";
+import { maybeRedactMaintenanceFactText } from "../utils/maintenance-privacy.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
 import type { HandlerContext } from "./handlers.js";
 import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
@@ -237,7 +237,10 @@ export async function runExtractDirectivesForCli(
           });
           const storeResult = factsDb.storeWithResult(
             {
-              text: redactMaintenancePrivateText(incident.extractedRule),
+              text: maybeRedactMaintenanceFactText(incident.extractedRule, cfg.maintenance?.privacyRedaction, {
+                category: category as MemoryCategory,
+                key: null,
+              }),
               category: category as MemoryCategory,
               importance: 0.8,
               entity: null,

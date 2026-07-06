@@ -36,6 +36,8 @@ interface ConsolidateOptions {
   limit: number;
   model: string;
   thinkingMode?: import("./chat.js").MiniMaxThinkingMode;
+  /** Invoked once per cluster processed by the merge loop (success, skip, or failure). */
+  onProgress?: (progress: { clusterIndex: number; totalClusters: number; merged: number }) => void;
 }
 
 interface ConsolidateResult {
@@ -201,7 +203,11 @@ export async function runConsolidate(
   let vectorFailures = 0;
   let storeDedupeVectorFallbackSuppressed = 0;
   const consolidationRunId = provenanceService ? randomUUID() : null;
+  let clusterIndex = 0;
   for (const clusterIds of clusters) {
+    clusterIndex++;
+    const emitClusterProgress = () =>
+      opts.onProgress?.({ clusterIndex, totalClusters: clusters.length, merged });
     if (maintenanceRunDeadlineReached()) {
       logger.warn("memory-hybrid: consolidate stopped — maintenance run deadline reached");
       break;
@@ -234,10 +240,12 @@ export async function runConsolidate(
         clusterSize: clusterIds.length,
       });
       clustersFailed++;
+      emitClusterProgress();
       continue;
     }
     if (!mergedText) {
       clustersFailed++;
+      emitClusterProgress();
       continue;
     }
 
@@ -256,6 +264,7 @@ export async function runConsolidate(
         `memory-hybrid: consolidate [dry-run] would merge ${clusterIds.length} facts → "${mergedText.slice(0, 80)}..."`,
       );
       merged++;
+      emitClusterProgress();
       continue;
     }
 
@@ -296,6 +305,7 @@ export async function runConsolidate(
         `memory-hybrid: consolidate skipped merge store (pre-store guard blocked): "${mergedText.slice(0, 80)}..."`,
       );
       clustersFailed++;
+      emitClusterProgress();
       continue;
     }
     if (storeResult.newlyStored === false) {
@@ -303,6 +313,7 @@ export async function runConsolidate(
         `memory-hybrid: consolidate skipped merge store (dedupe resolved to existing fact ${storeResult.entry.id.slice(0, 8)}): "${mergedText.slice(0, 80)}..."`,
       );
       clustersFailed++;
+      emitClusterProgress();
       continue;
     }
     const entry = storeResult.entry;
@@ -386,6 +397,7 @@ export async function runConsolidate(
         `memory-hybrid: consolidate — merged fact ${entry.id.slice(0, 8)} has no vector (embed failed); keeping ${clusterIds.length} source fact(s) instead of deleting them`,
       );
       clustersFailed++;
+      emitClusterProgress();
       continue;
     }
     // Delete source vectors before removing SQLite rows: if we deleted SQLite first and then
@@ -402,6 +414,7 @@ export async function runConsolidate(
       deleted++;
     }
     merged++;
+    emitClusterProgress();
   }
 
   if (storeDedupeVectorFallbackSuppressed > 0) {

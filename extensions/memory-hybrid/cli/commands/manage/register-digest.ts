@@ -16,6 +16,7 @@ import {
   buildPendingReviewDigestReport,
   writePendingReviewDigestOutput,
 } from "../../../services/pending-review-digest.js";
+import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
@@ -109,11 +110,17 @@ export function registerManageDigest(mem: Chainable, b: ManageBindings): void {
       "Cron wrapper for pending digest autopilot (#1330). Enforces guard/lock/config safety, writes HM artifacts, and emits structured summary.",
     )
     .option("--json", "Emit structured summary JSON")
+    .option("-v, --verbose", "Mirror internal step progress as the run executes (stderr in --json mode, stdout otherwise)")
     .action(
-      withExit(async (opts?: { json?: boolean }) => {
+      withExit(async (opts?: { json?: boolean; verbose?: boolean }, cmd?: CommanderOptsParent) => {
+        const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+        // In --json mode, progress must go to stderr, not stdout — stdout is reserved for the
+        // final structured summary so downstream consumers can safely parse it as pure JSON.
+        const progressStream = opts?.json ? process.stderr : process.stdout;
         const result = await runPendingDigestAutopilotCron({
           cfg: b.cfg,
           factsDb: b.factsDb,
+          onProgress: verbose ? (line: string) => progressStream.write(`${line}\n`) : undefined,
         });
         process.stdout.write(opts?.json ? `${JSON.stringify(result.summary, null, 2)}\n` : `${result.humanSummary}\n`);
         if (result.summary.status === "failed" || result.summary.status === "partial") {

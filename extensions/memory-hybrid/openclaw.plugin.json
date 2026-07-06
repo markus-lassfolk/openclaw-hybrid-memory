@@ -1,7 +1,7 @@
 {
   "id": "openclaw-hybrid-memory",
   "kind": "memory",
-  "version": "2026.7.62",
+  "version": "2026.7.63",
   "contracts": {
     "tools": [
       "active_task_checkpoint",
@@ -422,6 +422,11 @@
     "maintenance.failureReporting.enabled": {
       "label": "Maintenance failure reporting",
       "help": "Emit best-effort grouped GlitchTip events for maintenance failures and degraded semantic outcomes (default: enabled; set false for local/dev opt-out)"
+    },
+    "maintenance.privacyRedaction.enabled": {
+      "label": "Redact PII in distilled facts",
+      "advanced": true,
+      "help": "Replace emails/home-paths/private-IPs with placeholders in facts extracted by distill/extract-directives/extract-reinforcement (default: disabled — this is a personal-memory system, and contacts/IPs are usually what you want remembered; secrets already go through the credential vault). Enable only if you want that scrub applied."
     },
     "wal.enabled": {
       "label": "Write-Ahead Log",

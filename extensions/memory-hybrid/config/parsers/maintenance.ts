@@ -5,6 +5,7 @@ import type {
   HealthConfig,
   MaintenanceFailureReportingConfig,
   MaintenanceConfig,
+  MaintenancePrivacyRedactionConfig,
   MonthlyReviewConfig,
   NightlyCycleConfig,
   ProvenanceConfig,
@@ -170,6 +171,16 @@ function parseMaintenanceFailureReportingConfig(cfg: Record<string, unknown>): M
   };
 }
 
+function parseMaintenancePrivacyRedactionConfig(cfg: Record<string, unknown>): MaintenancePrivacyRedactionConfig {
+  const maintenanceRaw = cfg.maintenance as Record<string, unknown> | undefined;
+  const raw = maintenanceRaw?.privacyRedaction as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled === true,
+    exemptCategories: parseStringList(raw?.exemptCategories) ?? ["entity"],
+    exemptKeys: parseStringList(raw?.exemptKeys) ?? ["email", "phone", "mobile"],
+  };
+}
+
 function parseStepGuards(raw: unknown): Record<string, number> | undefined {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
   const out: Record<string, number> = {};
@@ -257,6 +268,7 @@ export function parseMaintenanceConfig(cfg: Record<string, unknown>): Maintenanc
     monthlyReview,
     cronReliability: parseCronReliabilityConfig(cfg),
     failureReporting: parseMaintenanceFailureReportingConfig(cfg),
+    privacyRedaction: parseMaintenancePrivacyRedactionConfig(cfg),
     council: parseCouncilConfig(cfg),
     orchestrator: parseMaintenanceOrchestratorConfig(cfg),
   };

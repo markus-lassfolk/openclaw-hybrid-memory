@@ -281,6 +281,11 @@ Error: LanceDB commit conflict detected
             provenance: "none" as const,
             sessionKeyPrefix: "council-review",
           },
+          privacyRedaction: {
+            enabled: false,
+            exemptCategories: ["entity"],
+            exemptKeys: ["email", "phone", "mobile"],
+          },
         },
       },
       versionInfo: { pluginVersion: "1.0.0-test" },

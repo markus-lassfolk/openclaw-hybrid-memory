@@ -930,6 +930,29 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.maintenance.failureReporting.enabled).toBe(false);
   });
 
+  it("maintenance.privacyRedaction defaults to disabled with entity/contact exemptions (#2055)", () => {
+    const result = hybridConfigSchema.parse(validBase);
+    expect(result.maintenance.privacyRedaction.enabled).toBe(false);
+    expect(result.maintenance.privacyRedaction.exemptCategories).toEqual(["entity"]);
+    expect(result.maintenance.privacyRedaction.exemptKeys).toEqual(["email", "phone", "mobile"]);
+  });
+
+  it("allows maintenance.privacyRedaction to be enabled with custom exemptions", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      maintenance: {
+        privacyRedaction: {
+          enabled: true,
+          exemptCategories: ["entity", "preference"],
+          exemptKeys: ["email"],
+        },
+      },
+    });
+    expect(result.maintenance.privacyRedaction.enabled).toBe(true);
+    expect(result.maintenance.privacyRedaction.exemptCategories).toEqual(["entity", "preference"]);
+    expect(result.maintenance.privacyRedaction.exemptKeys).toEqual(["email"]);
+  });
+
   it("parses custom categories", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,

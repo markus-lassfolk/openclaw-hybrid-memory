@@ -427,6 +427,9 @@ interface GitHubIssue {
 
 const execFileAsync = promisify(execFile);
 
+/** Progress callback: reports a short human-readable label immediately before a slow step starts. */
+export type SensorSweepProgress = (label: string) => void;
+
 async function tryExecFile(file: string, args: string[]): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync(file, args, { encoding: "utf-8", timeout: 15_000 });
@@ -450,12 +453,14 @@ export async function sweepGitHub(
   bus: EventBus,
   cfg: GitHubSensorConfig,
   cooldownHours: number,
+  onProgress?: SensorSweepProgress,
 ): Promise<SensorSweepResult> {
   const result: SensorSweepResult = { sensor: "github", eventsWritten: 0, eventsSkipped: 0 };
   try {
     const repo = cfg.repo ?? "";
 
     // Check if gh CLI is available
+    onProgress?.("github: checking gh CLI availability");
     const ghCheck = await tryExecFile("gh", ["--version"]);
     if (!ghCheck) {
       result.error = "gh CLI not available";
@@ -465,6 +470,7 @@ export async function sweepGitHub(
     const repoArgs = cfg.repo ? ["--repo", cfg.repo] : [];
 
     // Open PRs
+    onProgress?.("github: listing open PRs");
     const prOutput = await tryExecFile("gh", [
       "pr",
       "list",
@@ -481,6 +487,7 @@ export async function sweepGitHub(
     // Review requests (PRs where we are requested reviewer)
     let reviewRequests: GitHubPR[] = [];
     if (cfg.includeReviewRequests !== false) {
+      onProgress?.("github: listing review-requested PRs");
       const rrOutput = await tryExecFile("gh", [
         "pr",
         "list",
@@ -499,7 +506,9 @@ export async function sweepGitHub(
 
     // CI failures on open PRs
     const ciFailures: Array<{ pr: number; title: string; url: string }> = [];
-    for (const pr of openPrs.slice(0, 5)) {
+    const prsToCheck = openPrs.slice(0, 5);
+    for (const [index, pr] of prsToCheck.entries()) {
+      onProgress?.(`github: pr checks (${index + 1}/${prsToCheck.length})`);
       const ciOutput = await tryExecFile("gh", [
         "pr",
         "checks",
@@ -523,6 +532,7 @@ export async function sweepGitHub(
     // Stale issues
     const staleIssueDays = cfg.staleIssueDays ?? 7;
     const staleCutoff = new Date(Date.now() - staleIssueDays * 24 * 3600 * 1000).toISOString();
+    onProgress?.("github: listing open issues");
     const issueOutput = await tryExecFile("gh", [
       "issue",
       "list",
@@ -591,6 +601,7 @@ async function sweepHomeAssistantAnomaly(
   cfg: HomeAssistantAnomalySensorConfig,
   ha: HomeAssistantSensorConfig,
   cooldownHours: number,
+  onProgress?: SensorSweepProgress,
 ): Promise<SensorSweepResult> {
   const result: SensorSweepResult = { sensor: "ha-anomaly", eventsWritten: 0, eventsSkipped: 0 };
   try {
@@ -599,6 +610,7 @@ async function sweepHomeAssistantAnomaly(
 
     const states: Record<string, { state: string; last_updated: string }> = {};
     // Fetch only the specific watched entities by ID to avoid downloading all HA states.
+    onProgress?.(`ha-anomaly: fetching ${watchEntities.length} watched entities`);
     await Promise.all(
       watchEntities.map(async (entityId) => {
         const entity = await fetchHaEntityById(ha, entityId);
@@ -715,6 +727,7 @@ async function sweepWeather(
   bus: EventBus,
   cfg: WeatherSensorConfig,
   cooldownHours: number,
+  onProgress?: SensorSweepProgress,
 ): Promise<SensorSweepResult> {
   const result: SensorSweepResult = { sensor: "weather", eventsWritten: 0, eventsSkipped: 0 };
   try {
@@ -726,6 +739,7 @@ async function sweepWeather(
     const timeout = setTimeout(() => controller.abort(), 10_000);
     let weatherData: Record<string, unknown> = {};
     try {
+      onProgress?.("weather: fetching");
       const res = await fetch(url, { signal: controller.signal });
       if (res.ok) {
         const json = (await res.json()) as Record<string, unknown>;
@@ -849,6 +863,13 @@ interface SweepAllOpts {
   sources?: string[];
   dryRun?: boolean;
   resolvedSqlitePath?: string;
+  /**
+   * Called with a short label immediately before each sensor (and, for multi-step sensors
+   * like GitHub, before each individual `gh`/network call) starts. Lets a verbose CLI caller
+   * emit progress so a cron log doesn't look hung during slow sequential `gh` CLI calls or
+   * network-bound sensors. No-op if omitted; never affects sweep behavior.
+   */
+  onProgress?: SensorSweepProgress;
 }
 
 export async function sweepAll(
@@ -890,6 +911,7 @@ export async function sweepAll(
       ((tier === 2 || tier === "all") && shouldRun("yarbo") && cfg.yarbo?.enabled);
     if (needsHaStates) {
       try {
+        opts.onProgress?.("home-assistant: fetching all states");
         cachedHaStates = await fetchAllHaStates(ha);
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -901,10 +923,13 @@ export async function sweepAll(
     }
   }
 
+  const onProgress = opts.onProgress;
+
   // Tier 1
   if (tier === 1 || tier === "all") {
     if (shouldRun("garmin") && cfg.garmin?.enabled && ha) {
       if (!opts.dryRun) {
+        onProgress?.("garmin");
         results.push(await sweepGarmin(bus, cfg.garmin, ha, cooldown, cachedHaStates));
       } else {
         results.push({ sensor: "garmin", eventsWritten: 0, eventsSkipped: 0 });
@@ -913,6 +938,7 @@ export async function sweepAll(
 
     if (shouldRun("session-history") && cfg.sessionHistory?.enabled) {
       if (!opts.dryRun) {
+        onProgress?.("session-history");
         results.push(await sweepSessionHistory(bus, cfg.sessionHistory, cooldown));
       } else {
         results.push({ sensor: "session-history", eventsWritten: 0, eventsSkipped: 0 });
@@ -921,6 +947,7 @@ export async function sweepAll(
 
     if (shouldRun("memory-patterns") && cfg.memoryPatterns?.enabled) {
       if (!opts.dryRun) {
+        onProgress?.("memory-patterns");
         results.push(await sweepMemoryPatterns(bus, cfg.memoryPatterns, factsDb, cooldown));
       } else {
         results.push({ sensor: "memory-patterns", eventsWritten: 0, eventsSkipped: 0 });
@@ -929,7 +956,8 @@ export async function sweepAll(
 
     if (shouldRun("github") && cfg.github?.enabled) {
       if (!opts.dryRun) {
-        results.push(await sweepGitHub(bus, cfg.github, cooldown));
+        onProgress?.("github");
+        results.push(await sweepGitHub(bus, cfg.github, cooldown, onProgress));
       } else {
         results.push({ sensor: "github", eventsWritten: 0, eventsSkipped: 0 });
       }
@@ -940,7 +968,8 @@ export async function sweepAll(
   if (tier === 2 || tier === "all") {
     if (shouldRun("ha-anomaly") && cfg.homeAssistantAnomaly?.enabled && ha) {
       if (!opts.dryRun) {
-        results.push(await sweepHomeAssistantAnomaly(bus, cfg.homeAssistantAnomaly, ha, cooldown));
+        onProgress?.("ha-anomaly");
+        results.push(await sweepHomeAssistantAnomaly(bus, cfg.homeAssistantAnomaly, ha, cooldown, onProgress));
       } else {
         results.push({ sensor: "ha-anomaly", eventsWritten: 0, eventsSkipped: 0 });
       }
@@ -948,6 +977,7 @@ export async function sweepAll(
 
     if (shouldRun("system-health") && cfg.systemHealth?.enabled) {
       if (!opts.dryRun) {
+        onProgress?.("system-health");
         results.push(await sweepSystemHealth(bus, cfg.systemHealth, opts.resolvedSqlitePath ?? "", cooldown));
       } else {
         results.push({ sensor: "system-health", eventsWritten: 0, eventsSkipped: 0 });
@@ -956,7 +986,8 @@ export async function sweepAll(
 
     if (shouldRun("weather") && cfg.weather?.enabled) {
       if (!opts.dryRun) {
-        results.push(await sweepWeather(bus, cfg.weather, cooldown));
+        onProgress?.("weather");
+        results.push(await sweepWeather(bus, cfg.weather, cooldown, onProgress));
       } else {
         results.push({ sensor: "weather", eventsWritten: 0, eventsSkipped: 0 });
       }
@@ -964,6 +995,7 @@ export async function sweepAll(
 
     if (shouldRun("yarbo") && cfg.yarbo?.enabled && ha) {
       if (!opts.dryRun) {
+        onProgress?.("yarbo");
         results.push(await sweepYarbo(bus, cfg.yarbo, ha, cooldown, cachedHaStates));
       } else {
         results.push({ sensor: "yarbo", eventsWritten: 0, eventsSkipped: 0 });

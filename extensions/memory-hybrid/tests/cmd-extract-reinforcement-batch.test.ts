@@ -147,6 +147,67 @@ describe("extract-reinforcement batching", () => {
   });
 });
 
+describe("extract-reinforcement batch heartbeat (cron silence audit)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("logs a heartbeat start/still-running/complete around a slow single-batch LLM call when verbose", async () => {
+    vi.useFakeTimers();
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    });
+
+    let resolveCreate: ((value: unknown) => void) | undefined;
+    const create = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    const ctx = makeCtx({ chat: { completions: { create } } });
+
+    const runPromise = runExtractReinforcementForCli(ctx, {
+      workspace,
+      full: true,
+      force: true,
+      verbose: true,
+    });
+
+    // Drain microtasks so execution reaches the (still-pending) LLM call inside the batch loop.
+    for (let i = 0; i < 25; i++) {
+      await Promise.resolve();
+    }
+    expect(logs.some((line) => line.includes("memory-hybrid: extract-reinforcement — start"))).toBe(true);
+    expect(create).toHaveBeenCalledTimes(1);
+
+    // Simulate the batch's LLM call blocking for a full heartbeat interval (default 60s) without
+    // resolving — this is exactly the silent-hang scenario the audit flagged.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(
+      logs.some((line) => line.includes("memory-hybrid: extract-reinforcement — still running after 60s")),
+    ).toBe(true);
+
+    resolveCreate?.({
+      choices: [
+        {
+          message: {
+            content:
+              '[{"remediationType":"NO_ACTION","category":"technical","severity":"low","remediationContent":"ok","incidentIndex":0}]',
+          },
+        },
+      ],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    await runPromise;
+
+    expect(logs.some((line) => line.includes("memory-hybrid: extract-reinforcement — complete in"))).toBe(true);
+  });
+});
+
 describe("readReinforcementBatchState", () => {
   it("preserves all seven diagnostic counters on resume", () => {
     const statePath = join(tmpdir(), `reinf-state-${Date.now()}.json`);

@@ -433,7 +433,7 @@ const MAINTENANCE_CRON_JOBS: Array<
     channel: "system",
     message: buildHybridMemCronTaskMessage("weekly-vectordb-optimize-sunday", {
       preamble: "Weekly LanceDB optimize (Sunday). Report compacted fragments and bytes freed.",
-      steps: [{ name: "vectordb-optimize", cmd: "openclaw hybrid-mem vectordb-optimize --older-than-days 7" }],
+      steps: [{ name: "vectordb-optimize", cmd: "openclaw hybrid-mem vectordb-optimize --older-than-days 7 --verbose" }],
     }),
     isolated: true,
     modelTier: "nano",
@@ -547,9 +547,9 @@ const MAINTENANCE_CRON_JOBS: Array<
     message: buildHybridMemCronTaskMessage("weekly-deep-maintenance", {
       preamble: "Weekly deep maintenance. Report counts for each step in your reply.",
       steps: [
-        { name: "compact", cmd: "openclaw hybrid-mem compact" },
-        { name: "vectordb-optimize", cmd: "openclaw hybrid-mem vectordb-optimize" },
-        { name: "scope-promote", cmd: "openclaw hybrid-mem scope promote" },
+        { name: "compact", cmd: "openclaw hybrid-mem compact --verbose" },
+        { name: "vectordb-optimize", cmd: "openclaw hybrid-mem vectordb-optimize --verbose" },
+        { name: "scope-promote", cmd: "openclaw hybrid-mem scope promote --verbose" },
       ],
     }),
     isolated: true,
@@ -585,10 +585,10 @@ const MAINTENANCE_CRON_JOBS: Array<
       preamble:
         "Monthly consolidation. If graph.enabled is false, replace enrich-entities with a no-op hm_step that logs graph disabled and exits 0.",
       steps: [
-        { name: "consolidate", cmd: "openclaw hybrid-mem consolidate --threshold 0.92" },
-        { name: "build-languages", cmd: "openclaw hybrid-mem build-languages" },
-        { name: "backfill-decay", cmd: "openclaw hybrid-mem backfill-decay" },
-        { name: "reembed-vectorless", cmd: "openclaw hybrid-mem reembed-vectorless --limit 1000 --apply" },
+        { name: "consolidate", cmd: "openclaw hybrid-mem consolidate --threshold 0.92 --verbose" },
+        { name: "build-languages", cmd: "openclaw hybrid-mem build-languages --verbose" },
+        { name: "backfill-decay", cmd: "openclaw hybrid-mem backfill-decay --verbose" },
+        { name: "reembed-vectorless", cmd: "openclaw hybrid-mem reembed-vectorless --limit 1000 --apply --verbose" },
         {
           name: "enrich-entities",
           cmd: 'openclaw hybrid-mem enrich-entities --limit "${HYBRID_MEM_CLI_JOB_ENRICH_LIMIT:-25}" --verbose',
@@ -631,8 +631,8 @@ const MAINTENANCE_CRON_JOBS: Array<
       preamble:
         "Sensor sweep (no LLM). If sensorSweep.enabled is false, skip and do not update the guard file. Report events written and skipped per sensor.",
       steps: [
-        { name: "sensor-sweep-tier-1", cmd: "openclaw hybrid-mem sensor-sweep --tier 1" },
-        { name: "sensor-sweep-tier-2", cmd: "openclaw hybrid-mem sensor-sweep --tier 2" },
+        { name: "sensor-sweep-tier-1", cmd: "openclaw hybrid-mem sensor-sweep --tier 1 --verbose" },
+        { name: "sensor-sweep-tier-2", cmd: "openclaw hybrid-mem sensor-sweep --tier 2 --verbose" },
       ],
     }),
     isolated: true,
@@ -656,7 +656,7 @@ const MAINTENANCE_CRON_JOBS: Array<
       steps: [
         {
           name: "lifecycle-sync-github",
-          cmd: "openclaw hybrid-mem lifecycle sync github",
+          cmd: "openclaw hybrid-mem lifecycle sync github --verbose",
         },
       ],
     }),

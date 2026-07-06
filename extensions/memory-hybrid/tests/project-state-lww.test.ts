@@ -819,3 +819,93 @@ describe("resolve-contradictions auto mode", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// resolve-contradictions --auto progress heartbeat (no live output during the autonomous
+// resolution loop was an audit finding — --verbose was only used post-hoc to print resolved /
+// ambiguous lists after the run finished, never to gate any live output).
+// ---------------------------------------------------------------------------
+describe("resolveContradictionsAuto: onProgress heartbeat callback", () => {
+  function makeConflictingPair(index: number) {
+    const older = db.store({
+      text: `Deploy strategy for service-${index} is blue-green`,
+      category: "fact",
+      importance: 0.8,
+      entity: `service-${index}`,
+      key: "deploy-strategy",
+      value: "blue-green",
+      source: "conversation",
+      confidence: 1,
+    });
+    const newer = db.store({
+      text: `Deploy strategy for service-${index} is canary`,
+      category: "fact",
+      importance: 0.8,
+      entity: `service-${index}`,
+      key: "deploy-strategy",
+      value: "canary",
+      source: "conversation",
+      confidence: 1,
+    });
+    db.recordContradiction(newer.id, older.id);
+    return { older, newer };
+  }
+
+  it("invokes onProgress once per contradiction with monotonically increasing counts", async () => {
+    const pairCount = 4;
+    for (let i = 0; i < pairCount; i++) makeConflictingPair(i);
+
+    const progressTicks: Array<{ processed: number; total: number; autoResolved: number; ambiguous: number }> = [];
+    const result = await db.resolveContradictionsAuto({
+      dryRun: true,
+      llm: true,
+      // Simulate slow per-item LLM latency — a real adjudicate() call over the network — so the
+      // audit's complaint ("zero output regardless of ... LLM latency") is directly exercised.
+      adjudicate: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        return { decision: "keep_new", confidence: 0.99, reason: "Canary is the current standard." };
+      },
+      onProgress: (p) => {
+        progressTicks.push(p);
+      },
+    });
+
+    // Fired exactly once per contradiction processed, spanning the whole run.
+    expect(progressTicks).toHaveLength(pairCount);
+    expect(progressTicks.map((p) => p.processed)).toEqual([1, 2, 3, 4]);
+    for (const tick of progressTicks) {
+      expect(tick.total).toBe(pairCount);
+    }
+    // Running auto-resolved/ambiguous counts climb monotonically and land on the final totals.
+    const last = progressTicks[progressTicks.length - 1];
+    expect(last?.autoResolved).toBe(result.deterministic + result.llm + result.merged);
+    expect(last?.ambiguous).toBe(result.manualReview);
+    for (let i = 1; i < progressTicks.length; i++) {
+      expect(progressTicks[i].autoResolved).toBeGreaterThanOrEqual(progressTicks[i - 1].autoResolved);
+      expect(progressTicks[i].ambiguous).toBeGreaterThanOrEqual(progressTicks[i - 1].ambiguous);
+    }
+  });
+
+  it("still reports progress for manual-review-only contradictions (no --llm)", async () => {
+    const pairCount = 3;
+    for (let i = 0; i < pairCount; i++) makeConflictingPair(i);
+
+    const progressTicks: Array<{ processed: number; total: number; autoResolved: number; ambiguous: number }> = [];
+    const result = await db.resolveContradictionsAuto({
+      dryRun: true,
+      onProgress: (p) => progressTicks.push(p),
+    });
+
+    expect(progressTicks).toHaveLength(pairCount);
+    expect(progressTicks[progressTicks.length - 1]).toMatchObject({
+      processed: pairCount,
+      total: pairCount,
+      ambiguous: result.manualReview,
+    });
+  });
+
+  it("does not require onProgress to be provided", async () => {
+    makeConflictingPair(0);
+    await expect(db.resolveContradictionsAuto({ dryRun: true })).resolves.toMatchObject({ total: 1 });
+  });
+});

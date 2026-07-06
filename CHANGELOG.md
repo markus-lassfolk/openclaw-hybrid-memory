@@ -23,6 +23,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.63] - 2026-07-06
+
+### Fixed
+
+- **Maintenance PII redaction was unconditional and corrupted stored facts (#2055):** `distill`, `extract-directives`, and `extract-reinforcement` ran every extracted fact through `redactMaintenancePrivateText()` before storing it, replacing emails/home-paths/private-IPs with literal placeholder tokens (`[redacted-email]`, etc.) — with no config to disable it. For a personal-memory system this was actively counterproductive: the placeholder is stored as the fact's permanent `text`/`value`, which is useless on recall and creates false "ambiguous" contradiction pairs against the same contact's real address stored via `memory_store` (which was never redacted, nor is CONTACTS.md sync — so the corruption was also inconsistent). Actual secrets already go through the separate, deliberately opt-in credential vault; this regex scrub was never what protected those.
+
+  Added `maintenance.privacyRedaction` config (`enabled`, `exemptCategories`, `exemptKeys`) — **default `enabled: false`** — and a new `maybeRedactMaintenanceFactText()` helper that the three call sites now use instead of the unconditional function. Redaction can still be turned on for deployments that want it, with `category`/`key` exemptions (defaults: `entity` category, `email`/`phone`/`mobile` keys) so contact facts stay legible even when enabled.
+- **`resolve-contradictions` degraded-backlog triage hint suggested a nonexistent `--limit` flag:** `contradiction-progress-summary.ts`'s `backlog_alert` hint read `resolve-contradictions --details --limit 20`, but the command has no `--limit` option (only `--details`, which already implies listing every ambiguous row). Removed the bogus flag from the hint.
+- **Maintenance commands too often looked hung when they weren't:** an audit of all ~25 maintenance CLI commands (cron steps run inside `cron-job-bash-harness.ts`'s tee'd-log bash wrapper) found most had no progress output during long LLM/network calls, so an operator watching the log had no way to tell a slow-but-working run from a stuck one. `distill`, `reflect-meta` (both modes), `enrich-entities`, `dream-cycle`, `record-storage-sample`, and `skills rescan` already had adequate coverage; the rest are now fixed, using the existing `runMaintenanceHeartbeat` house pattern (start/60s-tick/complete-or-failed lines, verbose-gated) from `cli/commands/manage/maintenance-heartbeat.ts`:
+  - `build-languages`, `backfill-decay`, `reembed-vectorless` already had a working heartbeat that cron never enabled (missing `--verbose`) — now passed in `cron-jobs.ts`. `reembed-vectorless` matters most here: up to 1000 embedding-API calls were running fully silent.
+  - `resolve-contradictions --auto`, `reflect`, `reflect-rules`, `generate-proposals` had no heartbeat mechanism at all despite blocking LLM calls; `self-correction-run` and `extract-reinforcement` had only a per-batch start marker with no ticker during a single slow batch. All now wrap their blocking call(s) with a heartbeat, with `onProgress` threaded through where useful (contradiction counts, cluster progress, batch index).
+  - `extract-daily` gained a heartbeat, and its diagnostics (previously only sent through a `sink` that the default orchestrator cron path replaces with a no-op) now also reach `logger`, so warnings survive under the consolidated `maintenance-nightly` job.
+  - `compact`, `vectordb-optimize`, `scope promote`, `consolidate`, `sensor-sweep` had no `--verbose` option at all — added, plus a heartbeat. `consolidate` was the sharpest case (one LLM call per cluster, zero flag to enable anything); `sensor-sweep` was mischaracterized as fast ("no LLM") but Tier 1 makes up to ~7 sequential `gh` CLI calls and could run 100+s silently.
+  - `lifecycle sync github` — the highest-risk finding — had an unbounded per-row/per-repo `gh api` loop with its one internal log line silently dropped (the CLI wrapper never passed a real logger). Now passes a real logger, reports scope up front, and ticks progress via `onProgress`.
+  - `digest autopilot-cron` already had a rich internal step ledger, but it only wrote to a private artifact file the operator never watches. Its `logLine` calls now also reach an optional `onProgress` sink; the CLI's `--verbose` routes that to stdout (or stderr when `--json` is set too, so the JSON summary on stdout stays parseable).
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.7.63**.
+
+---
+
 ## [2026.7.62] - 2026-07-06
 
 ### Fixed

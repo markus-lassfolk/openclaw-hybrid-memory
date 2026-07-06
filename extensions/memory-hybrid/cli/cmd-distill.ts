@@ -59,7 +59,7 @@ import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/consta
 import { formatDateUtc, formatTimestampUtcFromMs, nowIso } from "../utils/dates.js";
 import { getEnv } from "../utils/env-manager.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
-import { redactMaintenancePrivateText } from "../utils/maintenance-privacy.js";
+import { maybeRedactMaintenanceFactText } from "../utils/maintenance-privacy.js";
 import {
   capTimeoutByMaintenanceRunDeadline,
   getMaintenanceRunAbortSignal,
@@ -967,8 +967,11 @@ export async function runDistillForCli(
       const category = (isValidCategory(fact.category) ? fact.category : "other") as MemoryCategory;
       const entity = fact.entity ?? null;
       const key = fact.key ?? null;
-      const redactedText = redactMaintenancePrivateText(fact.text);
-      const redactedValue = fact.value ? redactMaintenancePrivateText(fact.value) : redactedText.slice(0, 200);
+      const redactionCtx = { category, key };
+      const redactedText = maybeRedactMaintenanceFactText(fact.text, cfg.maintenance?.privacyRedaction, redactionCtx);
+      const redactedValue = fact.value
+        ? maybeRedactMaintenanceFactText(fact.value, cfg.maintenance?.privacyRedaction, redactionCtx)
+        : redactedText.slice(0, 200);
 
       if (
         factsDb.hasDuplicate(redactedText, "distillation", {

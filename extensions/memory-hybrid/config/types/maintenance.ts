@@ -128,6 +128,21 @@ export type MaintenanceFailureReportingConfig = {
   enabled: boolean;
 };
 
+/**
+ * Redaction of emails/home-paths/private-IPs from maintenance-extracted fact text before storage
+ * (distill, extract-directives, extract-reinforcement). Default: disabled — see #2055. This is a
+ * personal-memory system; contacts/IPs are usually what an operator wants remembered, and actual
+ * secrets already go through the separate credential vault rather than plain fact text.
+ */
+export type MaintenancePrivacyRedactionConfig = {
+  /** Enable redaction at the maintenance-pipeline fact-store boundary (default: false). */
+  enabled: boolean;
+  /** Fact categories exempt from redaction even when enabled (default: ["entity"]). */
+  exemptCategories: string[];
+  /** Fact `key` values exempt from redaction even when enabled (default: ["email", "phone", "mobile"]). */
+  exemptKeys: string[];
+};
+
 /** Orchestrator tuning for hybrid maintenance consolidation. */
 export type MaintenanceOrchestratorConfig = {
   /** Per-step guard overrides (step name → min interval ms). */
@@ -172,6 +187,8 @@ export type MaintenanceConfig = {
   cronReliability: CronReliabilityConfig;
   /** Grouped GlitchTip/Sentry-compatible reporting for maintenance failures (Issue #1836). */
   failureReporting: MaintenanceFailureReportingConfig;
+  /** Redaction of emails/paths/private-IPs from maintenance-extracted fact text (Issue #2055). */
+  privacyRedaction: MaintenancePrivacyRedactionConfig;
   /** Council review provenance configuration (Issue #280). */
   council: CouncilConfig;
   /** Hybrid maintenance orchestrator settings. */

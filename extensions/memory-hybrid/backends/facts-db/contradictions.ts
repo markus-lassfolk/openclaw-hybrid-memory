@@ -910,6 +910,13 @@ export interface LlmContradictionDecision {
   mergedFactText?: string | null;
 }
 
+export interface ResolveContradictionsAutoProgress {
+  processed: number;
+  total: number;
+  autoResolved: number;
+  ambiguous: number;
+}
+
 export interface ResolveContradictionsAutoOptions {
   dryRun?: boolean;
   targetRate?: number;
@@ -919,6 +926,8 @@ export interface ResolveContradictionsAutoOptions {
   actor?: string;
   toolVersion?: string;
   model?: string | null;
+  /** Called after each contradiction is processed, so callers can drive a progress heartbeat. */
+  onProgress?: (progress: ResolveContradictionsAutoProgress) => void;
 }
 
 export interface ResolveContradictionsAutoResult {
@@ -1143,6 +1152,7 @@ export async function resolveContradictionsAutonomously(
     actor = "resolve-contradictions",
     toolVersion,
     model,
+    onProgress,
   } = options;
 
   const unresolved = getContradictions(db);
@@ -1152,103 +1162,117 @@ export async function resolveContradictionsAutonomously(
   let llmResolved = 0;
   const merged = 0;
   let decisionsApplied = 0;
+  let processed = 0;
+  const emitProgress = () => {
+    onProgress?.({
+      processed,
+      total: unresolved.length,
+      autoResolved: deterministic + llmResolved + merged,
+      ambiguous: reviewItems.length,
+    });
+  };
 
   for (const contradiction of unresolved) {
-    const newFact = getById(contradiction.factIdNew);
-    const oldFact = getById(contradiction.factIdOld);
-    if (!newFact || !oldFact) continue;
-    total++;
+    try {
+      processed++;
+      const newFact = getById(contradiction.factIdNew);
+      const oldFact = getById(contradiction.factIdOld);
+      if (!newFact || !oldFact) continue;
+      total++;
 
-    const reviewItem = buildContradictionReviewItem(contradiction, newFact, oldFact);
-    const lww = evaluateLwwEligibility(newFact, oldFact, contradiction.oldFactOriginalConfidence);
+      const reviewItem = buildContradictionReviewItem(contradiction, newFact, oldFact);
+      const lww = evaluateLwwEligibility(newFact, oldFact, contradiction.oldFactOriginalConfidence);
 
-    if (reviewItem.possibleOverloadedEntity) {
-      // Hard-block: never let LLM adjudication override a possible-entity-reuse signal, matching
-      // the deterministic paths (isAutoResolvableContradiction, the project-state LWW write path
-      // in facts-db-layer3.ts) which treat this as unconditionally unsafe to auto-resolve.
-      reviewItem.suggestedReason = "Possible entity reuse detected; leaving for manual review.";
-      reviewItems.push(reviewItem);
-      continue;
-    }
-    if (lww.eligible && lww.qualifies && !isFactVerified(db, contradiction.factIdOld)) {
-      reviewItem.suggestedDecision = "keep_new";
-      reviewItem.suggestedStrategy = "project-state-lww";
-      reviewItem.suggestedConfidence = 1;
-      reviewItem.suggestedReason = "Trusted newer project-state fact supersedes the stale value.";
-      deterministic++;
-      if (!dryRun) {
-        const applied = persistContradictionDecision(db, getById, supersede, {
-          contradictionId: contradiction.id,
-          keptFactId: contradiction.factIdNew,
-          supersededFactId: contradiction.factIdOld,
-          resolution: "superseded",
-          strategy: reviewItem.suggestedStrategy,
-          confidence: reviewItem.suggestedConfidence,
-          reason: reviewItem.suggestedReason,
-          actor,
-          toolVersion,
-          mode: "auto",
-          model: null,
-        });
-        if (applied) decisionsApplied++;
+      if (reviewItem.possibleOverloadedEntity) {
+        // Hard-block: never let LLM adjudication override a possible-entity-reuse signal, matching
+        // the deterministic paths (isAutoResolvableContradiction, the project-state LWW write path
+        // in facts-db-layer3.ts) which treat this as unconditionally unsafe to auto-resolve.
+        reviewItem.suggestedReason = "Possible entity reuse detected; leaving for manual review.";
+        reviewItems.push(reviewItem);
+        continue;
       }
-      continue;
-    }
-    if (isFactVerified(db, contradiction.factIdOld)) {
-      // Hard-block: verified facts must never be superseded by LLM adjudication alone, matching
-      // the write-time LWW guard (facts-db-layer3.ts) and isAutoResolvableContradiction, both of
-      // which hard-block on isFactVerified(old).
-      reviewItem.suggestedReason = "Older fact is verified; leaving for manual review.";
-      reviewItems.push(reviewItem);
-      continue;
-    }
+      if (lww.eligible && lww.qualifies && !isFactVerified(db, contradiction.factIdOld)) {
+        reviewItem.suggestedDecision = "keep_new";
+        reviewItem.suggestedStrategy = "project-state-lww";
+        reviewItem.suggestedConfidence = 1;
+        reviewItem.suggestedReason = "Trusted newer project-state fact supersedes the stale value.";
+        deterministic++;
+        if (!dryRun) {
+          const applied = persistContradictionDecision(db, getById, supersede, {
+            contradictionId: contradiction.id,
+            keptFactId: contradiction.factIdNew,
+            supersededFactId: contradiction.factIdOld,
+            resolution: "superseded",
+            strategy: reviewItem.suggestedStrategy,
+            confidence: reviewItem.suggestedConfidence,
+            reason: reviewItem.suggestedReason,
+            actor,
+            toolVersion,
+            mode: "auto",
+            model: null,
+          });
+          if (applied) decisionsApplied++;
+        }
+        continue;
+      }
+      if (isFactVerified(db, contradiction.factIdOld)) {
+        // Hard-block: verified facts must never be superseded by LLM adjudication alone, matching
+        // the write-time LWW guard (facts-db-layer3.ts) and isAutoResolvableContradiction, both of
+        // which hard-block on isFactVerified(old).
+        reviewItem.suggestedReason = "Older fact is verified; leaving for manual review.";
+        reviewItems.push(reviewItem);
+        continue;
+      }
 
-    if (llm && adjudicate) {
-      try {
-        const llmDecision = await adjudicate(reviewItem);
-        const confidence = clampConfidence(llmDecision.confidence);
-        if (
-          (llmDecision.decision === "keep_new" || llmDecision.decision === "keep_old") &&
-          confidence >= llmConfidenceThreshold
-        ) {
-          reviewItem.suggestedDecision = llmDecision.decision;
-          reviewItem.suggestedStrategy = "llm-adjudication";
-          reviewItem.suggestedConfidence = confidence;
-          reviewItem.suggestedReason = llmDecision.reason?.trim() || "LLM adjudication approved the resolution.";
-          llmResolved++;
-          if (!dryRun) {
-            const keepNew = llmDecision.decision === "keep_new";
-            const applied = persistContradictionDecision(db, getById, supersede, {
-              contradictionId: contradiction.id,
-              keptFactId: keepNew ? contradiction.factIdNew : contradiction.factIdOld,
-              supersededFactId: keepNew ? contradiction.factIdOld : contradiction.factIdNew,
-              resolution: keepNew ? "superseded" : "kept",
-              strategy: reviewItem.suggestedStrategy,
-              confidence,
-              reason: reviewItem.suggestedReason,
-              actor,
-              toolVersion,
-              mode: "auto",
-              model: model ?? null,
-            });
-            if (applied) decisionsApplied++;
+      if (llm && adjudicate) {
+        try {
+          const llmDecision = await adjudicate(reviewItem);
+          const confidence = clampConfidence(llmDecision.confidence);
+          if (
+            (llmDecision.decision === "keep_new" || llmDecision.decision === "keep_old") &&
+            confidence >= llmConfidenceThreshold
+          ) {
+            reviewItem.suggestedDecision = llmDecision.decision;
+            reviewItem.suggestedStrategy = "llm-adjudication";
+            reviewItem.suggestedConfidence = confidence;
+            reviewItem.suggestedReason = llmDecision.reason?.trim() || "LLM adjudication approved the resolution.";
+            llmResolved++;
+            if (!dryRun) {
+              const keepNew = llmDecision.decision === "keep_new";
+              const applied = persistContradictionDecision(db, getById, supersede, {
+                contradictionId: contradiction.id,
+                keptFactId: keepNew ? contradiction.factIdNew : contradiction.factIdOld,
+                supersededFactId: keepNew ? contradiction.factIdOld : contradiction.factIdNew,
+                resolution: keepNew ? "superseded" : "kept",
+                strategy: reviewItem.suggestedStrategy,
+                confidence,
+                reason: reviewItem.suggestedReason,
+                actor,
+                toolVersion,
+                mode: "auto",
+                model: model ?? null,
+              });
+              if (applied) decisionsApplied++;
+            }
+            continue;
           }
-          continue;
-        }
 
-        if (llmDecision.decision === "merge") {
-          reviewItem.suggestedReason =
-            llmDecision.reason?.trim() || "LLM requested merge; keep manual review for safety.";
-        } else if (confidence > 0) {
-          reviewItem.suggestedReason =
-            llmDecision.reason?.trim() || `LLM confidence ${confidence.toFixed(2)} below auto-apply threshold.`;
+          if (llmDecision.decision === "merge") {
+            reviewItem.suggestedReason =
+              llmDecision.reason?.trim() || "LLM requested merge; keep manual review for safety.";
+          } else if (confidence > 0) {
+            reviewItem.suggestedReason =
+              llmDecision.reason?.trim() || `LLM confidence ${confidence.toFixed(2)} below auto-apply threshold.`;
+          }
+        } catch (err) {
+          reviewItem.suggestedReason = `LLM adjudication failed: ${err instanceof Error ? err.message : String(err)}`;
         }
-      } catch (err) {
-        reviewItem.suggestedReason = `LLM adjudication failed: ${err instanceof Error ? err.message : String(err)}`;
       }
-    }
 
-    reviewItems.push(reviewItem);
+      reviewItems.push(reviewItem);
+    } finally {
+      emitProgress();
+    }
   }
 
   reviewItems.sort(compareReviewItems);

@@ -148,7 +148,7 @@ export function formatContradictionProgressSummaryLine(
     metrics.ambiguous >= evaluation.degradedAmbiguousThreshold
   ) {
     parts.push("backlog_alert=1");
-    parts.push("triage_cmd=openclaw hybrid-mem resolve-contradictions --details --limit 20");
+    parts.push("triage_cmd=openclaw hybrid-mem resolve-contradictions --details");
     if (evaluation.consecutiveNoProgressRuns >= evaluation.degradedConsecutiveThreshold) {
       parts.push("operator_action=manual_triage_required");
     }
