@@ -23,6 +23,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.95] - 2026-07-06
+
+### Fixed
+
+Loop iteration 31 (eleventh iteration of the third batch) of the full-codebase review loop — picks up another deferred finding from iteration 27's multi-agent sweep.
+
+- **`memory_record_episode`'s `scopeTarget` was derived independently from the declared `scope`, and ignored the caller's own explicit `sessionId`/`userId`/`agentId` params entirely.** `scope` was taken directly from the caller's tool param, but `scopeTarget` was computed as `scopeFilter?.sessionId ?? scopeFilter?.userId ?? scopeFilter?.agentId ?? null` — using only the internally-*resolved* scope filter (which, for this pair of tools, only ever reflects `currentAgentIdRef`/config, since `buildToolScopeFilter` is called with an empty `params: {}`), never the tool call's own `sessionId`/`userId`/`agentId` fields. A caller declaring `scope: "session", sessionId: "abc"` (both fields the tool's own schema explicitly supports) got a `scope_target` value unrelated to `"abc"` — in the common single-agent default config, the public-API "unscoped" sentinel (`__public_api_unscoped__`) leaked into the column instead. The episode was still recorded and the tool call succeeded, but it became permanently unfindable by any query actually scoped to that session, since `scopeFilterClausePositional` only matches `scope='session'` rows against a real session id. Fixed by deriving `scopeTarget` from whichever field actually corresponds to the declared `scope` (explicit param first, then the resolved scope filter's matching field), and excluding the sentinel from ever being stored as a real agent scope target (mirrors `scopeFieldsFromFilter`'s existing sentinel handling).
+
+Regression tests added (session/user/agent scope each get the correct scopeTarget; the sentinel never leaks), verified via `git stash` to fail without the fix and pass with it — all three failed identically on the stash-out run, confirming the bug was reachable via the caller's own explicit params, not just an edge case. tsc clean; biome clean (one own-code formatting fix applied via `biome check --write`, zero net-new elsewhere). Full background vitest suite: only the 3 known pre-existing unrelated failures.
+
+### Deferred (carried over from iteration 27; still tracked for future iterations)
+
+- `backends/issue-store.ts`'s `transition()`/`update()` lacking compare-and-swap protection (cross-process race only).
+- `backends/facts-db/housekeeping.ts`'s `countBySource()` missing a scope predicate (cross-tenant document-ingestion dedupe/count leak).
+- `register-store-tools.ts`'s merge-dedupe path storing a mismatched text/vector pair.
+- Lower-severity items: an off-by-one output-line overwrite in `tools/apitap-tools.ts`, an inverted enabled/disabled detection in an unwired ESPHome YAML converter, an entity-lookup pre-filter that doesn't fan out across vaults in `register-recall-tools.ts`.
+
 ## [2026.7.94] - 2026-07-06
 
 ### Fixed
