@@ -4,10 +4,11 @@
 import type { SQLInputValue } from "node:sqlite";
 import type { DatabaseSync } from "node:sqlite";
 
-import type { MemoryEntry } from "../../types/memory.js";
+import type { MemoryEntry, MemoryScope } from "../../types/memory.js";
 import { updateConfidence, recordContradiction } from "./contradictions.js";
 import { filterEntityStopWords } from "../../utils/entity-stopwords.js";
 import { rowToMemoryEntry } from "./row-mapper.js";
+import { episodeCandidateScopeClause } from "./scope-sql.js";
 import type { MemoryLinkType } from "./types.js";
 
 const KNOWN_ENTITIES_CACHE_TTL_MS = 30_000;
@@ -63,10 +64,21 @@ export function extractEntitiesFromText(
     .sort((a, b) => b.weight - a.weight);
 }
 
-export function findEntityAnchor(db: DatabaseSync, entity: string, excludeId?: string): MemoryEntry | null {
+export function findEntityAnchor(
+  db: DatabaseSync,
+  entity: string,
+  excludeId?: string,
+  linkScope?: { scope?: MemoryScope | null; scopeTarget?: string | null },
+): MemoryEntry | null {
   const nowSec = Math.floor(Date.now() / 1000);
   const excludeClause = excludeId ? "AND id != ?" : "";
-  const params = excludeId ? [entity, nowSec, excludeId] : [entity, nowSec];
+  const { clause: scopeClause, params: scopeParams } = episodeCandidateScopeClause({
+    scope: linkScope?.scope ?? "global",
+    scopeTarget: linkScope?.scopeTarget ?? null,
+  });
+  const params: SQLInputValue[] = excludeId
+    ? [entity, nowSec, excludeId, ...scopeParams]
+    : [entity, nowSec, ...scopeParams];
   const row = db
     .prepare(
       `SELECT * FROM facts
@@ -74,6 +86,7 @@ export function findEntityAnchor(db: DatabaseSync, entity: string, excludeId?: s
            AND superseded_at IS NULL
            AND (expires_at IS NULL OR expires_at > ?)
            ${excludeClause}
+           ${scopeClause}
          ORDER BY created_at DESC, rowid DESC
          LIMIT 1`,
     )
@@ -88,6 +101,7 @@ export function autoDetectInstanceOf(
   knownEntitiesList: string[] | undefined,
   createLink: (a: string, b: string, t: MemoryLinkType, s?: number) => string,
   getKnown: (d: DatabaseSync) => string[],
+  linkScope?: { scope?: MemoryScope | null; scopeTarget?: string | null },
 ): number {
   const patterns = [
     /\bis\s+an?\s+([a-zA-Z][a-zA-Z0-9 _-]{1,40}?)(?:\s*[,;.!?]|$)/gi,
@@ -113,7 +127,7 @@ export function autoDetectInstanceOf(
 
   for (const typeName of candidates) {
     if (!knownEntitiesSet.has(typeName)) continue;
-    const anchor = findEntityAnchor(db, typeName, newFactId);
+    const anchor = findEntityAnchor(db, typeName, newFactId, linkScope);
     if (!anchor) continue;
     const existing = db
       .prepare(
@@ -146,12 +160,13 @@ export function autoLinkEntities(
 ): { linkedCount: number; supersededIds: string[] } {
   let linkedCount = 0;
   const supersededIds: string[] = [];
+  const linkScope = { scope: (scope as MemoryScope | null) ?? null, scopeTarget: scopeTarget ?? null };
 
   const knownEntities = getKnownEntities(db);
   const mentions = extractEntitiesFromText(text, knownEntities);
 
   for (const { entity: mentionedEntity, weight } of mentions) {
-    const anchor = findEntityAnchor(db, mentionedEntity, newFactId);
+    const anchor = findEntityAnchor(db, mentionedEntity, newFactId, linkScope);
     if (!anchor) continue;
     const existing = db
       .prepare(
@@ -262,7 +277,7 @@ export function autoLinkEntities(
     }
   }
 
-  linkedCount += autoDetectInstanceOf(db, newFactId, text, knownEntities, createLink, getKnownEntities);
+  linkedCount += autoDetectInstanceOf(db, newFactId, text, knownEntities, createLink, getKnownEntities, linkScope);
 
   return { linkedCount, supersededIds };
 }

@@ -575,7 +575,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
                     .map((r) => r.entry)
                 : ctx.cfg.memoryTiering.enabled
                   ? ctx.factsDb.getHotFacts(8, scopeFilter).map((r) => r.entry)
-                  : ctx.factsDb.list(8);
+                  : ctx.factsDb.list(8, { scopeFilter });
             if (summaryFacts.length > 0) {
               summaryInner.push("Key memories retained across compaction:");
               for (const f of summaryFacts) {

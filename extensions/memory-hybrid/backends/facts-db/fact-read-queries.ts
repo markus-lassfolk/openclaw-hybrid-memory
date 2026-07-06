@@ -344,6 +344,7 @@ export function listFacts(
     key?: string;
     source?: string;
     tier?: string;
+    scopeFilter?: ScopeFilter | null;
   },
 ): MemoryEntry[] {
   const nowSec = Math.floor(Date.now() / 1000);
@@ -375,8 +376,9 @@ export function listFacts(
     parts.push("COALESCE(tier, 'warm') = ?");
     params.push(filters.tier);
   }
-  const where = parts.join(" AND ");
-  params.push(limit);
+  const { clause: scopeClause, params: scopeParams } = scopeFilterClausePositional(filters?.scopeFilter);
+  const where = parts.join(" AND ") + scopeClause;
+  params.push(...scopeParams, limit);
   const rows = db
     .prepare(`SELECT * FROM facts WHERE ${where} ORDER BY COALESCE(source_date, created_at) DESC LIMIT ?`)
     .all(...params) as Array<Record<string, unknown>>;

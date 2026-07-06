@@ -366,6 +366,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
       if (query && query.length >= 5) {
         const tierFilter = cfg.memoryTiering?.enabled ? ("warm" as const) : ("all" as const);
         const results = factsDb.search(query, Math.min(limit, 15), {
+          scopeFilter: cfg.autoRecall?.scopeFilter,
           tierFilter,
           interactiveFtsFastPath: true,
           deferAccessRefresh: true,
@@ -373,7 +374,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
         facts = results.map((r) => r.entry);
       }
       if (facts.length === 0) {
-        facts = factsDb.list(Math.min(limit, 15));
+        facts = factsDb.list(Math.min(limit, 15), { scopeFilter: cfg.autoRecall?.scopeFilter });
       }
 
       if (facts.length === 0) {
@@ -478,7 +479,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
         sessionFacts = factsDb.getCount();
         // after_compaction hook owns post-compaction injection when auto-recall is on (#957).
         if (!this.opts.cfg.autoRecall?.enabled) {
-          topFacts = factsDb.list(8);
+          topFacts = factsDb.list(8, { scopeFilter: this.opts.cfg.autoRecall?.scopeFilter });
           const block = buildContextBlock(
             topFacts,
             "post-compaction memory summary",
@@ -541,7 +542,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
 
       // Fetch top-N recent/important facts to seed the sub-agent's context
       const limit = cfg.autoRecall?.limit ?? 10;
-      let topFacts = factsDb.list(Math.min(limit, 15));
+      let topFacts = factsDb.list(Math.min(limit, 15), { scopeFilter: cfg.autoRecall?.scopeFilter });
       topFacts = filterFactsNotYetInjected(this.opts.injectedFactIdsBySession, params.childSessionKey, topFacts);
 
       if (topFacts.length === 0) {

@@ -179,6 +179,7 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
       key?: string;
       source?: string;
       tier?: string;
+      scopeFilter?: ScopeFilter | null;
     },
   ): MemoryEntry[] {
     return listFactsImpl(this.liveDb, limit, filters);

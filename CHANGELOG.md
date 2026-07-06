@@ -23,6 +23,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.76] - 2026-07-06
+
+### Fixed
+
+Loop iteration 12 of the full-codebase review loop: a cluster of scope-filter gaps in code paths that read/write facts outside `tools/` (the previously-audited surface) — `setup/register-hooks.ts`, `services/context-engine.ts`, and two `backends/facts-db/` write paths.
+
+- **`after_compaction` hook's post-compaction summary leaked cross-tenant facts** when `memoryTiering.enabled` was `false` and no recent prompt was tracked: two of the three fallback branches passed `scopeFilter` to `factsDb.search()`/`getHotFacts()`, but the third fell back to `factsDb.list(8)`, which had no scope parameter at all and returned the most recent facts across every tenant. The same unscoped `factsDb.list()` calls existed in `services/context-engine.ts`'s `assemble()` (context-injection fallback), `compact()` (post-compaction summary), and `prepareSubagentSpawn()` (parent-context seeding for new sub-agents — the most exploitable of the three, since it runs on every sub-agent spawn when `autoRecall` is disabled). Fixed by adding an optional `scopeFilter` to `FactsDB.list()`/`listFacts()` (mirroring `getHotFacts()`/`search()`) and threading the caller's scope filter through all four call sites.
+- **Quota-overflow eviction (`onOverflow: "evict-lowest-confidence"`) could supersede another tenant's fact.** When a source hit its `maxPerDay` quota, `storeFact()` selected the globally lowest-confidence active fact for that `source` as the eviction victim, with no scope check — a quota trip in one tenant's scope could soft-delete a different tenant's fact that merely shared the same `source` string. Fixed by restricting the eviction candidate query to the same scope bucket as the incoming write.
+- **Entity-based auto-linking (`memory_store`'s `autoLinkEntities`, Issue #154) created `RELATED_TO`/`INSTANCE_OF` graph edges across tenant boundaries.** The entity-mention co-occurrence block and `autoDetectInstanceOf()` both called `findEntityAnchor()` with no scope filter, unlike the sibling entity+key conflict/supersede block later in the same function, which correctly scoped its query. Any two tenants storing facts that mention the same known entity string (e.g. a common term) would get a persistent graph edge linking their otherwise-isolated facts. Fixed by threading the new fact's `scope`/`scopeTarget` through `findEntityAnchor()` (reusing the existing `episodeCandidateScopeClause()` helper) and `autoDetectInstanceOf()`.
+
+All four fixes have regression tests verified via `git stash` to fail without the fix and pass with it. tsc clean; biome checked against each file's pre-existing baseline — zero net-new lint/format issues.
+
+### Deferred (found this iteration, tracked for a future pass)
+
+Background review agents also surfaced several findings not fixed in this iteration, kept out to keep this commit reviewable:
+- `services/procedure-feedback-tool.ts` / `backends/facts-db/procedures/crud.ts`'s `procedureFeedback()` has no scope check on `procedureId` (unlike the sibling `memory_recall_procedures` search path) — lower urgency since exploiting it requires already knowing a foreign tenant's procedure UUID, which the properly-scoped search tool won't disclose.
+- `backends/event-bus.ts`'s `EventBus` doesn't override the inherited `permanentClose()`, so a stale reference can silently reopen a "permanently closed" database during teardown.
+- `backends/edict-store.ts`'s duplicate-text check-then-insert isn't transactional and has no UNIQUE index, so concurrent writers can both pass the dedup check.
+- `backends/issue-store.ts`'s `linkFact()` does a non-atomic JS-level read-modify-write on a JSON column, risking lost updates under concurrent calls.
+- `backends/vector-db/vector-db-class.ts`'s `swapShadowTable()` closes the connection and renames table directories without draining in-flight readers or the path-containment guard `resetTableForReindex()` applies; `count()`/`countSemanticQueryCacheRows()` release their reader-lock slot immediately on timeout even though the underlying native call keeps running.
+
 ## [2026.7.75] - 2026-07-06
 
 ### Fixed

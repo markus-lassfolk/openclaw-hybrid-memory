@@ -483,6 +483,38 @@ describe("FactsDB.autoLinkEntities — entity-based RELATED_TO links", () => {
     const result = db.autoLinkEntities(newFact.id, newFact.text, null, null, null, cfg);
     expect(result.linkedCount).toBe(0);
   });
+
+  it("does not link a new fact to another tenant's entity anchor across scope (loop iteration 12 regression)", () => {
+    const bobAnchor = db.store({
+      text: "Bob's alpha server notes",
+      entity: "alpha",
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.5,
+      source: "test",
+      scope: "user",
+      scopeTarget: "bob",
+    });
+    const aliceFact = db.store({
+      text: "Deploying to alpha now",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.5,
+      source: "test",
+      scope: "user",
+      scopeTarget: "alice",
+    });
+
+    const result = db.autoLinkEntities(aliceFact.id, aliceFact.text, null, null, null, cfg, "user", "alice");
+    expect(result.linkedCount).toBe(0);
+
+    const links = relatedLinksFrom(aliceFact.id);
+    const toBobAnchor = links.find((l) => l.targetFactId === bobAnchor.id);
+    expect(toBobAnchor).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
