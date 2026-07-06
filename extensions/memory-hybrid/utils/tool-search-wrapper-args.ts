@@ -149,6 +149,7 @@ export const MEMORY_TOOL_EXPECTED_ARG_KEYS: Record<string, readonly string[]> = 
   memory_tool_reject: ["id", "proposalId"],
   memory_verify: ["factId"],
   memory_provenance: ["factId"],
+  memory_workshop: ["id", "ordinal"],
   active_task_checkpoint: ["entity"],
   goal_get: ["goal_id"],
   goal_register: ["description"],

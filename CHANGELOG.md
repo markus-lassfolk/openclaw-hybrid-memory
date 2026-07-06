@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.102] - 2026-07-06
+
+### Fixed
+
+Loop iteration 38 of the full-codebase review loop — restores the `memory_workshop` tool, which was completely unusable for its main actions.
+
+- **`memory_workshop`'s `approve`/`reject`/`quarantine`/`revise`/`undo`/`inspect` actions were always intercepted before `execute()` ran.** `utils/tool-search-wrapper-args.ts`'s Tool Search wrapper-argument-loss detector falls back to a coarse "sentinel_only" heuristic for any `memory_*` tool not listed in `MEMORY_TOOL_EXPECTED_ARG_KEYS` — that heuristic flags a call as wrapper-dropped whenever the params object contains a key named `id`, regardless of whether `id` carries a meaningful value. `memory_workshop` was never added to the map (unlike its sibling approve/reject tools — `memory_crystallize_approve`, `memory_tool_approve`, `memory_tool_reject`, etc. — which are all correctly listed), so every legitimate call using `id` (the normal, documented way to invoke these six actions) was silently intercepted and replaced with a canned "received empty or wrapper-only arguments" error — only `list`/`digest`/`revert_by_ordinal` (which don't use `id`) ever worked. Fixed by adding `memory_workshop: ["id", "ordinal"]` to `MEMORY_TOOL_EXPECTED_ARG_KEYS`, switching it to the precise "mapped" detection mode (which already has special-case handling to distinguish a genuine `id` tool argument from wrapper metadata).
+
+Regression test added (`tests/tool-search-wrapper-args.test.ts`): a genuine `memory_workshop` `approve` call (`{action: "approve", id: "..."}`) must reach `execute()`, not the wrapper-dropped short-circuit. Verified via `git stash` to fail without the fix and pass with it. tsc clean; biome clean (zero net-new against baseline). Related suites (tool-search-wrapper-args, workshop-service, workshop-collectors, workshop-service-sync, workshop-config): 35 passed, no regressions.
+
+---
+
 ## [2026.7.101] - 2026-07-06
 
 ### Fixed
@@ -98,7 +110,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 - Lost-update race between the heartbeat/cron `reconcileActiveTaskInProgressSessions` and `active_task_checkpoint` on `ACTIVE-TASKS.md` (plain read-then-write, no optimistic-concurrency check unlike sibling writers).
 - `cli/cmd-extract-directives.ts` advances its scan cursor past session files that failed to read/parse, permanently dropping any directives they contained (sibling `cmd-extract-procedures.ts` correctly gates cursor advancement on this).
 - `tools/memory/register-store-tools.ts`'s active-task-ledger mirror (`syncProjectStoreToActiveTaskLedger`) and `build-runtime.ts`'s `maybeRefreshProjectActiveTaskProjection` are closed over the default vault only, so a vault-scoped `memory_store` call's project-task mirror writes land in the wrong vault's ledger.
-- `utils/tool-search-wrapper-args.ts`: `memory_workshop` is missing from `MEMORY_TOOL_EXPECTED_ARG_KEYS`, so every `approve`/`reject`/`quarantine`/`revise`/`undo`/`inspect` call is misclassified as wrapper-arg-loss and short-circuited before `execute()` runs — the tool is unusable for its main actions.
 - `cli/cmd-distill.ts` and `cli/cmd-extract-reinforcement.ts` each have their own instance of the iteration-33 merge-embedding bug class (storing a vector embedded from pre-merge/unvalidated text instead of the actual persisted merged/validated content).
 - `utils/llm-json-array.ts`'s `extractItemArray` returns on the first matching nested envelope in a multi-element array instead of merging across all elements, silently dropping later batch items.
 - `services/task-queue-leases.ts`'s `withRegistryLock` stale-lock reclaim has a dead-code "recheck after unlink" — both branches of the recheck fall through to the same `continue`, so it provides no actual protection against reclaiming a lock another process just re-acquired.
