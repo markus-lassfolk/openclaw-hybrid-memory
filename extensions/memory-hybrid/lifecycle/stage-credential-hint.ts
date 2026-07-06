@@ -35,7 +35,12 @@ export function registerCredentialHint(api: ClawdbotPluginApi, ctx: LifecycleCon
   api.on("before_agent_start", async (event: unknown, hookCtx: unknown) =>
     runOptionalBeforeAgentStartStage(ctx.beforeAgentStartTurnRef, "credential-hint", api.logger, async () => {
     const rApi = withHookResolutionApi(api, hookCtx);
-    const sessionKey = resolveSessionKeyFromHookEvent(event, rApi) ?? "default";
+    // Must match the writer's fallback chain exactly (stage-capture/run-capture.ts's
+    // `resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default"`) — otherwise a
+    // turn where the event/context carries no resolvable session id but currentAgentIdRef is set
+    // (routine after stage-setup.ts runs) writes under hash(agentId) but reads under
+    // hash("default"), silently orphaning the pending-credential-hint file.
+    const sessionKey = resolveSessionKeyFromHookEvent(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default";
     const pendingPath = pendingCredentialPath(stateDir, sessionKey);
     try {
       const raw = (await readFile(pendingPath, "utf-8")).trim();

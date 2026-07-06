@@ -189,6 +189,41 @@ describe("runCaptureStage", () => {
     );
   });
 
+  it("still captures a new later-turn candidate once earlier turns already fill the top-3 window (loop iteration 7 regression)", async () => {
+    // Every agent_end call rescans the full session history from turn 1, so once the first 3
+    // capturable statements are stored they permanently dominate a pre-sliced top-3 window on
+    // every later call — starving auto-capture for the rest of the session. Simulate that by
+    // marking the first 3 as already-stored duplicates and confirming a 4th, later-turn
+    // candidate is still reached and captured instead of being silently dropped.
+    const api = makeApi("chat");
+    const { ctx, store } = makeContext();
+    const sessionState = makeSessionState();
+    const alreadyStored = new Set([
+      "Remember that I like tea.",
+      "Remember that I like coffee.",
+      "Remember that I like cocoa.",
+    ]);
+    ctx.factsDb.hasDuplicate = vi.fn((text: string) => alreadyStored.has(text));
+
+    await runCaptureStage(
+      {
+        success: true,
+        messages: [
+          { role: "user", content: "Remember that I like tea." },
+          { role: "user", content: "Remember that I like coffee." },
+          { role: "user", content: "Remember that I like cocoa." },
+          { role: "user", content: "Remember that I like juice." },
+        ],
+      },
+      api as never,
+      ctx,
+      sessionState,
+    );
+
+    expect(store).toHaveBeenCalledOnce();
+    expect(store).toHaveBeenCalledWith(expect.objectContaining({ text: "Remember that I like juice." }));
+  });
+
   it("skips post-store vector and audit side effects when storeWithResult is skipped", async () => {
     const api = makeApi("chat");
     const storeWithResult = vi.fn().mockReturnValue({

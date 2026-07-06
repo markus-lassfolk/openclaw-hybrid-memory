@@ -10,16 +10,18 @@ interface MemoryPluginContext {
 
 import { createSchema, createYoga, type YogaInitialContext } from "graphql-yoga";
 import type { FactsDB } from "../backends/facts-db.js";
+import { scopedRowMatchesFilter } from "../backends/facts-db/scope-sql.js";
 import type { VectorDB } from "../backends/vector-db.js";
+import type { MemoryScope, ScopeFilter } from "../types/memory.js";
 import { graphqlSchema } from "./graphql-schema.js";
 import { graphqlPubSub } from "./graphql-pubsub.js";
 import { pluginLogger } from "../utils/logger.js";
 import { scopeFilterFromIdentityHeaders } from "../utils/scope-filter.js";
-import { resolvers, type GraphQLContext } from "./graphql-resolvers.js";
+import { isLinkVisible, resolvers, type GraphQLContext } from "./graphql-resolvers.js";
 
 type FactSubscriptionPayload = { fact: unknown; category?: string; scope?: string };
 type FactUpdatedPayload = { fact: unknown; factId?: string; category?: string };
-type FactDeletedPayload = { id: string; category?: string };
+type FactDeletedPayload = { id: string; category?: string; scope?: string; scopeTarget?: string | null };
 type LinkCreatedPayload = { link: unknown; sourceId?: string; targetId?: string };
 type StatsUpdatedPayload = { stats: unknown };
 
@@ -39,6 +41,26 @@ function factCategory(fact: unknown, fallback?: string): string | undefined {
 
 function factScope(fact: unknown, fallback?: string): string | undefined {
   return typeof recordValue(fact, "scope") === "string" ? (recordValue(fact, "scope") as string) : fallback;
+}
+
+function factScopeTarget(fact: unknown, fallback?: string | null): string | null | undefined {
+  const v = recordValue(fact, "scopeTarget");
+  return typeof v === "string" || v === null ? (v as string | null) : fallback;
+}
+
+/**
+ * SECURITY: every subscription payload carries a live fact/link — never trust the schema
+ * argument filters alone (matchesFactCreatedSubscription etc. only filter on caller-supplied
+ * category/scope, which defaults to "match everything" when omitted). This re-derives
+ * visibility from the caller's own resolved scopeFilter, same as every query resolver.
+ */
+export function isFactPayloadVisible(
+  fact: unknown,
+  fallbackScope: string | undefined,
+  scopeFilter: ScopeFilter,
+): boolean {
+  const scope = (factScope(fact, fallbackScope) ?? "global") as MemoryScope;
+  return scopedRowMatchesFilter(scope, factScopeTarget(fact) ?? null, scopeFilter);
 }
 
 function factId(fact: unknown): string | undefined {
@@ -105,31 +127,51 @@ export function createGraphQLServer(
         ...resolvers,
         Subscription: {
           factCreated: {
-            subscribe: (_parent: unknown, args: { category?: string; scope?: string }) =>
-              filterAsyncIterator(pubSub.subscribe("factCreated"), (payload) =>
-                matchesFactCreatedSubscription(payload, args),
+            subscribe: (_parent: unknown, args: { category?: string; scope?: string }, context: GraphQLContext) =>
+              filterAsyncIterator(
+                pubSub.subscribe("factCreated"),
+                (payload) =>
+                  matchesFactCreatedSubscription(payload, args) &&
+                  isFactPayloadVisible(payload.fact, payload.scope, context.scopeFilter),
               ),
             resolve: (payload: FactSubscriptionPayload) => payload.fact,
           },
           factUpdated: {
-            subscribe: (_parent: unknown, args: { factId?: string; category?: string }) =>
-              filterAsyncIterator(pubSub.subscribe("factUpdated"), (payload) =>
-                matchesFactUpdatedSubscription(payload, args),
+            subscribe: (_parent: unknown, args: { factId?: string; category?: string }, context: GraphQLContext) =>
+              filterAsyncIterator(
+                pubSub.subscribe("factUpdated"),
+                (payload) =>
+                  matchesFactUpdatedSubscription(payload, args) &&
+                  isFactPayloadVisible(payload.fact, undefined, context.scopeFilter),
               ),
             resolve: (payload: FactUpdatedPayload) => payload.fact,
           },
           factDeleted: {
-            subscribe: (_parent: unknown, args: { category?: string }) =>
-              filterAsyncIterator(pubSub.subscribe("factDeleted"), (payload) =>
-                matchesFactDeletedSubscription(payload, args),
+            subscribe: (_parent: unknown, args: { category?: string }, context: GraphQLContext) =>
+              filterAsyncIterator(
+                pubSub.subscribe("factDeleted"),
+                (payload) =>
+                  matchesFactDeletedSubscription(payload, args) &&
+                  scopedRowMatchesFilter(
+                    (payload.scope ?? "global") as MemoryScope,
+                    payload.scopeTarget ?? null,
+                    context.scopeFilter,
+                  ),
               ),
             resolve: (payload: FactDeletedPayload) => payload.id,
           },
           linkCreated: {
-            subscribe: (_parent: unknown, args: { sourceId?: string; targetId?: string }) =>
-              filterAsyncIterator(pubSub.subscribe("linkCreated"), (payload) =>
-                matchesLinkCreatedSubscription(payload, args),
-              ),
+            subscribe: (_parent: unknown, args: { sourceId?: string; targetId?: string }, context: GraphQLContext) =>
+              filterAsyncIterator(pubSub.subscribe("linkCreated"), (payload) => {
+                const sourceId = linkEndpoint(payload.link, "sourceId", payload.sourceId);
+                const targetId = linkEndpoint(payload.link, "targetId", payload.targetId);
+                return (
+                  matchesLinkCreatedSubscription(payload, args) &&
+                  !!sourceId &&
+                  !!targetId &&
+                  isLinkVisible(context.factsDb, { sourceId, targetId }, context.scopeFilter)
+                );
+              }),
             resolve: (payload: LinkCreatedPayload) => payload.link,
           },
           statsUpdated: {
@@ -259,12 +301,7 @@ subscription WatchNewFacts {
 /**
  * Publish fact created event
  */
-export function publishFactCreated(
-  pubSub: typeof graphqlPubSub,
-  fact: unknown,
-  category?: string,
-  scope?: string,
-) {
+export function publishFactCreated(pubSub: typeof graphqlPubSub, fact: unknown, category?: string, scope?: string) {
   pubSub.publish("factCreated", { fact, category, scope });
 }
 

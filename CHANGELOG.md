@@ -23,6 +23,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.71] - 2026-07-06
+
+### Fixed
+
+Loop iteration 7 of the full-codebase review loop. This iteration covered the GraphQL dashboard API (`routes/`) and the conversational lifecycle capture/recall path (`lifecycle/`).
+
+- **GraphQL fact and link subscriptions leaked data across tenant/scope boundaries:** `Subscription.factCreated`/`factUpdated`/`linkCreated` only filtered on caller-supplied schema arguments (`category`, `scope`, `sourceId`/`targetId`), never on the caller's own resolved `context.scopeFilter` — unlike every Query/Mutation resolver in the same file, which explicitly threads `scopeFilter` through. A caller with no arguments on `factCreated`/`factUpdated` received every fact stored or updated by any tenant, in full (including `text`), in real time; `factDeleted` similarly exposed every tenant's deletions by id/category. Fixed by deriving visibility from the actual stored scope on every subscription payload (adding `scope`/`scopeTarget` to the `factDeleted` publish payload so it survives past deletion), matching the fail-closed default used everywhere else in the GraphQL layer.
+- **GraphQL link queries and mutations had no scope check at all:** `Query.link`, `Query.links`, `Fact.links`/`linkedFrom`, `stats.totalLinks`, `createLink`, and `deleteLink` all operated on `memory_links` rows directly with no visibility check, unlike `deleteFact`/`supersedeFact`'s explicit "SECURITY: scope-check before deleting" guards in the same file. Since a link connects two independently-scoped facts and carries no scope column of its own, any caller could read, create, or delete a link touching another tenant's fact just by knowing or guessing its id — including planting a link tying another tenant's fact into their own graph. Fixed by adding a shared `isLinkVisible()` check (both endpoints must resolve under the caller's `scopeFilter`) and applying it everywhere links are read, written, or deleted.
+- **Conversational auto-capture silently stopped working after the first few turns of a session:** `agent_end` rescans the *entire* session's message history every time (not just the new turn), builds a priority-sorted candidate list, then took `.slice(0, 3)` **before** checking which candidates were already-stored duplicates. Because the sort is stable, a session's first ~3 capturable statements permanently occupied that window on every later call — once stored, they were skipped as duplicates, but no later-turn statement ever got a chance to enter the top-3 slice. Fixed by walking the full candidate list and stopping once 3 genuinely new candidates are prepared, instead of pre-slicing.
+- **Credential-store nudge (`stage-credential-hint.ts`) used a different session-key fallback than its own writer:** the writer (`stage-capture/run-capture.ts` and every other lifecycle stage with this pattern) resolves the session key as `resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default"`, but the credential-hint reader omitted the `currentAgentIdRef` fallback. On any turn where the event/context carries no resolvable session id but `currentAgentIdRef` is set (routine after `stage-setup.ts` runs, e.g. cron/heartbeat turns), the pending-hint file was written under `hash(agentId)` but read under `hash("default")` — silently orphaning the file and permanently suppressing the nudge for that session. Fixed the reader to use the same fallback chain as the writer.
+
+### Deferred (found, need separate design confirmation before implementing)
+
+- **Episodic auto-capture can create unbounded duplicate episodes in long-running sessions:** like conversational auto-capture, the episodic success/failure scanner rescans the entire session history every `agent_end` call, but its duplicate guard only looks back 5 minutes (`searchEpisodes({..., since: now - 300})`). Once a session runs past 5 minutes since an episode was first recorded, the same historical message (e.g. an early "tests passing" or error) falls outside that window and gets re-recorded as a fresh duplicate on every subsequent call. The correct fix needs a design decision — either track a per-session last-scanned-message marker (only scan new content since the previous call), or drop the time bound entirely in favor of a session-lifetime dedupe — and either changes existing repeat-detection behavior, so it needs its own test pass rather than a rushed patch.
+
+### Changed
+
+- Version bumped to 2026.7.71.
+
+---
+
 ## [2026.7.70] - 2026-07-06
 
 ### Fixed
