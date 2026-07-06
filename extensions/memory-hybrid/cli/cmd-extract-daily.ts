@@ -90,7 +90,7 @@ export async function runExtractDailyForCli(
       for (let j = 0; j < chunk.length; j++) {
         const c = chunk[j];
         const classification: MemoryClassification = results[j];
-        const { trimmed, extracted, category, storePayload, sourceDateSec, vecForStore } = c;
+        const { extracted, category, storePayload, sourceDateSec, vecForStore } = c;
         if (classification.action === "NOOP") continue;
         if (classification.action === "DELETE" && classification.targetId) {
           const target = validateScopedClassificationTarget({
@@ -129,7 +129,10 @@ export async function runExtractDailyForCli(
               ...storePayload,
               entity: extracted.entity ?? oldFact.entity,
               key: extracted.key ?? oldFact.key,
-              value: extracted.value ?? oldFact.value,
+              // storePayload.value already went through maybeRedactMaintenanceFactText — must not
+              // fall back to the raw (unredacted) extracted.value here, or redaction is bypassed
+              // for every line routed through the classify-before-write batch path.
+              value: storePayload.value ?? oldFact.value,
               validFrom: sourceDateSec,
               supersedesId: classification.targetId,
             });
@@ -161,7 +164,7 @@ export async function runExtractDailyForCli(
               factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
               if (!(await vectorDb.hasDuplicate(vecForStore))) {
                 await vectorDb.store({
-                  text: trimmed,
+                  text: storePayload.text,
                   vector: vecForStore,
                   importance: BATCH_STORE_IMPORTANCE,
                   category,
@@ -195,7 +198,7 @@ export async function runExtractDailyForCli(
           factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
           if (!(await vectorDb.hasDuplicate(vector))) {
             await vectorDb.store({
-              text: trimmed,
+              text: storePayload.text,
               vector,
               importance: BATCH_STORE_IMPORTANCE,
               category,

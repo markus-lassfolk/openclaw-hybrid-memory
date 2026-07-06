@@ -23,6 +23,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.69] - 2026-07-06
+
+### Fixed
+
+Loop iteration 4 of a self-paced 10-iteration review loop, focused on the `cron-jobs.ts` `--verbose` rollout and a self-review of the two prior iterations' own (not-yet-independently-reviewed) commits.
+
+- **`weekly-pending-digest-autopilot`'s cron job never got the `--verbose` flag it was specifically fixed to support:** the 2026.7.63 progress-logging pass added correct `--verbose`/`--json` stream-routing to `digest autopilot-cron` in `register-digest.ts` (progress mirrors to stderr under `--json`, keeping stdout pure JSON), but the actual scheduled cron command string in `cli/install/cron-jobs.ts` was never updated to pass `--verbose` — so the fix never reached the one place it needed to run. Added `--verbose` to the job's command string.
+- **The maintenance-redaction fix from iteration 3 only covered `cmd-extract-daily.ts`'s direct (non-batched) store path — the classify-before-write batched path still leaked unredacted text:** when `cfg.store.classifyBeforeWrite` is enabled and a line has a pre-existing similar fact (routing it through `flushPendingExtractClassify` instead of the direct store branch), the vector-store writes (both the default/ADD branch and the UPDATE branch) and the UPDATE branch's `factsDb.storeWithResult` call all used the raw, unredacted `trimmed`/`extracted.value` variables instead of the already-redacted `storePayload.text`/`storePayload.value` — so a fact stored through this path had a correctly-redacted `text` column in facts.db but a leaked, unredacted copy in LanceDB (and, for UPDATEs, an unredacted `value` column too). Fixed all three call sites in `cli/cmd-extract-daily.ts` to consistently use `storePayload`'s already-redacted fields. Added a regression test that reproduces the exact routing (a pre-existing similar fact by entity+key) and verifies it fails without the fix.
+- No new correctness bugs found in a self-review of the maintenance-inventory collision-group aggregation or the `resolveContradictionsAutonomously` `scanned`/`total` fields from iteration 3 — both confirmed correct by direct code inspection.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.7.69**.
+
+---
+
 ## [2026.7.68] - 2026-07-06
 
 ### Fixed

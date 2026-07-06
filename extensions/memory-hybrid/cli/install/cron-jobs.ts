@@ -512,7 +512,7 @@ const MAINTENANCE_CRON_JOBS: Array<
     message: buildHybridMemCronTaskMessage("weekly-pending-digest-autopilot", {
       preamble:
         "Weekly pending-digest autopilot wrapper. Respect digest.autopilot config defaults (disabled + dry-run), keep durable HM_LOG/HM_EXIT artifacts, and fail on inner-step failures.",
-      steps: [{ name: "digest-autopilot-cron", cmd: "openclaw hybrid-mem digest autopilot-cron --json" }],
+      steps: [{ name: "digest-autopilot-cron", cmd: "openclaw hybrid-mem digest autopilot-cron --json --verbose" }],
     }),
     isolated: true,
     modelTier: "nano",

@@ -193,4 +193,56 @@ describe("runExtractDailyForCli — heartbeat + no-op-sink diagnostics survival"
     expect(facts.some((f) => f.text.includes("[private-path]"))).toBe(true);
     expect(facts.some((f) => f.text.includes("/home/alice"))).toBe(false);
   });
+
+  it("honors maintenance.privacyRedaction on the classify-before-write batched path too (a pre-existing similar fact routes the line through flushPendingExtractClassify, not the direct store path)", async () => {
+    dir = mkdtempSync(join(tmpdir(), "extract-daily-redaction-batched-"));
+    originalHome = process.env.HOME;
+    process.env.HOME = dir;
+    vi.useFakeTimers();
+    vi.setSystemTime(FIXED_NOW);
+    // Same entity+key ("user"/"prefer") as the new line below, so findSimilarForClassification
+    // finds this as a similar fact and routes the new line through the batch classify path
+    // instead of the direct (already-covered) store path.
+    db = new FactsDB(join(dir, "facts.db"));
+    db.store({
+      text: "I prefer the old backup folder for photos.",
+      category: "decision",
+      importance: 0.5,
+      entity: "user",
+      key: "prefer",
+      value: "the old backup folder for photos",
+      source: "conversation",
+    });
+    writeTodayMemoryFile(dir, [
+      "I prefer to back up photos to /home/alice/Pictures every night automatically.",
+    ]);
+    const logger = { info: vi.fn(), warn: vi.fn() };
+
+    const ctx = makeCtx(db, logger, async () => [0.1]);
+    (ctx.cfg as { maintenance?: unknown }).maintenance = {
+      privacyRedaction: { enabled: true, exemptCategories: [], exemptKeys: [] },
+    };
+    // A fast, working classification response avoids the adaptive-retry backoff path a broken
+    // openai stub would otherwise trigger (which hangs under fake timers in this test).
+    ctx.openai = {
+      chat: { completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content: "ADD | test" } }] }) } },
+    } as unknown as HandlerContext["openai"];
+    const vectorDbStore = (ctx.vectorDb as unknown as { store: ReturnType<typeof vi.fn> }).store;
+
+    await runExtractDailyForCli(ctx, { days: 1, dryRun: false, verbose: false }, NOOP_SINK);
+
+    // Classification has no working LLM in this test harness (openai is an empty stub) and falls
+    // back to {action: "ADD"} on failure, which still routes through flushPendingExtractClassify's
+    // default store branch — exactly the path that leaked unredacted text before this fix.
+    expect(vectorDbStore).toHaveBeenCalled();
+    const storedTexts = vectorDbStore.mock.calls.map((call) => (call[0] as { text: string }).text);
+    expect(storedTexts.some((t) => t.includes("[private-path]"))).toBe(true);
+    expect(storedTexts.some((t) => t.includes("/home/alice"))).toBe(false);
+
+    const facts = db.getAll();
+    const newFact = facts.find((f) => f.text.includes("back up photos"));
+    expect(newFact).toBeDefined();
+    expect(newFact?.text).toContain("[private-path]");
+    expect(newFact?.text).not.toContain("/home/alice");
+  });
 });
