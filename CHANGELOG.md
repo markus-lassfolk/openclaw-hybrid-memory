@@ -23,6 +23,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.72] - 2026-07-06
+
+### Fixed
+
+Loop iteration 8 of the full-codebase review loop. This iteration covered `config/parsers/`, and the agent-facing `tools/` directory — the MCP tool surface the agent actually calls (memory_link, memory_graph, memory_path, memory_directory), distinct from the `routes/` GraphQL dashboard API already covered in iteration 7. Found a systemic pattern: several tool families never had multi-tenant scope filtering wired in at all, unlike `tools/memory/*`, which threads a scope filter through every read.
+
+- **`autoClassify.batchSize` of `0` or negative hangs the classify loop forever:** `parseAutoClassifyConfig()` only checked `typeof === "number"` with no lower bound, unlike every other stride/threshold field in the same parser. `services/auto-classifier.ts` does `for (i = 0; i < others.length; i += config.batchSize)` — a non-positive stride never advances `i`, and the direct CLI classify path has no maintenance-run deadline to break out of it, so a config file with `batchSize: 0` (a plausible attempt to "disable" batching) hangs the process while repeatedly re-issuing the same LLM call. Fixed to floor at 1, matching the codebase convention. Also fixed the same missing lower bound on `minFactsForNewCategory` (a non-positive value silently made every single-instance category proposal "qualify," flooding the taxonomy).
+- **`memory_directory`'s `org_view` operation leaked cross-tenant fact text:** it called `factsDb.getById(id)` with no scope filter for facts linked to an organization, unlike the sibling `memory_promote`/`memory_forget` handlers in the same file, which correctly scope-check. Any agent could view another tenant's fact text/category (truncated to 240 chars) via an org that happened to have a foreign-tenant fact entity-linked to it.
+- **`memory_link`, `memory_graph`, and `memory_path` had no scope filtering wired in at all:** unlike `tools/memory/*`, `graph-tools.ts`'s plugin context never carried `currentAgentIdRef`/a scope-filter builder, so none of its three tools could enforce scope even in principle. Since `memory_links` carries no scope column of its own (it just connects two independently-scoped facts), this meant: `memory_link` could tie a caller's fact to another tenant's fact (or discover the foreign id exists); `memory_graph` disclosed a linked fact's full text/category regardless of scope, both directly and via BFS-connected ids; `memory_path` could resolve and traverse through an out-of-scope fact as a path endpoint or intermediate hop. Fixed by threading `currentAgentIdRef`/`buildToolScopeFilter` into the tool context (via `setup/tool-installers.ts`) and scope-checking every fact/link endpoint; `memory_path`'s fix only needed to scope-bind `getById` (and entity-name `lookup`) since `shortest-path.ts`'s BFS already re-validates every hop through `getById` before accepting it (originally to exclude superseded facts) — no changes needed inside `shortest-path.ts` itself.
+
+### Deferred (found and verified this iteration, carried into the next iteration — NOT abandoned, tracked for prompt follow-up given severity)
+
+The same "review agent has no scope-filter access" pattern was found in several more tool files; each needs its own careful fix + test pass rather than a rushed batch:
+
+- `tools/verification-tools.ts` — `memory_verify`/`memory_verified_list` read/store fact text via an unscoped `getById` and a scope-less `VerificationStore`.
+- `tools/provenance-tools.ts` — `memory_provenance`/`buildProvenanceChain`/`buildDerivedFrom` call `getById` unscoped, returning cross-tenant fact text and its derivation chain.
+- `tools/document-tools.ts` — `ingestSingleDocument`'s `storeWithResult` never sets `scope`/`scopeTarget` (defaults to `"global"`), unlike `memory_store` — every ingested document chunk is globally recallable in a multi-tenant deployment.
+- `tools/task-hygiene-tools.ts` + `services/active-task-tools-loader.ts` — `loadTaskLedgerFromFacts` accepts an optional `scopeFilter` but is called without one when `activeTask.ledger: "facts"`, leaking all tenants' task facts.
+- `tools/goal-tools.ts` — `goal_complete`/`goal_abandon` call `factsDb.recordEpisode` with no scope/agentId/userId/sessionId, unlike the sibling `memory_record_episode` tool, defaulting the episode to global scope.
+- `tools/memory/register-agent-verb-tools.ts` — `memory_retrieve`'s `getEntry` closure omits `{scopeFilter}` on two `getById` calls; narrow exposure today (ids reaching it are already scope-vetted), but a latent risk in the multi-vault fan-out path if a fact id collides across two tenants' vaults.
+- `tools/memory/register-store-tools.ts` — `maybeAutoVerify` (enrolls a stored fact for `verification_tier: "critical"`/auto-classify) is only invoked on the classify-before-write UPDATE branch, never the normal ADD path — a functional bug (not a leak): critical-verification requests on ordinary new stores silently no-op.
+- `tools/memory/register-recall-tools.ts` — `memory_recall`'s `includeCold=false` (default) cold-tier exclusion filter runs once before graph expansion, and is never re-applied to facts graph expansion subsequently appends — a cold-tier fact within `graph.maxTraversalDepth` hops of a matched warm fact leaks into the response despite `includeCold: false`, under the default config (`graph.useInRecall=true`, `graphRetrieval.defaultExpand=false`).
+
+### Changed
+
+- Version bumped to 2026.7.72.
+
+---
+
 ## [2026.7.71] - 2026-07-06
 
 ### Fixed

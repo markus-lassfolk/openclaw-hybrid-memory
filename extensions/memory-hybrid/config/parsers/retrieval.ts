@@ -124,9 +124,15 @@ export function parseAutoClassifyConfig(cfg: Record<string, unknown>): AutoClass
   return {
     enabled: acCfg?.enabled === true,
     model: typeof acCfg?.model === "string" ? acCfg.model : undefined,
-    batchSize: typeof acCfg?.batchSize === "number" ? acCfg.batchSize : 20,
+    // batchSize drives `for (i = 0; i < others.length; i += batchSize)` in auto-classifier.ts —
+    // 0 or negative never advances `i`, hanging the loop (and the CLI classify path has no
+    // maintenance-run deadline to break out), so this must floor at 1 like every other stride.
+    batchSize: typeof acCfg?.batchSize === "number" && acCfg.batchSize >= 1 ? Math.floor(acCfg.batchSize) : 20,
     suggestCategories: acCfg?.suggestCategories !== false,
-    minFactsForNewCategory: typeof acCfg?.minFactsForNewCategory === "number" ? acCfg.minFactsForNewCategory : 10,
+    minFactsForNewCategory:
+      typeof acCfg?.minFactsForNewCategory === "number" && acCfg.minFactsForNewCategory >= 1
+        ? Math.floor(acCfg.minFactsForNewCategory)
+        : 10,
     discoveryIntervalHours:
       typeof acCfg?.discoveryIntervalHours === "number" && acCfg.discoveryIntervalHours >= 0
         ? acCfg.discoveryIntervalHours

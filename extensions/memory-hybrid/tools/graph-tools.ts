@@ -9,14 +9,17 @@ import { Type } from "@sinclair/typebox";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { stringEnum } from "../utils/typebox.js";
 
+import type { BuildToolScopeFilterFn } from "../api/memory-plugin-api.js";
 import type { FactsDB, MemoryLinkType } from "../backends/facts-db.js";
 import { MEMORY_LINK_TYPES } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
-import { findShortestPath, formatPath, resolveInput } from "../services/shortest-path.js";
+import { findShortestPath, formatPath, resolveInput, type ShortestPathLookup } from "../services/shortest-path.js";
 
 export interface PluginContext {
   factsDb: FactsDB;
   cfg: HybridMemoryConfig;
+  currentAgentIdRef: { value: string | null };
+  buildToolScopeFilter: BuildToolScopeFilterFn;
 }
 
 /**
@@ -25,7 +28,7 @@ export interface PluginContext {
  * This includes: memory_link and memory_graph (when graph is enabled).
  */
 export function registerGraphTools(ctx: PluginContext, api: ClawdbotPluginApi): void {
-  const { factsDb, cfg } = ctx;
+  const { factsDb, cfg, currentAgentIdRef, buildToolScopeFilter } = ctx;
 
   // Graph tools (when graph enabled)
   if (cfg.graph.enabled) {
@@ -53,8 +56,12 @@ export function registerGraphTools(ctx: PluginContext, api: ClawdbotPluginApi): 
             linkType: MemoryLinkType;
             strength?: number;
           };
-          const src = factsDb.getById(sourceFact);
-          const tgt = factsDb.getById(targetFact);
+          // SECURITY: both endpoints must be in-scope before linking — otherwise a caller could
+          // tie an out-of-scope (another tenant's) fact into their own graph, or discover its id
+          // exists, just by guessing/enumerating ids (mirrors the GraphQL createLink guard).
+          const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
+          const src = factsDb.getById(sourceFact, { scopeFilter });
+          const tgt = factsDb.getById(targetFact, { scopeFilter });
           if (!src) {
             return {
               content: [{ type: "text", text: `Source fact not found: ${sourceFact}` }],
@@ -97,7 +104,12 @@ export function registerGraphTools(ctx: PluginContext, api: ClawdbotPluginApi): 
         }),
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           const { factId, depth = 2 } = params as { factId: string; depth?: number };
-          const fact = factsDb.getById(factId);
+          // SECURITY: memory_links carries no scope column of its own — it connects two
+          // independently-scoped facts — so every endpoint (the anchor fact, each direct link's
+          // other end, and every BFS-connected id) must be re-checked against the caller's scope
+          // rather than trusted just because a link row references it.
+          const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
+          const fact = factsDb.getById(factId, { scopeFilter });
           if (!fact) {
             return {
               content: [{ type: "text", text: `Fact not found: ${factId}` }],
@@ -105,34 +117,40 @@ export function registerGraphTools(ctx: PluginContext, api: ClawdbotPluginApi): 
             };
           }
           const maxD = Math.min(3, Math.max(1, depth));
-          const out = factsDb.getLinksFrom(factId);
-          const in_ = factsDb.getLinksTo(factId);
           const lines: string[] = [
             `Fact: "${fact.text.slice(0, 80)}${fact.text.length > 80 ? "…" : ""}"`,
             "",
             "Direct links:",
           ];
-          for (const l of out) {
-            const t = factsDb.getById(l.targetFactId);
+          let outboundVisible = 0;
+          for (const l of factsDb.getLinksFrom(factId)) {
+            const t = factsDb.getById(l.targetFactId, { scopeFilter });
+            if (!t) continue; // out-of-scope (or deleted) — omit rather than leak the raw id
+            outboundVisible++;
             lines.push(
-              `  → [${l.linkType}] ${t ? t.text.slice(0, 60) + (t.text.length > 60 ? "…" : "") : l.targetFactId} (strength: ${l.strength.toFixed(2)})`,
+              `  → [${l.linkType}] ${t.text.slice(0, 60)}${t.text.length > 60 ? "…" : ""} (strength: ${l.strength.toFixed(2)})`,
             );
           }
-          for (const l of in_) {
-            const s = factsDb.getById(l.sourceFactId);
+          let inboundVisible = 0;
+          for (const l of factsDb.getLinksTo(factId)) {
+            const s = factsDb.getById(l.sourceFactId, { scopeFilter });
+            if (!s) continue;
+            inboundVisible++;
             lines.push(
-              `  ← [${l.linkType}] ${s ? s.text.slice(0, 60) + (s.text.length > 60 ? "…" : "") : l.sourceFactId} (strength: ${l.strength.toFixed(2)})`,
+              `  ← [${l.linkType}] ${s.text.slice(0, 60)}${s.text.length > 60 ? "…" : ""} (strength: ${l.strength.toFixed(2)})`,
             );
           }
-          const connectedIds = factsDb.getConnectedFactIds([factId], maxD, { hubDegreeCap: cfg.graph.hubDegreeCap });
+          const connectedIds = factsDb
+            .getConnectedFactIds([factId], maxD, { hubDegreeCap: cfg.graph.hubDegreeCap })
+            .filter((id) => factsDb.getById(id, { scopeFilter }) != null);
           lines.push("");
           lines.push(`Total connected facts (depth ${maxD}): ${connectedIds.length}`);
           return {
             content: [{ type: "text", text: lines.join("\n") }],
             details: {
               factId,
-              outbound: out.length,
-              inbound: in_.length,
+              outbound: outboundVisible,
+              inbound: inboundVisible,
               connectedCount: connectedIds.length,
             },
           };
@@ -172,7 +190,20 @@ export function registerGraphTools(ctx: PluginContext, api: ClawdbotPluginApi): 
 
           const depthCap = Math.min(cfg.path.maxPathDepth, Math.max(1, Math.floor(maxDepth)));
 
-          const fromId = resolveInput(factsDb, from);
+          // SECURITY: getNeighbors() in shortest-path.ts already re-validates every candidate hop
+          // via db.getById() before accepting it into the BFS frontier (originally to exclude
+          // superseded facts) — so binding getById (and entity-name lookup) to the caller's scope
+          // here is sufficient to keep the whole traversal from ever entering or resolving to an
+          // out-of-scope fact; getLinksFrom/getLinksTo don't need their own scope filter.
+          const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
+          const scopedLookup: ShortestPathLookup = {
+            getById: (id) => factsDb.getById(id, { scopeFilter }),
+            getLinksFrom: (id) => factsDb.getLinksFrom(id),
+            getLinksTo: (id) => factsDb.getLinksTo(id),
+            lookup: (entity) => factsDb.lookup(entity, undefined, undefined, { scopeFilter }),
+          };
+
+          const fromId = resolveInput(scopedLookup, from);
           if (!fromId) {
             return {
               content: [
@@ -182,7 +213,7 @@ export function registerGraphTools(ctx: PluginContext, api: ClawdbotPluginApi): 
             };
           }
 
-          const toId = resolveInput(factsDb, to);
+          const toId = resolveInput(scopedLookup, to);
           if (!toId) {
             return {
               content: [{ type: "text", text: `Could not resolve end: "${to}" (not a known fact ID or entity name)` }],
@@ -190,7 +221,7 @@ export function registerGraphTools(ctx: PluginContext, api: ClawdbotPluginApi): 
             };
           }
 
-          const result = findShortestPath(factsDb, fromId, toId, { maxDepth: depthCap });
+          const result = findShortestPath(scopedLookup, fromId, toId, { maxDepth: depthCap });
 
           if (!result) {
             return {

@@ -985,6 +985,23 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoClassify.batchSize).toBe(20);
   });
 
+  it("rejects a non-positive autoClassify.batchSize/minFactsForNewCategory instead of hanging the classify loop (loop iteration 8 regression)", () => {
+    // auto-classifier.ts does `for (i = 0; i < others.length; i += config.batchSize)` — 0 or a
+    // negative value never advances `i`, hanging the loop forever on the CLI classify path
+    // (no maintenance-run deadline to break out of it).
+    const zeroBatch = hybridConfigSchema.parse({ ...validBase, autoClassify: { batchSize: 0 } });
+    expect(zeroBatch.autoClassify.batchSize).toBe(20);
+    const negativeBatch = hybridConfigSchema.parse({ ...validBase, autoClassify: { batchSize: -5 } });
+    expect(negativeBatch.autoClassify.batchSize).toBe(20);
+    const fractionalBatch = hybridConfigSchema.parse({ ...validBase, autoClassify: { batchSize: 4.7 } });
+    expect(fractionalBatch.autoClassify.batchSize).toBe(4);
+
+    const zeroMin = hybridConfigSchema.parse({ ...validBase, autoClassify: { minFactsForNewCategory: 0 } });
+    expect(zeroMin.autoClassify.minFactsForNewCategory).toBe(10);
+    const negativeMin = hybridConfigSchema.parse({ ...validBase, autoClassify: { minFactsForNewCategory: -1 } });
+    expect(negativeMin.autoClassify.minFactsForNewCategory).toBe(10);
+  });
+
   it("parses entity lookup config", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,

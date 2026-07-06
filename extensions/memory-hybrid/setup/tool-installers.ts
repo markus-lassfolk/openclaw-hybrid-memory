@@ -144,13 +144,21 @@ function installMemoryCoreTools(ctx: MemoryToolsContext, api: ClawdbotPluginApi)
   registerMemoryTools(ctx, api);
 }
 
-function selectGraphToolsContext({ factsDb, cfg }: ToolsContext): GraphToolsContext {
-  return { factsDb, cfg };
+function selectGraphToolsContext({
+  factsDb,
+  cfg,
+  currentAgentIdRef,
+  buildToolScopeFilter,
+}: ToolsContext): GraphToolsContext {
+  return { factsDb, cfg, currentAgentIdRef, buildToolScopeFilter };
 }
 
-function installGraphTools({ factsDb, cfg }: GraphToolsContext, api: ClawdbotPluginApi): void {
+function installGraphTools(
+  { factsDb, cfg, currentAgentIdRef, buildToolScopeFilter }: GraphToolsContext,
+  api: ClawdbotPluginApi,
+): void {
   if (cfg.graph.enabled) {
-    registerGraphTools({ factsDb, cfg }, api);
+    registerGraphTools({ factsDb, cfg, currentAgentIdRef, buildToolScopeFilter }, api);
   }
 }
 
