@@ -1,7 +1,7 @@
 {
   "id": "openclaw-hybrid-memory",
   "kind": "memory",
-  "version": "2026.7.66",
+  "version": "2026.7.67",
   "contracts": {
     "tools": [
       "active_task_checkpoint",

@@ -23,6 +23,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.67] - 2026-07-06
+
+### Fixed
+
+- **Loop iteration 2 (of a self-paced 10-iteration review loop):** `weekly-crystallization-skills-rescan`'s maintenance-inventory catalog entry claimed it mutated nothing (`mutates: {sqlite: false, ...}`, no `collisionGroups`), but its command (`openclaw hybrid-mem skills rescan` → `CrystallizationProposer.rescanInstalledSkills()`) writes to the same `CrystallizationStore` sqlite file (`crystallization_proposals` table) that `weekly-persona-proposals` also writes to via the same `CrystallizationProposer` class — a real concurrent-write collision risk the inventory report was hiding from operators. Added a `crystallization-store-writer` collision group to both entries in `services/maintenance-inventory.ts` and corrected the rescan entry's `mutates.sqlite` to `true` (it does write sqlite, just not the shared `facts.db` — kept out of the generic `sqlite-writer`/`memory-facts-writer` groups since those are reserved for facts.db writers). Added a regression test.
+- No new correctness bugs found in a fresh scan of the heartbeat/progress-reporting additions to `sensor-sweep`, `self-correction-run`, `generate-proposals`, `tier-compact`, and `vectordb-optimize`, or in a solo re-review of the tooling-blocker commit's other files.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.7.67**.
+
+---
+
 ## [2026.7.66] - 2026-07-06
 
 ### Added

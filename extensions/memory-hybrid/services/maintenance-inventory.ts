@@ -151,9 +151,13 @@ const MAINTENANCE_JOB_CATALOG: MaintenanceJobCatalogEntry[] = [
     name: "weekly-crystallization-skills-rescan",
     pluginJobId: "hybrid-mem:weekly-crystallization-skills-rescan",
     aliases: [],
-    lockKey: undefined,
-    collisionGroups: [],
-    mutates: { sqlite: false, lancedb: false, github: false, memoryFacts: false },
+    // `openclaw hybrid-mem skills rescan` -> CrystallizationProposer.rescanInstalledSkills()
+    // writes to the same CrystallizationStore sqlite file (crystallization_proposals table) that
+    // weekly-persona-proposals' runCrystallizationProposalCycle() also writes to — a real
+    // concurrent-write collision risk distinct from (and narrower than) the main facts.db.
+    lockKey: "crystallization-sqlite",
+    collisionGroups: ["crystallization-store-writer"],
+    mutates: { sqlite: true, lancedb: false, github: false, memoryFacts: false },
   },
   {
     jobKey: "weekly-deep-maintenance",
@@ -170,7 +174,9 @@ const MAINTENANCE_JOB_CATALOG: MaintenanceJobCatalogEntry[] = [
     pluginJobId: "hybrid-mem:weekly-persona-proposals",
     aliases: [],
     lockKey: "sqlite",
-    collisionGroups: ["sqlite-writer", "memory-facts-writer"],
+    // Also shares the CrystallizationStore sqlite file with weekly-crystallization-skills-rescan
+    // (see that entry's comment) — flagged separately from the main facts.db collision group.
+    collisionGroups: ["sqlite-writer", "memory-facts-writer", "crystallization-store-writer"],
     mutates: { sqlite: true, lancedb: false, github: false, memoryFacts: true },
   },
   {
