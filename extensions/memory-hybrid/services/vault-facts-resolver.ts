@@ -3,6 +3,7 @@
  */
 
 import type { FactsDB } from "../backends/facts-db.js";
+import type { ScopeFilter } from "../types/memory.js";
 import { matchEntitiesInPrompt, type SpoTriple } from "./vault-context.js";
 
 type OrgRow = { id: string; display_name: string };
@@ -27,7 +28,12 @@ function loadContactRows(db: ReturnType<FactsDB["getRawDb"]>): ContactRow[] {
 }
 
 /** Build SPO triples for entities mentioned in the user prompt. */
-export function resolveVaultFactsTriples(factsDb: FactsDB, prompt: string, maxTriples = 20): SpoTriple[] {
+export function resolveVaultFactsTriples(
+  factsDb: FactsDB,
+  prompt: string,
+  maxTriples = 20,
+  scopeFilter?: ScopeFilter | null,
+): SpoTriple[] {
   const db = factsDb.getRawDb();
   const orgRows = loadOrgRows(db);
   const contactRows = loadContactRows(db);
@@ -54,7 +60,10 @@ export function resolveVaultFactsTriples(factsDb: FactsDB, prompt: string, maxTr
     if (org) {
       const factIds = factsDb.listFactIdsLinkedToOrg(org.id, 3);
       for (const factId of factIds) {
-        const fact = factsDb.getById(factId);
+        // SECURITY: org/contact rows aren't scoped themselves, but the facts linked to them
+        // are — scope-check each one (same pattern as register-directory-tools.ts) so a fact
+        // linked to an org by one tenant can't leak into another tenant's injected context.
+        const fact = factsDb.getById(factId, { scopeFilter });
         if (!fact?.key || !fact.value) continue;
         triples.push({
           subject: org.display_name,
@@ -70,12 +79,17 @@ export function resolveVaultFactsTriples(factsDb: FactsDB, prompt: string, maxTr
 }
 
 /** Merge SPO triples from multiple vault facts DBs (multi-vault fan-out). */
-export function resolveVaultFactsTriplesMulti(factsDbs: FactsDB[], prompt: string, maxTriples = 20): SpoTriple[] {
+export function resolveVaultFactsTriplesMulti(
+  factsDbs: FactsDB[],
+  prompt: string,
+  maxTriples = 20,
+  scopeFilter?: ScopeFilter | null,
+): SpoTriple[] {
   if (factsDbs.length === 0) return [];
   const seen = new Set<string>();
   const merged: SpoTriple[] = [];
   for (const factsDb of factsDbs) {
-    for (const triple of resolveVaultFactsTriples(factsDb, prompt, maxTriples)) {
+    for (const triple of resolveVaultFactsTriples(factsDb, prompt, maxTriples, scopeFilter)) {
       const key = `${triple.subject}|${triple.predicate}|${triple.object}`;
       if (seen.has(key)) continue;
       seen.add(key);

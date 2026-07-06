@@ -17,7 +17,7 @@ import { filterFactTextsForInjection, type InjectionFilterMode } from "./injecti
 import { resolveVaultFactsTriplesMulti } from "./vault-facts-resolver.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
 import type { LifecycleContext } from "../lifecycle/types.js";
-import type { SearchResult } from "../types/memory.js";
+import type { ScopeFilter, SearchResult } from "../types/memory.js";
 import { estimateTokens, truncateForStorage } from "../utils/text.js";
 
 /** Max share of the interactive prepend budget reserved for edicts (remainder goes to memories). */
@@ -92,6 +92,7 @@ export function finalizeInjectionMemoryContent(
   event: unknown,
   plainMemoryContent: string,
   candidates: SearchResult[],
+  scopeFilter?: ScopeFilter | null,
 ): string {
   const boundary = ctx.cfg.retrieval?.contextBoundary;
   const prompt = extractLastUserMessageText(event) ?? "";
@@ -101,7 +102,7 @@ export function finalizeInjectionMemoryContent(
   const factsDbs = vaultHandles.length > 0 ? vaultHandles.map((handle) => handle.factsDb) : [ctx.factsDb];
   let spoBlock = "";
   if (vaultBudget > 0 && prompt.trim()) {
-    const triples = resolveVaultFactsTriplesMulti(factsDbs, prompt);
+    const triples = resolveVaultFactsTriplesMulti(factsDbs, prompt, 20, scopeFilter);
     spoBlock = buildVaultFactsBlock(triples, vaultBudget, estimateTokens);
   }
 

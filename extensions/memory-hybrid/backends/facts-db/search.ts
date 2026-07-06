@@ -429,11 +429,12 @@ function escapeSqlLike(value: string): string {
 export function getCandidateIdsByStructuredFilters(
   db: DatabaseSync,
   filters: ConstrainedSearchFilters,
-  options: { limit?: number; nowSec?: number } | number = 1000,
+  options: { limit?: number; nowSec?: number; scopeFilter?: ScopeFilter | null } | number = 1000,
 ): string[] {
   const limit = typeof options === "number" ? options : (options.limit ?? 1000);
   const nowSec =
     typeof options === "number" ? Math.floor(Date.now() / 1000) : (options.nowSec ?? Math.floor(Date.now() / 1000));
+  const callerScopeFilter = typeof options === "number" ? undefined : options.scopeFilter;
   if (!hasActiveFilters(filters)) {
     return [];
   }
@@ -500,8 +501,13 @@ export function getCandidateIdsByStructuredFilters(
     params.push(formatTimestampUtc(nowSec));
   }
 
-  const sql = `SELECT id FROM facts WHERE ${conditions.join(" AND ")} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC LIMIT ?`;
-  const finalParams = [...params, limit];
+  // Restrict the candidate pool to what the caller can see — otherwise another tenant's
+  // higher-confidence/more-recent matching facts can fill the LIMIT cap and starve the
+  // caller's own in-scope facts out of constrained-recall results entirely (they'd never
+  // reach the scope-filtered hydration step downstream).
+  const { clause: scopeClause, params: scopeParams } = scopeFilterClausePositional(callerScopeFilter);
+  const sql = `SELECT id FROM facts WHERE ${conditions.join(" AND ")}${scopeClause} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC LIMIT ?`;
+  const finalParams = [...params, ...scopeParams, limit];
 
   try {
     const rows = db.prepare(sql).all(...finalParams) as Array<{ id: string }>;

@@ -37,6 +37,7 @@ import { markFactsInjectedForSession } from "../services/session-injection-dedup
 import { setProgressiveIndexIds } from "../utils/progressive-index-session.js";
 import type { LifecycleContext, RecallResult } from "./types.js";
 import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
+import { resolveRecallScopeFilter } from "./stage-recall/degraded-recall.js";
 
 const INJECTION_STAGE_TIMEOUT_MS = 10_000;
 const HEBBIAN_MAX_K = 8;
@@ -247,7 +248,13 @@ async function runInjection(
     sideEffects?: InjectionSideEffects,
   ): { prependContext: string } | undefined => {
     if (options.emitGate?.emitted) return undefined;
-    const structured = finalizeInjectionMemoryContent(ctx, event, memoryContent, candidates);
+    const structured = finalizeInjectionMemoryContent(
+      ctx,
+      event,
+      memoryContent,
+      candidates,
+      resolveRecallScopeFilter(ctx),
+    );
     const prepend = assembleRecallPrependContext(ctx, markDegradedLatency(structured), {
       prefix,
       edictBlock,

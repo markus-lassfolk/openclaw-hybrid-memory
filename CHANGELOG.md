@@ -23,6 +23,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.88] - 2026-07-06
+
+### Fixed
+
+Loop iteration 24 (fourth iteration of the third batch) of the full-codebase review loop — a broad `services/` sweep (the largest, only partially-reviewed directory), specifically targeting the retrieval/recall pipeline given its history of scope-filter bugs elsewhere in this codebase.
+
+- **Constrained-recall's candidate prefilter ignored the caller's scope entirely.** `getCandidateIdsByStructuredFilters()` (`backends/facts-db/search.ts`) builds the 1000-row candidate pool for `memory_recall`'s constrained-recall mode (triggered by an explicit `tag`/`category`/`entity` filter, or heuristically for filter-like queries) with no scope enforcement at all — unlike sibling queries in the same file, which already apply `scopeFilterClausePositional`. Since the pool is ordered by confidence/recency and capped at 1000 rows *before* the later scope-filtered hydration step, another tenant's higher-confidence or more-recent matching facts could fill the cap and silently starve the caller's own in-scope facts out of the result set entirely. Fixed by adding an optional `scopeFilter` to the function and threading the caller's scope filter through from `services/retrieval-orchestrator.ts` (it was already computed there, just never passed to this one call).
+- **Vault-facts SPO triples (org-linked facts surfaced in prompt injection) leaked across tenant scope.** `services/vault-facts-resolver.ts`'s `resolveVaultFactsTriples()` calls `factsDb.getById(factId)` with no scope filter when resolving facts linked to an organization. Organization/contact rows aren't scoped themselves, but the facts linked to them are — the codebase already documents and handles this correctly elsewhere (`tools/memory/register-directory-tools.ts` has an explicit "SECURITY: scope-check each fact" comment), but `vault-facts-resolver.ts` was never updated to match. Since this SPO block is built on essentially every turn (default 200-token budget, gated only on a non-empty prompt), a fact one agent linked to an org (e.g. a key/value pair) could surface in another agent's injected context whenever that agent's prompt mentions the same org name. Fixed by threading a `scopeFilter` parameter through `resolveVaultFactsTriples()`/`resolveVaultFactsTriplesMulti()` → `services/recalled-context-assembler.ts`'s `finalizeInjectionMemoryContent()` → `lifecycle/stage-injection.ts` (computed there via the canonical `resolveRecallScopeFilter()`, not duplicated inline, to avoid the exact "local reimplementation drifts from the shared helper" bug fixed in iteration 20).
+
+Regression tests added for both fixes, verified via `git stash` to fail without the fix and pass with it. tsc clean; biome checked against each file's pre-existing baseline — zero net-new lint/format issues.
+
+### Deferred (found this iteration, tracked for a future pass)
+
+- `services/workboard-facts-sync.ts`'s `applyWorkboardGoalStatusUpdate()` can resurrect a completed/failed/abandoned goal: unlike every other `updateGoal()` call site that touches `status` (`goal-subagent.ts`, `goal-health.ts`), it has no `isTerminalStatus()` guard before writing a new status derived from a dragged Workboard card. Live as soon as `workboard.enabled` is on (default config has `bidirectional: true`/`syncGoals: true`) — a user dragging a terminal goal's card to a non-terminal column silently reopens it on the next sync. Not fixed this iteration due to time budget; next candidate for iteration 25.
+- `services/recall-signals.ts`'s `aggregateRecallStats()`/`fetchRecallEventRows()` aggregate `recall_events` globally with no scope filter, feeding `retrieval-v2.ts`'s cross-domain-boost scoring. Lower severity than the fixes above — it only adjusts the ranking of facts already scope-filtered upstream, so this is a ranking-fairness quirk in multi-tenant setups rather than a data-exposure bug.
+
 ## [2026.7.87] - 2026-07-06
 
 ### Fixed

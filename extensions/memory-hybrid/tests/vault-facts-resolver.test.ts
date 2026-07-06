@@ -61,4 +61,42 @@ describe("resolveVaultFactsTriplesMulti", () => {
     const merged = resolveVaultFactsTriplesMulti([defaultDb, secondaryDb], "Tell me about Acme Corporation");
     expect(merged.some((t) => t.subject === "Acme Corporation" && t.predicate === "deadline")).toBe(true);
   });
+
+  it("does not leak a fact linked to an org across tenant scope (loop iteration 24 regression)", () => {
+    const fact = defaultDb.store({
+      text: "Acme Corporation internal budget is confidential",
+      entity: "Acme Corporation",
+      key: "budget",
+      value: "$500k",
+      category: "fact",
+      importance: 0.6,
+      source: "test",
+      scope: "user",
+      scopeTarget: "bob",
+    });
+    defaultDb.applyEntityEnrichment(
+      fact.id,
+      [
+        {
+          label: "ORG",
+          surfaceText: "Acme Corporation",
+          normalizedSurface: "acme corporation",
+          startOffset: 0,
+          endOffset: 16,
+          confidence: 0.9,
+        },
+      ],
+      "eng",
+    );
+
+    const unscoped = resolveVaultFactsTriples(defaultDb, "Tell me about Acme Corporation");
+    expect(unscoped.some((t) => t.predicate === "budget")).toBe(true); // sanity: the org link exists
+
+    const aliceTriples = resolveVaultFactsTriples(defaultDb, "Tell me about Acme Corporation", 20, {
+      userId: "alice",
+      agentId: null,
+      sessionId: null,
+    });
+    expect(aliceTriples.some((t) => t.predicate === "budget")).toBe(false);
+  });
 });
