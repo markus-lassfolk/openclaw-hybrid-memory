@@ -23,6 +23,69 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.98] - 2026-07-06
+
+### Fixed
+
+Loop iteration 34 of the full-codebase review loop. This iteration's review fanned out into a very large multi-agent sweep covering nearly the entire repository (CLI commands, services, tools, routes, utils); one high-severity process-crash bug is fixed here, and the many other confirmed findings from the sweep are tracked below for upcoming iterations rather than combined into one commit.
+
+- **`raceWithAbortSignal` (`utils/signal-race.ts`) could crash the whole host process on an unrelated, intentionally-non-fatal promise rejection.** The helper's internal cleanup call, `promise.finally(() => signal.removeEventListener(...))`, returns a *new* promise that rejects whenever the raced `promise` rejects — a separate promise object from the one `Promise.race` and the caller's own `await`/`.catch()` observe. Left unconsumed, that derived promise became a genuine unhandled promise rejection any time the raced promise rejected (regardless of whether the abort signal ever actually fired), which crashes the Node process under the default `--unhandled-rejections=throw` behavior. The only current call site, `lifecycle/stage-recall/run-recall.ts`'s `embed()` calls, wraps this helper in a `try/catch` specifically to make embedding failures non-fatal during recall-stage cancellation — but that try/catch never got a chance to matter, since the orphaned `.finally()` promise crashed the process independently of it. Fixed by attaching a no-op `.catch()` to the derived promise.
+
+Regression test added: races a promise that rejects (via `setTimeout`) with a signal, listens for `process.on("unhandledRejection", ...)` during the call, and asserts none fired. Verified via `git stash` to fail without the fix (unhandled rejection observed) and pass with it. tsc clean; biome clean (zero net-new). Related suites (recall-pipeline, lifecycle-stage-recall, constrained-recall, degraded-recall): 59 passed, no regressions. Full background vitest suite: only the 3 known pre-existing unrelated failures.
+
+### Deferred (confirmed findings from iteration 34's sweep, not yet fixed — grouped by rough severity)
+
+**Security/cross-tenant:**
+- `routes/proposal-routes.ts` / `routes/proposal-gateway-methods.ts` / `services/change-feed-revert.ts`: change-feed list/revert endpoints trust a client-supplied `session`/`sessionKey` param (and an unscoped `getById` in the id-based revert path) instead of the trusted identity header — cross-session IDOR letting one session read or revert another session's changes.
+- `tools/verification-tools.ts`'s `memory_verified_list` has no scope filter at all (already flagged as a known open gap in the file's own doc comment) — broadcasts every tenant's verified-fact content to every other tenant.
+- `services/goal-context-injection.ts`'s `resolveGoalsForSubagentContext` omits `scopeFilter` when loading task-ledger facts (sibling `active-task-tools-loader.ts` has an explicit SECURITY comment about this exact gap).
+- `tools/memory/register-agent-verb-tools.ts`'s `memory_retrieve` → `services/fragment-recall.ts`'s `resolveRecallInjectionText` hydrates a fragment's parent fact via `getById` with no scope filter, bypassing the scope guard applied a few lines earlier in the same tool.
+- `tools/provenance-tools.ts`'s `buildDerivedFrom` returns `event_log`-sourced text with no scope filter (event_log has no tenant column), inconsistent with the scoped `fact_chain`/`consolidationChain` handling in the same function.
+- `services/apitap-service.ts`'s `validateUrl` only blocks path keywords, never resolved host/IP — no protection against SSRF to private/link-local ranges or cloud metadata endpoints (`169.254.169.254`, etc.) via `apitap_capture`/`apitap_peek`.
+- `tools/memory/register-recall-tools.ts`: keyword recall applies the FTS row-limit before per-hit scope filtering, silently under-returning results in scoped multi-tenant deployments; graph expansion ignores per-result vault during multi-vault fan-out.
+
+**Data loss / correctness:**
+- `services/active-task-checkpoint.ts`'s `syncMarkdownLedgerFromCheckpoint`/`completeTask` discards the checkpoint call's fresh `next`/`title`/`relatedGoal` on terminal status, spreading the stale pre-call row instead.
+- Lost-update race between the heartbeat/cron `reconcileActiveTaskInProgressSessions` and `active_task_checkpoint` on `ACTIVE-TASKS.md` (plain read-then-write, no optimistic-concurrency check unlike sibling writers).
+- `cli/cmd-extract-directives.ts` advances its scan cursor past session files that failed to read/parse, permanently dropping any directives they contained (sibling `cmd-extract-procedures.ts` correctly gates cursor advancement on this).
+- `tools/memory/register-store-tools.ts`'s active-task-ledger mirror (`syncProjectStoreToActiveTaskLedger`) and `build-runtime.ts`'s `maybeRefreshProjectActiveTaskProjection` are closed over the default vault only, so a vault-scoped `memory_store` call's project-task mirror writes land in the wrong vault's ledger.
+- `utils/tool-search-wrapper-args.ts`: `memory_workshop` is missing from `MEMORY_TOOL_EXPECTED_ARG_KEYS`, so every `approve`/`reject`/`quarantine`/`revise`/`undo`/`inspect` call is misclassified as wrapper-arg-loss and short-circuited before `execute()` runs — the tool is unusable for its main actions.
+- `cli/cmd-distill.ts` and `cli/cmd-extract-reinforcement.ts` each have their own instance of the iteration-33 merge-embedding bug class (storing a vector embedded from pre-merge/unvalidated text instead of the actual persisted merged/validated content).
+- `utils/llm-json-array.ts`'s `extractItemArray` returns on the first matching nested envelope in a multi-element array instead of merging across all elements, silently dropping later batch items.
+- `services/task-queue-leases.ts`'s `withRegistryLock` stale-lock reclaim has a dead-code "recheck after unlink" — both branches of the recheck fall through to the same `continue`, so it provides no actual protection against reclaiming a lock another process just re-acquired.
+- `tools/health-dashboard.ts`'s liveness queries use `valid_until` instead of the codebase's standard `superseded_at IS NULL` marker, undercounting facts trimmed/evicted by the token-budget and daily-quota paths as still "active".
+- `services/procedure-skill-generator.ts`'s `generateAutoSkillForProcedure` (the default `requireApprovalForPromote`/quarantine path) reports/records `relativePath` under `skillsAutoPath` while physically writing the file under the quarantine `basePath`, so `markProcedurePromoted`/idempotency checks point at a nonexistent location (sibling `generateAutoSkills` does this correctly).
+- `services/procedure-feedback-tool.ts`'s `bootstrapProcedureIfMissing` correctly scope-checks the read but calls `upsertProcedure` with no `scope`/`scopeTarget` on create, defaulting new tenant-scoped procedures to `scope: "global"` — a write-side multi-tenant isolation break.
+- `backends/facts-db/links.ts`'s `getConnectedFactIds` (the legacy, non-CTE graph-traversal path used whenever `graphRetrieval.defaultExpand` is unset/false, which is the shipped "minimal" preset's default) has no `superseded_at`/scope join, unlike the CTE path — a fact superseded by a correction can still resurface as a `memory_recall` result via its surviving graph link.
+- `lifecycle/stage-cleanup.ts`'s `subagent_spawned` handler only guards against reopening a `"Done"` task, not `"Failed"`; the codebase's shared `TERMINAL` status set (`services/task-ledger/canonical.ts`) also omits `"failed"`, disabling the "refuse to regress terminal status" checks elsewhere — a retried/re-dispatched task can silently resurrect a task the system intended to keep terminal.
+- `services/context-engine.ts`'s `prepareSubagentSpawn` calls `buildContextBlock` with no token budget (so every candidate fact is recorded as "injected") and only trims to the real budget afterward — facts trimmed off the end are marked injected anyway and never shown to that sub-agent again in any future turn.
+- `services/graph-retrieval.ts`: `hubScorePenalty` (score-attenuation for high-degree hub nodes) is only implemented in the iterative-BFS fallback; the real production CTE-based expansion path (`expandGraphWithCTE`) never applies it, hard-skipping over-cap hub links entirely instead of attenuating them as both shipped "enhanced"/"complete" presets document.
+- `services/recall-pipeline.ts`: the FTS-only-results abort-signal early-return skips the `.slice(0, limitNum)` every other exit path applies, so an in-flight abort can return an oversized, un-deduped, unranked result set.
+- `config/parsers/features.ts`'s `parsePersonaProposalsConfig` collapses an explicitly-configured empty `allowedFiles: []` back to the full default allowlist — the same "explicit empty array silently replaced by default" class already fixed for `maintenance.privacyRedaction.exemptCategories`/`exemptKeys`, not applied to this sibling authorization allowlist.
+- `services/embedding-migration.ts`'s checkpoint-resume check (`offset > 0 && offset < total`) treats an exactly-completed checkpoint (`offset === total`, persisted right before an interrupted final cleanup) as "nothing to resume," forcing a full needless re-migration.
+- `services/embeddings/factory.ts`'s Google-in-chain dimension guard only covers the OpenAI-model case (`OPENAI_ONLY_EMBED_MODELS`); an Ollama/ONNX model with dims≠768 chained with Google silently builds a mismatched-dimensions chain that only fails later, confusingly, at `vectorDb.store()`.
+
+**Lower-severity / cosmetic:**
+- `services/credentials-encryption-key.ts`'s legacy-key security warning is gated on array index instead of matching the literal key, so it never fires when the key file is missing (the most common trigger case).
+- `cli/verify/sections/config-cron.ts`'s credentials-vault health check only test-decrypts one row, false-negative on partial vault corruption; `cli/verify/plugin-config-credentials.ts` logs a duplicate warning on parse failure.
+- `cli/verify/sections/llm-models.ts`'s `--test-llm` failures never affect verify's exit code/issues summary (unlike the parallel embeddings check).
+- `cli/install/cron-jobs.ts`: under the default consolidated-cron mode, standalone jobs not in `CONSOLIDATED_CRON_JOBS` (e.g. `weekly-pending-digest`, `maintenance-log-analyzer`, `sensor-sweep`) are never installed even when enabled/feature-gated on.
+- `cli/commands/manage/register-storage-maintenance.ts`: `--json` mode on `rebuild-aliases`/`repair-vectors`/`classification-artifacts` swallows non-zero exit codes; `classification-artifacts --apply` can print duplicate entries in `verifiedSkippedIds`.
+- `cli/cmd-health.ts --json` never reflects an `unhealthy` overall status in its exit code.
+- `cli/cmd-selfcorrection.ts`: a MEMORY_STORE remediation with an object `remediationContent` missing `text` stringifies to `"[object Object]"` and gets stored as a real fact instead of being skipped.
+- `cli/cmd-mine.ts --undo` filters only by `mine_batch_id` with no scope check, a plausible cross-tenant supersede.
+- `cli/cmd-backfill.ts`'s `runBackfillForCli`/`runIngestFilesForCli` don't increment the `skipped` stat on pre-store-guard rejections (sibling `cmd-distill.ts` does), understating the CLI's summary output.
+- `services/fact-mutation-gateway.ts`'s `hybrid-mem.facts.create` doesn't clamp `importance` to `[0,1]` unlike the sibling `confidence` field in the same handler.
+- `tools/goal-tools.ts`'s `goal_register` has a TOCTOU race on `maxActiveGoals` (no lock around the cap re-check, distinct from the four already-fixed terminal-status races).
+- `utils/llm-selection.ts` mislabels a configured `fallbackModel` as `"built-in"` in diagnostic source attribution (display-only, doesn't affect which model is used).
+
+### Deferred (carried over from earlier iterations; still tracked)
+
+- `backends/issue-store.ts`'s `transition()`/`update()` lacking compare-and-swap protection (cross-process race only).
+- An off-by-one output-line overwrite in `tools/apitap-tools.ts`; an inverted enabled/disabled detection in an unwired ESPHome YAML converter.
+
+---
+
 ## [2026.7.97] - 2026-07-06
 
 ### Fixed

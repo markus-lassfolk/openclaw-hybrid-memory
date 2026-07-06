@@ -23,7 +23,12 @@ export async function raceWithAbortSignal<T>(
         );
       };
       signal.addEventListener("abort", onAbort, { once: true });
-      void promise.finally(() => signal.removeEventListener("abort", onAbort));
+      // `.finally()` returns a new promise that rejects if `promise` rejects — a separate
+      // promise object from the one `Promise.race`/the `onAbort` `.then()` above consume.
+      // Left unhandled, that derived promise becomes a genuine unhandled rejection (and can
+      // crash the process under Node's default --unhandled-rejections=throw) whenever `promise`
+      // rejects, independent of whether the caller's race result was itself handled.
+      void promise.finally(() => signal.removeEventListener("abort", onAbort)).catch(() => {});
     }),
   ]);
 }
