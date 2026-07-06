@@ -18,6 +18,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { capturePluginError } from "../services/error-reporter.js";
 import { sanitizePromptInjection } from "../services/skill-prompt-injection.js";
 import { parseTimestamp } from "../utils/dates.js";
+import { createTransaction } from "../utils/sqlite-transaction.js";
 import { parseTags, serializeTags } from "../utils/tags.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
@@ -277,24 +278,39 @@ export class EdictStore extends BaseSqliteStore {
       throw new Error(`Edict with similar text already exists: ${existing.id}`);
     }
 
-    this.liveDb
-      .prepare(
-        `INSERT INTO edicts (id, text, normalized_text, source, verified_at, expires_at, expires_at_sec, ttl, tags, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        id,
-        input.text.trim(),
-        normalizedText,
-        source,
-        nowSec,
-        expiresAt,
-        expiresAtSec,
-        ttlStr,
-        tagsStr,
-        nowSec,
-        nowSec,
-      );
+    // Re-run the dedupe check once the write lock (BEGIN IMMEDIATE) is held, so the final
+    // duplicate decision is atomic with the INSERT. Without this, two concurrent add() calls for
+    // identical text could both pass the check above and both reach an unprotected INSERT
+    // (mirrors the same race fix in facts-db/crud.ts's storeFact()).
+    const insertWithDedupeRecheck = createTransaction(
+      this.liveDb,
+      () => {
+        const recheck = this.findByNormalizedTextInternal(normalizedText);
+        if (recheck) {
+          throw new Error(`Edict with similar text already exists: ${recheck.id}`);
+        }
+        this.liveDb
+          .prepare(
+            `INSERT INTO edicts (id, text, normalized_text, source, verified_at, expires_at, expires_at_sec, ttl, tags, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            id,
+            input.text.trim(),
+            normalizedText,
+            source,
+            nowSec,
+            expiresAt,
+            expiresAtSec,
+            ttlStr,
+            tagsStr,
+            nowSec,
+            nowSec,
+          );
+      },
+      "IMMEDIATE",
+    );
+    insertWithDedupeRecheck();
 
     return {
       id,

@@ -2,8 +2,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EdictStore } from "../backends/edict-store.js";
+
+type EdictStoreInternals = { findByNormalizedTextInternal: (normalized: string) => { id: string } | null };
 
 describe("EdictStore", () => {
   let dir: string;
@@ -94,6 +96,29 @@ describe("EdictStore", () => {
   it("detects duplicates using normalized_text (case/whitespace)", () => {
     store.add({ text: "Hello   World", tags: ["ops"] });
     expect(() => store.add({ text: "hello world", tags: ["ops"] })).toThrow(/already exists/i);
+  });
+
+  it("does not insert a duplicate edict when a concurrent writer's edict becomes visible between the first dedupe check and the write lock (loop iteration 15 regression)", () => {
+    const text = "Race-condition regression edict — identical text stored twice near-simultaneously";
+    const spy = vi.spyOn(store as unknown as EdictStoreInternals, "findByNormalizedTextInternal");
+
+    // The "concurrent writer" — stored first with the real (unmocked) check, so its insert is
+    // now visible in the table exactly as it would be once a racing add() call's transaction
+    // commits.
+    const winner = store.add({ text, tags: ["ops"] });
+
+    // Simulate the race for the SECOND call: its first (pre-transaction) dedupe check is mocked
+    // to report "no duplicate" — as if it had run a moment before `winner`'s insert became
+    // visible. The recheck inside the IMMEDIATE transaction uses the real implementation and
+    // must now see `winner` and throw instead of inserting a duplicate row.
+    spy.mockClear();
+    spy.mockImplementationOnce(() => null);
+    expect(() => store.add({ text, tags: ["ops"] })).toThrow(/already exists/i);
+
+    expect(spy).toHaveBeenCalledTimes(2);
+    const rows = store.list({ tags: ["ops"] }).filter((e) => e.text === text);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe(winner.id);
   });
 
   it("migrates legacy schemas missing id/derived columns", () => {

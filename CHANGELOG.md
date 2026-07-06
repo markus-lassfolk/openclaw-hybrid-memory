@@ -23,6 +23,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.79] - 2026-07-06
+
+### Fixed
+
+Loop iteration 15 of the full-codebase review loop — picked up the third deferred finding from iteration 12's CHANGELOG entry.
+
+- **`EdictStore.add()`'s duplicate-text check-then-insert wasn't transactional**, unlike `facts-db/crud.ts`'s `storeFact()`, which already defends against the same class of bug. Two concurrent `add()` calls for identical (normalized) text could both pass the dedupe check before either INSERT committed, producing two rows with the same `normalized_text` and violating the method's documented "throws on duplicate text" contract. Fixed by re-running the dedupe check inside a `BEGIN IMMEDIATE` transaction that also does the INSERT, so the final duplicate decision is atomic with the write — mirroring `storeFact()`'s existing pre-check + in-transaction-recheck structure.
+
+Regression test verified via `git stash` to fail without the fix (a mocked "no duplicate" pre-check let a second identical row through) and pass with it, using the same deterministic race-simulation technique as `tests/store-fact-dedupe-race.test.ts`. tsc clean; biome checked against each file's pre-existing baseline — zero net-new lint/format issues.
+
+### Deferred (carried over from iteration 12, still not fixed)
+
+- `backends/issue-store.ts`'s `linkFact()` does a non-atomic JS-level read-modify-write on a JSON column, risking lost updates under concurrent calls.
+- `backends/vector-db/vector-db-class.ts`'s `swapShadowTable()` closes the connection and renames table directories without draining in-flight readers or the path-containment guard `resetTableForReindex()` applies; `count()`/`countSemanticQueryCacheRows()` release their reader-lock slot immediately on timeout even though the underlying native call keeps running.
+
 ## [2026.7.78] - 2026-07-06
 
 ### Fixed
