@@ -3,7 +3,6 @@
  */
 
 import type { ExtractedMention } from "../../services/entity-enrichment.js";
-import { runWithSqliteBusyRetry } from "./crud.js";
 import type { Episode, EpisodeOutcome, MemoryEntry, ScopeFilter } from "../../types/memory.js";
 import {
   getAllEdges as getAllEdgesImpl,
@@ -14,31 +13,6 @@ import {
   getFactClusterId as getFactClusterIdImpl,
   saveClusters as saveClustersImpl,
 } from "./clusters.js";
-import {
-  addTag as addTagImpl,
-  applyContradictionReviewDecisions as applyContradictionReviewDecisionsImpl,
-  contradictionsCount as contradictionsCountImpl,
-  detectContradictions as detectContradictionsImpl,
-  evaluateLwwEligibility,
-  findConflictingFacts as findConflictingFactsImpl,
-  getContradictionResolutionAudit as getContradictionResolutionAuditImpl,
-  getContradictedIds as getContradictedIdsImpl,
-  getContradictions as getContradictionsImpl,
-  isContradicted as isContradictedImpl,
-  isFactVerified,
-  PROJECT_STATE_LWW_KEYS,
-  queryContradictionSurface as queryContradictionSurfaceImpl,
-  recordContradiction as recordContradictionImpl,
-  repairUndetectedContradictions as repairUndetectedContradictionsImpl,
-  resolveContradiction as resolveContradictionImpl,
-  type ContradictionDetectionResult,
-  previewResolveContradictionsAuto as previewResolveContradictionsAutoImpl,
-  resolveContradictionsAuto as resolveContradictionsAutoImpl,
-  resolveContradictionsAutonomously as resolveContradictionsAutonomouslyImpl,
-  resolveProjectStateLww as resolveProjectStateLwwImpl,
-  setConfidenceTo as setConfidenceToImpl,
-  updateConfidence as updateConfidenceImpl,
-} from "./contradictions.js";
 import type {
   ApplyContradictionReviewResult,
   ContradictionRecord,
@@ -49,6 +23,32 @@ import type {
   ResolveContradictionsAutoResult,
 } from "./contradictions.js";
 import {
+  addTag as addTagImpl,
+  applyContradictionReviewDecisions as applyContradictionReviewDecisionsImpl,
+  type ContradictionDetectionResult,
+  contradictionsCount as contradictionsCountImpl,
+  detectContradictions as detectContradictionsImpl,
+  evaluateLwwEligibility,
+  findConflictingFacts as findConflictingFactsImpl,
+  getContradictedIds as getContradictedIdsImpl,
+  getContradictionResolutionAudit as getContradictionResolutionAuditImpl,
+  getContradictions as getContradictionsImpl,
+  isContradicted as isContradictedImpl,
+  isFactVerified,
+  PROJECT_STATE_LWW_KEYS,
+  previewResolveContradictionsAuto as previewResolveContradictionsAutoImpl,
+  queryContradictionSurface as queryContradictionSurfaceImpl,
+  recordContradiction as recordContradictionImpl,
+  repairUndetectedContradictions as repairUndetectedContradictionsImpl,
+  resolveContradiction as resolveContradictionImpl,
+  resolveContradictionsAuto as resolveContradictionsAutoImpl,
+  resolveContradictionsAutonomously as resolveContradictionsAutonomouslyImpl,
+  resolveProjectStateLww as resolveProjectStateLwwImpl,
+  setConfidenceTo as setConfidenceToImpl,
+  updateConfidence as updateConfidenceImpl,
+} from "./contradictions.js";
+import { runWithSqliteBusyRetry } from "./crud.js";
+import {
   autoDetectInstanceOf as autoDetectInstanceOfImpl,
   autoLinkEntities as autoLinkEntitiesImpl,
   extractEntitiesFromText as extractEntitiesFromTextImpl,
@@ -58,31 +58,31 @@ import {
 import {
   type ContactProfileEnrichmentResult,
   type ContactProfileEnrichmentSource,
+  type ContactRow,
+  type ContactUpdatedBy,
   type EntityEnrichmentBacklogSummary,
   type EntityMentionsAuditSummary,
   type EntityMentionsCleanupSummary,
-  type ContactRow,
-  type ContactUpdatedBy,
-  type ListFactsNeedingEnrichmentOptions,
-  type OrganizationRow,
-  type UpsertContactOptions,
-  getEntityEnrichmentBacklogSummary as entityLayerGetEntityEnrichmentBacklogSummary,
   applyContactProfileEnrichmentForFact as entityLayerApplyContactProfileEnrichmentForFact,
   auditEntityMentions as entityLayerAuditEntityMentions,
   cleanupEntityMentions as entityLayerCleanupEntityMentions,
   findContactMergeCandidates as entityLayerFindContactMergeCandidates,
   getContactById as entityLayerGetContactById,
+  getEntityEnrichmentBacklogSummary as entityLayerGetEntityEnrichmentBacklogSummary,
   getOrganizationById as entityLayerGetOrganizationById,
   listContactsByNamePrefix as entityLayerListContactsByNamePrefix,
   listContactsForOrg as entityLayerListContactsForOrg,
   listFactIdsForOrg as entityLayerListFactIdsForOrg,
   listFactsNeedingEnrichment as entityLayerListFactsNeedingEnrichment,
-  getOrganizationByKeyOrName as lookupOrganizationByKeyOrName,
   mergeContacts as entityLayerMergeContacts,
   resolveContactId as entityLayerResolveContactId,
-  replaceFactEntityMentions,
   upsertContact as entityLayerUpsertContact,
   upsertOrganization as entityLayerUpsertOrganization,
+  type ListFactsNeedingEnrichmentOptions,
+  getOrganizationByKeyOrName as lookupOrganizationByKeyOrName,
+  type OrganizationRow,
+  replaceFactEntityMentions,
+  type UpsertContactOptions,
 } from "./entity-layer.js";
 import {
   deleteEpisode as deleteEpisodeImpl,
@@ -93,31 +93,31 @@ import {
 } from "./episodes.js";
 import { FactsDBLayer2 } from "./facts-db-layer2.js";
 import {
+  checkpointWalTruncate as checkpointWalTruncateImpl,
+  countActiveFactsByCategory as countActiveFactsByCategoryImpl,
   countBySource as countBySourceImpl,
   countSupersededFacts as countSupersededFactsImpl,
   countVerifiedFacts as countVerifiedFactsImpl,
-  getFtsConsistencySnapshot as getFtsConsistencySnapshotImpl,
+  type FtsConsistencySnapshot,
+  type FtsTriggerProbeResult,
   findSessionFactsForPromotion as findSessionFactsForPromotionImpl,
   freelistSpaceStats as freelistSpaceStatsImpl,
+  getFtsConsistencySnapshot as getFtsConsistencySnapshotImpl,
   languageKeywordsCount as languageKeywordsCountImpl,
+  listScopedFactIdsPendingPrune as listScopedFactIdsPendingPruneImpl,
   optimizeFts as optimizeFtsImpl,
-  checkpointWalTruncate as checkpointWalTruncateImpl,
   pruneLogTables as pruneLogTablesImpl,
   pruneOrphanedLinks as pruneOrphanedLinksImpl,
   pruneScopedFacts as pruneScopedFactsImpl,
-  listScopedFactIdsPendingPrune as listScopedFactIdsPendingPruneImpl,
-  recentActivity as recentActivityImpl,
   rebuildFtsIndexFromFacts as rebuildFtsIndexFromFactsImpl,
+  recentActivity as recentActivityImpl,
   runFtsTriggerProbe as runFtsTriggerProbeImpl,
   scopeStats as scopeStatsImpl,
   selfCorrectionIncidentsCount as selfCorrectionIncidentsCountImpl,
   statsBySource as statsBySourceImpl,
   statsReflection as statsReflectionImpl,
-  type FtsConsistencySnapshot,
-  type FtsTriggerProbeResult,
   uniqueScopes as uniqueScopesImpl,
   vacuumAndCheckpoint as vacuumAndCheckpointImpl,
-  countActiveFactsByCategory as countActiveFactsByCategoryImpl,
 } from "./housekeeping.js";
 
 export class FactsDB extends FactsDBLayer2 {
@@ -194,8 +194,8 @@ export class FactsDB extends FactsDBLayer2 {
     return selfCorrectionIncidentsCountImpl(this.liveDb);
   }
 
-  countBySource(source: string): number {
-    return countBySourceImpl(this.liveDb, source);
+  countBySource(source: string, scopeFilter?: ScopeFilter | null): number {
+    return countBySourceImpl(this.liveDb, source, scopeFilter);
   }
 
   languageKeywordsCount(): number {
@@ -653,7 +653,10 @@ export class FactsDB extends FactsDBLayer2 {
   }
 
   /** Explicitly merge one contact into another (`contacts merge` CLI). Manual source always wins field conflicts. */
-  mergeContacts(fromId: string, intoId: string): { ok: true; mergedFactMentions: number } | { ok: false; error: string } {
+  mergeContacts(
+    fromId: string,
+    intoId: string,
+  ): { ok: true; mergedFactMentions: number } | { ok: false; error: string } {
     return runWithSqliteBusyRetry(this.liveDb, () => entityLayerMergeContacts(this.liveDb, fromId, intoId));
   }
 
@@ -668,7 +671,9 @@ export class FactsDB extends FactsDBLayer2 {
     primaryOrgId: string | null,
     options: UpsertContactOptions & { updatedBy: ContactUpdatedBy },
   ): { id: string; created: boolean; mergedInto?: string } | null {
-    return runWithSqliteBusyRetry(this.liveDb, () => entityLayerUpsertContact(this.liveDb, displayName, primaryOrgId, options));
+    return runWithSqliteBusyRetry(this.liveDb, () =>
+      entityLayerUpsertContact(this.liveDb, displayName, primaryOrgId, options),
+    );
   }
 
   /** Link a fact to an organization outside the NER pipeline (roster import uses reason='roster_import'). */

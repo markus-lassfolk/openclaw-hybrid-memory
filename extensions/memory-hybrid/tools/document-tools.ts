@@ -22,16 +22,16 @@ import {
   type HybridMemoryConfig,
   type MemoryCategory,
 } from "../config.js";
-import { chunkMarkdown } from "../services/document-chunker.js";
+import { resolveMaintenanceChatTimeoutMs } from "../services/chat.js";
 import { resolveDefaultStoreScope } from "../services/default-store-scope.js";
+import { chunkMarkdown } from "../services/document-chunker.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { resolveMaintenanceChatTimeoutMs } from "../services/chat.js";
 import { chatCompletionTokenParams } from "../services/model-capabilities.js";
 import type { ProvenanceService } from "../services/provenance.js";
 import type { PythonBridge } from "../services/python-bridge.js";
 import { cleanupEvictedVector, storeCanonicalVectorForFact } from "../services/vector-maintenance.js";
-import type { MemoryEntry } from "../types/memory.js";
+import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { extractAssistantMessageText } from "../utils/llm-message.js";
 import { extractTags } from "../utils/tags.js";
 import { stringEnum } from "../utils/typebox.js";
@@ -432,7 +432,19 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
     const fileContent = readFileSync(realPath);
     const fingerprint = createHash("sha256").update(fileContent).digest("hex");
 
-    const existingCount = factsDb.countBySource(`document:${fingerprint}`);
+    // SECURITY: resolve this ingestion's own scope up front (rather than at the per-chunk store
+    // call below) so the duplicate-ingestion check can be scoped to it too — without this, one
+    // tenant ingesting a document made every OTHER tenant's ingestion of the same byte-identical
+    // file silently rejected as "already ingested", and disclosed the other tenant's chunk count
+    // as a side channel (same fix pattern as Issue #1574 / FR-006).
+    const { scope: docScope, scopeTarget: docScopeTarget } = resolveDefaultStoreScope(
+      cfg,
+      currentAgentIdRef.value,
+      (message) => api.logger.warn?.(message),
+    );
+    const dedupeScopeFilter: ScopeFilter | undefined = docScope === "global" ? undefined : { agentId: docScopeTarget };
+
+    const existingCount = factsDb.countBySource(`document:${fingerprint}`, dedupeScopeFilter);
     if (existingCount > 0 && !opts.dryRun) {
       const response = makeErrorResponse(
         `Document already ingested (${existingCount} chunks stored). Delete existing facts first if you want to re-ingest.`,
@@ -577,14 +589,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
     const extraTags = normalizeExtraTags(opts.tags);
     const baseTags: string[] = [...(docCfg.autoTag ? [headingTagSafe(fileName)] : []), "document", ...extraTags];
 
-    // SECURITY: without this, every ingested chunk defaults to global scope regardless of
-    // multiAgent.defaultStoreScope config — matching the same fix already applied to
-    // conversational auto-capture (Issue #1574 / FR-006).
-    const { scope: docScope, scopeTarget: docScopeTarget } = resolveDefaultStoreScope(
-      cfg,
-      currentAgentIdRef.value,
-      (message) => api.logger.warn?.(message),
-    );
+    // docScope/docScopeTarget resolved earlier (used for the duplicate-ingestion scope check too).
 
     let storedCount = 0;
     let errorCount = 0;

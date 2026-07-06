@@ -23,6 +23,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.96] - 2026-07-06
+
+### Fixed
+
+Loop iteration 32 (twelfth iteration of the third batch) of the full-codebase review loop — picks up another deferred finding from iteration 27's multi-agent sweep.
+
+- **Document-ingestion dedup (`memory_ingest_document`) had no scope predicate, leaking cross-tenant existence/count and blocking legitimate re-ingestion.** `countBySource()` (`backends/facts-db/housekeeping.ts`), used to detect "this exact file was already ingested" via a content-hash `source` fingerprint, ran with no scope filter at all — unlike the per-chunk store call a few lines later in the same file, which correctly resolves `docScope`/`docScopeTarget` via `resolveDefaultStoreScope` (Issue #1574/FR-006). In a multi-agent deployment, Tenant A ingesting a document permanently blocked Tenant B from ever ingesting the same byte-identical file (silently rejected as `skipped_duplicate`), and the rejection response's `chunkCount` disclosed how many chunks Tenant A's ingestion produced — a cross-tenant existence/count side-channel. Fixed by adding an optional `scopeFilter` parameter to `countBySource()` (default unrestricted, preserving the two other call sites — `context-engine.ts`'s session-key bookkeeping and `register-storage-maintenance.ts`'s global SLO metric — which are correctly unscoped) and threading the document's own resolved scope through it in `document-tools.ts`, hoisting the existing `resolveDefaultStoreScope()` call earlier so both the dedup check and the per-chunk stores share one computation.
+
+Regression test added (Tenant A ingests, then Tenant B ingests the same byte-identical file and must not be rejected as a duplicate), verified via `git stash` to fail without the fix (Tenant B's ingestion returned `skipped_duplicate` with no `storedCount`) and pass with it. tsc clean; biome clean (2 own-code formatting/lint touch-ups applied, zero net-new issues against baseline — baseline actually had 4 pre-existing errors in these files that a `biome check --write` incidentally cleaned up as a side effect of reordering imports around the new ones). Full background vitest suite: only the 3 known pre-existing unrelated failures.
+
+### Deferred (carried over from iteration 27; still tracked for future iterations)
+
+- `backends/issue-store.ts`'s `transition()`/`update()` lacking compare-and-swap protection (cross-process race only).
+- `register-store-tools.ts`'s merge-dedupe path storing a mismatched text/vector pair.
+- Lower-severity items: an off-by-one output-line overwrite in `tools/apitap-tools.ts`, an inverted enabled/disabled detection in an unwired ESPHome YAML converter, an entity-lookup pre-filter that doesn't fan out across vaults in `register-recall-tools.ts`.
+
 ## [2026.7.95] - 2026-07-06
 
 ### Fixed

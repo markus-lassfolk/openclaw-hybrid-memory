@@ -4,12 +4,12 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
-
+import { rebuildFtsIndex } from "../../services/fts-search.js";
 import type { MemoryEntry, ScopeFilter } from "../../types/memory.js";
 import { getLanguageKeywordsFilePath } from "../../utils/language-keywords.js";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
-import { rebuildFtsIndex } from "../../services/fts-search.js";
 import { rowToMemoryEntry } from "./row-mapper.js";
+import { scopeFilterClausePositional } from "./scope-sql.js";
 
 export function pruneOrphanedLinks(db: DatabaseSync): number {
   const result = db
@@ -372,10 +372,11 @@ export function recentActivity(db: DatabaseSync): {
   };
 }
 
-export function countBySource(db: DatabaseSync, source: string): number {
+export function countBySource(db: DatabaseSync, source: string, scopeFilter?: ScopeFilter | null): number {
+  const scopeClause = scopeFilterClausePositional(scopeFilter);
   const row = db
-    .prepare("SELECT COUNT(*) as count FROM facts WHERE superseded_at IS NULL AND source = ?")
-    .get(source) as { count: number } | undefined;
+    .prepare(`SELECT COUNT(*) as count FROM facts WHERE superseded_at IS NULL AND source = ? ${scopeClause.clause}`)
+    .get(source, ...scopeClause.params) as { count: number } | undefined;
   return row?.count ?? 0;
 }
 

@@ -206,6 +206,61 @@ describe("memory_ingest_document", () => {
     }
   });
 
+  it("does not block a different tenant from ingesting the same byte-identical file (loop iteration 32 regression)", async () => {
+    const bridge = makeMockBridge("## Section One\n\nContent one.\n\n## Section Two\n\nContent two.");
+    const cfg = {
+      ...makeCfg({}, tmpDir),
+      multiAgent: { orchestratorId: "main", defaultStoreScope: "agent" as const },
+    };
+
+    const apiA = makeMockApi();
+    registerDocumentTools(
+      {
+        factsDb: factsDb as never,
+        edictStore: null as never,
+        vectorDb: makeMockVectorDb() as never,
+        cfg: cfg as never,
+        embeddings: makeMockEmbeddings() as never,
+        openai: {} as never,
+        pythonBridge: bridge as never,
+        currentAgentIdRef: { value: "tenantA" },
+      },
+      apiA as never,
+    );
+    const resultA = await (apiA.getTool("memory_ingest_document")?.execute as AnyFn)("tc-a", {
+      path: testFilePath,
+    });
+    expect(resultA.details.status).not.toBe("skipped_duplicate");
+    expect(resultA.details.storedCount).toBeGreaterThanOrEqual(1);
+
+    // tenantB ingesting the same byte-identical file must not be rejected as a duplicate of
+    // tenantA's ingestion, and must not learn tenantA's chunk count via the rejection message.
+    const apiB = makeMockApi();
+    registerDocumentTools(
+      {
+        factsDb: factsDb as never,
+        edictStore: null as never,
+        vectorDb: makeMockVectorDb() as never,
+        cfg: cfg as never,
+        embeddings: makeMockEmbeddings() as never,
+        openai: {} as never,
+        pythonBridge: bridge as never,
+        currentAgentIdRef: { value: "tenantB" },
+      },
+      apiB as never,
+    );
+    const resultB = await (apiB.getTool("memory_ingest_document")?.execute as AnyFn)("tc-b", {
+      path: testFilePath,
+    });
+    expect(resultB.details.status).not.toBe("skipped_duplicate");
+    expect(resultB.details.storedCount).toBeGreaterThanOrEqual(1);
+
+    const stored = factsDb.getAll({ includeSuperseded: true });
+    const ingested = stored.filter((f) => f.source?.startsWith("document:"));
+    expect(ingested.some((f) => f.scopeTarget === "tenantA")).toBe(true);
+    expect(ingested.some((f) => f.scopeTarget === "tenantB")).toBe(true);
+  });
+
   it("rejects non-absolute path", async () => {
     const api = makeMockApi();
     registerDocumentTools(
