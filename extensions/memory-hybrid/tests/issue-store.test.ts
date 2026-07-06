@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { DatabaseSync } from "node:sqlite";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
 
 const { IssueStore } = _testing;
@@ -398,6 +399,18 @@ describe("IssueStore.linkFact", () => {
 
   it("throws when linking to nonexistent issue", () => {
     expect(() => store.linkFact("nonexistent", "fact-001")).toThrow("Issue not found");
+  });
+
+  it("wraps the read-modify-write in an IMMEDIATE transaction so concurrent linkFact calls can't overwrite each other (loop iteration 16 regression)", () => {
+    const issue = store.create({ title: "Race test", symptoms: ["s"] });
+    const rawDb = (store as unknown as { db: DatabaseSync }).db;
+    const execSpy = vi.spyOn(rawDb, "exec");
+
+    store.linkFact(issue.id, "fact-001");
+
+    const execCalls = execSpy.mock.calls.map((args) => String(args[0]));
+    expect(execCalls).toContain("BEGIN IMMEDIATE");
+    expect(execCalls).toContain("COMMIT");
   });
 });
 

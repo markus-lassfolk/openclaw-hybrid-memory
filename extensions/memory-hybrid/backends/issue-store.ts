@@ -16,6 +16,7 @@ import type { CreateIssueInput, Issue, IssueSeverity, IssueStatus } from "../typ
 import { ISSUE_TRANSITIONS } from "../types/issue-types.js";
 import { nowIso, cutoffIsoDaysAgo } from "../utils/dates.js";
 import { backfillIssueTextTimestamps } from "../utils/timestamp-migration.js";
+import { createTransaction } from "../utils/sqlite-transaction.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 interface IssueRow {
@@ -236,16 +237,27 @@ export class IssueStore extends BaseSqliteStore {
   }
 
   linkFact(issueId: string, factId: string): void {
-    const issue = this.get(issueId);
-    if (!issue) throw new Error(`Issue not found: ${issueId}`);
+    // Read-modify-write the JSON related_facts column inside an IMMEDIATE transaction so two
+    // concurrent linkFact() calls on the same issue can't both read the same array and overwrite
+    // each other's addition (last write wins) — mirrors the same class of fix already applied to
+    // facts-db/crud.ts's storeFact() and edict-store.ts's add().
+    const linkAtomic = createTransaction(
+      this.liveDb,
+      () => {
+        const issue = this.get(issueId);
+        if (!issue) throw new Error(`Issue not found: ${issueId}`);
 
-    const related = issue.relatedFacts;
-    if (!related.includes(factId)) {
-      related.push(factId);
-      this.liveDb
-        .prepare("UPDATE issues SET related_facts = ?, updated_at = ? WHERE id = ?")
-        .run(JSON.stringify(related), nowIso(), issueId);
-    }
+        const related = issue.relatedFacts;
+        if (!related.includes(factId)) {
+          related.push(factId);
+          this.liveDb
+            .prepare("UPDATE issues SET related_facts = ?, updated_at = ? WHERE id = ?")
+            .run(JSON.stringify(related), nowIso(), issueId);
+        }
+      },
+      "IMMEDIATE",
+    );
+    linkAtomic();
   }
 
   archive(olderThanDays: number): number {

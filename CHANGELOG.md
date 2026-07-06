@@ -23,6 +23,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.80] - 2026-07-06
+
+### Fixed
+
+Loop iteration 16 of the full-codebase review loop — picked up the fourth deferred finding from iteration 12's CHANGELOG entry.
+
+- **`IssueStore.linkFact()`'s read-modify-write on the `related_facts` JSON column wasn't atomic.** It read the issue, appended the new fact id to the in-memory array, then wrote the whole array back — two separate auto-committed statements with no transaction between them. Two concurrent `linkFact()` calls on the same issue could both read the same array before either write committed, and whichever `UPDATE` landed last would silently discard the other's fact-id addition (lost update). Fixed by wrapping the read and write in a `BEGIN IMMEDIATE` transaction, the same pattern already applied to `facts-db/crud.ts`'s `storeFact()` and `edict-store.ts`'s `add()`.
+
+Regression test verified via `git stash` to fail without the fix (no `BEGIN IMMEDIATE`/`COMMIT` calls were made during `linkFact()`) and pass with it. tsc clean; biome checked against each file's pre-existing baseline — zero net-new lint/format issues.
+
+### Deferred (carried over from iteration 12, still not fixed)
+
+- `backends/vector-db/vector-db-class.ts`'s `swapShadowTable()` closes the connection and renames table directories without draining in-flight readers or the path-containment guard `resetTableForReindex()` applies; `count()`/`countSemanticQueryCacheRows()` release their reader-lock slot immediately on timeout even though the underlying native call keeps running.
+
 ## [2026.7.79] - 2026-07-06
 
 ### Fixed
