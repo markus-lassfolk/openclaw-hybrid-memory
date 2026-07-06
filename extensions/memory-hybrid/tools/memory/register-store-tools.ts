@@ -1170,12 +1170,24 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
 
             try {
               addOperationBreadcrumb("vector", "store-fact");
-              if (vector) {
+              // When storeWithResult merged this call's text onto an existing fact
+              // (newlyStored: false, embeddingStale: true), entry.text is the ACTUAL persisted
+              // content (existing.text + "\n" + textToStore, truncated) — not textToStore alone.
+              // Re-embed from entry.text so the vector backend encodes the same content as the
+              // fact row, instead of leaving a vector embedded from only the newly-added text
+              // fragment (mirrors the classify-before-write UPDATE merge branch above).
+              const isMerge = storeResult.newlyStored === false && storeResult.embeddingStale === true;
+              const vectorText = isMerge ? entry.text : textToStore;
+              const vectorForStore = isMerge ? await embeddings.embed(entry.text) : vector;
+              if (isMerge) {
+                storeFactsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+              }
+              if (vectorForStore) {
                 await storeActiveCanonicalVector({
                   factId: entry.id,
-                  text: textToStore,
+                  text: vectorText,
                   why: whyStored,
-                  vector,
+                  vector: vectorForStore,
                   importance,
                   category,
                   factsDb: storeFactsDb,
@@ -1187,8 +1199,8 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 embeddingRegistry,
                 embeddings,
                 factId: entry.id,
-                text: textToStore,
-                vector,
+                text: vectorText,
+                vector: vectorForStore,
                 logger: api.logger,
                 operation: "store-fact",
               });

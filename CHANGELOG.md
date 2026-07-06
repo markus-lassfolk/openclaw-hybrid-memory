@@ -23,6 +23,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.97] - 2026-07-06
+
+### Fixed
+
+Loop iteration 33 (thirteenth iteration of the third batch) of the full-codebase review loop — resolves the merge-dedupe vector desync deferred at the end of iteration 32.
+
+- **`memory_store`'s normal ADD path re-embedded and stored the pre-merge text fragment instead of the actual merged fact text.** When `storeWithResult()` merges a new `memory_store` call's text onto an existing fact (`newlyStored: false`, `embeddingStale: true` — the persisted `entry.text` becomes `existing.text + "\n" + textToStore`, truncated to 4000 chars), the ADD-path post-store block (`tools/memory/register-store-tools.ts`) re-embedded and stored the vector using the pre-merge `textToStore` and the vector already computed from it *before* the merge was known, not `entry.text`. This left the vector backend (LanceDB) encoding only the newly-added text fragment while the fact row's real, persisted text was the full merged content — silently desyncing the two backends for that fact, so vector recall on the merged-in portion of the text would never surface it. The classify-before-write UPDATE-merge branch already handled this correctly by re-embedding `newEntry.text`; the normal ADD path (the majority of `memory_store` calls) did not. Fixed by detecting the merge case (`storeResult.newlyStored === false && storeResult.embeddingStale === true`) and re-embedding from `entry.text` (the actual persisted content) instead of `textToStore`, mirroring the UPDATE-branch fix.
+
+Regression test added: stores a fact, then stores a case-only-different duplicate with `onDuplicate: "merge"` configured (bypassing the cheap `hasDuplicate` pre-check, which would otherwise bounce the same hash match before `storeWithResult` runs), and asserts the vector backend's `store()` call receives the merged text, not the pre-merge fragment. Verified via `git stash` to fail without the fix and pass with it. tsc clean; biome clean (zero net-new against baseline). Related suites (facts-db, dedupe-policy, store-fact-dedupe-race, memory-store-event-log, capture-dedup-window, distill-vector-dedupe, memory-store-vault-vector-isolation): 235 passed, 3 skipped, no regressions. Full background vitest suite: only the 3 known pre-existing unrelated failures.
+
+### Deferred (carried over from iteration 27; still tracked for future iterations)
+
+- `backends/issue-store.ts`'s `transition()`/`update()` lacking compare-and-swap protection (cross-process race only).
+- Lower-severity items: an off-by-one output-line overwrite in `tools/apitap-tools.ts`, an inverted enabled/disabled detection in an unwired ESPHome YAML converter, an entity-lookup pre-filter that doesn't fan out across vaults in `register-recall-tools.ts`.
+
+---
+
 ## [2026.7.96] - 2026-07-06
 
 ### Fixed
