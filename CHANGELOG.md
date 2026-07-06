@@ -23,6 +23,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.64] - 2026-07-06
+
+### Fixed
+
+- **Mis-attributed emails caused false contradictions and corrupt org-level `key=email` facts (#2062):** `extractStructuredFields()`'s email heuristic grabbed the *first* email address in any text with no context awareness — so a payment-notification email mentioning a company (sender: a `noreply@`/automation address) or a multi-person contact-roster listing (several people's emails in one text) could get stored as if that address were the mentioned org's own `key=email` fact. Two org-level facts extracted this way from unrelated source text (a notification sender address, and a roster member's personal address) then looked like a genuine, alarming contradiction over "the org's real email," when neither was ever the org's email at all.
+
+  Fixed at the root cause in `services/fact-extraction.ts` (shared by `memory_store`, `distill`, `extract-daily`, and CLI `store`): the email heuristic now skips assigning a scalar `key=email` when (a) the matched address is a system/notification sender (`noreply@`, `robot@`, `mailer-daemon@`, etc. — new `utils/system-sender-email.ts` blocklist), or (b) the text contains 2+ distinct email addresses (ambiguous — e.g. a sender/recipient pair, or a multi-person roster) — falling through to phone/entity heuristics instead of guessing. Applied the same blocklist to `parseContactProfileHints()` (contact-profile enrichment) and to `distill`'s LLM-sourced `entity`/`key`/`value` (which bypasses the regex heuristic entirely, so needed its own guard). Also added the same blocklist as a skip condition in `backends/facts-db/contradictions.ts`'s write-time detection and nightly repair pass, so a system-sender value can no longer compete in a contradiction against a genuine one — covering facts already corrupted before this fix, not just preventing new ones.
+
+  Deliberately out of scope for this pass (would need a larger, separately-confirmed design): a typed email-key taxonomy (`contact_email`/`mail_sender`/`primary_email` instead of a flat `email` key) and Swedish/English mail sender/recipient pattern parsing (`från X till Y` / `from X to Y`) — both P1 items from the original report that ripple into recall queries, tools, and docs beyond what a blocklist/ambiguity guard needs to touch.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.7.64**.
+
+---
+
 ## [2026.7.63] - 2026-07-06
 
 ### Fixed

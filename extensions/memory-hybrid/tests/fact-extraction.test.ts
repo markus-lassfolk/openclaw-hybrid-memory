@@ -256,6 +256,71 @@ describe("extractStructuredFields — email extraction", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// #2062: mis-attribution guards — a naive first-email match silently corrupted
+// entity/key=email facts when the text was actually a mail sender notification or a
+// multi-person roster listing. All examples below use fabricated placeholder data.
+// ---------------------------------------------------------------------------
+
+describe("extractStructuredFields — system-sender email blocklist (#2062)", () => {
+  it("does not extract a noreply/notification sender address as key=email", () => {
+    const r = extractStructuredFields(
+      "Notification from noreply@vendor-example.com: your document is ready to sign.",
+      "entity",
+    );
+    expect(r.key).toBeNull();
+    expect(r.value).toBeNull();
+  });
+
+  it("does not extract a robot/automation sender address as key=email", () => {
+    const r = extractStructuredFields(
+      "Mail from AutomationBot (robot@notify-example.se) about a pending payment approval for Acme Consulting AB.",
+      "entity",
+    );
+    expect(r.key).toBeNull();
+    expect(r.value).toBeNull();
+  });
+
+  it("still extracts a single genuine (non-blocklisted) email even in mail-context text", () => {
+    const r = extractStructuredFields("Mail from jane.doe@example.com about the quarterly report.", "entity");
+    expect(r.key).toBe("email");
+    expect(r.value).toBe("jane.doe@example.com");
+  });
+});
+
+describe("extractStructuredFields — multi-email ambiguity guard (#2062)", () => {
+  it("does not assign a scalar key=email when text lists multiple distinct addresses (roster)", () => {
+    const r = extractStructuredFields(
+      "Acme Consulting AB — team roster (3 people). Members: Jordan Rivers <jordan.rivers@example.com>; " +
+        "Sam Patel <sam.patel@example.com>; Taylor Chen <taylor.chen@example.org>.",
+      "entity",
+    );
+    expect(r.key).toBeNull();
+    expect(r.value).toBeNull();
+  });
+
+  it("falls through to entity proper-noun extraction when emails are ambiguous", () => {
+    const r = extractStructuredFields(
+      "Northwind Traders — contacts: Jordan Rivers <jordan.rivers@example.com>, Sam Patel <sam.patel@example.com>.",
+      "entity",
+    );
+    expect(r.key).toBeNull();
+    expect(r.entity).toBe("Northwind");
+  });
+
+  it("still extracts the single email when a sender/recipient mail pair has one non-blocklisted and one blocklisted address", () => {
+    // Only one of the two addresses is a real candidate once the system-sender one is excluded —
+    // but since two *distinct* addresses are still present, this remains ambiguous by design
+    // (we don't try to guess which of two present addresses "is" the fact).
+    const r = extractStructuredFields(
+      "Mail from Vendor (noreply@vendor-example.com) to jane.doe@example.com regarding invoice #123.",
+      "entity",
+    );
+    expect(r.key).toBeNull();
+    expect(r.value).toBeNull();
+  });
+});
+
 describe("extractStructuredFields — phone extraction", () => {
   it("extracts phone number (10+ digits)", () => {
     const r = extractStructuredFields("call me at +12025551234 anytime", "entity");

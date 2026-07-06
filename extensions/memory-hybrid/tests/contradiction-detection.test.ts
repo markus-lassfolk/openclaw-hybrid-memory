@@ -23,6 +23,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { repairUndetectedContradictions } from "../backends/facts-db/contradictions.js";
 import { _testing } from "../index.js";
 
 const { FactsDB } = _testing;
@@ -448,5 +449,57 @@ describe("updateConfidence", () => {
     const fact = storeFact("user", "theme", "dark", "User prefers dark mode", 0.9);
     const updated = db.updateConfidence(fact.id, 0.5);
     expect(updated).toBeCloseTo(1.0, 5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 13. System-sender email mis-attribution guard (#2062)
+//
+// A notification/system-sender address (noreply@, robot@, etc.) mentioned in a fact's text is
+// never that fact's "true" value — e.g. a payment-notification email that mentions a company is
+// not that company's own email address. Such a value must not compete in a contradiction against
+// a genuine value. All examples use fabricated placeholder data.
+// ---------------------------------------------------------------------------
+describe("detectContradictions: system-sender email blocklist guard", () => {
+  it("does not record a contradiction when the new fact's value is a system-sender address", () => {
+    storeFact("Acme Consulting AB", "email", "jane.doe@example.com", "Acme Consulting AB primary contact");
+
+    const contradictions = db.detectContradictions(
+      "new-fact-id",
+      "Acme Consulting AB",
+      "email",
+      "noreply@vendor-example.com",
+    );
+
+    expect(contradictions).toHaveLength(0);
+  });
+
+  it("does not record a contradiction when the existing conflicting fact's value is a system-sender address", () => {
+    storeFact("Acme Consulting AB", "email", "robot@notify-example.se", "Payment notification mentioning Acme");
+    const newFact = storeFact("Acme Consulting AB", "email", "jane.doe@example.com", "Roster contact for Acme");
+
+    const contradictions = db.detectContradictions(newFact.id, "Acme Consulting AB", "email", "jane.doe@example.com");
+
+    expect(contradictions).toHaveLength(0);
+  });
+
+  it("still detects a genuine contradiction between two non-blocklisted values", () => {
+    const old = storeFact("Acme Consulting AB", "email", "jane.doe@example.com", "Acme Consulting AB contact");
+    const newFact = storeFact("Acme Consulting AB", "email", "sam.patel@example.com", "Acme Consulting AB new contact");
+
+    const contradictions = db.detectContradictions(newFact.id, "Acme Consulting AB", "email", "sam.patel@example.com");
+
+    expect(contradictions).toHaveLength(1);
+    expect(contradictions[0].oldFactId).toBe(old.id);
+  });
+
+  it("repairUndetectedContradictions does not backfill a pair where one side is a system-sender address", () => {
+    storeFact("Acme Consulting AB", "email", "noreply@vendor-example.com", "Payment notification mentioning Acme");
+    storeFact("Acme Consulting AB", "email", "jane.doe@example.com", "Roster contact for Acme");
+
+    const repair = repairUndetectedContradictions(db.getRawDb(), (a, b, t, s) => db.createLink(a, b, t, s ?? 1.0), 50);
+
+    expect(repair.pairsRepaired).toBe(0);
+    expect(db.queryContradictionSurface({ resolved: false, limit: 10 })).toHaveLength(0);
   });
 });

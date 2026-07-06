@@ -67,6 +67,7 @@ import {
   runUntilMaintenanceDeadline,
 } from "../utils/maintenance-run-deadline.js";
 import { loadPrompt } from "../utils/prompt-loader.js";
+import { isSystemSenderEmail } from "../utils/system-sender-email.js";
 import { extractTags } from "../utils/tags.js";
 import { chunkSessionText, estimateTokens } from "../utils/text.js";
 import { getMaxMtime } from "./cmd-extract.js";
@@ -966,11 +967,17 @@ export async function runDistillForCli(
 
       const category = (isValidCategory(fact.category) ? fact.category : "other") as MemoryCategory;
       const entity = fact.entity ?? null;
-      const key = fact.key ?? null;
+      // #2062: distill accepts entity/key/value directly from the LLM, bypassing the regex
+      // extraction blocklist in fact-extraction.ts — apply the same guard here, since a system-
+      // sender address (e.g. a payment-notification email mentioning a company) must never become
+      // that company's key=email.
+      const rejectSystemSenderEmail = fact.key?.toLowerCase() === "email" && isSystemSenderEmail(fact.value);
+      const key = rejectSystemSenderEmail ? null : (fact.key ?? null);
+      const rawValue = rejectSystemSenderEmail ? null : (fact.value ?? null);
       const redactionCtx = { category, key };
       const redactedText = maybeRedactMaintenanceFactText(fact.text, cfg.maintenance?.privacyRedaction, redactionCtx);
-      const redactedValue = fact.value
-        ? maybeRedactMaintenanceFactText(fact.value, cfg.maintenance?.privacyRedaction, redactionCtx)
+      const redactedValue = rawValue
+        ? maybeRedactMaintenanceFactText(rawValue, cfg.maintenance?.privacyRedaction, redactionCtx)
         : redactedText.slice(0, 200);
 
       if (

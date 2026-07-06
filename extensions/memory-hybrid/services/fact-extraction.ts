@@ -8,6 +8,7 @@ import type { MemoryCategory } from "../config.js";
 import { isEntityStopWord } from "../utils/entity-stopwords.js";
 import { tryExtractionFromTemplates } from "../utils/extraction-from-template.js";
 import { getExtractionTemplates } from "../utils/language-keywords.js";
+import { isSystemSenderEmail } from "../utils/system-sender-email.js";
 
 /**
  * Drop heuristic `entity` values that match the stop-word list (#1190).
@@ -130,9 +131,19 @@ export function extractStructuredFields(
   const templateResult = tryExtractionFromTemplates(getExtractionTemplates(), text);
   if (templateResult) return finalize(templateResult);
 
-  const emailMatch = text.match(/([\w.-]+@[\w.-]+\.\w+)/);
-  if (emailMatch) {
-    return { entity: null, key: "email", value: emailMatch[1] };
+  // #2062: a bare regex match on the first email in text is only trustworthy when there is
+  // exactly one candidate and it isn't a system/notification sender — otherwise (a mail-context
+  // sender/recipient pair, or a multi-person roster listing several emails) we can't tell which
+  // address the text is actually "about", and guessing wrong silently corrupts entity/key=email.
+  const emailMatches = text.match(/[\w.-]+@[\w.-]+\.\w+/g);
+  if (emailMatches && emailMatches.length > 0) {
+    const distinctEmails = new Set(emailMatches.map((e) => e.toLowerCase()));
+    if (distinctEmails.size === 1 && !isSystemSenderEmail(emailMatches[0])) {
+      return { entity: null, key: "email", value: emailMatches[0] };
+    }
+    // Ambiguous (2+ distinct addresses, e.g. a mail sender/recipient pair or a multi-person
+    // roster; or the only address found is a system-sender one) — don't guess which email the
+    // text is "about". Fall through to phone/entity heuristics instead of returning early.
   }
 
   const phoneMatch = text.match(/(\+?\d{10,})/);

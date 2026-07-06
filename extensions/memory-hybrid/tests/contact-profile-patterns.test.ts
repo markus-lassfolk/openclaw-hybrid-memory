@@ -33,4 +33,11 @@ describe("parseContactProfileHints", () => {
     expect(hints.role).toBe("CEO Example Corp");
     expect(hints.boardStatus).toBe("management");
   });
+
+  it("does not attribute a system-sender address to the mentioned person (#2062)", () => {
+    const hints = parseContactProfileHints(
+      "Jordan Rivers — Notification from noreply@vendor-example.com about a pending signature request.",
+    );
+    expect(hints.email).toBeNull();
+  });
 });
