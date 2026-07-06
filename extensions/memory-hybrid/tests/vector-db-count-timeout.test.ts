@@ -34,7 +34,7 @@ describe("VectorDB count timeout (#1489)", () => {
     vi.useRealTimers();
   });
 
-  it("releases reader slot when countRows never settles", async () => {
+  it("does not hang the caller when countRows never settles, but keeps the reader slot held", async () => {
     const readers = (VectorDB as unknown as VectorDBStatics)._activeReadersByPath;
     const dbPath = (db as unknown as { dbPath: string }).dbPath;
     const table = (db as unknown as { table: { countRows: () => Promise<number> } }).table;
@@ -49,6 +49,36 @@ describe("VectorDB count timeout (#1489)", () => {
     const result = await countPromise;
 
     expect(result).toBe(0);
+    // The native countRows() call never settles, so it may still be reading the table — the
+    // slot must stay held (not leaked to 0) or optimize()/swapShadowTable()'s reader-drain wait
+    // would proceed while a read is still in flight (loop iteration 17 regression).
+    expect(readers.get(dbPath) ?? 0).toBe(1);
+  });
+
+  it("releases the reader slot once a timed-out countRows() call actually settles (loop iteration 17 regression)", async () => {
+    const readers = (VectorDB as unknown as VectorDBStatics)._activeReadersByPath;
+    const dbPath = (db as unknown as { dbPath: string }).dbPath;
+    const table = (db as unknown as { table: { countRows: () => Promise<number> } }).table;
+    expect(table).toBeTruthy();
+
+    let resolveCountRows: (value: number) => void = () => {};
+    vi.spyOn(table, "countRows").mockReturnValue(
+      new Promise<number>((resolve) => {
+        resolveCountRows = resolve;
+      }),
+    );
+    expect(readers.get(dbPath) ?? 0).toBe(0);
+
+    vi.useFakeTimers();
+    const countPromise = db.count();
+    await vi.advanceTimersByTimeAsync(VECTORDB_COUNT_TIMEOUT_MS + 1);
+    const result = await countPromise;
+
+    expect(result).toBe(0);
+    expect(readers.get(dbPath) ?? 0).toBe(1);
+
+    resolveCountRows(1);
+    await vi.advanceTimersByTimeAsync(0);
     expect(readers.get(dbPath) ?? 0).toBe(0);
   });
 });

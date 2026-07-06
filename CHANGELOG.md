@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.81] - 2026-07-06
+
+### Fixed
+
+Loop iteration 17 of the full-codebase review loop — closes out the last deferred finding from iteration 12's CHANGELOG entry, `backends/vector-db/vector-db-class.ts`'s shadow-table-swap concurrency gaps.
+
+- **`swapShadowTable()` closed the LanceDB connection and renamed table directories on disk without excluding or draining concurrent readers**, unlike `optimize()`, which already holds an exclusive lock (`setOptimizeLock`) and waits for in-flight `search()`/`count()`/`getVectorsByFactIds()` calls to finish (`waitForReadersToDrain()`) before mutating table data for the same reason (issue #768). A concurrent read holding a reference to the table while a re-index swap ran could have its underlying Lance dataset files renamed or removed mid-read. Fixed by wrapping the swap in the same `setOptimizeLock`/`waitForReadersToDrain` protocol `optimize()` uses.
+- **`swapShadowTable()` lacked the path-containment guard that `resetTableForReindex()` applies before its own destructive `rmSync()` calls.** Both methods derive the same on-disk table directories from `dbPath` and recursively delete them, but only `resetTableForReindex()` refused to do so outside `~/.openclaw/memory` (unless `OPENCLAW_HYBRID_MEM_DANGEROUS_PATHS=1`). Fixed by adding the identical guard to `swapShadowTable()`.
+- **`count()` and `countSemanticQueryCacheRows()` released their reader-lock slot immediately on timeout, even though the underlying native `countRows()` call keeps running in the background** (it isn't cancellable). This let `waitForReadersToDrain()` (used by both `optimize()` and the newly-fixed `swapShadowTable()`) see zero active readers and proceed to prune/rename table data while an orphaned `countRows()` call could still be reading it — the same race `getVectorsByFactIds()` already avoids by transferring the reader slot to the orphaned promise's own settlement instead of releasing it early. Fixed by applying the same handoff pattern to both `count()` and `countSemanticQueryCacheRows()`.
+
+All four fixes have regression tests verified via `git stash` to fail without the fix and pass with it. The pre-existing `vector-db-count-timeout.test.ts` regression test asserted the reader slot was released immediately on timeout (issue #1489's original fix) — that assertion was the opposite of the corrected behavior, so it was split into two tests: one confirming `count()` still returns promptly without hanging the caller, and a new one confirming the slot is now held until the timed-out call actually settles. tsc clean; biome checked against each file's pre-existing baseline — zero net-new lint/format issues.
+
 ## [2026.7.80] - 2026-07-06
 
 ### Fixed

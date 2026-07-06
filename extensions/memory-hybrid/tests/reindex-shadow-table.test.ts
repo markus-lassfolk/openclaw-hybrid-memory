@@ -22,12 +22,16 @@ let testDbPath: string;
 
 beforeEach(() => {
   testDbPath = mkdtempSync(join(tmpdir(), "reindex-shadow-test-"));
+  // swapShadowTable()'s path-containment guard (loop iteration 17) only allows removing table
+  // directories under ~/.openclaw/memory unless this is set — tests use an arbitrary tmpdir.
+  vi.stubEnv("OPENCLAW_HYBRID_MEM_DANGEROUS_PATHS", "1");
 });
 
 afterEach(() => {
   if (existsSync(testDbPath)) {
     rmSync(testDbPath, { recursive: true, force: true });
   }
+  vi.unstubAllEnvs();
 });
 
 // ---------------------------------------------------------------------------
