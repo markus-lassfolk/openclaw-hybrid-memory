@@ -435,12 +435,22 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           type AssessDecision = {
             patch: GoalUpdatePatch;
             historyEntries: GoalHistoryEntry[];
-            outcome: "normal" | "circuit_breaker" | "assessment_budget" | "dispatch_budget";
+            outcome: "normal" | "circuit_breaker" | "assessment_budget" | "dispatch_budget" | "terminal";
             tripReason?: string;
           };
           const decisionRef: { current: AssessDecision | null } = { current: null };
 
           const computeAssessDecision = (fresh: Goal): AssessDecision => {
+            // Re-check terminal status against `fresh` (read inside updateGoal's lock), not the
+            // pre-lock `goal` snapshot above: a concurrent goal_complete/goal_fail/goal_abandon
+            // call could have terminated this goal in the race window between that snapshot and
+            // this lock being acquired. Without this, an assessment could still be recorded onto
+            // an already-terminal goal — and worse, if the assessment/dispatch budget is
+            // exhausted or the circuit breaker trips below, the patch would explicitly set
+            // `status: "blocked"`, silently reopening a goal the system or user already closed.
+            if (isTerminalStatus(fresh.status)) {
+              return { patch: {}, historyEntries: [], outcome: "terminal" };
+            }
             // Re-check both budgets against `fresh` (read inside updateGoal's lock), not the
             // pre-lock `goal` snapshot: this makes the budget check and the increment atomic
             // under a single lock acquisition, closing the race where two overlapping calls both
@@ -542,6 +552,12 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             throw new Error("memory-hybrid: goal_assess decision missing after updateGoal");
           }
 
+          if (decision.outcome === "terminal") {
+            return {
+              content: [{ type: "text", text: `Goal ${updated.label} is already ${updated.status}.` }],
+              details: { error: "terminal" },
+            };
+          }
           if (decision.outcome === "assessment_budget") {
             return { content: [{ type: "text", text: "Assessment budget exhausted." }], details: { error: "budget" } };
           }
@@ -734,6 +750,16 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             };
           }
           const completed = await terminateGoal(goalsDir, goal.id, "completed", p.reason, "agent", eventLog);
+          if (completed.status !== "completed") {
+            // A concurrent goal_complete/goal_abandon call already terminated this goal in the
+            // race window between the pre-lock check above and terminateGoal's own lock — it
+            // no-op'd instead of double-terminating. Report the actual outcome, don't claim
+            // success and fire completion side effects for a call that didn't apply.
+            return {
+              content: [{ type: "text", text: `Goal ${completed.label} is already ${completed.status}.` }],
+              details: { error: "terminal" },
+            };
+          }
           if (cfg.activeTask.flushOnComplete !== false) {
             await flushGoalOutcomeToMemory(memoryDir, `Goal completed: ${completed.label}`, [
               `**Outcome:** ${p.reason}`,
@@ -792,6 +818,13 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             };
           }
           const abandoned = await terminateGoal(goalsDir, goal.id, "abandoned", p.reason, "agent", eventLog);
+          if (abandoned.status !== "abandoned") {
+            // Same race as goal_complete above: a concurrent terminate call already won.
+            return {
+              content: [{ type: "text", text: `Goal ${abandoned.label} is already ${abandoned.status}.` }],
+              details: { error: "terminal" },
+            };
+          }
           if (cfg.activeTask.flushOnComplete !== false) {
             await flushGoalOutcomeToMemory(memoryDir, `Goal abandoned: ${abandoned.label}`, [
               `**Reason:** ${p.reason}`,

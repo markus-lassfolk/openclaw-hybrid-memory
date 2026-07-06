@@ -715,9 +715,19 @@ export async function terminateGoal(
   actor: GoalHistoryActor,
   eventLog?: EventLog | null,
 ): Promise<Goal> {
+  let applied = false;
   const next = await withGoalLock(goalsDir, id, async () => {
     const g = await readGoal(goalsDir, id);
     if (!g) throw new Error(`Goal not found: ${id}`);
+    // Re-check terminal status against `g` as re-read inside the lock, not the caller's pre-lock
+    // snapshot: a concurrent terminateGoal call (e.g. goal_complete racing goal_abandon on the
+    // same goal) could have already terminated it in the window between that snapshot and this
+    // lock being acquired. Without this, the second writer would silently flip an already-
+    // terminal goal to a different terminal status and append a redundant history entry, and
+    // both callers' post-completion side effects (flushGoalOutcomeToMemory, episode recording)
+    // would fire as if each had authoritatively terminated the goal.
+    if (isTerminalStatus(g.status)) return g;
+    applied = true;
     const ts = nowIso();
     const updated: Goal = {
       ...g,
@@ -728,25 +738,27 @@ export async function terminateGoal(
     await writeGoal(goalsDir, updated);
     return updated;
   });
-  const ts = next.history[next.history.length - 1]?.timestamp ?? nowIso();
 
-  const kind = status === "completed" ? "goal.completed" : status === "failed" ? "goal.failed" : "goal.abandoned";
-  try {
-    eventLog?.append({
-      sessionId: "goal-stewardship",
-      timestamp: ts,
-      eventType: "action_taken",
-      content: {
-        kind,
-        goalId: next.id,
-        label: next.label,
-        reason,
-        assessmentCount: next.assessmentCount,
-        dispatchCount: next.dispatchCount,
-      },
-    });
-  } catch {
-    /* non-fatal */
+  if (applied) {
+    const ts = next.history[next.history.length - 1]?.timestamp ?? nowIso();
+    const kind = status === "completed" ? "goal.completed" : status === "failed" ? "goal.failed" : "goal.abandoned";
+    try {
+      eventLog?.append({
+        sessionId: "goal-stewardship",
+        timestamp: ts,
+        eventType: "action_taken",
+        content: {
+          kind,
+          goalId: next.id,
+          label: next.label,
+          reason,
+          assessmentCount: next.assessmentCount,
+          dispatchCount: next.dispatchCount,
+        },
+      });
+    } catch {
+      /* non-fatal */
+    }
   }
 
   return next;
