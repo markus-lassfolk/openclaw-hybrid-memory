@@ -51,4 +51,10 @@ describe("maybeRedactMaintenanceFactText (#2055)", () => {
     const text = "jane@example.com";
     expect(maybeRedactMaintenanceFactText(text, ENABLED)).toBe("[redacted-email]");
   });
+
+  it("exempts an exempted key case-insensitively (LLM-emitted key casing is not normalized)", () => {
+    const text = "jane@example.com";
+    expect(maybeRedactMaintenanceFactText(text, ENABLED, { category: "other", key: "Email" })).toBe(text);
+    expect(maybeRedactMaintenanceFactText(text, ENABLED, { category: "other", key: "PHONE" })).toBe(text);
+  });
 });

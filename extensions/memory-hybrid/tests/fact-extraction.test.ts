@@ -308,7 +308,7 @@ describe("extractStructuredFields — multi-email ambiguity guard (#2062)", () =
     expect(r.entity).toBe("Northwind");
   });
 
-  it("still extracts the single email when a sender/recipient mail pair has one non-blocklisted and one blocklisted address", () => {
+  it("stays ambiguous (returns null) when a sender/recipient mail pair has one non-blocklisted and one blocklisted address", () => {
     // Only one of the two addresses is a real candidate once the system-sender one is excluded —
     // but since two *distinct* addresses are still present, this remains ambiguous by design
     // (we don't try to guess which of two present addresses "is" the fact).

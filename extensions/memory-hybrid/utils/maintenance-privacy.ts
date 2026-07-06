@@ -45,6 +45,9 @@ export function maybeRedactMaintenanceFactText(
 ): string {
   if (!redaction?.enabled) return text;
   if (context.category && redaction.exemptCategories?.includes(context.category)) return text;
-  if (context.key && redaction.exemptKeys?.includes(context.key)) return text;
+  // Case-insensitive: fact.key casing is LLM-emitted (e.g. "Email"), not normalized before this
+  // is called, while exemptKeys defaults to lowercase ("email", "phone", "mobile").
+  const keyLower = context.key?.toLowerCase();
+  if (keyLower && redaction.exemptKeys?.some((k) => k.toLowerCase() === keyLower)) return text;
   return redactMaintenancePrivateText(text);
 }

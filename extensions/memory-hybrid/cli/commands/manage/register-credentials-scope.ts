@@ -499,7 +499,7 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
                 if (outcome === "promoted") promoted++;
                 else if (outcome === "skipped") skipped++;
                 else failed++;
-                if ((i + 1) % reportEvery === 0) heartbeat.heartbeat();
+                if ((i + 1) % reportEvery === 0 || i === candidates.length - 1) heartbeat.heartbeat();
               }
             },
             {

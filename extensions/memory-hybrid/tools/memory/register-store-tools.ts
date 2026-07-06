@@ -32,6 +32,7 @@ import { addOperationBreadcrumb, capturePluginError } from "../../services/error
 import { guardAgainstWrapperArgsDropped } from "../../services/tool-args-guard.js";
 import { emitFeatureTelemetry } from "../../services/feature-telemetry.js";
 import { extractStructuredFields } from "../../services/fact-extraction.js";
+import { isSystemSenderEmail } from "../../utils/system-sender-email.js";
 import { storeAliases } from "../../services/retrieval-aliases.js";
 import { classifyMemoryOperation } from "../../services/classification.js";
 import { matchesExactScope, validateScopedClassificationTarget } from "../../services/classification-scope.js";
@@ -349,8 +350,15 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
           const extracted = extractStructuredFields(textToStore, category as MemoryCategory);
           const entity =
             prepareMemoryMetadataForStorage(paramEntity) ?? prepareMemoryMetadataForStorage(extracted.entity);
-          const key = prepareMemoryMetadataForStorage(paramKey) ?? prepareMemoryMetadataForStorage(extracted.key);
-          const value = prepareMemoryMetadataForStorage(paramValue) ?? prepareMemoryMetadataForStorage(extracted.value);
+          const rawKey = prepareMemoryMetadataForStorage(paramKey) ?? prepareMemoryMetadataForStorage(extracted.key);
+          const rawValue =
+            prepareMemoryMetadataForStorage(paramValue) ?? prepareMemoryMetadataForStorage(extracted.value);
+          // #2062: an LLM-supplied key/value pair bypasses extractStructuredFields' own blocklist
+          // entirely (paramKey/paramValue win via `??` above) — apply the same system-sender guard
+          // here, mirroring cmd-distill.ts's identical guard on the LLM-sourced distill path.
+          const rejectSystemSenderEmail = rawKey?.toLowerCase() === "email" && isSystemSenderEmail(rawValue);
+          const key = rejectSystemSenderEmail ? null : rawKey;
+          const value = rejectSystemSenderEmail ? null : rawValue;
 
           // FR-006: Compute scope early so it's available for classify-before-write UPDATE path; normal path may overwrite with multiAgent logic below
           let scope: "global" | "user" | "agent" | "session" = paramScope ?? "global";

@@ -210,6 +210,7 @@ export async function runConsolidate(
       opts.onProgress?.({ clusterIndex, totalClusters: clusters.length, merged });
     if (maintenanceRunDeadlineReached()) {
       logger.warn("memory-hybrid: consolidate stopped — maintenance run deadline reached");
+      emitClusterProgress();
       break;
     }
     const texts = clusterIds.map((id) => idToFact.get(id)?.text);

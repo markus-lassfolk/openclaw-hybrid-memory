@@ -8,7 +8,7 @@
  * so a blocklisted sender address is treated consistently everywhere: never assigned as a fact's
  * `key=email` value, and never allowed to compete as one side of a contradiction.
  */
-const SYSTEM_SENDER_EMAIL_RE = /\b(?:no-?reply|robot|mailer-daemon|notifications?|bounce|postmaster)@/i;
+const SYSTEM_SENDER_EMAIL_RE = /\b(?:no[-._]?reply|donotreply|robot|mailer-daemon|notifications?|bounce|postmaster)@/i;
 
 export function isSystemSenderEmail(value: string | null | undefined): boolean {
   return typeof value === "string" && SYSTEM_SENDER_EMAIL_RE.test(value);

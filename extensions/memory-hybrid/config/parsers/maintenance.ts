@@ -174,10 +174,13 @@ function parseMaintenanceFailureReportingConfig(cfg: Record<string, unknown>): M
 function parseMaintenancePrivacyRedactionConfig(cfg: Record<string, unknown>): MaintenancePrivacyRedactionConfig {
   const maintenanceRaw = cfg.maintenance as Record<string, unknown> | undefined;
   const raw = maintenanceRaw?.privacyRedaction as Record<string, unknown> | undefined;
+  // parseStringList collapses an explicitly-empty array to undefined (indistinguishable from "not
+  // provided"), which would silently restore the default list even when an operator explicitly
+  // configured `[]` to opt out of all exemptions. Check Array.isArray directly to preserve that intent.
   return {
     enabled: raw?.enabled === true,
-    exemptCategories: parseStringList(raw?.exemptCategories) ?? ["entity"],
-    exemptKeys: parseStringList(raw?.exemptKeys) ?? ["email", "phone", "mobile"],
+    exemptCategories: Array.isArray(raw?.exemptCategories) ? (parseStringList(raw.exemptCategories) ?? []) : ["entity"],
+    exemptKeys: Array.isArray(raw?.exemptKeys) ? (parseStringList(raw.exemptKeys) ?? []) : ["email", "phone", "mobile"],
   };
 }
 

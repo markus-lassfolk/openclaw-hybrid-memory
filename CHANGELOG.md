@@ -23,6 +23,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.65] - 2026-07-06
+
+### Fixed
+
+Follow-up `/code-review` pass over the previous three releases (2026.7.62–.64), running 10 independent finder angles over the full diff. Findings below are ranked by how many independent angles independently flagged the same defect (higher = more confidence):
+
+- **`lifecycle sync github --json` leaked adapter progress onto stdout, corrupting the JSON report (flagged by 4 angles):** the new real logger wired into `syncLifecycleFromGitHub` wrote unconditionally via `console.log`, unlike the sibling `digest autopilot-cron` fix in the same release which routes progress to stderr under `--json`. Fixed in `cli/commands/manage/register-lifecycle.ts` to route `logger.info` to stderr when `--json` is set, matching the established pattern. Added a regression test asserting stdout stays pure, parseable JSON.
+- **Contact-profile email extraction only ever looked at the first regex match (flagged by 4 angles):** `parseContactProfileHints()` picked the first email in the text and only checked it against the system-sender blocklist — it never got the multi-distinct-address ambiguity guard that `fact-extraction.ts` received in 2026.7.64, so a roster or sender/recipient pair could still attribute the wrong address to the mentioned person. Fixed in `utils/contact-profile-patterns.ts` to mirror `fact-extraction.ts`'s logic exactly (collect all matches, only extract when exactly one distinct non-blocklisted address remains).
+- **System-sender blocklist guard in contradiction detection applied to every fact key, not just `email` (flagged by 2 angles):** `detectContradictions()` and `repairUndetectedContradictions()` in `backends/facts-db/contradictions.ts` called `isSystemSenderEmail()` on any fact's value regardless of its key, so a `key="notes"` fact whose text happened to contain a blocklisted substring (e.g. "escalate to robot@ops-bot.internal") would silently skip contradiction detection/repair entirely. Scoped both guards to `key === "email"` only.
+- **`memory_store` tool bypassed the system-sender guard entirely:** an LLM-supplied `key`/`value` pair in `tools/memory/register-store-tools.ts` took precedence over `extractStructuredFields()`'s own blocklist via a `??` fallback, so a direct `memory_store` call with `key: "email", value: "noreply@..."` was never caught. Added the same guard used in `cmd-distill.ts`.
+- **Redaction's `exemptKeys` check was case-sensitive against un-normalized LLM output (flagged by 2 angles):** `maybeRedactMaintenanceFactText()` compared `fact.key` verbatim against the lowercase default `exemptKeys` list, so an LLM-emitted key like `"Email"` would not match and got redacted even with the default exemption configured. Fixed to compare case-insensitively.
+- **An explicit empty `exemptKeys`/`exemptCategories` array was silently replaced by the default list (flagged by 2 angles):** `parseStringList()` collapses any empty array (including one an operator explicitly configured) to `undefined`, so `parseMaintenancePrivacyRedactionConfig()`'s `?? [default]` fallback masked an intentional opt-out. Fixed to check `Array.isArray` directly for this one config so an explicit `[]` is honored.
+- **Cron ledger reconciler could validate with a missing log file instead of skipping (flagged by 2 angles):** the 2026.7.62 tooling-blocker fix replaced a combined `continue` guard with a narrower fallback, but as a side effect, an entry whose exit ledger is resolvable/exists but whose paired `.log` file is missing (rotated away, no replacement artifact pair found) now fell through to validation with `logPath: undefined` instead of being left alone — risking a false correction from incomplete evidence. Restored the skip for this specific case in `services/cron-maintenance-reconciler.ts`, while keeping the original zero-artifacts tooling-blocker fallback intact. Added a regression test.
+- **System-sender blocklist regex missed common variants:** `no.reply@`, `no_reply@`, and `donotreply@` were not matched by the `no-?reply` pattern. Broadened `utils/system-sender-email.ts`'s regex to cover them.
+- Minor observability fixes carried over from the same pass: `consolidation.ts` now emits a final progress tick before a maintenance-deadline-triggered stop (previously the heartbeat's last reported cluster index froze one behind the actual abort point); `cli/cmd-extract-daily.ts`'s `daysProcessed` counter no longer freezes when several consecutive recent days have no memory file (it's now updated unconditionally per day scanned, not only on a successful scan); `register-credentials-scope.ts`'s scope-promote heartbeat now ticks on the final partial chunk instead of only every 100 items.
+- Fixed a test in `tests/fact-extraction.test.ts` whose title claimed "still extracts the single email" while its assertion actually expected `null` — the assertion (and the inline comment above it) reflects the intended, deliberately conservative design (a sender/recipient pair with one blocklisted address stays ambiguous by design); only the title was wrong.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.7.65**.
+
+---
+
 ## [2026.7.64] - 2026-07-06
 
 ### Fixed

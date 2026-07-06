@@ -3,13 +3,12 @@
  * Project-state latest-wins (LWW) policy added in Issue #1636.
  */
 import { randomUUID } from "node:crypto";
-import type { SQLInputValue } from "node:sqlite";
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 
 import { capturePluginError } from "../../services/error-reporter.js";
 import type { MemoryEntry, ScopeFilter } from "../../types/memory.js";
-import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { nowIso } from "../../utils/dates.js";
+import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { isSystemSenderEmail } from "../../utils/system-sender-email.js";
 import { parseTags, serializeTags } from "../../utils/tags.js";
 import { rowToMemoryEntry } from "./row-mapper.js";
@@ -232,10 +231,12 @@ export function detectContradictions(
   newText?: string | null,
 ): ContradictionDetectionResult[] {
   if (!entity?.trim() || !key?.trim() || !value?.trim()) return [];
+  const keyLower = key.trim().toLowerCase();
   // #2062: a system/notification sender address (noreply@, robot@, etc.) is never a fact's "true"
-  // value — e.g. a payment-notification email mentioning a company is not that company's own
-  // email. Don't let it compete in a contradiction against anything.
-  if (isSystemSenderEmail(value)) return [];
+  // value for a key=email fact — e.g. a payment-notification email mentioning a company is not
+  // that company's own email. Scoped to key=email only: an unrelated key (e.g. "notes") whose
+  // text happens to contain a blocklisted substring must still be checked normally.
+  if (keyLower === "email" && isSystemSenderEmail(value)) return [];
 
   // BEGIN IMMEDIATE serializes cross-process writers so post-insert reads see committed peers.
   db.exec("BEGIN IMMEDIATE");
@@ -253,7 +254,7 @@ export function detectContradictions(
 
     for (const old of conflicting) {
       if (old.value?.toLowerCase() === value.trim().toLowerCase()) continue;
-      if (isSystemSenderEmail(old.value)) continue;
+      if (keyLower === "email" && isSystemSenderEmail(old.value)) continue;
       const { score, heuristicSignals } = scoreFactContradiction(
         newText ?? value.trim(),
         value.trim(),
@@ -346,9 +347,9 @@ export function repairUndetectedContradictions(
         const newer = facts[i]!;
         const older = facts[j]!;
         if ((newer.value ?? "").trim().toLowerCase() === (older.value ?? "").trim().toLowerCase()) continue;
-        // #2062: don't repair-in a contradiction where one side is a system-sender address —
-        // see detectContradictions above for the same guard on the write-time path.
-        if (isSystemSenderEmail(newer.value) || isSystemSenderEmail(older.value)) continue;
+        // #2062: don't repair-in a contradiction where one side is a system-sender address — only
+        // for key=email groups, matching the same scoping on the write-time guard above.
+        if (group.key_l === "email" && (isSystemSenderEmail(newer.value) || isSystemSenderEmail(older.value))) continue;
         if (contradictionPairExists(db, newer.id, older.id)) continue;
         const { score, heuristicSignals } = scoreFactContradiction(
           newer.text ?? newer.value ?? "",

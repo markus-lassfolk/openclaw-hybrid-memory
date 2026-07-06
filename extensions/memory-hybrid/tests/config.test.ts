@@ -953,6 +953,21 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.maintenance.privacyRedaction.exemptKeys).toEqual(["email"]);
   });
 
+  it("respects an explicit empty exemptKeys/exemptCategories array as an opt-out, not the default", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      maintenance: {
+        privacyRedaction: {
+          enabled: true,
+          exemptCategories: [],
+          exemptKeys: [],
+        },
+      },
+    });
+    expect(result.maintenance.privacyRedaction.exemptCategories).toEqual([]);
+    expect(result.maintenance.privacyRedaction.exemptKeys).toEqual([]);
+  });
+
   it("parses custom categories", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,

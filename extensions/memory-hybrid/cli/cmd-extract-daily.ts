@@ -219,6 +219,9 @@ export async function runExtractDailyForCli(
         date.setDate(date.getDate() - d);
         const dateStr = formatDateUtc(Math.floor(date.getTime() / 1000));
         const filePath = join(memoryDir, `${dateStr}.md`);
+        // Update before the existence check so the heartbeat's days=X/Y progress reflects days
+        // already scanned even when several consecutive recent days have no memory file yet.
+        daysProcessed = d + 1;
         if (!existsSync(filePath)) continue;
         const content = readFileSync(filePath, "utf-8");
         const lines = content.split("\n").filter((l: string) => l.trim().length > 10);
@@ -422,7 +425,6 @@ export async function runExtractDailyForCli(
           totalStored++;
         }
         await flushPendingExtractClassify();
-        daysProcessed = d + 1;
       }
       await flushPendingExtractClassify();
     },

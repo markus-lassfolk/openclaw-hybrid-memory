@@ -120,4 +120,25 @@ describe("lifecycle sync github CLI wiring", () => {
 
     expect(logSpy.mock.calls.some((c) => String(c[0]).includes("lifecycle-sync-github — start"))).toBe(false);
   });
+
+  it("--json routes the adapter's logger.info progress to stderr so stdout stays pure JSON", async () => {
+    syncLifecycleFromGitHubMock.mockImplementation(async (_factsDb: unknown, opts: { logger?: { info: (m: string) => void } }) => {
+      opts.logger?.info("lifecycle.github: scanning 0 candidate row(s) across 1 repo(s)");
+      return EMPTY_REPORT;
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const program = makeProgram();
+    await program.parseAsync(["lifecycle", "sync", "github", "--json"], { from: "user" });
+
+    expect(errSpy.mock.calls.some((c) => String(c[0]).includes("lifecycle.github: scanning 0 candidate"))).toBe(true);
+    expect(logSpy.mock.calls.some((c) => String(c[0]).includes("lifecycle.github: scanning 0 candidate"))).toBe(
+      false,
+    );
+    // stdout must be pure, parseable JSON with --json (no leaked adapter progress lines).
+    const jsonCall = logSpy.mock.calls.find((c) => String(c[0]).trim().startsWith("{"));
+    expect(jsonCall).toBeDefined();
+    expect(() => JSON.parse(String(jsonCall?.[0]))).not.toThrow();
+  });
 });

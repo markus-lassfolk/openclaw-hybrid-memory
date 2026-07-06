@@ -54,8 +54,11 @@ export function registerLifecycleSyncCommands(mem: Chainable, b: ManageBindings)
     .action(
       withExit(async (opts?: { dryRun?: boolean; json?: boolean; verbose?: boolean }, cmd?: CommanderOptsParent) => {
         const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+        // In --json mode, adapter progress must go to stderr, not stdout — stdout is reserved for
+        // the final JSON report so downstream consumers can safely parse it (mirrors the
+        // digest autopilot-cron stream-routing fix in the same change).
         const logger = {
-          info: (msg: string) => console.log(msg),
+          info: (msg: string) => (opts?.json ? console.error(msg) : console.log(msg)),
           warn: (msg: string) => console.warn(msg),
         };
         try {

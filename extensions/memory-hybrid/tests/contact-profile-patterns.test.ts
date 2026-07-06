@@ -40,4 +40,11 @@ describe("parseContactProfileHints", () => {
     );
     expect(hints.email).toBeNull();
   });
+
+  it("does not attribute either address when 2+ distinct emails appear in the text (#2062)", () => {
+    const hints = parseContactProfileHints(
+      "Jordan Rivers, cc: ops@other-example.com — jordan.rivers@example.com, Sverigechef Avoki",
+    );
+    expect(hints.email).toBeNull();
+  });
 });

@@ -288,6 +288,11 @@ export function reconcileCronRunLedger(
       if (closestArtifact) {
         exitPath = closestArtifact.exitPath;
         logPath = closestArtifact.logPath;
+      } else if (exitPath && existsSync(exitPath)) {
+        // A resolvable exit ledger exists, but its paired log is missing/rotated away and no
+        // replacement artifact pair was found — validating with no log content risks a false
+        // correction from incomplete evidence, so leave this entry alone rather than guessing.
+        continue;
       }
     }
 
