@@ -599,8 +599,8 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     return listProceduresUpdatedInLastNDaysImpl(this.liveDb, days, limit);
   }
 
-  getProcedureById(id: string): ProcedureEntry | null {
-    return getProcedureByIdImpl(this.liveDb, id);
+  getProcedureById(id: string, scopeFilter?: ScopeFilter | null): ProcedureEntry | null {
+    return getProcedureByIdImpl(this.liveDb, id, scopeFilter);
   }
 
   findProcedureByTaskPattern(taskPattern: string, limit = 5): ProcedureEntry[] {

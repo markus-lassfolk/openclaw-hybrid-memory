@@ -1670,6 +1670,27 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
               description: "Procedure type when registerIfMissing creates a new row (default: derived from success).",
             }),
           ),
+          agentId: Type.Optional(
+            Type.String({
+              description: "⚠️ SECURITY: Caller-controlled parameter. Restrict feedback to a specific agent's scope.",
+            }),
+          ),
+          userId: Type.Optional(
+            Type.String({
+              description: "⚠️ SECURITY: Caller-controlled parameter. Restrict feedback to a specific user's scope.",
+            }),
+          ),
+          sessionId: Type.Optional(
+            Type.String({
+              description: "⚠️ SECURITY: Caller-controlled parameter. Restrict feedback to a specific session's scope.",
+            }),
+          ),
+          confirmCrossTenantScope: Type.Optional(
+            Type.Boolean({
+              description:
+                "When multiAgent.trustToolScopeParams is true, set true to confirm intentional cross-tenant scope use of userId/agentId/sessionId (#874).",
+            }),
+          ),
         }),
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           try {
@@ -1684,6 +1705,10 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
               taskPattern,
               steps,
               procedureType,
+              agentId,
+              userId,
+              sessionId,
+              confirmCrossTenantScope,
             } = params as {
               procedureId: string;
               success: boolean;
@@ -1695,7 +1720,24 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
               taskPattern?: string;
               steps?: Array<{ tool: string; summary?: string; args?: Record<string, unknown> }>;
               procedureType?: "positive" | "negative";
+              agentId?: string;
+              userId?: string;
+              sessionId?: string;
+              confirmCrossTenantScope?: boolean;
             };
+
+            // Same scope resolution as memory_recall_procedures — restricts feedback (and the
+            // getProcedureById lookup behind it) to the caller's own scope bucket (#154 follow-up).
+            const scopeFilter = buildToolScopeFilter(
+              {
+                userId: sanitizeScopeParam("userId", userId),
+                agentId: sanitizeScopeParam("agentId", agentId),
+                sessionId: sanitizeScopeParam("sessionId", sessionId),
+                confirmCrossTenantScope,
+              },
+              currentAgentIdRef.value,
+              cfg,
+            );
 
             return executeProcedureFeedbackTool(factsDb, {
               procedureId,
@@ -1708,6 +1750,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
               taskPattern,
               steps,
               procedureType,
+              scopeFilter,
             });
           } catch (err) {
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {

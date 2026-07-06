@@ -23,6 +23,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.77] - 2026-07-06
+
+### Fixed
+
+Loop iteration 13 of the full-codebase review loop — picked up the first deferred finding from iteration 12's CHANGELOG entry.
+
+- **`memory_procedure_feedback` had no scope check on `procedureId`.** `procedureFeedback()` fetched the target procedure via `getProcedureById()` with no scope filter at all, unlike the sibling `memory_recall_procedures` search path (which already builds a `scopeFilter` via `buildToolScopeFilter()`). Any caller that knew (or was given) another tenant's scoped procedure id could flip its confidence/success/failure counters and read back its `avoidanceNotes`. Fixed by adding an optional `scopeFilter` to `getProcedureById()` (reusing the existing `scopedRowMatchesFilter()` helper), threading it through `procedureFeedback()`, and adding the same `userId`/`agentId`/`sessionId`/`confirmCrossTenantScope` parameters + `buildToolScopeFilter()` resolution to the `memory_procedure_feedback` tool that `memory_recall_procedures` already has. An out-of-scope procedure now reports `procedure_not_found` rather than being silently mutated — consistent with how other scoped lookups in this codebase avoid disclosing whether a foreign-tenant record exists.
+
+Regression test verified via `git stash` to fail without the fix (feedback succeeded and mutated another tenant's procedure) and pass with it. tsc clean; biome checked against each file's pre-existing baseline — zero net-new lint/format issues.
+
+### Deferred (carried over from iteration 12, still not fixed)
+
+- `backends/event-bus.ts`'s `EventBus` doesn't override the inherited `permanentClose()`, so a stale reference can silently reopen a "permanently closed" database during teardown.
+- `backends/edict-store.ts`'s duplicate-text check-then-insert isn't transactional and has no UNIQUE index, so concurrent writers can both pass the dedup check.
+- `backends/issue-store.ts`'s `linkFact()` does a non-atomic JS-level read-modify-write on a JSON column, risking lost updates under concurrent calls.
+- `backends/vector-db/vector-db-class.ts`'s `swapShadowTable()` closes the connection and renames table directories without draining in-flight readers or the path-containment guard `resetTableForReindex()` applies; `count()`/`countSemanticQueryCacheRows()` release their reader-lock slot immediately on timeout even though the underlying native call keeps running.
+
 ## [2026.7.76] - 2026-07-06
 
 ### Fixed

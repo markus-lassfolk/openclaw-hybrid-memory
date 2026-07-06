@@ -5,9 +5,15 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import { capturePluginError } from "../../../services/error-reporter.js";
-import { GENERATED_SKILL_LIFECYCLE_STATES, type ProcedureEntry } from "../../../types/memory.js";
+import {
+  GENERATED_SKILL_LIFECYCLE_STATES,
+  type MemoryScope,
+  type ProcedureEntry,
+  type ScopeFilter,
+} from "../../../types/memory.js";
 import { recordEpisode } from "../episodes.js";
 import { sanitizeFts5QueryForFacts } from "../fts-text.js";
+import { scopedRowMatchesFilter } from "../scope-sql.js";
 
 // ---------- Procedural memory: procedures table CRUD ----------
 
@@ -282,7 +288,13 @@ export function procedureFeedback(
   },
 ): ProcedureEntry | null {
   const nowSec = Math.floor(Date.now() / 1000);
-  const proc = getProcedureById(db, input.procedureId);
+  // Only enforce scope when the caller actually identified one — omitting it entirely
+  // preserves unrestricted (e.g. CLI/admin) access, matching getById's scopeFilter contract.
+  const feedbackScopeFilter: ScopeFilter | undefined =
+    input.userId || input.agentId || input.sessionId
+      ? { userId: input.userId ?? null, agentId: input.agentId ?? null, sessionId: input.sessionId ?? null }
+      : undefined;
+  const proc = getProcedureById(db, input.procedureId, feedbackScopeFilter);
   if (!proc) return null;
 
   if (input.success) {
@@ -419,7 +431,7 @@ export function procedureFeedback(
     }
   }
 
-  return getProcedureById(db, input.procedureId);
+  return getProcedureById(db, input.procedureId, feedbackScopeFilter);
 }
 
 /**
@@ -602,10 +614,17 @@ export function listProceduresUpdatedInLastNDays(db: DatabaseSync, days: number,
   }
 }
 
-export function getProcedureById(db: DatabaseSync, id: string): ProcedureEntry | null {
+export function getProcedureById(
+  db: DatabaseSync,
+  id: string,
+  scopeFilter?: ScopeFilter | null,
+): ProcedureEntry | null {
   const row = db.prepare("SELECT * FROM procedures WHERE id = ?").get(id) as Record<string, unknown> | undefined;
   if (!row) return null;
-  return procedureRowToEntry(db, row);
+  const entry = procedureRowToEntry(db, row);
+  if (scopeFilter && !scopedRowMatchesFilter(entry.scope as MemoryScope | undefined, entry.scopeTarget, scopeFilter))
+    return null;
+  return entry;
 }
 
 /** Find procedure by task_pattern hash or normalized match (for dedupe). */

@@ -109,4 +109,28 @@ describe("procedure-feedback-tool (#1965–#1967)", () => {
     expect(result.isError).toBe(true);
     expect(result.details.error).toBe("register_validation_failed");
   });
+
+  it("rejects feedback on another tenant's scoped procedure as not-found (loop iteration 13 regression)", () => {
+    db = new FactsDB(":memory:");
+    const proc = db.upsertProcedure({
+      taskPattern: "Bob's private deploy workflow",
+      recipeJson: JSON.stringify([{ tool: "exec", summary: "deploy" }]),
+      procedureType: "positive",
+      scope: "user",
+      scopeTarget: "bob",
+    });
+
+    const result = executeProcedureFeedbackTool(db, {
+      procedureId: proc.id,
+      success: true,
+      context: "Alice trying to feedback on Bob's procedure",
+      scopeFilter: { userId: "alice", agentId: null, sessionId: null },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.details.error).toBe("procedure_not_found");
+    const unchanged = db.getProcedureById(proc.id);
+    expect(unchanged?.successCount).toBe(proc.successCount);
+    expect(unchanged?.version).toBe(proc.version);
+  });
 });

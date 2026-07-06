@@ -2,7 +2,7 @@
  * Agent tool helpers for memory_procedure_feedback (#1965–#1967).
  */
 import type { FactsDB } from "../backends/facts-db.js";
-import type { ProcedureEntry, ProcedureStep } from "../types/memory.js";
+import type { ProcedureEntry, ProcedureStep, ScopeFilter } from "../types/memory.js";
 import { minimalRecipe } from "./procedure-extractor.js";
 
 export type ProcedureFeedbackToolParams = {
@@ -16,6 +16,8 @@ export type ProcedureFeedbackToolParams = {
   taskPattern?: string;
   steps?: ProcedureStep[];
   procedureType?: "positive" | "negative";
+  /** Pre-resolved (already security-gated) scope filter — see buildToolScopeFilter. */
+  scopeFilter?: ScopeFilter;
 };
 
 export type ProcedureFeedbackToolResult = {
@@ -100,7 +102,7 @@ function bootstrapProcedureIfMissing(
   factsDb: FactsDB,
   params: ProcedureFeedbackToolParams,
 ): { ok: true; created: boolean } | { ok: false; result: ProcedureFeedbackToolResult } {
-  if (factsDb.getProcedureById(params.procedureId)) {
+  if (factsDb.getProcedureById(params.procedureId, params.scopeFilter)) {
     return { ok: true, created: false };
   }
   if (!params.registerIfMissing) {
@@ -149,6 +151,9 @@ export function executeProcedureFeedbackTool(
     failedAtStep: params.failedAtStep,
     duration: params.duration,
     tags: params.tags,
+    userId: params.scopeFilter?.userId ?? undefined,
+    agentId: params.scopeFilter?.agentId ?? undefined,
+    sessionId: params.scopeFilter?.sessionId ?? undefined,
   });
 
   if (!result) {
