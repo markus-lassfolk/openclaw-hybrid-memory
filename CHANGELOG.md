@@ -23,6 +23,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.92] - 2026-07-06
+
+### Fixed
+
+Loop iteration 28 (eighth iteration of the third batch) of the full-codebase review loop — picks up the two highest-severity deferred findings from iteration 27's multi-agent sweep.
+
+- **`tools/public-api-routes.ts`'s session-observability HTTP route let a user-scoped caller read an arbitrary other session's data.** The route's only defense against untrusted `sessionId`/`agentId` query params was a catch-all check that rejected them solely when *all three* trusted identity headers (`x-openclaw-session-id`, `-agent-id`, `-user-id`) were absent. A caller authenticated with only `x-openclaw-user-id` (a user-scoped token not bound to one session/agent — the gateway's own supported identity model) defeated this check entirely: `GET .../session?sessionId=<other session>` with just that one header returned the target session's full audit/episode/capture/recall/injection report. Fixed by replacing the flawed three-header catch-all with two precise per-field checks — a `sessionId`/`agentId` query param is now only ever honored when the *matching* trusted header (`x-openclaw-session-id`/`x-openclaw-agent-id` respectively) is also present, closing the gap without touching the existing mismatch checks for when both are present but disagree.
+- **`goal_update` had no terminal-status guard at all**, unlike `goal_assess`/`goal_complete`/`goal_abandon` (all fixed for exactly this class of race in #37 and iteration 27). A caller could freely rewrite a goal's `description`/`acceptanceCriteria`/`priority` after it was already completed/failed/abandoned — an audit-integrity gap, since the acceptance criteria a completed goal was actually judged against could silently change afterward. Fixed with the same pre-lock-check-plus-recheck-inside-the-lock pattern used for the other three tools, reporting "already `<status>`; not updated" instead of claiming success when the goal turns out to already be terminal.
+
+Regression tests added for both (an HTTP-level bypass test plus a sanity test that a legitimately session-scoped caller is unaffected, and a terminal-goal-rewrite test), verified via `git stash` to fail without the fix and pass with it. tsc clean; biome checked against each file's pre-existing baseline — zero net-new lint/format issues.
+
+### Deferred (carried over from iteration 27; still tracked for future iterations)
+
+- `tools/issue-tools.ts` / `services/issue-fact-correlation.ts`'s missing `scopeFilter` on auto-linking searches (cross-tenant fact-ID disclosure via `issue.relatedFacts`).
+- `backends/issue-store.ts`'s `transition()`/`update()` lacking compare-and-swap protection (cross-process race only).
+- `backends/facts-db/housekeeping.ts`'s `countBySource()` missing a scope predicate (cross-tenant document-ingestion dedupe/count leak).
+- `tools/memory/register-episode-tools.ts`'s inconsistent `scope`/`scopeTarget` derivation (episodes that become permanently unfindable).
+- `tools/memory/register-store-tools.ts`'s `storeActiveCanonicalVector` ignoring the `vault` parameter (cross-vault embedding leak/loss) and a merge-dedupe path storing a mismatched text/vector pair.
+- Lower-severity items: an off-by-one output-line overwrite in `tools/apitap-tools.ts`, an inverted enabled/disabled detection in an unwired ESPHome YAML converter, an entity-lookup pre-filter that doesn't fan out across vaults in `register-recall-tools.ts`.
+
 ## [2026.7.91] - 2026-07-06
 
 ### Fixed

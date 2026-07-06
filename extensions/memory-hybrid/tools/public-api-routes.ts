@@ -542,7 +542,6 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     const url = parseReqUrl(req.url);
     const trustedSessionId = getHeader(req, "x-openclaw-session-id");
     const trustedAgentId = getHeader(req, "x-openclaw-agent-id");
-    const trustedUserId = getHeader(req, "x-openclaw-user-id");
     const querySessionId = url.searchParams.get("sessionId")?.trim() ?? null;
     const queryAgentId = url.searchParams.get("agentId")?.trim() ?? null;
     const limit = parseLimitParam(url.searchParams.get("limit"), 50, 200);
@@ -553,6 +552,24 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     if (trustedAgentId && queryAgentId && queryAgentId !== trustedAgentId) {
       return toJson(403, { error: "agentId query param does not match trusted identity header" });
     }
+    // A sessionId/agentId query param is only ever honored when the matching trusted identity
+    // header is also present (in which case it must equal it, per the mismatch checks above) —
+    // never on the strength of some OTHER trusted header alone. Without this, a caller
+    // authenticated with only x-openclaw-user-id (a user-scoped token not bound to any one
+    // session/agent) could supply an arbitrary ?sessionId=<other-user's-session> and read that
+    // session's full observability report (audit/episode/capture/recall/injection data) — the
+    // old check only rejected query params when ALL THREE trusted headers were absent, so
+    // trustedUserId alone defeated it.
+    if (querySessionId && !trustedSessionId) {
+      return toJson(403, {
+        error: "sessionId query param requires the x-openclaw-session-id trusted identity header",
+      });
+    }
+    if (queryAgentId && !trustedAgentId) {
+      return toJson(403, {
+        error: "agentId query param requires the x-openclaw-agent-id trusted identity header",
+      });
+    }
 
     const sessionId = trustedSessionId ?? querySessionId;
     const agentId = trustedAgentId ?? queryAgentId;
@@ -561,12 +578,6 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
       return toJson(400, {
         error:
           "Missing sessionId or agentId. Provide x-openclaw-session-id / x-openclaw-agent-id headers or matching query params.",
-      });
-    }
-
-    if (!trustedSessionId && !trustedAgentId && !trustedUserId && (querySessionId || queryAgentId)) {
-      return toJson(403, {
-        error: "Untrusted session/agent query params require gateway identity headers",
       });
     }
 

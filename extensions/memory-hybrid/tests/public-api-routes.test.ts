@@ -619,6 +619,38 @@ describe("registerPublicApiRoutes", () => {
     expect(JSON.parse(res.body).error).toBe("authentication required");
   });
 
+  it("session observability rejects a user-scoped caller reading another session via query param (loop iteration 28 regression)", async () => {
+    const { api, routes } = makeApi();
+    registerPublicApiRoutes({ cfg: makeCfg(true), factsDb, narrativesDb }, api);
+    const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.session}`);
+
+    // Caller is authenticated only as a user (x-openclaw-user-id), not bound to any one
+    // session/agent. Without the fix, this alone defeated the "reject untrusted session/agent
+    // query params" guard, letting any user-scoped token read an arbitrary other session's data.
+    const res = await invokeNodeHttpRoute(route?.handler, {
+      method: "GET",
+      url: `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.session}?sessionId=bob-session`,
+      headers: { "x-openclaw-user-id": "alice" },
+    } as ReturnType<typeof fakeReq>);
+
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body).error).toMatch(/requires the x-openclaw-session-id trusted identity header/);
+  });
+
+  it("session observability still serves a caller whose trusted session header matches the query param", async () => {
+    const { api, routes } = makeApi();
+    registerPublicApiRoutes({ cfg: makeCfg(true), factsDb, narrativesDb }, api);
+    const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.session}`);
+
+    const res = await invokeNodeHttpRoute(route?.handler, {
+      method: "GET",
+      url: `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.session}?sessionId=own-session`,
+      headers: { "x-openclaw-session-id": "own-session" },
+    } as ReturnType<typeof fakeReq>);
+
+    expect(res.status).toBe(200);
+  });
+
   it("fact mutate rejects unauthenticated callers", async () => {
     const { api, routes } = makeApi();
     registerPublicApiRoutes({ cfg: makeCfg(false), factsDb, narrativesDb, factMutationsEnabled: true }, api);

@@ -387,4 +387,58 @@ describe("goal tools registry primitives", () => {
       resolveSpy.mockRestore();
     }
   });
+
+  it("goal_update does not rewrite an already-terminal goal's description/acceptance criteria (loop iteration 28 regression)", async () => {
+    const g = await createGoal(
+      goalsDir,
+      { label: "update_terminal", description: "original description", acceptanceCriteria: ["a"] },
+      defaults,
+    );
+    await terminateGoal(goalsDir, g.id, "completed", "shipped it", "agent");
+
+    const cfg = hybridConfigSchema.parse({
+      embedding: {
+        apiKey: "sk-test-key-that-is-long-enough-to-pass",
+        model: "text-embedding-3-small",
+      },
+      goalStewardship: { enabled: true, goalsDir: "state/goals" },
+    });
+    const tools = new Map<string, { execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }>();
+    const api: Pick<ClawdbotPluginApi, "registerTool"> = {
+      registerTool(toolDefinition: { name: string; execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }) {
+        tools.set(toolDefinition.name, { execute: toolDefinition.execute });
+      },
+    };
+    registerGoalTools(
+      {
+        cfg,
+        goalsDir,
+        workspaceRoot,
+        resolvedActiveTaskPath: join(workspaceRoot, "ACTIVE-TASKS.md"),
+        factsDb: null,
+        vectorDb: null,
+        embeddings: null,
+        eventLog: null,
+        memoryDir: join(workspaceRoot, "memory"),
+        currentAgentIdRef: { value: null },
+        buildToolScopeFilter,
+      },
+      api as ClawdbotPluginApi,
+    );
+    const update = tools.get("goal_update");
+    expect(update).toBeDefined();
+
+    const result = (await update?.execute("tc", {
+      goal_id: g.id,
+      description: "rewritten after completion",
+      acceptance_criteria: ["rewritten criterion"],
+      confirmed: true,
+    })) as { details?: { error?: string } };
+    expect(result.details?.error).toBe("terminal");
+
+    const after = await readGoal(goalsDir, g.id);
+    expect(after?.description).toBe("original description");
+    expect(after?.acceptanceCriteria).toEqual(["a"]);
+    expect(after?.history.some((h) => h.action === "updated")).toBe(false);
+  });
 });

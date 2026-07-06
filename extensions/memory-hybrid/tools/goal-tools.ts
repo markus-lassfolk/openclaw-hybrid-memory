@@ -657,6 +657,12 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           };
           const goal = await resolveGoalId(goalsDir, p.goal_id);
           if (!goal) return { content: [{ type: "text", text: "Goal not found." }], details: { error: "not_found" } };
+          if (isTerminalStatus(goal.status)) {
+            return {
+              content: [{ type: "text", text: `Goal ${goal.label} is already ${goal.status}.` }],
+              details: { error: "terminal" },
+            };
+          }
           if (p.acceptance_criteria !== undefined) {
             const clarity = validateGoalRegisterClarity({
               label: goal.label,
@@ -671,16 +677,39 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
               };
             }
           }
-          const patch: Parameters<typeof updateGoal>[2] = {};
-          if (p.description !== undefined) patch.description = p.description;
-          if (p.acceptance_criteria !== undefined) patch.acceptanceCriteria = p.acceptance_criteria;
-          if (p.priority !== undefined) patch.priority = p.priority;
-          const updated = await updateGoal(goalsDir, goal.id, patch, {
-            timestamp: nowIso(),
-            action: "updated",
-            detail: p.note ?? "update",
-            actor: "agent",
-          });
+          const staticPatch: Parameters<typeof updateGoal>[2] = {};
+          if (p.description !== undefined) staticPatch.description = p.description;
+          if (p.acceptance_criteria !== undefined) staticPatch.acceptanceCriteria = p.acceptance_criteria;
+          if (p.priority !== undefined) staticPatch.priority = p.priority;
+          const ts = nowIso();
+          // Unlike goal_assess/goal_complete/goal_abandon, goal_update never re-checked terminal
+          // status against the goal re-read inside updateGoal's lock — only against the pre-lock
+          // snapshot above. A concurrent goal_complete/goal_fail/goal_abandon landing in that race
+          // window would let this call silently rewrite description/acceptanceCriteria/priority
+          // on an already-terminal goal, an audit-integrity gap (the goal's acceptance criteria
+          // would no longer match what it was actually judged against when closed).
+          let applied = true;
+          const updated = await updateGoal(
+            goalsDir,
+            goal.id,
+            (fresh) => {
+              if (isTerminalStatus(fresh.status)) {
+                applied = false;
+                return {};
+              }
+              return staticPatch;
+            },
+            (fresh) =>
+              isTerminalStatus(fresh.status)
+                ? []
+                : { timestamp: ts, action: "updated", detail: p.note ?? "update", actor: "agent" },
+          );
+          if (!applied) {
+            return {
+              content: [{ type: "text", text: `Goal ${updated.label} is already ${updated.status}; not updated.` }],
+              details: { error: "terminal" },
+            };
+          }
           return { content: [{ type: "text", text: `Updated ${updated.label}` }], details: { goal: updated } };
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
