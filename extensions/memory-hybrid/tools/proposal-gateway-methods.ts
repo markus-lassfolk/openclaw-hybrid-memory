@@ -12,9 +12,11 @@ import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { HybridMemoryConfig } from "../config.js";
 import {
   DEFAULT_WORKSHOP_LIST_LIMIT,
+  isAuthorizedChangeFeedSessionKey,
   isWorkshopEnabled,
   resolveWorkshopRevertSessionKey,
 } from "../services/workshop-config.js";
+import { BROADCAST_CHANGE_SESSION_KEY } from "../services/change-feed-emit.js";
 import { buildWorkshopDigestReport } from "../services/unified-proposals.js";
 import type { ChangeFeed } from "../services/change-feed.js";
 import { revertChangeById, revertChangeByOrdinal, buildChangeRevertContext } from "../services/change-feed-revert.js";
@@ -175,6 +177,11 @@ export function registerProposalGatewayMethods(ctx: ProposalGatewayContext): voi
           message: "missing sessionKey (use __broadcast__ for system-wide changes)",
         });
       }
+      const trustedCallerSessionKey =
+        (ctx.api.context?.sessionKey as string | undefined) ?? (ctx.api.context?.sessionId as string | undefined);
+      if (!isAuthorizedChangeFeedSessionKey(sessionKey, trustedCallerSessionKey)) {
+        return respond(false, undefined, { message: "sessionKey does not match the caller's own session" });
+      }
       respond(true, {
         changes: ctx.changeFeed!.listRecent({ sessionKey, since, sinceOrdinal, limit }),
       });
@@ -182,11 +189,16 @@ export function registerProposalGatewayMethods(ctx: ProposalGatewayContext): voi
 
     register("hybrid-mem.changes.revert", async ({ params, respond }) => {
       if (!ctx.changeFeed) return respond(false, undefined, { message: "change feed unavailable" });
+      const chatSessionKey =
+        (ctx.api.context?.sessionKey as string | undefined) ?? (ctx.api.context?.sessionId as string | undefined);
       const sessionKey = resolveWorkshopRevertSessionKey(
         resolveProposalCfg(ctx),
         typeof params.sessionKey === "string" ? params.sessionKey : undefined,
-        (ctx.api.context?.sessionKey as string | undefined) ?? (ctx.api.context?.sessionId as string | undefined),
+        chatSessionKey,
       );
+      if (!isAuthorizedChangeFeedSessionKey(sessionKey, chatSessionKey)) {
+        return respond(false, undefined, { message: "sessionKey does not match the caller's own session" });
+      }
       const revertCtx = changeRevertCtx(ctx, sessionKey);
       if (typeof params.ordinal === "number") {
         const result = revertChangeByOrdinal(revertCtx, params.ordinal, sessionKey);
@@ -194,6 +206,16 @@ export function registerProposalGatewayMethods(ctx: ProposalGatewayContext): voi
       }
       const id = typeof params.id === "string" ? params.id : "";
       if (!id) return respond(false, undefined, { message: "missing id or ordinal" });
+      // revertChangeById resolves purely by primary key with no session check of its own —
+      // an authorized sessionKey doesn't stop `id` from naming a different session's event.
+      const targetEvent = ctx.changeFeed.getById(id);
+      if (
+        targetEvent &&
+        targetEvent.sessionKey !== sessionKey &&
+        targetEvent.sessionKey !== BROADCAST_CHANGE_SESSION_KEY
+      ) {
+        return respond(false, undefined, { message: "change event does not belong to the caller's own session" });
+      }
       const result = revertChangeById(revertCtx, id);
       respond(result.ok, result.ok ? result : undefined, result.ok ? undefined : { message: result.error });
     });

@@ -24,13 +24,17 @@ type RegisteredMethod = {
   }) => void | Promise<void>;
 };
 
-function makeGatewayApi(): { api: ClawdbotPluginApi; methods: RegisteredMethod[] } {
+function makeGatewayApi(opts?: { context?: Record<string, unknown> }): {
+  api: ClawdbotPluginApi;
+  methods: RegisteredMethod[];
+} {
   const methods: RegisteredMethod[] = [];
   const api = {
     registerGatewayMethod: (method: string, handler: RegisteredMethod["handler"]) => {
       methods.push({ method, handler });
     },
     logger: { info: () => {}, warn: () => {}, debug: () => {} },
+    context: opts?.context,
   } as unknown as ClawdbotPluginApi;
   return { api, methods };
 }
@@ -297,7 +301,7 @@ describe("registerProposalGatewayMethods change feed", () => {
         separateSelfCorrectionQuota: true,
       },
     } as HybridMemoryConfig;
-    const { api, methods: registered } = makeGatewayApi();
+    const { api, methods: registered } = makeGatewayApi({ context: { sessionKey: "chat-1" } });
     methods = registered;
     registerProposalGatewayMethods({
       cfg,
@@ -362,5 +366,72 @@ describe("registerProposalGatewayMethods change feed", () => {
     const result = await callMethod(methods, "hybrid-mem.changes.list", { limit: 10 });
     expect(result.ok).toBe(false);
     expect(result.error?.message).toContain("missing sessionKey");
+  });
+
+  it("hybrid-mem.changes.list rejects a sessionKey that is not the caller's own session (loop iteration 35 regression: cross-session IDOR)", async () => {
+    changeFeed.append({
+      sessionKey: "victim-session",
+      timestamp: Date.now(),
+      tier: "persistent",
+      category: "persona",
+      action: "proposed",
+      title: "Victim's private proposal",
+      detail: "",
+      proposalKey: "persona:victim",
+      rollbackAvailable: true,
+      activation: "next-reload",
+    });
+
+    // makeGatewayApi() is set up with context.sessionKey "chat-1" (see beforeEach) — an
+    // attacker calling as "chat-1" must not be able to read "victim-session"'s changes.
+    const result = await callMethod(methods, "hybrid-mem.changes.list", { sessionKey: "victim-session", limit: 10 });
+    expect(result.ok).toBe(false);
+    expect(result.error?.message).toContain("caller's own session");
+  });
+
+  it("hybrid-mem.changes.revert rejects an explicit sessionKey override that does not match the caller (loop iteration 35 regression: cross-session IDOR)", async () => {
+    const victimEvent = changeFeed.append({
+      sessionKey: "victim-session",
+      timestamp: Date.now(),
+      tier: "persistent",
+      category: "persona",
+      action: "proposed",
+      title: "Victim's private proposal",
+      detail: "",
+      proposalKey: "persona:victim",
+      rollbackAvailable: true,
+      activation: "next-reload",
+    });
+
+    const result = await callMethod(methods, "hybrid-mem.changes.revert", {
+      sessionKey: "victim-session",
+      ordinal: victimEvent.ordinal,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error?.message).toContain("caller's own session");
+    expect(changeFeed.getById(victimEvent.id)?.status).toBe("active");
+  });
+
+  it("hybrid-mem.changes.revert by id rejects reverting another session's event even without an explicit sessionKey override (loop iteration 35 regression: cross-session IDOR)", async () => {
+    const victimEvent = changeFeed.append({
+      sessionKey: "victim-session",
+      timestamp: Date.now(),
+      tier: "persistent",
+      category: "persona",
+      action: "proposed",
+      title: "Victim's private proposal",
+      detail: "",
+      proposalKey: "persona:victim",
+      rollbackAvailable: true,
+      activation: "next-reload",
+    });
+
+    // No sessionKey override — resolves to the caller's own trusted session ("chat-1"), which
+    // the first check accepts. But `id` names a DIFFERENT session's event — revertChangeById has
+    // no session check of its own, so the handler must catch this.
+    const result = await callMethod(methods, "hybrid-mem.changes.revert", { id: victimEvent.id });
+    expect(result.ok).toBe(false);
+    expect(result.error?.message).toContain("caller's own session");
+    expect(changeFeed.getById(victimEvent.id)?.status).toBe("active");
   });
 });

@@ -83,3 +83,21 @@ export function resolveWorkshopRevertSessionKey(
   if (chat) return chat;
   return resolveWorkshopSessionKey(cfg);
 }
+
+/**
+ * SECURITY: the change-feed list/revert HTTP routes and gateway RPC methods let a caller name
+ * an arbitrary `session`/`sessionKey` to scope the request — but that value must never be
+ * trusted as an identity claim (the same class of gap `utils/scope-filter.ts` documents for
+ * fact scoping). Only the caller's own trusted session (from the plugin API's `context`, which
+ * the caller cannot spoof) or the broadcast pseudo-session may be used; any other value is a
+ * cross-session read/revert attempt and must be rejected. This does not apply to Mission
+ * Control's dashboard collectors, which call the change-feed service directly in-process and
+ * never go through these caller-facing entry points.
+ */
+export function isAuthorizedChangeFeedSessionKey(requested: string, trustedCallerSessionKey?: string): boolean {
+  const trimmed = requested.trim();
+  if (!trimmed) return false;
+  if (trimmed === BROADCAST_CHANGE_SESSION_KEY) return true;
+  const trustedTrimmed = trustedCallerSessionKey?.trim();
+  return !!trustedTrimmed && trimmed === trustedTrimmed;
+}

@@ -289,6 +289,7 @@ describe("registerProposalHttpRoutes change feed", () => {
       api: {
         registerHttpRoute: () => {},
         logger: { warn: () => {}, info: () => {} },
+        context: { sessionKey: "chat-1" },
       } as unknown as ClawdbotPluginApi,
     });
   });
@@ -348,6 +349,86 @@ describe("registerProposalHttpRoutes change feed", () => {
     expect(response.status).toBe(400);
     const body = JSON.parse(response.body) as { error: string };
     expect(body.error).toContain("missing session");
+  });
+
+  it("change feed list rejects a session param that is not the caller's own session (loop iteration 35 regression: cross-session IDOR)", async () => {
+    changeFeed.append({
+      sessionKey: "victim-session",
+      timestamp: Date.now(),
+      tier: "persistent",
+      category: "persona",
+      action: "proposed",
+      title: "Victim's private proposal",
+      detail: "",
+      proposalKey: "persona:victim",
+      rollbackAvailable: true,
+      activation: "next-reload",
+    });
+
+    // The registered api.context is sessionKey "chat-1" (see beforeEach) — an attacker calling
+    // as "chat-1" must not be able to read "victim-session"'s changes by simply naming it.
+    const route = capturedRoutes.find((r) => r.path === `${CHANGE_FEED_API_PREFIX}/list`);
+    const response = await route?.handler({
+      method: "GET",
+      url: `${CHANGE_FEED_API_PREFIX}/list?session=victim-session`,
+      headers: {},
+    });
+    expect(response.status).toBe(403);
+    const body = JSON.parse(response.body) as { error: string };
+    expect(body.error).toContain("caller's own session");
+  });
+
+  it("change feed revert rejects an explicit session override that does not match the caller (loop iteration 35 regression: cross-session IDOR)", async () => {
+    const victimEvent = changeFeed.append({
+      sessionKey: "victim-session",
+      timestamp: Date.now(),
+      tier: "persistent",
+      category: "persona",
+      action: "proposed",
+      title: "Victim's private proposal",
+      detail: "",
+      proposalKey: "persona:victim",
+      rollbackAvailable: true,
+      activation: "next-reload",
+    });
+
+    const route = capturedRoutes.find((r) => r.path === `${CHANGE_FEED_API_PREFIX}/revert`);
+    const response = await route?.handler({
+      method: "POST",
+      url: `${CHANGE_FEED_API_PREFIX}/revert`,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session: "victim-session", ordinal: victimEvent.ordinal }),
+    });
+    expect(response.status).toBe(403);
+    expect(changeFeed.getById(victimEvent.id)?.status).toBe("active");
+  });
+
+  it("change feed revert by id rejects reverting another session's event even without an explicit session override (loop iteration 35 regression: cross-session IDOR)", async () => {
+    const victimEvent = changeFeed.append({
+      sessionKey: "victim-session",
+      timestamp: Date.now(),
+      tier: "persistent",
+      category: "persona",
+      action: "proposed",
+      title: "Victim's private proposal",
+      detail: "",
+      proposalKey: "persona:victim",
+      rollbackAvailable: true,
+      activation: "next-reload",
+    });
+
+    // No `session`/`sessionKey` override — resolves to the caller's own trusted session
+    // ("chat-1"), which the first check accepts. But `id` names a DIFFERENT session's event —
+    // revertChangeById has no session check of its own, so the route must catch this.
+    const route = capturedRoutes.find((r) => r.path === `${CHANGE_FEED_API_PREFIX}/revert`);
+    const response = await route?.handler({
+      method: "POST",
+      url: `${CHANGE_FEED_API_PREFIX}/revert`,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: victimEvent.id }),
+    });
+    expect(response.status).toBe(403);
+    expect(changeFeed.getById(victimEvent.id)?.status).toBe("active");
   });
 
   it("reject route syncs pending proposed events into change feed", async () => {
