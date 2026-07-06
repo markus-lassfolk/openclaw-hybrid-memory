@@ -23,6 +23,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.85] - 2026-07-06
+
+### Fixed
+
+Loop iteration 21 (first iteration of the third batch) of the full-codebase review loop — picks up the deferred finding from iteration 20's CHANGELOG entry.
+
+- **`buildMemoryNudge()` (the session-start "memory nudge" feature) counted duplicate/never-referenced facts across every tenant instead of just the caller's own scope.** Unlike every sibling recall/capture call site, its two raw SQL `COUNT(*)` queries against the `facts` table had no scope filter at all, so a multi-tenant deployment with the nudge feature enabled would leak presence/volume signals about another tenant's stored facts (e.g. "6 facts have near-duplicate observations" surfaced to tenant A even when all 6 belonged to tenant B) into the current chat. Fixed by threading the same `resolveRecallScopeFilter()` result every other recall hook uses through `buildMemoryNudge()`, applying `scopeFilterClausePositional()` to both count queries.
+
+Regression test added, verified via `git stash` to fail without the fix (leaked the combined cross-tenant count) and pass with it. tsc clean; biome checked against each file's pre-existing baseline — zero net-new lint/format issues (one pre-existing warning incidentally resolved as a side effect of the fix).
+
+### Deferred (found this iteration, tracked for a future pass)
+
+- `buildMemoryNudge()`'s third signal, `getSnoozeCandidates()` (via `services/recall-signals.ts`'s `aggregateRecallStats`), remains unscoped. It reads from `recall_events`, which has no scope column at all (only `session_key`), and the facts it references are looked up via a JSON-encoded `fact_ids` array — scoping it properly needs either a schema change or a per-fact join, out of proportion for this iteration given it's the same low-severity "count leak" as the fix above and behind the same default-disabled flag.
+
 ## [2026.7.84] - 2026-07-06
 
 ### Fixed

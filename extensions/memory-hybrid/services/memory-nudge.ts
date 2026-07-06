@@ -3,6 +3,8 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
+import { scopeFilterClausePositional } from "../backends/facts-db/scope-sql.js";
+import type { ScopeFilter } from "../types/memory.js";
 import { getSnoozeCandidates } from "./recall-signals.js";
 
 export type MemoryNudgeConfig = {
@@ -32,8 +34,20 @@ export type MemoryNudgePayload = {
   actions: NudgeAction[];
 };
 
-/** Build top-3 nudge actions from vault backlog. */
-export function buildMemoryNudge(db: DatabaseSync, config: MemoryNudgeConfig): MemoryNudgePayload | null {
+/**
+ * Build top-3 nudge actions from vault backlog.
+ *
+ * `scopeFilter` restricts the duplicate/never-referenced counts to the caller's own scope,
+ * matching every other recall/capture call site — otherwise a multi-tenant deployment would
+ * leak presence/volume signals about another tenant's stored facts into the current chat.
+ * `getSnoozeCandidates()` is not yet scoped (`recall_events` has no scope column, only
+ * `session_key`) — tracked separately, see CHANGELOG.
+ */
+export function buildMemoryNudge(
+  db: DatabaseSync,
+  config: MemoryNudgeConfig,
+  scopeFilter?: ScopeFilter | null,
+): MemoryNudgePayload | null {
   if (!config.enabled) return null;
 
   const actions: NudgeAction[] = [];
@@ -45,9 +59,11 @@ export function buildMemoryNudge(db: DatabaseSync, config: MemoryNudgeConfig): M
     });
   }
 
+  const { clause: scopeClause, params: scopeParams } = scopeFilterClausePositional(scopeFilter);
+
   const dupRow = db
-    .prepare(`SELECT COUNT(*) AS cnt FROM facts WHERE superseded_at IS NULL AND duplicate_count > 1`)
-    .get() as { cnt: number } | undefined;
+    .prepare(`SELECT COUNT(*) AS cnt FROM facts WHERE superseded_at IS NULL AND duplicate_count > 1${scopeClause}`)
+    .get(...scopeParams) as { cnt: number } | undefined;
   const dupCount = dupRow?.cnt ?? 0;
   if (dupCount >= config.duplicateCandidateThreshold) {
     actions.push({
@@ -61,9 +77,9 @@ export function buildMemoryNudge(db: DatabaseSync, config: MemoryNudgeConfig): M
       `SELECT COUNT(*) AS cnt FROM facts
        WHERE superseded_at IS NULL
          AND COALESCE(indexed_count, 0) >= 3
-         AND COALESCE(access_count, 0) = 0`,
+         AND COALESCE(access_count, 0) = 0${scopeClause}`,
     )
-    .get() as { cnt: number } | undefined;
+    .get(...scopeParams) as { cnt: number } | undefined;
   const neverRefCount = neverRef?.cnt ?? 0;
   if (neverRefCount >= config.neverReferencedThreshold) {
     actions.push({

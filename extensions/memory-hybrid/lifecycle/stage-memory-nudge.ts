@@ -12,6 +12,7 @@ import {
 } from "../services/memory-nudge.js";
 import { applyPrependBudget } from "../services/prepend-budget.js";
 import { runOptionalBeforeAgentStartStage } from "../services/before-agent-start-budget.js";
+import { resolveRecallScopeFilter } from "./stage-recall/degraded-recall.js";
 import type { LifecycleContext } from "./types.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
 import { resolveSessionKeyFromHookEvent } from "./session-state.js";
@@ -35,7 +36,7 @@ export function registerMemoryNudgeInjection(api: ClawdbotPluginApi, ctx: Lifecy
       neverReferencedThreshold:
         nudgeCfg.neverReferencedThreshold ?? DEFAULT_MEMORY_NUDGE_CONFIG.neverReferencedThreshold,
     };
-    const nudge = buildMemoryNudge(ctx.factsDb.getRawDb(), config);
+    const nudge = buildMemoryNudge(ctx.factsDb.getRawDb(), config, resolveRecallScopeFilter(ctx));
     if (!nudge || nudge.actions.length === 0) return undefined;
 
     recordNudgeEmission(sessionKey);
