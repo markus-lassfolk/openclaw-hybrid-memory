@@ -589,6 +589,8 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     vector,
                     importance,
                     category: "technical",
+                    factsDb: storeFactsDb,
+                    vectorDb: storeVectorDb,
                   });
                   await storeRegistryEmbeddings({
                     factsDb: storeFactsDb,
@@ -886,6 +888,8 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                         vector: mergedVector,
                         importance: Math.max(importance, oldFact.importance),
                         category,
+                        factsDb: storeFactsDb,
+                        vectorDb: storeVectorDb,
                       });
                     } catch (err) {
                       api.logger.warn(`memory-hybrid: UPDATE merge vector refresh failed: ${err}`);
@@ -936,6 +940,8 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                           vector,
                           importance: finalImportance,
                           category,
+                          factsDb: storeFactsDb,
+                          vectorDb: storeVectorDb,
                         });
                       }
                       await storeRegistryEmbeddings({
@@ -1172,6 +1178,8 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                   vector,
                   importance,
                   category,
+                  factsDb: storeFactsDb,
+                  vectorDb: storeVectorDb,
                 });
               }
               await storeRegistryEmbeddings({

@@ -93,10 +93,12 @@ export function buildMemoryToolRuntime(resolvedContext: MemoryToolsContext, api:
     vector: number[];
     importance: number;
     category: string;
+    factsDb: typeof factsDb;
+    vectorDb: typeof vectorDb;
   }): Promise<void> => {
     await storeCanonicalVectorForFact({
-      vectorDb,
-      factsDb,
+      vectorDb: options.vectorDb,
+      factsDb: options.factsDb,
       factId: options.factId,
       text: options.text,
       why: options.why,

@@ -23,6 +23,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.94] - 2026-07-06
+
+### Fixed
+
+Loop iteration 30 (tenth iteration of the third batch) of the full-codebase review loop — picks up another deferred finding from iteration 27's multi-agent sweep.
+
+- **`memory_store`'s embedding write ignored the caller's `vault` parameter, breaking vault isolation.** `memory_store` correctly resolves vault-scoped backends via `resolveToolVaultBackends(runtime, vault)` and inserts the fact row into the named vault's SQLite DB — but every call to `storeActiveCanonicalVector` (the wrapper around `storeCanonicalVectorForFact`) took no `factsDb`/`vectorDb` argument at all, so it always used the *default*-vault instances captured once in a closure at plugin init (`tools/memory/build-runtime.ts`). Storing a fact with `vault: "work"` therefore inserted the row correctly into the `work` vault's SQLite DB, but wrote its semantic embedding into the *default* vault's LanceDB instead — silently breaking the documented "vaults are isolated silos" guarantee (`services/vault-registry.ts`): the `work`-vault fact became permanently unreachable by semantic/hybrid recall from its own vault (only keyword/FTS still found it), while the default vault's LanceDB accumulated an orphan vector tied to a factId that doesn't exist in its own facts.db. Fixed by making `storeActiveCanonicalVector` require explicit `factsDb`/`vectorDb` parameters (matching the sibling `storeRegistryEmbeddings` helper's existing pattern) and threading the vault-resolved `storeFactsDb`/`storeVectorDb` through all four call sites in `register-store-tools.ts`.
+
+Regression test added (asserts the named vault's mock `vectorDb.store` is called and the default vault's is not, plus the inverse sanity check for the no-`vault` case), verified via `git stash` to fail without the fix and pass with it. tsc clean; biome clean (zero net-new issues). Full background vitest suite: only the 3 known pre-existing unrelated failures.
+
+### Deferred (carried over from iteration 27; still tracked for future iterations)
+
+- `backends/issue-store.ts`'s `transition()`/`update()` lacking compare-and-swap protection (cross-process race only).
+- `backends/facts-db/housekeeping.ts`'s `countBySource()` missing a scope predicate (cross-tenant document-ingestion dedupe/count leak).
+- `tools/memory/register-episode-tools.ts`'s inconsistent `scope`/`scopeTarget` derivation (episodes that become permanently unfindable).
+- `register-store-tools.ts`'s merge-dedupe path storing a mismatched text/vector pair (separate from the vault-isolation fix above).
+- Lower-severity items: an off-by-one output-line overwrite in `tools/apitap-tools.ts`, an inverted enabled/disabled detection in an unwired ESPHome YAML converter, an entity-lookup pre-filter that doesn't fan out across vaults in `register-recall-tools.ts`.
+
 ## [2026.7.93] - 2026-07-06
 
 ### Fixed
