@@ -8,7 +8,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import { nowIso } from "../utils/dates.js";
 import type { ActiveTaskStatus } from "./active-task.js";
 import type { GoalStatus } from "./goal-stewardship-types.js";
-import { updateGoal } from "./goal-registry.js";
+import { isTerminalStatus, readGoal, updateGoal } from "./goal-registry.js";
 import { displayStatusToFact, loadTaskLedgerFromFacts, syncActiveTaskEntryToFacts } from "./task-ledger-facts.js";
 
 export async function applyWorkboardTaskStatusUpdate(
@@ -35,15 +35,26 @@ export async function applyWorkboardGoalStatusUpdate(
   goalId: string,
   newStatus: GoalStatus,
 ): Promise<void> {
+  const precheck = await readGoal(goalsDir, goalId);
+  if (!precheck || isTerminalStatus(precheck.status)) return;
+  const ts = nowIso();
+  // Re-check terminal status inside the lock (not just the pre-check above): a concurrent
+  // goal_complete/goal_fail/goal_abandon call could land in the race window between that read
+  // and this lock being acquired. Without this, dragging a completed/failed/abandoned goal's
+  // Workboard card to a non-terminal column would silently reopen a goal the user already
+  // closed — same pattern as linkSubagentToGoal/markGoalDispatchFailure in goal-subagent.ts.
   await updateGoal(
     goalsDir,
     goalId,
-    { status: newStatus, lastAssessedAt: nowIso() },
-    {
-      timestamp: nowIso(),
-      action: "workboard_pull",
-      detail: `Status updated from Workboard column → ${newStatus}`,
-      actor: "steward",
-    },
+    (fresh) => (isTerminalStatus(fresh.status) ? {} : { status: newStatus, lastAssessedAt: ts }),
+    (fresh) =>
+      isTerminalStatus(fresh.status)
+        ? []
+        : {
+            timestamp: ts,
+            action: "workboard_pull",
+            detail: `Status updated from Workboard column → ${newStatus}`,
+            actor: "steward",
+          },
   );
 }

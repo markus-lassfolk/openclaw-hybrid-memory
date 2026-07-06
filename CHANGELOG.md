@@ -23,6 +23,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.89] - 2026-07-06
+
+### Fixed
+
+Loop iteration 25 (fifth iteration of the third batch) of the full-codebase review loop — picks up the first deferred finding from iteration 24's CHANGELOG entry.
+
+- **`applyWorkboardGoalStatusUpdate()` could resurrect a completed/failed/abandoned goal.** Unlike every other `updateGoal()` call site that touches `status` (`goal-subagent.ts`'s `linkSubagentToGoal`/`markGoalDispatchFailure`, fixed under issue #37), this function had no `isTerminalStatus()` guard at all before writing a new status derived from a Workboard card's column. Since the default config has `workboard.bidirectional: true` and `workboard.syncGoals: true`, a user dragging a completed/failed/abandoned goal's card to a non-terminal column would silently reopen a goal the system or user had already closed. Fixed by adding the same pre-check-plus-re-check-inside-the-lock pattern the goal-subagent fixes already established: a `readGoal()` precheck before calling `updateGoal()`, and an `isTerminalStatus()` re-check inside `updateGoal()`'s mutator-function form (both `patch` and `historyEntry`) to close the TOCTOU race window between the precheck and the lock.
+
+Regression tests added (including a TOCTOU race test mirroring the existing `goal-subagent.test.ts` pattern), verified via `git stash` to fail without the fix (goal resurrected to a non-terminal status) and pass with it. tsc clean; biome checked against the pre-existing baseline — zero net-new lint/format issues.
+
 ## [2026.7.88] - 2026-07-06
 
 ### Fixed
