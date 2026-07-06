@@ -264,6 +264,7 @@ export function buildHybridMemCronTaskMessage(
     "EXECUTION (durable logs + per-step exits)",
     "Run the bash below in ONE foreground shell session and wait until it exits. Do not background this work and end the turn while commands are still running.",
     "TOOLING: Use the exec tool with a full shell command string (e.g. bash with the script body). Do NOT use deferred tool surfaces (tool_call, tool_describe, tool_search) — they strip exec arguments in isolated cron sessions (#1961).",
+    "- If no direct top-level exec/bash tool is present in your available tools for this session, do NOT fall back to tool_call/ToolSearch even once — that path is confirmed to silently drop arguments (upstream #96115/#53408) and will not run the script. Instead, reply with exactly `TOOLING_BLOCKED: <one-sentence reason>` and stop; do not attempt the bash script below.",
     "- HM_LOG: full stdout/stderr for the run. HM_EXIT: one line per hm_step with UTC timestamp and exit= (first command in the pipeline).",
     "",
     "```bash",

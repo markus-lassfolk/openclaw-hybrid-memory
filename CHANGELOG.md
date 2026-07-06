@@ -23,6 +23,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.62] - 2026-07-06
+
+### Fixed
+
+Root-cause review of a failed `workshop-approval-reminder` maintenance run (reported: "tooling blocker — no evidence the step ran"). The isolated cron session had no top-level exec/bash tool this run, so the only remaining path was the deferred `tool_call`/ToolSearch wrapper — a surface the #1961/#1962 harness fix deliberately forbids because it silently drops arguments (upstream #96115/#53408). The agent retried the forbidden wrapper three times, then reported failure in free text only; no HM_EXIT/HM_LOG artifacts were ever written. Following the trail through the harness, reconciler, and inventory code turned up four related gaps, now fixed:
+
+- **`cron-job-bash-harness.ts` TOOLING guidance was a dead end:** it told the agent to use the exec tool and forbade the deferred wrapper, but gave no instruction for what to do when no direct exec tool is available at all. Added an explicit bounded fallback: reply `TOOLING_BLOCKED: <reason>` and stop, instead of repeatedly retrying a surface already known to be broken.
+- **`cron-maintenance-reconciler.ts`'s false-OK repair silently skipped exactly this failure signature:** when a scheduled run produced *zero* HM_EXIT/HM_LOG artifacts anywhere (the harness never started), `reconcileCronRunLedger` `continue`d past the entry instead of correcting it — leaving a misleading `status:"ok"` ledger row uncorrected forever. It now falls through into the existing `missing_exit_ledger` validation path so these runs are caught the same way an empty-but-present exit ledger already is.
+- **`maintenance-inventory.ts`'s job catalog was missing `workshop-approval-reminder`** (plus, found in the same pass, `weekly-crystallization-skills-rescan` and `daily-lifecycle-sync`) — `hybrid-mem maintenance inventory` silently omitted these jobs entirely, so operators had no visibility into their schedule or last-run status.
+- **`hybrid-mem-cron-default-job-steps.ts`'s required-step map was missing 11 of the ~20 defined maintenance cron jobs**, including `workshop-approval-reminder` itself, `monthly-consolidation`, and `daily-lifecycle-sync` — `reconcile-cron-ledgers`/`verify --reconcile` had no per-step mapping for these and fell back to cruder any-step-failed validation, or skipped entirely for jobs also missing from the catalog.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.7.62**.
+
+---
+
 ## [2026.7.61] - 2026-07-05
 
 ### Fixed

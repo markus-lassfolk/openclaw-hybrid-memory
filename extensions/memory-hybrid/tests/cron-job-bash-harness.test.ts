@@ -60,6 +60,14 @@ describe("cron-job-bash-harness", () => {
     expect(msg).toContain("The bash harness automatically runs `openclaw hybrid-mem validate-cron-exit`");
   });
 
+  it("tells the agent what to do when no top-level exec tool is available (#1961 dead-end fix)", () => {
+    const msg = buildHybridMemCronTaskMessage("sensor-sweep", {
+      steps: [{ name: "t1", cmd: "openclaw hybrid-mem sensor-sweep --tier 1" }],
+    });
+    expect(msg).toContain("do NOT fall back to tool_call/ToolSearch even once");
+    expect(msg).toContain("TOOLING_BLOCKED: <one-sentence reason>");
+  });
+
   it("lists sanitized required step names in the task message to match HM_EXIT labels", () => {
     const msg = buildHybridMemCronTaskMessage("job", {
       steps: [{ name: "step one", cmd: "echo ok" }],

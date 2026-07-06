@@ -297,6 +297,40 @@ describe("reconcileCronRunLedger", () => {
     expect(result.corrected).toBe(1);
   });
 
+  it("corrects a false-OK entry with zero HM_EXIT/HM_LOG artifacts anywhere (tooling-blocker: harness never started)", () => {
+    // Reproduces the workshop-approval-reminder tooling-blocker case: the cron scheduler recorded
+    // a "finished"/status:"ok" run, but the bash harness never started (no exec tool available
+    // this run), so no HM_EXIT/HM_LOG files were ever written for this job — not even empty ones.
+    const ledgerPath = join(cronRunsDir, "hybrid-mem:workshop-approval-reminder.jsonl");
+    rmSync(cronRunsDir, { recursive: true, force: true });
+    mkdirSync(cronRunsDir, { recursive: true });
+    rmSync(logDir, { recursive: true, force: true });
+    mkdirSync(logDir, { recursive: true });
+
+    writeCronRunLedger(ledgerPath, [
+      {
+        runAtMs: Date.UTC(2026, 6, 6, 1, 50, 0),
+        jobId: "hybrid-mem:workshop-approval-reminder",
+        status: "ok",
+        summary: "FAILED (tooling blocker — no evidence the step ran)",
+      },
+    ]);
+
+    const result = reconcileCronRunLedger(ledgerPath, logDir, ["digest-pending"], false);
+
+    expect(result.examined).toBe(1);
+    expect(result.falseOk).toBe(1);
+    expect(result.corrected).toBe(1);
+    expect(result.corrections[0].originalStatus).toBe("ok");
+    expect(result.corrections[0].newStatus).toBe("error");
+    expect(result.corrections[0].validationResult.error).toContain("Exit ledger not found");
+    expect(result.corrections[0].validationResult.reportableIssues[0]?.failureClass).toBe("missing_exit_ledger");
+
+    const updated = parseCronRunLedger(ledgerPath);
+    expect(updated[0].status).toBe("error");
+    expect(updated[0].summary).toContain("[RECONCILED]");
+  });
+
   it("should respect dry-run mode", () => {
     const ledgerPath = join(cronRunsDir, "test-job.jsonl");
     rmSync(cronRunsDir, { recursive: true, force: true });

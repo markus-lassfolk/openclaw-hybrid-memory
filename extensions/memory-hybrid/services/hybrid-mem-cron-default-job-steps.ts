@@ -23,4 +23,22 @@ export const HYBRID_MEM_CRON_DEFAULT_JOB_STEPS: Record<string, string[]> = {
     "generate-auto-skills",
   ],
   "hybrid-mem:weekly-deep-maintenance": ["compact", "vectordb-optimize", "scope-promote"],
+  "hybrid-mem:monthly-consolidation": [
+    "consolidate",
+    "build-languages",
+    "backfill-decay",
+    "reembed-vectorless",
+    "enrich-entities",
+  ],
+  "hybrid-mem:weekly-crystallization-skills-rescan": ["skills-rescan"],
+  "hybrid-mem:daily-storage-growth-sample": ["record-storage-sample"],
+  "hybrid-mem:weekly-implicit-feedback-collapse": ["reflect-meta-collapse"],
+  "hybrid-mem:weekly-vectordb-optimize-sunday": ["vectordb-optimize"],
+  "hybrid-mem:weekly-audit-health": ["audit-health"],
+  "hybrid-mem:maintenance-log-analyzer": ["analyze-maintenance-logs"],
+  "hybrid-mem:weekly-pending-digest": ["digest-pending"],
+  "hybrid-mem:weekly-pending-digest-autopilot": ["digest-autopilot-cron"],
+  /** Twice-daily operator reminder (#1921); same underlying command as weekly-pending-digest. */
+  "hybrid-mem:workshop-approval-reminder": ["digest-pending"],
+  "hybrid-mem:daily-lifecycle-sync": ["lifecycle-sync-github"],
 };
