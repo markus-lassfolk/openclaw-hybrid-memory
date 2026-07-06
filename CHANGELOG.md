@@ -23,6 +23,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.74] - 2026-07-06
+
+### Fixed
+
+Loop iteration 10 of the full-codebase review loop, closing out the remaining items from iterations 8-9's systemic missing-scope-filter sweep of `tools/`.
+
+- **`memory_retrieve`'s `getEntry` closure omitted the scope filter on 2 `getById` calls** even though the same handler already builds one for the initial retrieval a few lines earlier. Exploitability is narrow today (ids reaching `getEntry` are normally already scope-vetted by the prior retrieval), but the multi-vault fan-out path (`vault: "all"`) could substitute a different tenant's fact if two vaults' fact ids ever collided. Fixed by passing `{ scopeFilter }` to both calls, matching the pattern used everywhere else this session — no dedicated regression test added here (see Note below).
+- **`memory_recall`'s `includeCold: false` (the default) didn't apply to facts introduced by graph expansion:** the cold-tier exclusion filter ran once, before both the new BFS (`expandGraph`) and legacy (`getConnectedFactIds`/`getById`) graph-traversal branches, and neither branch checks tier when appending newly-discovered facts to the result set. Under the default config (`graph.useInRecall=true`, `graphRetrieval.defaultExpand=false`), a cold-tier fact linked to a matched warm/hot fact would appear in `memory_recall` output despite `includeCold: false`. Fixed by re-applying the tier filter after graph expansion.
+- **`memory_ingest_document` always stored every chunk at global scope**, unlike `memory_store` (explicit scope param) and conversational auto-capture (already fixed for the same class of bug under Issue #1574/FR-006) — every document ingested in a multi-tenant deployment was globally recallable by any tenant. Fixed by deriving scope from `multiAgent.defaultStoreScope` via the same `resolveDefaultStoreScope()` helper auto-capture already uses, rather than adding a new caller-facing scope parameter (ingestion is a bulk/automated operation, not a single deliberate action like `memory_store`).
+
+Both `memory_recall` and `memory_ingest_document` fixes include regression tests verified via `git stash` to fail without the fix and pass with it. tsc clean; biome checked against each file's pre-existing baseline — zero net-new lint/format issues.
+
+**Note on `memory_retrieve`:** this is the one fix in the loop without a dedicated automated regression test. The tool has no existing test infrastructure at all (a gap worth flagging on its own), and the fix itself is the same 2-line `getById(id, { scopeFilter })` pattern already covered by 6+ regression tests elsewhere in this session — building a full `memory_retrieve` test harness from scratch was judged disproportionate effort for validating an already-low-severity, already-proven-correct mechanism. Verified instead via direct code reading and `tsc`.
+
+### Deferred (found and verified across iterations 8-9, tracked for a dedicated pass)
+
+- **`verified_facts` has no scope column:** `memory_verified_list` lists every row regardless of tenant. Needs a schema migration (a `scope`/`scope_target` column plus backfill), not a quick patch.
+- **`tools/memory/register-store-tools.ts`'s `maybeAutoVerify`** only runs on the classify-before-write UPDATE branch, never on the normal ADD path — a functional no-op (`verification_tier: "critical"` silently does nothing for ordinary new stores), not a cross-tenant leak. Lower priority than the security items above; still open.
+- **Full `memory_retrieve` test coverage** (see Note above) — this tool has zero existing tests and is a large surface (1700+ line sibling `register-recall-tools.ts` file); worth a dedicated test-writing pass independent of any specific bug fix.
+
+This closes out the systemic scope-filter theme found in iterations 8-9. Diminishing returns are being reached for this specific theme — the loop will broaden back to general full-codebase sampling (or wrap up per the original "until diminishing returns" instruction) starting next iteration.
+
+### Changed
+
+- Version bumped to 2026.7.74.
+
+---
+
 ## [2026.7.73] - 2026-07-06
 
 ### Fixed

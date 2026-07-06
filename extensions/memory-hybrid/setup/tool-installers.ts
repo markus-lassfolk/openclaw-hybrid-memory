@@ -55,7 +55,7 @@ type ProvenanceInstallerContext = Pick<
 type CredentialInstallerContext = Pick<ToolsContext, "credentialsDb" | "factsDb" | "vectorDb" | "cfg">;
 type DocumentInstallerContext = Pick<
   ToolsContext,
-  "factsDb" | "vectorDb" | "cfg" | "embeddings" | "pythonBridge" | "openai" | "provenanceService"
+  "factsDb" | "vectorDb" | "cfg" | "embeddings" | "pythonBridge" | "openai" | "provenanceService" | "currentAgentIdRef"
 >;
 type VerificationInstallerContext = Pick<
   ToolsContext,
@@ -291,14 +291,18 @@ function selectDocumentToolsContext({
   pythonBridge,
   openai,
   provenanceService,
+  currentAgentIdRef,
 }: ToolsContext): DocumentInstallerContext {
-  return { factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService };
+  return { factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService, currentAgentIdRef };
 }
 
 function installDocumentTools(ctx: DocumentInstallerContext, api: ClawdbotPluginApi): void {
-  const { factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService } = ctx;
+  const { factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService, currentAgentIdRef } = ctx;
   if (cfg.documents.enabled && pythonBridge) {
-    registerDocumentTools({ factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService }, api);
+    registerDocumentTools(
+      { factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService, currentAgentIdRef },
+      api,
+    );
   }
 }
 

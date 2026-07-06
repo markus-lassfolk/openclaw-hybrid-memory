@@ -23,6 +23,7 @@ import {
   type MemoryCategory,
 } from "../config.js";
 import { chunkMarkdown } from "../services/document-chunker.js";
+import { resolveDefaultStoreScope } from "../services/default-store-scope.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { resolveMaintenanceChatTimeoutMs } from "../services/chat.js";
@@ -43,6 +44,7 @@ interface DocumentToolsContext {
   openai: OpenAI;
   pythonBridge: PythonBridge;
   provenanceService?: ProvenanceService | null;
+  currentAgentIdRef: { value: string | null };
   onProgress?: (progress: { stage: string; pct: number; message: string }) => void;
 }
 
@@ -280,7 +282,8 @@ async function describeImageWithVision(opts: {
  * Only called when cfg.documents.enabled is true.
  */
 export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPluginApi): void {
-  const { factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService, onProgress } = ctx;
+  const { factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService, onProgress, currentAgentIdRef } =
+    ctx;
   const docCfg = cfg.documents;
 
   const tagSafe = (s: string): string =>
@@ -574,6 +577,15 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
     const extraTags = normalizeExtraTags(opts.tags);
     const baseTags: string[] = [...(docCfg.autoTag ? [headingTagSafe(fileName)] : []), "document", ...extraTags];
 
+    // SECURITY: without this, every ingested chunk defaults to global scope regardless of
+    // multiAgent.defaultStoreScope config — matching the same fix already applied to
+    // conversational auto-capture (Issue #1574 / FR-006).
+    const { scope: docScope, scopeTarget: docScopeTarget } = resolveDefaultStoreScope(
+      cfg,
+      currentAgentIdRef.value,
+      (message) => api.logger.warn?.(message),
+    );
+
     let storedCount = 0;
     let errorCount = 0;
 
@@ -597,6 +609,8 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
           source: sourceName,
           tags: chunkTags,
           decayClass: "stable",
+          scope: docScope,
+          scopeTarget: docScopeTarget,
         });
         if (storeResult.skipped) {
           continue;

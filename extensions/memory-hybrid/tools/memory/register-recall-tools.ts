@@ -1165,6 +1165,13 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       results = results.slice(0, limit);
     }
 
+    // The includeCold=false filter above runs BEFORE graph expansion — re-apply it, since
+    // neither expandGraph() nor the legacy getConnectedFactIds()/getById() traversal above
+    // checks tier, and both can append cold-tier facts reached via a warm/hot seed's links.
+    if (!includeCold && results.length > 0) {
+      results = results.filter((r) => r.entry.tier !== "cold").slice(0, limit);
+    }
+
     const retrievalExplanation = (() => {
       if (!shouldUseConstrainedMode || !constrainedFilters) return undefined;
       const filterPairs = Object.entries(constrainedFilters)

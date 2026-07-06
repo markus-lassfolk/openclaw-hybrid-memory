@@ -157,6 +157,7 @@ describe("memory_ingest_document", () => {
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
+        currentAgentIdRef: { value: null },
       },
       api as never,
     );
@@ -170,6 +171,41 @@ describe("memory_ingest_document", () => {
     expect(result.details.errorCount).toBe(0);
   });
 
+  it("scopes ingested chunks to the caller's agent instead of always global (loop iteration 10 regression)", async () => {
+    const api = makeMockApi();
+    const bridge = makeMockBridge("## Section One\n\nContent one.\n\n## Section Two\n\nContent two.");
+    const cfg = {
+      ...makeCfg({}, tmpDir),
+      multiAgent: { orchestratorId: "main", defaultStoreScope: "agent" as const },
+    };
+
+    registerDocumentTools(
+      {
+        factsDb: factsDb as never,
+        edictStore: null as any,
+        vectorDb: makeMockVectorDb() as never,
+        cfg: cfg as never,
+        embeddings: makeMockEmbeddings() as never,
+        openai: {} as never,
+        pythonBridge: bridge as never,
+        currentAgentIdRef: { value: "tenantA" },
+      },
+      api as never,
+    );
+
+    const tool = api.getTool("memory_ingest_document");
+    const result = await (tool?.execute as AnyFn)("tc-scope", { path: testFilePath });
+    expect(result.details.storedCount).toBeGreaterThanOrEqual(1);
+
+    const stored = factsDb.getAll({ includeSuperseded: true });
+    const ingested = stored.filter((f) => f.source?.startsWith("document:"));
+    expect(ingested.length).toBeGreaterThanOrEqual(1);
+    for (const fact of ingested) {
+      expect(fact.scope).toBe("agent");
+      expect(fact.scopeTarget).toBe("tenantA");
+    }
+  });
+
   it("rejects non-absolute path", async () => {
     const api = makeMockApi();
     registerDocumentTools(
@@ -181,6 +217,7 @@ describe("memory_ingest_document", () => {
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: makeMockBridge() as never,
+        currentAgentIdRef: { value: null },
       },
       api as never,
     );
@@ -200,6 +237,7 @@ describe("memory_ingest_document", () => {
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: makeMockBridge() as never,
+        currentAgentIdRef: { value: null },
       },
       api as never,
     );
@@ -221,6 +259,7 @@ describe("memory_ingest_document", () => {
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
+        currentAgentIdRef: { value: null },
       },
       api as never,
     );
@@ -243,6 +282,7 @@ describe("memory_ingest_document", () => {
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
+        currentAgentIdRef: { value: null },
       },
       api as never,
     );
@@ -265,6 +305,7 @@ describe("memory_ingest_document", () => {
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
+        currentAgentIdRef: { value: null },
       },
       api as never,
     );
@@ -293,6 +334,7 @@ describe("memory_ingest_document", () => {
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
+        currentAgentIdRef: { value: null },
       },
       api as never,
     );
@@ -322,6 +364,7 @@ describe("memory_ingest_document", () => {
         openai: {} as never,
         pythonBridge: bridge as never,
         onProgress,
+        currentAgentIdRef: { value: null },
       },
       api as never,
     );
@@ -353,6 +396,7 @@ describe("memory_ingest_document", () => {
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
+        currentAgentIdRef: { value: null },
       },
       api as never,
     );
@@ -377,6 +421,7 @@ describe("memory_ingest_document", () => {
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
+        currentAgentIdRef: { value: null },
       },
       api as never,
     );
@@ -414,6 +459,7 @@ describe("memory_ingest_folder", () => {
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
+        currentAgentIdRef: { value: null },
       },
       api as never,
     );
@@ -449,6 +495,7 @@ describe("memory_ingest_folder", () => {
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
+        currentAgentIdRef: { value: null },
       },
       api as never,
     );
@@ -479,6 +526,7 @@ describe("hash-based deduplication", () => {
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
+        currentAgentIdRef: { value: null },
       },
       api as never,
     );
@@ -514,6 +562,7 @@ describe("hash-based deduplication", () => {
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
+        currentAgentIdRef: { value: null },
       },
       api as never,
     );
@@ -545,6 +594,7 @@ describe("hash-based deduplication", () => {
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
+        currentAgentIdRef: { value: null },
       },
       api as never,
     );
@@ -579,6 +629,7 @@ describe("LLM vision integration", () => {
         embeddings: makeMockEmbeddings() as never,
         openai: mockOpenAI as never,
         pythonBridge: bridge as never,
+        currentAgentIdRef: { value: null },
       },
       api as never,
     );
@@ -613,6 +664,7 @@ describe("LLM vision integration", () => {
         embeddings: makeMockEmbeddings() as never,
         openai: mockOpenAI as never,
         pythonBridge: bridge as never,
+        currentAgentIdRef: { value: null },
       },
       api as never,
     );
@@ -645,6 +697,7 @@ describe("LLM vision integration", () => {
         embeddings: makeMockEmbeddings() as never,
         openai: mockOpenAI as never,
         pythonBridge: makeMockBridge() as never,
+        currentAgentIdRef: { value: null },
       },
       api as never,
     );
@@ -687,6 +740,7 @@ describe("LLM vision integration", () => {
         embeddings: makeMockEmbeddings() as never,
         openai: mockOpenAI as never,
         pythonBridge: bridgeThatThrows as never,
+        currentAgentIdRef: { value: null },
       },
       api as never,
     );
