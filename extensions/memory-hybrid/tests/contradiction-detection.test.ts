@@ -502,4 +502,34 @@ describe("detectContradictions: system-sender email blocklist guard", () => {
     expect(repair.pairsRepaired).toBe(0);
     expect(db.queryContradictionSurface({ resolved: false, limit: 10 })).toHaveLength(0);
   });
+
+  it("still detects a contradiction for a non-email key whose value happens to contain a blocklisted substring", () => {
+    const old = storeFact("Acme Consulting AB", "notes", "escalate to robot@ops-bot.internal", "Support routing note");
+    const newFact = storeFact(
+      "Acme Consulting AB",
+      "notes",
+      "escalate to oncall@ops-bot.internal",
+      "Updated support routing note",
+    );
+
+    const contradictions = db.detectContradictions(
+      newFact.id,
+      "Acme Consulting AB",
+      "notes",
+      "escalate to oncall@ops-bot.internal",
+    );
+
+    expect(contradictions).toHaveLength(1);
+    expect(contradictions[0].oldFactId).toBe(old.id);
+  });
+
+  it("repairUndetectedContradictions still backfills a non-email-key pair with a blocklisted substring", () => {
+    storeFact("Acme Consulting AB", "notes", "escalate to robot@ops-bot.internal", "Support routing note");
+    storeFact("Acme Consulting AB", "notes", "escalate to oncall@ops-bot.internal", "Updated support routing note");
+
+    const repair = repairUndetectedContradictions(db.getRawDb(), (a, b, t, s) => db.createLink(a, b, t, s ?? 1.0), 50);
+
+    expect(repair.pairsRepaired).toBe(1);
+    expect(db.queryContradictionSurface({ resolved: false, limit: 10 })).toHaveLength(1);
+  });
 });

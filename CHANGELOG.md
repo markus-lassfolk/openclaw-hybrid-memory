@@ -23,6 +23,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.66] - 2026-07-06
+
+### Added
+
+- Regression test coverage for the 2026.7.65 fix batch, added during a follow-up self-paced review loop (iteration 1 of 10) that scanned the 2026.7.65 commit itself for new bugs (none found — see below) and gaps in test coverage (four found and closed):
+  - `tests/contradiction-detection.test.ts`: a `key="notes"` fact whose value contains a blocklisted substring (e.g. `robot@ops-bot.internal`) now has explicit coverage proving contradiction detection/repair still runs normally for non-`email` keys.
+  - `tests/memory-store-early-validation.test.ts`: the `memory_store` tool's system-sender guard now has direct coverage — an explicit `key="email"` call with a blocklisted `value` is nulled out, while a genuine email pair is stored unaffected.
+  - `tests/system-sender-email.test.ts` (new file): direct unit coverage for `isSystemSenderEmail()`, including the broadened `no.reply@`/`no_reply@`/`donotreply@` variants added in 2026.7.65.
+  - `tests/contacts-profile-enrichment.test.ts`: a single-PERSON-mention fact whose text contains 2+ distinct emails now has explicit coverage proving the contact's email stays `null` (ambiguous) rather than picking the first address.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.7.66**.
+
+---
+
 ## [2026.7.65] - 2026-07-06
 
 ### Fixed

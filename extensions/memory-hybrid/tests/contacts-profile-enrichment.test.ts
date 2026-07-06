@@ -63,6 +63,18 @@ describe("contact profile enrichment and merge (#2014)", () => {
     expect(contacts[0].boardStatus).toBe("management");
   });
 
+  it("does not attribute either address when a single-person mention's text contains 2+ distinct emails (#2062)", () => {
+    const text = "Daniel Thunberg, cc: ops@other-example.com — daniel.thunberg@avoki.com, Sverigechef Avoki";
+    const fact = storeAndTagPerson(text, "Daniel Thunberg", 0);
+
+    const result = db.applyContactProfileEnrichment(fact.id, text, "ner");
+    expect(result).not.toBeNull();
+
+    const contacts = db.listContactsByNamePrefix("Daniel", 10);
+    expect(contacts).toHaveLength(1);
+    expect(contacts[0].email).toBeNull();
+  });
+
   it("does not enrich when a fact mentions more than one person (ambiguous attribution)", () => {
     const fact = db.store({
       text: "Alice alice@example.com and Bob bob@example.com discussed the roadmap.",
