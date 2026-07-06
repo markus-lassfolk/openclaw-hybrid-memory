@@ -7,22 +7,35 @@
 import { Type } from "@sinclair/typebox";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 
+import type { BuildToolScopeFilterFn } from "../api/memory-plugin-api.js";
 import type { FactsDB } from "../backends/facts-db.js";
+import type { HybridMemoryConfig } from "../config.js";
 import type { VerificationStore } from "../services/verification-store.js";
 import { VerificationError } from "../services/verification-store.js";
 
 interface PluginContext {
   factsDb: FactsDB;
   verificationStore: VerificationStore;
+  cfg: HybridMemoryConfig;
+  currentAgentIdRef: { value: string | null };
+  buildToolScopeFilter: BuildToolScopeFilterFn;
 }
 
 /**
  * Register verification-related tools with the plugin API.
  *
  * This includes: memory_verify, memory_verified_list, memory_verification_status.
+ *
+ * SECURITY (loop iteration 9): verified_facts has no scope column of its own — verifying a fact
+ * copies its text into that global table, and memory_verified_list lists every row with no way
+ * to filter by scope. Gating memory_verify/memory_verification_status on the caller's scope
+ * blocks copying an out-of-scope fact's text in (or probing its verification status), but
+ * memory_verified_list itself still needs a schema change (a scope/scope_target column plus a
+ * migration) to stop broadcasting every tenant's already-verified facts to every other tenant —
+ * tracked separately, not fixed here.
  */
 export function registerVerificationTools(ctx: PluginContext, api: ClawdbotPluginApi): void {
-  const { factsDb, verificationStore } = ctx;
+  const { factsDb, verificationStore, cfg, currentAgentIdRef, buildToolScopeFilter } = ctx;
 
   api.registerTool(
     {
@@ -34,7 +47,8 @@ export function registerVerificationTools(ctx: PluginContext, api: ClawdbotPlugi
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         const { factId } = params as { factId: string };
-        const fact = factsDb.getById(factId);
+        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
+        const fact = factsDb.getById(factId, { scopeFilter });
         if (!fact) {
           return {
             content: [{ type: "text", text: `Fact not found: ${factId}` }],
@@ -115,6 +129,15 @@ export function registerVerificationTools(ctx: PluginContext, api: ClawdbotPlugi
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         const { factId } = params as { factId: string };
+        // Out-of-scope facts report the same "not verified" response as a genuinely unverified
+        // one, rather than a distinct "not found" — don't reveal that a foreign-tenant id exists.
+        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
+        if (!factsDb.getById(factId, { scopeFilter })) {
+          return {
+            content: [{ type: "text", text: `Fact ${factId} is not verified.` }],
+            details: { status: "not_verified", id: factId },
+          };
+        }
         try {
           const verified = verificationStore.getVerified(factId);
           if (!verified) {

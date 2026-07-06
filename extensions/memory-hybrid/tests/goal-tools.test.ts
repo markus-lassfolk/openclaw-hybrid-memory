@@ -19,6 +19,7 @@ import {
 import { resolveGoalsDir } from "../services/goal-stewardship.js";
 import { registerGoalTools } from "../tools/goal-tools.js";
 import { setEnv } from "../utils/env-manager.js";
+import { buildToolScopeFilter } from "../utils/scope-filter.js";
 
 const defaults = {
   maxDispatches: 5,
@@ -153,6 +154,8 @@ describe("goal tools registry primitives", () => {
         embeddings: null,
         eventLog: null,
         memoryDir: join(workspaceRoot, "memory"),
+        currentAgentIdRef: { value: null },
+        buildToolScopeFilter,
       },
       api as ClawdbotPluginApi,
     );
@@ -193,6 +196,8 @@ describe("goal tools registry primitives", () => {
         embeddings: null,
         eventLog: null,
         memoryDir: join(workspaceRoot, "memory"),
+        currentAgentIdRef: { value: null },
+        buildToolScopeFilter,
       },
       api as ClawdbotPluginApi,
     );
@@ -250,6 +255,8 @@ describe("goal tools registry primitives", () => {
         embeddings: null,
         eventLog: null,
         memoryDir: join(workspaceRoot, "memory"),
+        currentAgentIdRef: { value: null },
+        buildToolScopeFilter,
       },
       api as ClawdbotPluginApi,
     );
@@ -289,6 +296,8 @@ describe("goal tools registry primitives", () => {
         embeddings: null,
         eventLog: null,
         memoryDir: join(workspaceRoot, "memory"),
+        currentAgentIdRef: { value: null },
+        buildToolScopeFilter,
       },
       api as ClawdbotPluginApi,
     );

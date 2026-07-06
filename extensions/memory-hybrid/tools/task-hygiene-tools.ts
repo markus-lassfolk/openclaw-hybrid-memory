@@ -5,6 +5,7 @@
 import { isAbsolute, join as pathJoin } from "node:path";
 import { Type } from "@sinclair/typebox";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import type { BuildToolScopeFilterFn } from "../api/memory-plugin-api.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import type { ActiveTaskEntry } from "../services/active-task.js";
@@ -20,6 +21,8 @@ export interface TaskHygieneToolsContext {
   resolvedActiveTaskPath: string;
   workspaceRoot: string;
   factsDb: FactsDB | null;
+  currentAgentIdRef: { value: string | null };
+  buildToolScopeFilter: BuildToolScopeFilterFn;
 }
 
 export function resolveActiveTaskPathForTools(cfg: HybridMemoryConfig, workspaceRoot: string): string {
@@ -44,7 +47,7 @@ function formatTaskSummary(task: ActiveTaskEntry): string {
 
 export function registerTaskHygieneTools(ctx: TaskHygieneToolsContext, api: ClawdbotPluginApi): void {
   const path = ctx.resolvedActiveTaskPath;
-  const { cfg, factsDb } = ctx;
+  const { cfg, factsDb, currentAgentIdRef, buildToolScopeFilter } = ctx;
 
   const disabled = () => ({
     content: [
@@ -75,7 +78,12 @@ export function registerTaskHygieneTools(ctx: TaskHygieneToolsContext, api: Claw
         const dropped = guardArgs("active_task_list", params);
         if (dropped) return dropped;
         try {
-          const loaded = await loadActiveTasksForTools(cfg, path, factsDb);
+          const loaded = await loadActiveTasksForTools(
+            cfg,
+            path,
+            factsDb,
+            buildToolScopeFilter({}, currentAgentIdRef.value, cfg),
+          );
           if (!loaded) {
             return {
               content: [{ type: "text", text: "Active task ledger unavailable (facts DB required when ledger=facts)." }],
@@ -127,7 +135,12 @@ export function registerTaskHygieneTools(ctx: TaskHygieneToolsContext, api: Claw
         const dropped = guardArgs("active_task_get", params);
         if (dropped) return dropped;
         try {
-          const loaded = await loadActiveTasksForTools(cfg, path, factsDb);
+          const loaded = await loadActiveTasksForTools(
+            cfg,
+            path,
+            factsDb,
+            buildToolScopeFilter({}, currentAgentIdRef.value, cfg),
+          );
           if (!loaded) {
             return {
               content: [{ type: "text", text: "Active task ledger unavailable." }],
@@ -177,7 +190,12 @@ export function registerTaskHygieneTools(ctx: TaskHygieneToolsContext, api: Claw
         const dropped = guardArgs("active_task_propose_goal", params);
         if (dropped) return dropped;
         try {
-          const loaded = await loadActiveTasksForTools(cfg, path, factsDb);
+          const loaded = await loadActiveTasksForTools(
+            cfg,
+            path,
+            factsDb,
+            buildToolScopeFilter({}, currentAgentIdRef.value, cfg),
+          );
           if (!loaded) {
             return {
               content: [{ type: "text", text: "Active task ledger unavailable." }],

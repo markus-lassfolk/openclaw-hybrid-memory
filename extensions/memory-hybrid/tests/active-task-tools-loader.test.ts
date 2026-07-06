@@ -45,4 +45,48 @@ describe("loadActiveTasksForTools", () => {
     expect(loaded?.tasks).toHaveLength(1);
     expect(loaded?.tasks[0]?.label).toBe("deploy-prod");
   });
+
+  it("only returns the caller's own tenant's task facts when a scopeFilter is provided (loop iteration 9 regression)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "hm-tools-loader-scope-"));
+    dirs.push(root);
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-long-enough", model: "text-embedding-3-small" },
+      sqlitePath: join(root, "facts.db"),
+      lanceDbPath: join(root, "lancedb"),
+      activeTask: { enabled: true, ledger: "facts", filePath: "ACTIVE-TASKS.md" },
+    });
+    const factsDb = new FactsDB(join(root, "facts.db"));
+
+    const storeTask = (entity: string, scopeTarget: string) => {
+      factsDb.store({
+        text: `Task [${entity}] status: in_progress`,
+        category: "project",
+        importance: 0.5,
+        entity,
+        key: "status",
+        value: "in_progress",
+        source: "active-task",
+        decayClass: "permanent",
+        scope: "agent",
+        scopeTarget,
+      });
+      factsDb.store({
+        text: `Task [${entity}] title: ${entity}`,
+        category: "project",
+        importance: 0.5,
+        entity,
+        key: "title",
+        value: entity,
+        source: "active-task",
+        decayClass: "permanent",
+        scope: "agent",
+        scopeTarget,
+      });
+    };
+    storeTask("tenant-a-task", "tenantA");
+    storeTask("tenant-b-task", "tenantB");
+
+    const loaded = await loadActiveTasksForTools(cfg, join(root, "ACTIVE-TASKS.md"), factsDb, { agentId: "tenantA" });
+    expect(loaded?.tasks.map((t) => t.label)).toEqual(["tenant-a-task"]);
+  });
 });

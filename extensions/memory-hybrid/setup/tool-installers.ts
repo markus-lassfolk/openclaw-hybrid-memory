@@ -48,13 +48,19 @@ type UtilityInstallerContext = {
   walRemove: (id: string) => Promise<void>;
 };
 
-type ProvenanceInstallerContext = Pick<ToolsContext, "factsDb" | "eventLog" | "provenanceService" | "cfg">;
+type ProvenanceInstallerContext = Pick<
+  ToolsContext,
+  "factsDb" | "eventLog" | "provenanceService" | "cfg" | "currentAgentIdRef" | "buildToolScopeFilter"
+>;
 type CredentialInstallerContext = Pick<ToolsContext, "credentialsDb" | "factsDb" | "vectorDb" | "cfg">;
 type DocumentInstallerContext = Pick<
   ToolsContext,
   "factsDb" | "vectorDb" | "cfg" | "embeddings" | "pythonBridge" | "openai" | "provenanceService"
 >;
-type VerificationInstallerContext = Pick<ToolsContext, "factsDb" | "verificationStore" | "cfg">;
+type VerificationInstallerContext = Pick<
+  ToolsContext,
+  "factsDb" | "verificationStore" | "cfg" | "currentAgentIdRef" | "buildToolScopeFilter"
+>;
 type IssueInstallerContext = Pick<ToolsContext, "issueStore" | "factsDb" | "cfg">;
 type WorkflowInstallerContext = Pick<ToolsContext, "workflowStore" | "cfg">;
 type CrystallizationInstallerContext = Pick<
@@ -191,14 +197,16 @@ function selectProvenanceToolsContext({
   eventLog,
   provenanceService,
   cfg,
+  currentAgentIdRef,
+  buildToolScopeFilter,
 }: ToolsContext): ProvenanceInstallerContext {
-  return { factsDb, eventLog, provenanceService, cfg };
+  return { factsDb, eventLog, provenanceService, cfg, currentAgentIdRef, buildToolScopeFilter };
 }
 
 function installProvenanceTools(ctx: ProvenanceInstallerContext, api: ClawdbotPluginApi): void {
-  const { factsDb, eventLog, provenanceService, cfg } = ctx;
+  const { factsDb, eventLog, provenanceService, cfg, currentAgentIdRef, buildToolScopeFilter } = ctx;
   if (cfg.provenance.enabled && provenanceService) {
-    registerProvenanceTools({ factsDb, eventLog, provenanceService, cfg }, api);
+    registerProvenanceTools({ factsDb, eventLog, provenanceService, cfg, currentAgentIdRef, buildToolScopeFilter }, api);
   }
 }
 
@@ -298,14 +306,16 @@ function selectVerificationToolsContext({
   factsDb,
   verificationStore,
   cfg,
+  currentAgentIdRef,
+  buildToolScopeFilter,
 }: ToolsContext): VerificationInstallerContext {
-  return { factsDb, verificationStore, cfg };
+  return { factsDb, verificationStore, cfg, currentAgentIdRef, buildToolScopeFilter };
 }
 
 function installVerificationTools(ctx: VerificationInstallerContext, api: ClawdbotPluginApi): void {
-  const { factsDb, verificationStore, cfg } = ctx;
+  const { factsDb, verificationStore, cfg, currentAgentIdRef, buildToolScopeFilter } = ctx;
   if (cfg.verification.enabled && verificationStore) {
-    registerVerificationTools({ factsDb, verificationStore }, api);
+    registerVerificationTools({ factsDb, verificationStore, cfg, currentAgentIdRef, buildToolScopeFilter }, api);
   }
 }
 
@@ -528,6 +538,8 @@ function selectGoalToolsContext(ctx: ToolsContext): GoalToolsContext {
     embeddings: ctx.embeddings,
     eventLog: ctx.eventLog,
     memoryDir: pathJoin(workspaceRoot, "memory"),
+    currentAgentIdRef: ctx.currentAgentIdRef,
+    buildToolScopeFilter: ctx.buildToolScopeFilter,
   };
 }
 
@@ -539,6 +551,8 @@ function installGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi): void {
       resolvedActiveTaskPath: ctx.resolvedActiveTaskPath,
       workspaceRoot: ctx.workspaceRoot,
       factsDb: ctx.factsDb,
+      currentAgentIdRef: ctx.currentAgentIdRef,
+      buildToolScopeFilter: ctx.buildToolScopeFilter,
     },
     api,
   );

@@ -67,7 +67,10 @@ describe("memory_provenance tool", () => {
     cfg.provenance!.enabled = true;
     const api = makeMockApi("sess-123");
 
-    registerProvenanceTools({ factsDb, eventLog, provenanceService, cfg }, api as any);
+    registerProvenanceTools(
+      { factsDb, eventLog, provenanceService, cfg, currentAgentIdRef: { value: null }, buildToolScopeFilter },
+      api as any,
+    );
 
     const sourceFact = factsDb.store({
       text: "User likes tea",
@@ -125,6 +128,54 @@ describe("memory_provenance tool", () => {
     expect(chain.consolidationChain[0].fact.id).toBe(sourceFact.id);
   });
 
+  it("does not leak a cross-tenant fact's text via memory_provenance or its consolidation chain (loop iteration 9 regression)", async () => {
+    const cfg = hybridConfigSchema.parse({
+      embedding: { provider: "ollama", model: "nomic-embed-text", dimensions: 768 },
+      provenance: { enabled: true },
+    });
+    cfg.provenance!.enabled = true;
+    const api = makeMockApi("sess-scope");
+
+    registerProvenanceTools(
+      { factsDb, eventLog, provenanceService, cfg, currentAgentIdRef: { value: "tenantA" }, buildToolScopeFilter },
+      api as any,
+    );
+
+    const ownFact = factsDb.store({
+      text: "Tenant A's own fact",
+      category: "fact",
+      importance: 0.6,
+      source: "conversation",
+      scope: "agent",
+      scopeTarget: "tenantA",
+    });
+    const foreignFact = factsDb.store({
+      text: "Tenant B's private fact",
+      category: "fact",
+      importance: 0.8,
+      source: "conversation",
+      scope: "agent",
+      scopeTarget: "tenantB",
+    });
+
+    // memory_provenance directly on another tenant's fact must report not-found, not its chain.
+    const directResult = (await api.callTool("memory_provenance", { factId: foreignFact.id })) as any;
+    expect(directResult.details.error).toBe("not_found");
+
+    // A CONSOLIDATED_FROM edge pointing at another tenant's fact must not surface its text.
+    provenanceService.addEdge(ownFact.id, {
+      edgeType: "CONSOLIDATED_FROM",
+      sourceType: "consolidation",
+      sourceId: foreignFact.id,
+      sourceText: foreignFact.text,
+    });
+
+    const result = (await api.callTool("memory_provenance", { factId: ownFact.id })) as any;
+    const chain = result.details.provenance;
+    expect(chain.fact.text).toBe("Tenant A's own fact");
+    expect(JSON.stringify(chain)).not.toContain("Tenant B's private fact");
+  });
+
   it("recursively follows derived_from and consolidation chains", async () => {
     const cfg = hybridConfigSchema.parse({
       embedding: { provider: "ollama", model: "nomic-embed-text", dimensions: 768 },
@@ -133,7 +184,10 @@ describe("memory_provenance tool", () => {
     cfg.provenance!.enabled = true;
     const api = makeMockApi("sess-abc");
 
-    registerProvenanceTools({ factsDb, eventLog, provenanceService, cfg }, api as any);
+    registerProvenanceTools(
+      { factsDb, eventLog, provenanceService, cfg, currentAgentIdRef: { value: null }, buildToolScopeFilter },
+      api as any,
+    );
 
     const factC = factsDb.store({
       text: "C: User likes coffee",

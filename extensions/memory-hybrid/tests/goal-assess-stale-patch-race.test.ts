@@ -24,6 +24,7 @@ import { createGoal, readGoal } from "../services/goal-registry.js";
 import * as goalStewardship from "../services/goal-stewardship.js";
 import { registerGoalTools } from "../tools/goal-tools.js";
 import { setEnv } from "../utils/env-manager.js";
+import { buildToolScopeFilter } from "../utils/scope-filter.js";
 
 const defaults = {
   maxDispatches: 5,
@@ -84,6 +85,8 @@ describe("goal_assess stale-patch write race", () => {
         embeddings: null,
         eventLog: null,
         memoryDir: join(workspaceRoot, "memory"),
+        currentAgentIdRef: { value: null },
+        buildToolScopeFilter,
       },
       api as ClawdbotPluginApi,
     );
@@ -156,6 +159,8 @@ describe("goal_assess stale-patch write race", () => {
         embeddings: null,
         eventLog: null,
         memoryDir: join(workspaceRoot, "memory"),
+        currentAgentIdRef: { value: null },
+        buildToolScopeFilter,
       },
       api as ClawdbotPluginApi,
     );
@@ -225,6 +230,8 @@ describe("goal_assess stale-patch write race", () => {
         embeddings: null,
         eventLog: null,
         memoryDir: join(workspaceRoot, "memory"),
+        currentAgentIdRef: { value: null },
+        buildToolScopeFilter,
       },
       api as ClawdbotPluginApi,
     );
@@ -294,6 +301,8 @@ describe("goal_assess stale-patch write race", () => {
         embeddings: null,
         eventLog: null,
         memoryDir: join(workspaceRoot, "memory"),
+        currentAgentIdRef: { value: null },
+        buildToolScopeFilter,
       },
       api as ClawdbotPluginApi,
     );
@@ -362,6 +371,8 @@ describe("goal_assess stale-patch write race", () => {
         embeddings: null,
         eventLog: null,
         memoryDir: join(workspaceRoot, "memory"),
+        currentAgentIdRef: { value: null },
+        buildToolScopeFilter,
       },
       api as ClawdbotPluginApi,
     );

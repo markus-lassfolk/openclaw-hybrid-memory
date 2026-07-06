@@ -21,6 +21,7 @@ import { createGoal } from "../services/goal-registry.js";
 import * as goalStewardship from "../services/goal-stewardship.js";
 import { registerGoalTools } from "../tools/goal-tools.js";
 import { setEnv } from "../utils/env-manager.js";
+import { buildToolScopeFilter } from "../utils/scope-filter.js";
 
 const defaults = {
   maxDispatches: 20,
@@ -76,6 +77,8 @@ describe("goal_update/goal_complete/goal_abandon top-level error handling (#41)"
         embeddings: null,
         eventLog: null,
         memoryDir: join(workspaceRoot, "memory"),
+        currentAgentIdRef: { value: null },
+        buildToolScopeFilter,
       },
       api as ClawdbotPluginApi,
     );

@@ -23,6 +23,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.73] - 2026-07-06
+
+### Fixed
+
+Loop iteration 9 of the full-codebase review loop, continuing the systemic missing-scope-filter pattern found in iteration 8's `tools/` sweep.
+
+- **`memory_verify`/`memory_verification_status` could read and copy another tenant's fact text:** both called `factsDb.getById(factId)` with no scope filter, so any caller could verify (copying its full text into the global `verified_facts` table) or probe the verification status of a fact belonging to a different tenant/scope. Fixed by scope-checking the fact before either operation proceeds. Note: `verified_facts` still has no scope column of its own, so `memory_verified_list` itself still broadcasts every tenant's already-verified facts — that needs a schema migration and is tracked separately below, not fixed here.
+- **`memory_provenance` could trace another tenant's full fact history:** `getProvenance()` reads `facts.text` via raw SQL, bypassing `FactsDB.getById()`'s scope enforcement entirely, and `buildProvenanceChain`/`buildDerivedFrom` recursively traced `DERIVED_FROM`/`CONSOLIDATED_FROM` edges with no scope check on any hop. Fixed by threading a scope filter into `getProvenance()`'s own raw query and gating every recursive hop (including the `CONSOLIDATED_FROM` chain, which had a second, narrower gap: even after the live-lookup fix, its `factText` fallback could still surface an out-of-scope edge's own stored `sourceText` snapshot if a chain ever reached one).
+- **`active_task_list`/`active_task_get`/`propose_goal` leaked every tenant's task ledger when `activeTask.ledger: "facts"`:** `loadActiveTasksForTools()` called `loadTaskLedgerFromFacts(factsDb)` with no scope filter (the function accepts one as an optional 3rd argument), so every agent saw every other tenant's active tasks. Fixed by threading a scope filter through from the tool context.
+- **`goal_complete`/`goal_abandon` always recorded their outcome episode at global scope:** unlike the sibling `memory_record_episode` tool (which lets the caller pick a scope, falling back to the caller's own resolved identity), these two had no scope param at all and called `factsDb.recordEpisode()` with none of `scope`/`scopeTarget`/`agentId`/`userId`/`sessionId` set. Fixed to always derive scope from the caller's own resolved identity, matching `memory_record_episode`'s no-explicit-scope fallback behavior.
+
+All four fixes include regression tests verified to fail without the fix and pass with it (via `git stash` before/after comparison). tsc clean; biome checked against each file's pre-existing baseline — zero net-new lint/format issues.
+
+### Deferred (found and verified, tracked for a dedicated pass — not abandoned)
+
+- **`verified_facts` has no scope column:** `memory_verified_list` lists every row in that table regardless of tenant. Needs a schema migration (a `scope`/`scope_target` column plus backfill) rather than a quick patch, since the table predates the multi-tenant scope system.
+- Remaining items carried over from iteration 8, not yet reached: `tools/document-tools.ts` (`ingestSingleDocument` never sets `scope`/`scopeTarget`, defaulting every ingested chunk to global), `tools/memory/register-agent-verb-tools.ts` (`memory_retrieve`'s `getEntry` closure omits `scopeFilter` on 2 `getById` calls — narrow multi-vault-collision risk), `tools/memory/register-store-tools.ts` (`maybeAutoVerify` only runs on the classify-before-write UPDATE branch, never on ADD — a functional no-op, not a leak), `tools/memory/register-recall-tools.ts` (`memory_recall`'s `includeCold=false` filter isn't re-applied to graph-expansion-appended facts).
+
+### Changed
+
+- Version bumped to 2026.7.73.
+
+---
+
 ## [2026.7.72] - 2026-07-06
 
 ### Fixed

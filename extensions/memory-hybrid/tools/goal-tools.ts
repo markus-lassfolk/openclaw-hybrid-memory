@@ -41,7 +41,9 @@ import {
 } from "../services/goal-register-validation.js";
 import { guardAgainstWrapperArgsDropped } from "../services/tool-args-guard.js";
 import { formatDateUtc, nowIso, nowSec } from "../utils/dates.js";
+import { globalOnlyScopeFilter, scopeFieldsFromFilter } from "../utils/scope-filter.js";
 import { stringEnum } from "../utils/typebox.js";
+import type { BuildToolScopeFilterFn } from "../api/memory-plugin-api.js";
 
 export interface GoalToolsContext {
   cfg: HybridMemoryConfig;
@@ -54,6 +56,8 @@ export interface GoalToolsContext {
   embeddings: EmbeddingProvider | null;
   eventLog: EventLog | null;
   memoryDir: string;
+  currentAgentIdRef: { value: string | null };
+  buildToolScopeFilter: BuildToolScopeFilterFn;
 }
 
 const PRIORITIES = ["critical", "high", "normal", "low"] as const;
@@ -72,7 +76,8 @@ async function flushGoalOutcomeToMemory(memoryDir: string, title: string, lines:
 }
 
 export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi): void {
-  const { cfg, goalsDir, factsDb, vectorDb, embeddings, eventLog, memoryDir, workspaceRoot } = ctx;
+  const { cfg, goalsDir, factsDb, vectorDb, embeddings, eventLog, memoryDir, workspaceRoot, currentAgentIdRef, buildToolScopeFilter } =
+    ctx;
   const gs = cfg.goalStewardship;
   const defaults = goalStewardshipDefaultsFromConfig(gs);
   const notEnabled = () => ({
@@ -735,11 +740,21 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             ]);
           }
           try {
+            // SECURITY: unlike memory_record_episode, this has no caller-facing scope param —
+            // always derive scope from the caller's own resolved identity, matching the sibling
+            // tool's fallback-when-unspecified behavior, so this doesn't default to global scope.
+            const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg) ?? globalOnlyScopeFilter();
+            const { scope, scopeTarget } = scopeFieldsFromFilter(scopeFilter);
             factsDb?.recordEpisode?.({
               event: `Goal completed: ${completed.label}`,
               outcome: "success",
               context: p.reason,
               importance: 0.7,
+              scope,
+              scopeTarget,
+              agentId: scopeFilter.agentId ?? undefined,
+              userId: scopeFilter.userId ?? undefined,
+              sessionId: scopeFilter.sessionId ?? undefined,
             });
           } catch {
             /* */
@@ -783,11 +798,18 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             ]);
           }
           try {
+            const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg) ?? globalOnlyScopeFilter();
+            const { scope, scopeTarget } = scopeFieldsFromFilter(scopeFilter);
             factsDb?.recordEpisode?.({
               event: `Goal abandoned: ${abandoned.label}`,
               outcome: "failure",
               context: p.reason,
               importance: 0.5,
+              scope,
+              scopeTarget,
+              agentId: scopeFilter.agentId ?? undefined,
+              userId: scopeFilter.userId ?? undefined,
+              sessionId: scopeFilter.sessionId ?? undefined,
             });
           } catch {
             /* */

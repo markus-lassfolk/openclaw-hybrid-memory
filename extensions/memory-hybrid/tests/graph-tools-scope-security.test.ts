@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import { scopedRowMatchesFilter } from "../backends/facts-db/scope-sql.js";
 import { hybridConfigSchema } from "../config.js";
 import { registerGraphTools } from "../tools/graph-tools.js";
 import type { MemoryScope, ScopeFilter } from "../types/memory.js";
@@ -27,13 +26,26 @@ describe("graph tools scope enforcement", () => {
     };
   }
 
+  /** Mirrors applyLookupFilters in backends/facts-db/fact-read-queries.ts: an omitted/empty
+   * scopeFilter is PERMISSIVE (no filtering at all) — only a non-empty filter restricts by scope. */
+  function matchesScopeLookup(f: FakeFact, filter: ScopeFilter | null | undefined): boolean {
+    if (!filter || (!filter.userId && !filter.agentId && !filter.sessionId)) return true;
+    if (f.scope === "global") return true;
+    const target = f.scopeTarget ?? null;
+    return (
+      (f.scope === "user" && (filter.userId ?? null) === target) ||
+      (f.scope === "agent" && (filter.agentId ?? null) === target) ||
+      (f.scope === "session" && (filter.sessionId ?? null) === target)
+    );
+  }
+
   function makeFactsDb(facts: FakeFact[], links: FakeLink[]) {
     const factMap = new Map(facts.map((f) => [f.id, f]));
     return {
       getById: vi.fn((id: string, opts?: { scopeFilter?: ScopeFilter | null }) => {
         const f = factMap.get(id);
         if (!f) return null;
-        return scopedRowMatchesFilter(f.scope, f.scopeTarget, opts?.scopeFilter) ? f : null;
+        return matchesScopeLookup(f, opts?.scopeFilter) ? f : null;
       }),
       getLinksFrom: vi.fn((id: string) =>
         links
