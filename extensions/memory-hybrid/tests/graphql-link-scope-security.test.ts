@@ -28,7 +28,10 @@ describe("GraphQL link/subscription scope enforcement", () => {
     scopeTarget: null,
   };
 
-  function makeFactsDb(getRawRows: Array<Record<string, unknown>> = []) {
+  function makeFactsDb(
+    getRawRows: Array<Record<string, unknown>> = [],
+    getConnectedFactIds: (factIds: string[], maxDepth: number) => string[] = (factIds) => factIds,
+  ) {
     const facts = new Map([
       [tenantAFact.id, tenantAFact],
       [tenantBFact.id, tenantBFact],
@@ -49,6 +52,7 @@ describe("GraphQL link/subscription scope enforcement", () => {
         })),
       })),
       createLink: vi.fn(() => "new-link-id"),
+      getConnectedFactIds: vi.fn(getConnectedFactIds),
     };
   }
 
@@ -121,6 +125,30 @@ describe("GraphQL link/subscription scope enforcement", () => {
     ]);
     const context = { factsDb, scopeFilter: { userId: "tenantA" } } as unknown as ResolverContext;
     expect(resolvers.Mutation.deleteLink(null, { id: "link-1" } as ResolverArgs, context)).toBe(false);
+  });
+
+  it("relatedFacts does not use an out-of-scope root factId as a graph-traversal oracle (loop iteration 18 regression)", () => {
+    // b-fact (tenantB) is "connected" to g-fact (global, visible to everyone) — if the resolver
+    // traverses from an unchecked root, tenantA gets g-fact back and thereby confirms b-fact
+    // exists and is linked, even though b-fact itself is never returned.
+    const factsDb = makeFactsDb([], (factIds) => [...factIds, "g-fact"]);
+    const context = { factsDb, scopeFilter: { userId: "tenantA" } } as unknown as ResolverContext;
+
+    const result = resolvers.Query.relatedFacts(null, { factId: "b-fact" } as ResolverArgs, context);
+
+    expect(result).toEqual([]);
+    expect(factsDb.getConnectedFactIds).not.toHaveBeenCalled();
+  });
+
+  it("relatedFacts still traverses from a visible root factId", () => {
+    const factsDb = makeFactsDb([], (factIds) => [...factIds, "g-fact"]);
+    const context = { factsDb, scopeFilter: { userId: "tenantA" } } as unknown as ResolverContext;
+
+    const result = resolvers.Query.relatedFacts(null, { factId: "a-fact" } as ResolverArgs, context) as Array<{
+      id: string;
+    }>;
+
+    expect(result.map((fact) => fact.id)).toEqual(["g-fact"]);
   });
 
   it("isFactPayloadVisible blocks a subscription payload scoped to a different tenant", () => {

@@ -335,6 +335,11 @@ export const resolvers: GraphQLResolvers = {
       const input = asRecord(args);
       const factId = asString(input.factId);
       if (!factId) return [];
+      // Same visibility gate as link()/links() (isLinkVisible): without it, a caller could
+      // supply another tenant's factId and use the link-graph traversal below as an oracle to
+      // confirm the id exists and see its neighbors, even though the root itself is never
+      // returned to them.
+      if (context.factsDb.getById(factId, { scopeFilter: context.scopeFilter }) == null) return [];
       const maxDepth = Math.max(1, Math.min(5, asNumber(input.maxDepth) ?? 1));
       const linkTypes = asStringArray(input.linkTypes);
       const nowSec = Math.floor(Date.now() / 1000);

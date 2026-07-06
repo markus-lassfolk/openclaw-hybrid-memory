@@ -23,6 +23,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.82] - 2026-07-06
+
+### Fixed
+
+Loop iteration 18 of the full-codebase review loop — first pass over `extensions/memory-hybrid/routes/` (the GraphQL server), previously unreviewed in this loop.
+
+- **The `relatedFacts` GraphQL query used an unchecked `factId` argument as a link-graph-traversal oracle.** Every other link-facing resolver (`Query.link`, `Query.links`, `createLink`, `deleteLink`) gates on `isLinkVisible()`, which requires both link endpoints to resolve under the caller's `scopeFilter` — specifically to prevent a caller from confirming a guessed/foreign fact id exists by probing whether it's linked to anything. `relatedFacts` never applied that check to its own `factId` root before traversing `memory_links` (via `getAllLinks`/`getConnectedFactIds`): only the *returned neighbors* were scope-checked, not the root being traversed from. A caller could supply another tenant's factId and get back any neighbor that happened to also be visible in their own scope, confirming the foreign id exists and is link-adjacent to their own data — the exact oracle the sibling resolvers were hardened against. Fixed by adding the same scope-visibility check on `factId` before any traversal, returning `[]` immediately when the root isn't visible to the caller.
+
+Regression tests added, verified via `git stash` to fail without the fix and pass with it. tsc clean; biome checked against each file's pre-existing baseline — zero net-new lint/format issues.
+
+### Deferred (found this iteration, tracked for a future pass)
+
+- `Query.relatedFacts` (`routes/graphql-resolvers.ts`) silently ignores its `maxDepth` argument when `linkTypes` is also supplied — that branch only inspects direct (1-hop) links instead of doing a real multi-hop traversal like the untyped branch does via `getConnectedFactIds`. Not a security issue (both branches still scope-filter correctly with the iteration 18 fix), just a documented-parameter inconsistency; fixing it properly requires either a `linkTypes` filter option on `getConnectedFactIds` or a hand-rolled BFS in the resolver.
+- `Subscription.statsUpdated` (`routes/graphql-server.ts`) has no scope filter, unlike the fact/link subscriptions — currently unreachable since `notifyGraphqlStatsUpdated`/`publishStatsUpdated` have no call sites anywhere in the plugin (dead code), but worth fixing before anyone wires stats-publishing in.
+
 ## [2026.7.81] - 2026-07-06
 
 ### Fixed
