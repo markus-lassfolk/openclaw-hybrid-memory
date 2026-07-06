@@ -711,6 +711,15 @@ describe("hybridConfigSchema.parse", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.wal.enabled).toBe(true);
     expect(result.wal.maxAge).toBe(5 * 60 * 1000);
+    expect(result.wal.maxSizeBytes).toBe(16 * 1024 * 1024);
+  });
+
+  it("respects wal.maxSizeBytes when set (loop iteration 22 regression)", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      wal: { maxSizeBytes: 4 * 1024 * 1024 },
+    });
+    expect(result.wal.maxSizeBytes).toBe(4 * 1024 * 1024);
   });
 
   it("credentials vault on by default (local preset enables manager)", () => {

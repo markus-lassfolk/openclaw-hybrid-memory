@@ -163,7 +163,7 @@ export type MaintenanceOrchestratorConfig = {
 
 /** Worker lease + quiet-window configuration (Issue #1904). */
 export type WorkerLeasesConfig = {
-  /** Enable lease acquisition for background workers (default: true). */
+  /** Enable lease acquisition for background workers (default: false — opt-in). */
   enabled: boolean;
   /** Default lease TTL in seconds (default: 120). */
   defaultTtlSeconds: number;

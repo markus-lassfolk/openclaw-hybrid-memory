@@ -140,6 +140,8 @@ export function parseWALConfig(cfg: Record<string, unknown>): WALConfig {
     enabled: walRaw?.enabled !== false,
     walPath: typeof walRaw?.walPath === "string" ? walRaw.walPath : undefined,
     maxAge: typeof walRaw?.maxAge === "number" && walRaw.maxAge > 0 ? walRaw.maxAge : 5 * 60 * 1000,
+    maxSizeBytes:
+      typeof walRaw?.maxSizeBytes === "number" && walRaw.maxSizeBytes > 0 ? walRaw.maxSizeBytes : 16 * 1024 * 1024,
   };
 }
 

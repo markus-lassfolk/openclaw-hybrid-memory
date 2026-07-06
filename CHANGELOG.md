@@ -23,6 +23,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.86] - 2026-07-06
+
+### Fixed
+
+Loop iteration 22 (second iteration of the third batch) of the full-codebase review loop — first pass over `extensions/memory-hybrid/config/parsers/`, previously unreviewed in this loop.
+
+- **`wal.maxSizeBytes` was parsed nowhere, silently dropping a documented config option.** `WALConfig` (`config/types/core.ts`) declares `maxSizeBytes?: number` with the doc comment "Rewrite WAL when file size exceeds this limit (bytes, default: 16 MiB)," and it's genuinely consumed at runtime (`setup/plugin-service.ts`'s `wal.compactIfOversized(cfg.wal?.maxSizeBytes ?? 16 * 1024 * 1024)`). But `parseWALConfig()` only read `enabled`/`walPath`/`maxAge` — never `maxSizeBytes` — so `cfg.wal.maxSizeBytes` was always `undefined` and the 16 MiB default silently applied regardless of what an operator configured. Fixed by parsing the field with the same validation/default pattern already used for `maxAge`.
+- **Stale doc comment on `WorkerLeasesConfig.enabled`** (`config/types/maintenance.ts`) claimed "default: true," but the actual system-wide default (`DEFAULT_WORKER_LEASES_CONFIG.enabled` in `services/worker-lease.ts`, and the parser's own `enabled: o.enabled === true`) is `false` — a deliberate opt-in feature. Corrected the comment to match the real, consistent behavior rather than changing behavior to match a comment that appears to have simply gone stale.
+
+Regression test added for the `wal.maxSizeBytes` fix, verified via `git stash` to fail without the fix and pass with it. tsc clean; biome checked against each file's pre-existing baseline — zero net-new lint/format issues.
+
+### Deferred (found this iteration, tracked for a future pass)
+
+- `maintenance.orchestrator.nightlyCycle.eventLogArchivalDays`/`eventLogArchivePath` (`config/parsers/maintenance.ts`, typed in `config/types/maintenance.ts`) are parsed correctly but never read anywhere — `setup/cli-context/cli-services.ts` builds `DreamCycleConfig`'s equivalent fields from the separate top-level `cfg.eventLog.archivalDays`/`archivePath` instead, so setting `nightlyCycle.eventLogArchivalDays` has zero effect. Not fixed this iteration since the correct resolution (wire the `nightlyCycle` fields up as an override, or remove them as duplicate/dead config surface) is a design call rather than an obvious bug fix.
+
 ## [2026.7.85] - 2026-07-06
 
 ### Fixed
