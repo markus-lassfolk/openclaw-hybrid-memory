@@ -701,8 +701,15 @@ export async function runExtractReinforcementForCli(
                     tags?: string[];
                   })
                 : { text: String(c) };
-            const text = (obj.text ?? "").trim();
-            if (!text || factsDb.hasDuplicate(text, "reinforcement-analysis")) continue;
+            const rawText = (obj.text ?? "").trim();
+            if (!rawText) continue;
+            const remediationCategory = isPattern ? "pattern" : "technical";
+            const remediationKey = typeof obj.key === "string" ? obj.key : null;
+            const text = maybeRedactMaintenanceFactText(rawText, cfg.maintenance?.privacyRedaction, {
+              category: remediationCategory,
+              key: remediationKey,
+            });
+            if (factsDb.hasDuplicate(text, "reinforcement-analysis")) continue;
             let vector: number[] | null = null;
             try {
               vector = await embeddings.embed(text);
@@ -720,10 +727,10 @@ export async function runExtractReinforcementForCli(
             const storeResult = factsDb.storeWithResult(
               {
                 text,
-                category: isPattern ? "pattern" : "technical",
+                category: remediationCategory,
                 importance: CLI_STORE_IMPORTANCE,
                 entity: obj.entity ?? null,
-                key: typeof obj.key === "string" ? obj.key : null,
+                key: remediationKey,
                 value: text.slice(0, 200),
                 source: "reinforcement-analysis",
                 tags,
@@ -749,7 +756,7 @@ export async function runExtractReinforcementForCli(
                 text,
                 vector,
                 importance: CLI_STORE_IMPORTANCE,
-                category: isPattern ? "pattern" : "technical",
+                category: remediationCategory,
                 id: entry.id,
               });
               factsDb.setEmbeddingModel(entry.id, embeddings.modelName);

@@ -117,6 +117,7 @@ describe("contradiction-progress-summary", () => {
       degradedAmbiguousThreshold: 200,
       degradedConsecutiveThreshold: 3,
       runAuto: async () => ({
+        scanned: 250,
         total: 250,
         deterministic: 0,
         llm: 0,
@@ -141,6 +142,7 @@ describe("contradiction-progress-summary", () => {
       degradedAmbiguousThreshold: 200,
       degradedConsecutiveThreshold: 3,
       runAuto: async () => ({
+        scanned: 250,
         total: 250,
         deterministic: 0,
         llm: 0,
@@ -162,6 +164,7 @@ describe("contradiction-progress-summary", () => {
       degradedAmbiguousThreshold: 200,
       degradedConsecutiveThreshold: 3,
       runAuto: async () => ({
+        scanned: 250,
         total: 250,
         deterministic: 0,
         llm: 0,

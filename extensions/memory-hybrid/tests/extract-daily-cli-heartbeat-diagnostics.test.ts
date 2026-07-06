@@ -170,4 +170,27 @@ describe("runExtractDailyForCli — heartbeat + no-op-sink diagnostics survival"
 
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("extract-daily embedding failed"));
   });
+
+  it("honors maintenance.privacyRedaction when enabled — a home path is scrubbed from the stored fact", async () => {
+    dir = mkdtempSync(join(tmpdir(), "extract-daily-redaction-"));
+    originalHome = process.env.HOME;
+    process.env.HOME = dir;
+    vi.useFakeTimers();
+    vi.setSystemTime(FIXED_NOW);
+    writeTodayMemoryFile(dir, ["Decision: back up photos to /home/alice/Pictures every night automatically."]);
+    db = new FactsDB(join(dir, "facts.db"));
+    const logger = { info: vi.fn(), warn: vi.fn() };
+
+    const ctx = makeCtx(db, logger, async () => [0.1]);
+    (ctx.cfg as { maintenance?: unknown }).maintenance = {
+      privacyRedaction: { enabled: true, exemptCategories: [], exemptKeys: [] },
+    };
+
+    await runExtractDailyForCli(ctx, { days: 1, dryRun: false, verbose: false }, NOOP_SINK);
+
+    const facts = db.getAll();
+    expect(facts.length).toBeGreaterThan(0);
+    expect(facts.some((f) => f.text.includes("[private-path]"))).toBe(true);
+    expect(facts.some((f) => f.text.includes("/home/alice"))).toBe(false);
+  });
 });

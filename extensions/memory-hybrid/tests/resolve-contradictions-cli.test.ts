@@ -349,6 +349,7 @@ describe("resolve-contradictions CLI contract mode", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "resolve-contradictions-cli-"));
     const exportPath = join(tmpDir, "review.jsonl");
     const runResolveContradictionsAuto = vi.fn().mockResolvedValue({
+      scanned: 5,
       total: 5,
       deterministic: 4,
       llm: 0,
@@ -405,7 +406,9 @@ describe("resolve-contradictions CLI contract mode", () => {
       model: undefined,
     });
     expect(typeof autoOpts.onProgress).toBe("function");
-    expect(lines.some((l) => l.includes("contradiction-auto summary total=5 deterministic=4 llm=0"))).toBe(true);
+    expect(lines.some((l) => l.includes("contradiction-auto summary scanned=5 total=5 deterministic=4 llm=0"))).toBe(
+      true,
+    );
     const exported = readFileSync(exportPath, "utf-8").trim().split("\n");
     expect(exported).toHaveLength(1);
     expect(JSON.parse(exported[0])).toMatchObject({ contradictionId: "c-1", suggestedDecision: "manual_review" });
@@ -833,6 +836,7 @@ describe("resolve-contradictions CLI contract mode", () => {
     try {
       process.env.OPENCLAW_HOME = tmpHome;
       const runResolveContradictionsAuto = vi.fn().mockResolvedValue({
+        scanned: 222,
         total: 222,
         deterministic: 0,
         llm: 0,
@@ -1043,6 +1047,7 @@ describe("resolve-contradictions --auto progress heartbeat", () => {
         opts.onProgress?.({ processed: i, total: 3, autoResolved: i - 1, ambiguous: 0 });
       }
       return {
+        scanned: 3,
         total: 3,
         deterministic: 2,
         llm: 0,
@@ -1075,6 +1080,7 @@ describe("resolve-contradictions --auto progress heartbeat", () => {
     const runResolveContradictionsAuto = vi.fn(async (opts: { onProgress?: (p: AutoProgress) => void }) => {
       opts.onProgress?.({ processed: 1, total: 1, autoResolved: 1, ambiguous: 0 });
       return {
+        scanned: 1,
         total: 1,
         deterministic: 1,
         llm: 0,
@@ -1110,6 +1116,7 @@ describe("resolve-contradictions --auto progress heartbeat", () => {
     const runResolveContradictionsAuto = vi.fn(async (opts: { onProgress?: (p: AutoProgress) => void }) => {
       opts.onProgress?.({ processed: 1, total: 1, autoResolved: 0, ambiguous: 1 });
       return {
+        scanned: 1,
         total: 1,
         deterministic: 0,
         llm: 0,

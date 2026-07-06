@@ -941,6 +941,13 @@ export interface ResolveContradictionsAutoOptions {
 }
 
 export interface ResolveContradictionsAutoResult {
+  /**
+   * Raw count of unresolved-contradiction rows scanned this run — the SAME denominator the live
+   * `onProgress` heartbeat's `total` field reports. Distinct from `total` below (which excludes
+   * pairs referencing an already-deleted/pruned fact), so callers logging both avoid presenting
+   * a "total" that appears to shrink between the live progress lines and the final summary.
+   */
+  scanned: number;
   total: number;
   deterministic: number;
   llm: number;
@@ -1289,6 +1296,7 @@ export async function resolveContradictionsAutonomously(
   const autoResolved = deterministic + llmResolved + merged;
   const achievedRate = total === 0 ? 1 : autoResolved / total;
   return {
+    scanned: unresolved.length,
     total,
     deterministic,
     llm: llmResolved,

@@ -1387,8 +1387,11 @@ export function registerManageReflectionPipeline(
                 },
               });
               if (!jsonMode) {
+                // `scanned` matches the live heartbeat's processed=X/Y denominator; `total` is the
+                // narrower "still-resolvable pairs" count achievedRate is computed against — kept
+                // distinct so this line doesn't look like `total` shrank since the last progress tick.
                 console.log(
-                  `contradiction-auto summary total=${res.total} deterministic=${res.deterministic} llm=${res.llm} merged=${res.merged} manual_review=${res.manualReview} applied=${res.applied} target=${res.targetRate.toFixed(2)} achieved=${res.achievedRate.toFixed(3)}`,
+                  `contradiction-auto summary scanned=${res.scanned} total=${res.total} deterministic=${res.deterministic} llm=${res.llm} merged=${res.merged} manual_review=${res.manualReview} applied=${res.applied} target=${res.targetRate.toFixed(2)} achieved=${res.achievedRate.toFixed(3)}`,
                 );
                 if (!res.targetMet) {
                   console.log(

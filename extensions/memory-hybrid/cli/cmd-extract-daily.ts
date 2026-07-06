@@ -20,6 +20,7 @@ import { findSimilarByEmbedding } from "../services/vector-search.js";
 import type { MemoryEntry } from "../types/memory.js";
 import { BATCH_STORE_IMPORTANCE } from "../utils/constants.js";
 import { formatDateUtc } from "../utils/dates.js";
+import { maybeRedactMaintenanceFactText } from "../utils/maintenance-privacy.js";
 import { extractTags } from "../utils/tags.js";
 import { runMaintenanceHeartbeat } from "./commands/manage/maintenance-heartbeat.js";
 import type { HandlerContext } from "./handlers.js";
@@ -231,6 +232,18 @@ export async function runExtractDailyForCli(
           if (trimmed.length < 15 || trimmed.length > 500) continue;
           const category = ctx.detectCategory(trimmed);
           const extracted = extractStructuredFields(trimmed, category);
+          // Redact for storage/embedding only — extraction and credential parsing above/below
+          // need the original text, and this must run before the dedup/store/embed calls that
+          // follow so extract-daily honors maintenance.privacyRedaction like cmd-distill.ts does.
+          const redactionCtx = { category, key: extracted.key };
+          const redactedTrimmed = maybeRedactMaintenanceFactText(
+            trimmed,
+            cfg.maintenance?.privacyRedaction,
+            redactionCtx,
+          );
+          const redactedExtractedValue = extracted.value
+            ? maybeRedactMaintenanceFactText(extracted.value, cfg.maintenance?.privacyRedaction, redactionCtx)
+            : extracted.value;
           const parsed = tryParseCredentialForVault(trimmed, extracted.entity, extracted.key, extracted.value, {
             requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
           });
@@ -334,27 +347,27 @@ export async function runExtractDailyForCli(
             sink.log(
               `  [${category}] ${extracted.entity || "?"} / ${
                 extracted.key || "?"
-              } = ${extracted.value || trimmed.slice(0, 60)}`,
+              } = ${redactedExtractedValue || redactedTrimmed.slice(0, 60)}`,
             );
             continue;
           }
-          if (factsDb.hasDuplicate(trimmed, `daily-scan:${dateStr}`)) continue;
+          if (factsDb.hasDuplicate(redactedTrimmed, `daily-scan:${dateStr}`)) continue;
           const sourceDateSec = Math.floor(new Date(dateStr).getTime() / 1000);
           const storePayload = {
-            text: trimmed,
+            text: redactedTrimmed,
             category,
             importance: BATCH_STORE_IMPORTANCE,
             entity: extracted.entity,
             key: extracted.key,
-            value: extracted.value,
+            value: redactedExtractedValue,
             source: `daily-scan:${dateStr}` as const,
             sourceDate: sourceDateSec,
-            tags: extractTags(trimmed, extracted.entity),
+            tags: extractTags(redactedTrimmed, extracted.entity),
           };
           let vecForStore: number[] | undefined;
           if (cfg.store.classifyBeforeWrite) {
             try {
-              vecForStore = await embeddings.embed(trimmed);
+              vecForStore = await embeddings.embed(redactedTrimmed);
             } catch (err) {
               warnDiag(`memory-hybrid: extract-daily embedding failed: ${err}`);
               capturePluginError(err as Error, {
@@ -369,7 +382,7 @@ export async function runExtractDailyForCli(
               });
               if (similarFacts.length === 0) {
                 similarFacts = factsDb.findSimilarForClassification(
-                  trimmed,
+                  redactedTrimmed,
                   extracted.entity,
                   extracted.key,
                   3,
@@ -408,11 +421,11 @@ export async function runExtractDailyForCli(
             context: "extract-daily",
           });
           try {
-            const vector = vecForStore ?? (await embeddings.embed(trimmed));
+            const vector = vecForStore ?? (await embeddings.embed(redactedTrimmed));
             factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
             if (!(await vectorDb.hasDuplicate(vector))) {
               await vectorDb.store({
-                text: trimmed,
+                text: redactedTrimmed,
                 vector,
                 importance: BATCH_STORE_IMPORTANCE,
                 category,

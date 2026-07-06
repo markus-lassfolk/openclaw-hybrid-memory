@@ -23,7 +23,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { repairUndetectedContradictions } from "../backends/facts-db/contradictions.js";
+import { repairUndetectedContradictions, resolveContradictionsAutonomously } from "../backends/facts-db/contradictions.js";
 import { _testing } from "../index.js";
 
 const { FactsDB } = _testing;
@@ -531,5 +531,41 @@ describe("detectContradictions: system-sender email blocklist guard", () => {
 
     expect(repair.pairsRepaired).toBe(1);
     expect(db.queryContradictionSurface({ resolved: false, limit: 10 })).toHaveLength(1);
+  });
+});
+
+describe("resolveContradictionsAutonomously: scanned vs total reporting", () => {
+  it("reports scanned (raw unresolved-row count) distinctly from total (valid pairs) when a row references a since-deleted fact", async () => {
+    storeFact("Acme Consulting AB", "status", "active", "Acme status active");
+    const acmeNew = storeFact("Acme Consulting AB", "status", "inactive", "Acme status inactive");
+    db.detectContradictions(acmeNew.id, "Acme Consulting AB", "status", "inactive");
+
+    storeFact("Beta Traders", "status", "active", "Beta status active");
+    const betaNew = storeFact("Beta Traders", "status", "inactive", "Beta status inactive");
+    db.detectContradictions(betaNew.id, "Beta Traders", "status", "inactive");
+
+    // Simulate a fact hard-pruned (e.g. by lifecycle cleanup) after its contradiction row was
+    // recorded, leaving an orphaned contradiction row — the ON DELETE CASCADE FK normally prevents
+    // this on a single connection with foreign_keys enforcement on, but disable it transiently here
+    // to reproduce the multi-connection/cross-process edge case the guard in
+    // resolveContradictionsAutonomously (the `!newFact || !oldFact` continue) exists to handle.
+    // supersede() alone wouldn't reproduce this: a superseded row still exists and getById() still
+    // returns it.
+    const rawDb = db.getRawDb();
+    rawDb.exec("PRAGMA foreign_keys = OFF");
+    rawDb.prepare("DELETE FROM facts WHERE id = ?").run(betaNew.id);
+    rawDb.exec("PRAGMA foreign_keys = ON");
+
+    const result = await resolveContradictionsAutonomously(
+      db.getRawDb(),
+      (id) => db.getById(id),
+      (oldId, newId) => db.supersede(oldId, newId),
+    );
+
+    // scanned counts every unresolved row (2); total excludes the one with a missing fact (1) —
+    // these must stay distinct so a caller logging both isn't shown a "total" that appears to
+    // shrink between the live onProgress heartbeat (which uses `scanned`) and the final result.
+    expect(result.scanned).toBe(2);
+    expect(result.total).toBe(1);
   });
 });

@@ -23,6 +23,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.68] - 2026-07-06
+
+### Fixed
+
+Loop iteration 3 of a self-paced 10-iteration review loop, focused on the maintenance PII-redaction wiring and the resolve-contradictions --auto heartbeat/summary reporting.
+
+- **Three maintenance commands silently bypassed `maintenance.privacyRedaction` entirely:** `cli/cmd-extract-daily.ts` never called `maybeRedactMaintenanceFactText()` at all (the whole command bypassed redaction even when enabled), and the `MEMORY_STORE`/`PATTERN_FACT` remediation-apply paths in `cli/cmd-extract-reinforcement.ts` and `cli/cmd-selfcorrection.ts` stored LLM-derived fact text with no redaction call, even though sibling paths in the same files (reinforcement's praise-fact store, distill, extract-directives) already honored it. Wired `maybeRedactMaintenanceFactText()` into all three, mirroring the existing `cmd-distill.ts` pattern (redact before dedup/embed/store, using each fact's own category/key for exemption lookups). Added regression tests to `tests/extract-daily-cli-heartbeat-diagnostics.test.ts` and `tests/reinforcement-analysis.test.ts`.
+- **`resolve-contradictions --auto`'s live heartbeat and final summary silently used two different denominators under the same "total" label:** `resolveContradictionsAutonomously()`'s `onProgress` reports `total: unresolved.length` (every unresolved-contradiction row scanned), but the function's own returned `total` field only counts pairs where both facts still exist — a genuinely different, smaller number whenever a contradiction row references an already-deleted/pruned fact. An operator watching `--verbose` output would see e.g. `processed=10/10` live, then `contradiction-auto summary total=8 ...` at completion — an apparently-shrinking total with no explanation. Added a `scanned` field to `ResolveContradictionsAutoResult` (matching the live heartbeat's denominator) and updated the final summary log line in `register-reflection-pipeline.ts` to print both `scanned=` and `total=` explicitly. Added a regression test reproducing the divergence with a hard-deleted (not just superseded) fact.
+- No new correctness bugs found in a fresh review of the maintenance redaction config/type wiring itself, or in the reflection-pipeline/digest heartbeat code beyond the one finding above.
+- **Process note:** an intermediate `biome check --write` pass on two of the files above reordered their entire import blocks as a side effect of an unrelated formatting fix, which silently reintroduced a stale-state hang in `cmd-selfcorrection.ts` caught by `tests/self-correction-m3-hardening-1876.test.ts` (5 tests timing out). Root-caused via bisection (stash/restore) and fixed by reapplying only the intended logic changes on top of the original, unreordered import block — a reminder that blanket auto-format fixes are not risk-free in this codebase and should be verified with the full affected test suite, not just typecheck.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.7.68**.
+
+---
+
 ## [2026.7.67] - 2026-07-06
 
 ### Fixed

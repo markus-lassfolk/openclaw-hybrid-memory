@@ -348,6 +348,91 @@ describe("MEMORY_STORE stores fact with semantic dedup (#260)", () => {
     expect(stored?.source).toBe("reinforcement-analysis");
   });
 
+  it("honors maintenance.privacyRedaction when enabled (#2062 follow-up)", async () => {
+    const llmResponse = JSON.stringify([
+      {
+        category: "technical",
+        severity: "strong",
+        remediationType: "MEMORY_STORE",
+        remediationContent: {
+          text: "Confirmed with alice@example.com to use async/await style going forward",
+          entity: null,
+          key: "ts-style",
+          tags: ["typescript", "style"],
+        },
+      },
+    ]);
+
+    const openai = makeOpenAIMock(llmResponse);
+
+    const sessionFile = join(tmpDir, "2026-01-01-session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "I rewrote the function using async/await for clarity." }],
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "Perfect, always prefer async/await in this codebase." }],
+          },
+        }),
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const ctx = makeCtx(openai, {
+      cfg: {
+        procedures: { sessionsDir: tmpDir },
+        distill: {},
+        reinforcement: {
+          enabled: true,
+          passiveBoost: 0.1,
+          activeBoost: 0.05,
+          maxConfidence: 1.0,
+          similarityThreshold: 0.85,
+          trackContext: true,
+          maxEventsPerFact: 50,
+        },
+        selfCorrection: {
+          semanticDedup: false,
+          semanticDedupThreshold: 0.92,
+          toolsSection: "Self-correction rules",
+          applyToolsByDefault: true,
+          autoRewriteTools: false,
+          analyzeViaSpawn: false,
+          spawnThreshold: 15,
+          spawnModel: "",
+          positiveRulesSection: "Positive Reinforcement Rules",
+          reinforcementLLMAnalysis: true,
+          reinforcementToProposals: true,
+          agentsRuleToProposals: true,
+        },
+        llm: { default: ["test-model"], heavy: ["test-model"], _source: undefined },
+        store: { classifyBeforeWrite: false },
+        autoRecall: { enabled: false },
+        personaProposals: DEFAULT_PERSONA_PROPOSALS,
+        maintenance: {
+          privacyRedaction: { enabled: true, exemptCategories: ["entity"], exemptKeys: ["email", "phone", "mobile"] },
+        },
+      } as any,
+    });
+    await runExtractReinforcementForCli(ctx, { workspace: tmpDir });
+
+    const allFacts = factsDb.getAll({});
+    const stored = allFacts.find((f) => f.category === "technical" && f.text.includes("async/await"));
+    expect(stored).toBeDefined();
+    // key="ts-style" is not in the default exemptKeys list, so the email must be redacted.
+    expect(stored?.text).toContain("[redacted-email]");
+    expect(stored?.text).not.toContain("alice@example.com");
+  });
+
   it("skips MEMORY_STORE when vectorDb.hasDuplicate returns true", async () => {
     const llmResponse = JSON.stringify([
       {
@@ -606,6 +691,80 @@ describe("Self-correction NO_ACTION handling", () => {
     expect(result.analysed).toBe(1);
     expect(result.autoFixed).toBe(0);
     expect(result.proposals).toEqual([]);
+  });
+
+  it("MEMORY_STORE remediation honors maintenance.privacyRedaction when enabled (#2062 follow-up)", async () => {
+    const llmResponse = JSON.stringify([
+      {
+        category: "technical",
+        severity: "strong",
+        remediationType: "MEMORY_STORE",
+        remediationContent: {
+          text: "Confirmed with bob@example.com to always run the migration script first",
+          entity: null,
+          key: "migration-order",
+          tags: [],
+        },
+      },
+    ]);
+
+    const openai = makeOpenAIMock(llmResponse);
+    const ctx = makeCtx(openai, {
+      cfg: {
+        procedures: { sessionsDir: tmpDir },
+        distill: {},
+        reinforcement: {
+          enabled: true,
+          passiveBoost: 0.1,
+          activeBoost: 0.05,
+          maxConfidence: 1.0,
+          similarityThreshold: 0.85,
+          trackContext: true,
+          maxEventsPerFact: 50,
+        },
+        selfCorrection: {
+          semanticDedup: false,
+          semanticDedupThreshold: 0.92,
+          toolsSection: "Self-correction rules",
+          applyToolsByDefault: true,
+          autoRewriteTools: false,
+          analyzeViaSpawn: false,
+          spawnThreshold: 15,
+          spawnModel: "",
+          positiveRulesSection: "Positive Reinforcement Rules",
+          reinforcementLLMAnalysis: true,
+          reinforcementToProposals: true,
+          agentsRuleToProposals: true,
+        },
+        llm: { default: ["test-model"], heavy: ["test-model"], _source: undefined },
+        store: { classifyBeforeWrite: false },
+        autoRecall: { enabled: false },
+        personaProposals: DEFAULT_PERSONA_PROPOSALS,
+        maintenance: {
+          privacyRedaction: { enabled: true, exemptCategories: ["entity"], exemptKeys: ["email", "phone", "mobile"] },
+        },
+      } as any,
+    });
+
+    const result = await runSelfCorrectionRunForCli(ctx, {
+      incidents: [
+        {
+          userMessage: "That migration failed because you skipped a step.",
+          agentMessage: "I'll always run the migration script first from now on.",
+          sessionFile: "2026-01-01-session.jsonl",
+          timestamp: "2026-01-01T00:00:00.000Z",
+        } as any,
+      ],
+      workspace: tmpDir,
+    });
+
+    expect(result.error).toBeUndefined();
+    const allFacts = factsDb.getAll({});
+    const stored = allFacts.find((f) => f.category === "technical" && f.text.includes("migration script"));
+    expect(stored).toBeDefined();
+    // key="migration-order" is not in the default exemptKeys list, so the email must be redacted.
+    expect(stored?.text).toContain("[redacted-email]");
+    expect(stored?.text).not.toContain("bob@example.com");
   });
 });
 

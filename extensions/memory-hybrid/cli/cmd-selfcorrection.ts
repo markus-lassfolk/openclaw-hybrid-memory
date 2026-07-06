@@ -55,6 +55,7 @@ import { resolveCliWorkspaceRoot } from "../utils/cli-workspace-root.js";
 import { serializeWorkspaceSkillTargetsForPrompt } from "../utils/skill-discovery.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
+import { maybeRedactMaintenanceFactText } from "../utils/maintenance-privacy.js";
 import {
   finishSelfCorrectionJobRun,
   loadSelfCorrectionBatchResume,
@@ -333,7 +334,7 @@ async function applySelfCorrectionRemediations(params: {
   scFallbackModels: string[];
 }): Promise<SelfCorrectionApplyResult> {
   const { ctx, analysed, incidents, workspaceRoot, scCfg, opts, model, modelSource, scFallbackModels } = params;
-  const { factsDb, vectorDb, embeddings, openai, proposalsDb, logger } = ctx;
+  const { factsDb, vectorDb, embeddings, openai, proposalsDb, logger, cfg } = ctx;
   const proposals: string[] = [];
   const toolsSuggestions: string[] = [];
   let autoFixed = 0;
@@ -350,8 +351,14 @@ async function applySelfCorrectionRemediations(params: {
       const c = a.remediationContent;
       const obj =
         typeof c === "object" && c && "text" in c ? c : { text: String(c), entity: "Fact", tags: [] as string[] };
-      const text = (obj.text ?? "").trim();
-      if (!text || factsDb.hasDuplicate(text, "self-correction")) continue;
+      const rawText = (obj.text ?? "").trim();
+      if (!rawText) continue;
+      const remediationKey = typeof obj.key === "string" ? obj.key : null;
+      const text = maybeRedactMaintenanceFactText(rawText, cfg.maintenance?.privacyRedaction, {
+        category: "technical",
+        key: remediationKey,
+      });
+      if (factsDb.hasDuplicate(text, "self-correction")) continue;
       let vector: number[] | null = null;
       if (scCfg.semanticDedup || !opts.dryRun) {
         try {
@@ -371,7 +378,7 @@ async function applySelfCorrectionRemediations(params: {
             category: "technical",
             importance: CLI_STORE_IMPORTANCE,
             entity: obj.entity ?? null,
-            key: typeof obj.key === "string" ? obj.key : null,
+            key: remediationKey,
             value: text.slice(0, 200),
             source: "self-correction",
             tags: Array.isArray(obj.tags) ? obj.tags : [],
