@@ -345,15 +345,28 @@ export const resolvers: GraphQLResolvers = {
       const nowSec = Math.floor(Date.now() / 1000);
       let neighborIds: string[];
       if (linkTypes?.length) {
-        neighborIds = [
-          ...new Set(
-            getAllLinks(context.factsDb)
-              .filter(
-                (link) => linkTypes.includes(link.linkType) && (link.sourceId === factId || link.targetId === factId),
-              )
-              .flatMap((link) => [link.sourceId, link.targetId]),
-          ),
-        ].filter((id) => id !== factId);
+        // Multi-hop BFS restricted to the requested link types, so maxDepth behaves the same
+        // way here as it does in the untyped branch below (previously this only ever looked at
+        // factId's direct/1-hop links, silently ignoring maxDepth > 1).
+        const linkTypeSet = new Set(linkTypes);
+        const relevantLinks = getAllLinks(context.factsDb).filter((link) => linkTypeSet.has(link.linkType));
+        const visited = new Set<string>([factId]);
+        let frontier = new Set<string>([factId]);
+        for (let depth = 0; depth < maxDepth && frontier.size > 0; depth++) {
+          const next = new Set<string>();
+          for (const link of relevantLinks) {
+            if (frontier.has(link.sourceId) && !visited.has(link.targetId)) {
+              visited.add(link.targetId);
+              next.add(link.targetId);
+            }
+            if (frontier.has(link.targetId) && !visited.has(link.sourceId)) {
+              visited.add(link.sourceId);
+              next.add(link.sourceId);
+            }
+          }
+          frontier = next;
+        }
+        neighborIds = [...visited].filter((id) => id !== factId);
       } else {
         neighborIds = context.factsDb.getConnectedFactIds([factId], maxDepth).filter((id) => id !== factId);
       }

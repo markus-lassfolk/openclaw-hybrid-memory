@@ -31,11 +31,13 @@ describe("GraphQL link/subscription scope enforcement", () => {
   function makeFactsDb(
     getRawRows: Array<Record<string, unknown>> = [],
     getConnectedFactIds: (factIds: string[], maxDepth: number) => string[] = (factIds) => factIds,
+    extraFacts: Array<{ id: string; scope: string; scopeTarget: string | null }> = [],
   ) {
     const facts = new Map([
       [tenantAFact.id, tenantAFact],
       [tenantBFact.id, tenantBFact],
       [globalFact.id, globalFact],
+      ...extraFacts.map((fact) => [fact.id, fact] as const),
     ]);
     return {
       getById: vi.fn((id: string, opts?: { scopeFilter?: { userId?: string } }) => {
@@ -149,6 +151,42 @@ describe("GraphQL link/subscription scope enforcement", () => {
     }>;
 
     expect(result.map((fact) => fact.id)).toEqual(["g-fact"]);
+  });
+
+  it("relatedFacts respects maxDepth when linkTypes is given instead of only looking at direct links (loop iteration 19 regression)", () => {
+    const midFact = { id: "mid-fact", scope: "global", scopeTarget: null };
+    const farFact = { id: "far-fact", scope: "global", scopeTarget: null };
+    const factsDb = makeFactsDb(
+      [
+        {
+          id: "link-1",
+          source_fact_id: "a-fact",
+          target_fact_id: "mid-fact",
+          link_type: "RELATED_TO",
+          strength: 1,
+          created_at: 1,
+        },
+        {
+          id: "link-2",
+          source_fact_id: "mid-fact",
+          target_fact_id: "far-fact",
+          link_type: "RELATED_TO",
+          strength: 1,
+          created_at: 2,
+        },
+      ],
+      undefined,
+      [midFact, farFact],
+    );
+    const context = { factsDb, scopeFilter: { userId: "tenantA" } } as unknown as ResolverContext;
+
+    const result = resolvers.Query.relatedFacts(
+      null,
+      { factId: "a-fact", maxDepth: 2, linkTypes: ["RELATED_TO"] } as ResolverArgs,
+      context,
+    ) as Array<{ id: string }>;
+
+    expect(result.map((fact) => fact.id).sort()).toEqual(["far-fact", "mid-fact"]);
   });
 
   it("isFactPayloadVisible blocks a subscription payload scoped to a different tenant", () => {

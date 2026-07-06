@@ -23,6 +23,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.83] - 2026-07-06
+
+### Fixed
+
+Loop iteration 19 of the full-codebase review loop — picks up the first deferred finding from iteration 18's CHANGELOG entry.
+
+- **`Query.relatedFacts` silently ignored `maxDepth` whenever `linkTypes` was also supplied.** That branch only inspected `factId`'s direct (1-hop) links, while the untyped branch does a real multi-hop `getConnectedFactIds` traversal — a caller requesting `relatedFacts(factId, maxDepth: 3, linkTypes: ["RELATED_TO"])` silently got 1-hop results instead of the requested 3-hop traversal. Fixed by replacing the direct-links filter with a proper BFS over the `linkTypes`-filtered link set, bounded to `maxDepth` hops, matching the untyped branch's depth semantics.
+
+Regression test added, verified via `git stash` to fail without the fix (2-hop neighbor missing from the result) and pass with it. tsc clean; biome checked against the file's pre-existing baseline — zero net-new lint/format issues.
+
+### Deferred (carried over from iteration 18, still not fixed)
+
+- `Subscription.statsUpdated` (`routes/graphql-server.ts`) has no scope filter, unlike the fact/link subscriptions — currently unreachable since `notifyGraphqlStatsUpdated`/`publishStatsUpdated` have no call sites anywhere in the plugin (dead code), but worth fixing before anyone wires stats-publishing in.
+
 ## [2026.7.82] - 2026-07-06
 
 ### Fixed
