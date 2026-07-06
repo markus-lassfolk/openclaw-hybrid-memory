@@ -121,6 +121,13 @@ describe("extractTags", () => {
     expect(tags).toContain("zigbee");
     expect(tags).toContain("homeassistant");
   });
+
+  it("requires a word boundary on both sides of kubernetes/k8s (loop iteration 23 regression)", () => {
+    expect(extractTags("Kubernetes cluster setup")).toContain("kubernetes");
+    expect(extractTags("migrated to k8s")).toContain("kubernetes");
+    expect(extractTags("kubernetesish setup notes")).not.toContain("kubernetes");
+    expect(extractTags("renamed to myclusterk8s")).not.toContain("kubernetes");
+  });
 });
 
 describe("serializeTags", () => {

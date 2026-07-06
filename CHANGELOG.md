@@ -23,6 +23,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.87] - 2026-07-06
+
+### Fixed
+
+Loop iteration 23 (third iteration of the third batch) of the full-codebase review loop — first pass over `extensions/memory-hybrid/utils/`, previously unreviewed in this loop.
+
+- **The `"kubernetes"` tag-extraction pattern in `utils/tags.ts` had an unbounded regex alternation.** `/\bkubernetes|k8s\b/i` parses as `(\bkubernetes)|(k8s\b)` — the leading `\b` only binds to "kubernetes" and the trailing `\b` only binds to "k8s", unlike every sibling entry in `TAG_PATTERNS` (`z-wave`, `homeassistant`, `postgres`, etc.), which correctly bound each alternative on both sides. This let `extractTags()` mistag substrings: `"kubernetesish setup notes"` and `"renamed to myclusterk8s"` both incorrectly got tagged `"kubernetes"`. `extractTags()` runs on every stored fact's tag extraction path (`memory_store`, `cmd-store`, `cmd-extract-daily`, `cmd-distill`, auto-capture), so this affected live tagging, not just a theoretical edge case. Fixed by wrapping the alternation in a non-capturing group: `/\b(?:kubernetes|k8s)\b/i`.
+
+Regression test added, verified via `git stash` to fail without the fix (mistagged both substring cases) and pass with it. tsc clean; biome checked against each file's pre-existing baseline — zero net-new lint/format issues.
+
 ## [2026.7.86] - 2026-07-06
 
 ### Fixed
