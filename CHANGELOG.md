@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.100] - 2026-07-06
+
+### Fixed
+
+Loop iteration 36 of the full-codebase review loop — fixes the next highest-severity item from the Deferred backlog: superseded facts resurfacing in `memory_recall`.
+
+- **`backends/facts-db/links.ts`'s `getConnectedFactIds` (the legacy, non-CTE graph-traversal path) let a superseded (corrected/replaced) fact serve as an intermediate hop or resurface directly as a `memory_recall` result.** This function traverses `memory_links` with no join against `facts` at all, unlike the newer CTE-based `expandGraphWithCTE`, which explicitly filters `f.superseded_at IS NULL` at every hop specifically to prevent this. The legacy path is still the one exercised by default: `memory_recall` only uses the newer `expandGraph`/CTE path when `graphRetrieval.defaultExpand` is explicitly enabled — under the shipped default (`graph.enabled=true`, `graph.useInRecall=true`, `graphRetrieval.defaultExpand` unset/false), every ordinary `memory_recall` call goes through `getConnectedFactIds` followed by `getById(id, {asOf, scopeFilter})` to hydrate each connected id — and `getById` has no `superseded_at` check of its own either (its SQL is a bare `SELECT * FROM facts WHERE id = ?`, and its `applyLookupFilters` post-check only validates `asOf`/`scopeFilter`). So once a fact is superseded by a correction but a `memory_links` edge to it survives, the stale fact keeps resurfacing in recall results — silently undoing the correction for anyone relying on graph-linked recall. Fixed by joining `facts` and filtering `f.superseded_at IS NULL` in `getConnectedFactIds`'s neighbor-selection queries, mirroring `expandGraphWithCTE`'s exact pattern; falls back to the unfiltered queries when the `facts` table (or its `superseded_at` column) doesn't exist, matching the file's existing `denormDegreeStmt` fallback convention for minimal-schema tests.
+
+Regression test added (`tests/facts-db-modules.test.ts`): a "seed" fact links to a "corrected" fact that has since been superseded by a "correction" fact; asserts traversal returns only `["seed"]`, with neither the superseded fact nor anything reachable only through it appearing. Verified via `git stash` to fail without the fix (returned `["seed", "corrected", "correction"]`) and pass with it. tsc clean; biome clean (zero net-new, 1 own formatting touch-up applied). Related suites (facts-db-modules, graph-retrieval, graph-tools-scope-security, graphql-link-scope-security, facts-db, dashboard-graph): 272 passed, 3 skipped, no regressions.
+
+---
+
 ## [2026.7.99] - 2026-07-06
 
 ### Fixed
@@ -71,7 +83,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 - `tools/health-dashboard.ts`'s liveness queries use `valid_until` instead of the codebase's standard `superseded_at IS NULL` marker, undercounting facts trimmed/evicted by the token-budget and daily-quota paths as still "active".
 - `services/procedure-skill-generator.ts`'s `generateAutoSkillForProcedure` (the default `requireApprovalForPromote`/quarantine path) reports/records `relativePath` under `skillsAutoPath` while physically writing the file under the quarantine `basePath`, so `markProcedurePromoted`/idempotency checks point at a nonexistent location (sibling `generateAutoSkills` does this correctly).
 - `services/procedure-feedback-tool.ts`'s `bootstrapProcedureIfMissing` correctly scope-checks the read but calls `upsertProcedure` with no `scope`/`scopeTarget` on create, defaulting new tenant-scoped procedures to `scope: "global"` — a write-side multi-tenant isolation break.
-- `backends/facts-db/links.ts`'s `getConnectedFactIds` (the legacy, non-CTE graph-traversal path used whenever `graphRetrieval.defaultExpand` is unset/false, which is the shipped "minimal" preset's default) has no `superseded_at`/scope join, unlike the CTE path — a fact superseded by a correction can still resurface as a `memory_recall` result via its surviving graph link.
 - `lifecycle/stage-cleanup.ts`'s `subagent_spawned` handler only guards against reopening a `"Done"` task, not `"Failed"`; the codebase's shared `TERMINAL` status set (`services/task-ledger/canonical.ts`) also omits `"failed"`, disabling the "refuse to regress terminal status" checks elsewhere — a retried/re-dispatched task can silently resurrect a task the system intended to keep terminal.
 - `services/context-engine.ts`'s `prepareSubagentSpawn` calls `buildContextBlock` with no token budget (so every candidate fact is recorded as "injected") and only trims to the real budget afterward — facts trimmed off the end are marked injected anyway and never shown to that sub-agent again in any future turn.
 - `services/graph-retrieval.ts`: `hubScorePenalty` (score-attenuation for high-degree hub nodes) is only implemented in the iterative-BFS fallback; the real production CTE-based expansion path (`expandGraphWithCTE`) never applies it, hard-skipping over-cap hub links entirely instead of attenuating them as both shipped "enhanced"/"complete" presets document.
