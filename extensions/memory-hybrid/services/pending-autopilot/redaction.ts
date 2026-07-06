@@ -3,7 +3,10 @@
 const SECRET_PATTERNS: RegExp[] = [
   /\b(?:sk|pk|rk|ghp|gho|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,}\b/g,
   /\bAKIA[0-9A-Z]{16}\b/g,
-  /\b(?:password|passwd|pwd|secret|token|api[_-]?key|authorization)\s*[:=]\s*[^\s,;}{[\]]+/gi,
+  // `[\s"']*` (not just `\s*`) tolerates a JSON-style closing quote between the keyword and the
+  // `:`/`=` (e.g. `{"password":"hunter2"}`), which the original whitespace-only gap missed
+  // entirely — any JSON-quoted credential key produced zero redactions.
+  /\b(?:password|passwd|pwd|secret|token|api[_-]?key|authorization)\b[\s"']*[:=]\s*[^\s,;}{[\]]+/gi,
   /\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi,
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:[^\s@/]+@[^\s]+/gi,
 ];

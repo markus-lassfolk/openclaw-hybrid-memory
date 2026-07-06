@@ -23,6 +23,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.101] - 2026-07-06
+
+### Fixed
+
+Loop iteration 37 of the full-codebase review loop — fixes a PII/secret redaction gap flagged during iteration 34's sweep.
+
+- **`redactAutopilotText`'s credential-keyword patterns never matched a JSON-serialized secret.** The `SECRET_PATTERNS` regex for `password`/`secret`/`token`/`api_key`/`authorization` required its `:`/`=` to follow the keyword with only whitespace in between (`\s*[:=]`). A JSON-serialized credential — `{"password":"hunter2"}` — has a closing quote between the keyword and the colon (`password":`), which `\s*` never matches, so the entire pattern silently failed to match and the secret passed through unredacted. This is reachable in practice: `redactAutopilotText` is called directly on captured shell/API command strings (`procedure-skill-recipe.ts`'s `args.command`) and other free text that can plausibly embed a JSON body with credentials (e.g. a captured `curl -d '{"password":"..."}'` invocation), and those redacted strings are written into audit logs, verification metadata, and skill-recipe artifacts. Fixed by widening the pattern to `[\s"']*[:=]`, tolerating an optional JSON closing quote (or single quote) between the keyword and the operator.
+
+Regression test added (`tests/pending-autopilot-redaction.test.ts`, 4 cases): a bare JSON-serialized password, multiple JSON-serialized secret/token/api_key values, the original plain `key: value` form (no regression), and a JSON credential embedded inside a captured shell command. Verified via `git stash` to fail without the fix (3 of 4 cases leaked the secret) and pass with it. tsc clean; biome clean (zero net-new). Related suites (skill-quality-hardening, procedure-promotion-policy, procedure-skill-recipe, procedure-skill-generator, procedure-skill-workflow, pending-digest-autopilot-cron): 106 passed, no regressions.
+
+### Deferred (remaining confirmed findings from iteration 34's sweep, not yet fixed)
+
+- `services/reflection.ts` writes its `reflection_input_hash` unconditionally after the storage loop even when a maintenance-run deadline broke the loop early — patterns extracted but never stored are permanently lost, since the next run's identical-input hash match skips re-extraction.
+- `services/reinforcement-batch-analyze.ts` increments `diagnostics.parseFailures` before attempting JSON repair and never reverts it on successful repair (sibling `self-correction-batch-analyze.ts` does this correctly), inflating operator diagnostics and an A/B benchmark penalty for batches that ultimately parsed fine.
+- `services/unified-proposals.ts`'s `countPendingUnifiedProposals` filters out `procedure-skill` proposals only after `listUnifiedProposals` has already sorted-and-truncated to the default top-100, so a burst of recent procedure-skill candidates can push real pending persona/tool/crystallization proposals out of the count window and let `enforceMaxPendingCap` admit more than configured.
+- `services/workboard-rpc-client.ts`'s HTTP/CLI `isAvailable()` omits the `shouldAbort`/`workboardRpcSkipped` check every sibling method honors, so it can still fire a live network/process call during plugin shutdown.
+- `services/crystallization-proposer.ts`'s `restoreProposal` rollback path can delete the just-restored skill directory (`removeCrystallizedSkillDir`) if the DB status flip and the rollback rename-back both fail, destroying the only surviving copy instead of leaving it for reconciliation.
+- `services/pending-digest-autopilot-cron.ts` releases its lock in `finally` before writing the guard timestamp, so a second cron invocation in that gap can re-acquire the just-freed lock and run a full duplicate autopilot apply pass.
+- `services/issue-retrieval.ts` + `backends/issue-store.ts`'s `IssueStore.list()` applies `ORDER BY created_at DESC LIMIT ?` before severity is considered, so older critical issues can be excluded entirely from an "always-surface-critical" baseline when enough newer high-severity issues exist.
+
+---
+
 ## [2026.7.100] - 2026-07-06
 
 ### Fixed
