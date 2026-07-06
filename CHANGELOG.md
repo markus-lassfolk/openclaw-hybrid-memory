@@ -23,6 +23,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.84] - 2026-07-06
+
+### Fixed
+
+Loop iteration 20 (final iteration of this batch) of the full-codebase review loop — first pass over `extensions/memory-hybrid/lifecycle/`, previously unreviewed in this loop.
+
+- **`registerAuthFailureRecall` dropped the operator-configured `autoRecall.scopeFilter` entirely in the single-agent/orchestrator case, potentially injecting another user's/session's stored credential facts into the current chat.** The hook computed its own scope filter inline instead of reusing the canonical `resolveRecallScopeFilter()` helper (already used by the compaction/recall hooks): when the detected agent was the orchestrator (the common single-agent case), it fell straight to `undefined` — no restriction at all — rather than resolveRecallScopeFilter's second branch, which still applies any configured `cfg.autoRecall.scopeFilter` (userId/sessionId) even outside multi-agent mode. Since this hook's whole purpose is searching for and injecting *credential* facts (SSH keys, tokens, passwords — gated on `category: "technical"` or `credential`/`ssh`/`token`/`api`/`auth`/`password` tags) the moment an auth failure is detected in the prompt, an operator relying on `autoRecall.scopeFilter` to keep different users'/sessions' credentials separate could have another tenant's credential fact surfaced directly into their chat. Fixed by replacing the local scope-filter computation with `resolveRecallScopeFilter(ctx)`, the same helper every other recall hook already uses.
+
+Regression test added, verified via `git stash` to fail without the fix (search ran with no scope filter instead of the configured one) and pass with it. tsc clean; biome checked against each file's pre-existing baseline — zero net-new lint/format issues.
+
+Also documented (no behavior change) the dead-code scope gap on `Subscription.statsUpdated` (`routes/graphql-server.ts`, flagged in iteration 18/19's CHANGELOG entries): its payload carries no scope-identifying data and there are still zero publish call sites anywhere in the plugin, so a real fix would mean designing a feature that doesn't exist yet. Left a comment for whoever eventually wires up stats-publishing instead of inventing a speculative scoping mechanism.
+
+### Deferred (found this iteration, tracked for a future pass)
+
+- `lifecycle/stage-memory-nudge.ts` / `services/memory-nudge.ts`'s `buildMemoryNudge()` runs raw, unscoped SQL (duplicate-fact and never-referenced-fact counts) with no scope filter, unlike every sibling recall/capture call site. In a multi-tenant deployment this leaks presence/volume signals (not fact content) about another tenant's stored facts into the current chat. Lower severity than the auth-failure fix above (counts only, no content) and gated behind `retrieval.recallFeedback.nudge.enabled` (default `false`).
+
 ## [2026.7.83] - 2026-07-06
 
 ### Fixed

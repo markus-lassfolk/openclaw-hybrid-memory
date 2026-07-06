@@ -94,4 +94,31 @@ describe("registerAuthFailureRecall", () => {
     expect(out?.prependContext).toContain("recalled data only");
     expect(api.logger.info).toHaveBeenCalledWith(expect.stringContaining("auth failure detected"));
   });
+
+  it("applies the operator-configured autoRecall.scopeFilter even in the single-agent/orchestrator case (loop iteration 20 regression)", async () => {
+    const ctx = buildRecallLifecycleContext(tmpDir, factsDb, {
+      autoRecall: {
+        enabled: true,
+        authFailure: { enabled: true },
+        scopeFilter: { userId: "alice" },
+      },
+    });
+    // Simulate the common single-agent deployment: the detected agent IS the orchestrator, so
+    // the buggy code previously dropped the scope filter entirely instead of still applying the
+    // operator-configured cfg.autoRecall.scopeFilter.
+    ctx.currentAgentIdRef.value = ctx.cfg.multiAgent.orchestratorId;
+
+    const searchSpy = vi.spyOn(factsDb, "search").mockReturnValue([]);
+    vi.spyOn(ctx.vectorDb, "search").mockResolvedValue([]);
+
+    const { handler } = captureHandler(ctx);
+    await handler(
+      { prompt: "Permission denied (publickey) when connecting to github.com via ssh" },
+      { sessionKey: "agent:main:main", sessionId: "agent:main:main", agentId: "main" },
+    );
+
+    expect(searchSpy).toHaveBeenCalled();
+    const searchOpts = searchSpy.mock.calls[0]?.[2] as { scopeFilter?: unknown };
+    expect(searchOpts?.scopeFilter).toEqual({ userId: "alice", agentId: null, sessionId: null });
+  });
 });

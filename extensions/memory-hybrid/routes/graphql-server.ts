@@ -175,6 +175,11 @@ export function createGraphQLServer(
             resolve: (payload: LinkCreatedPayload) => payload.link,
           },
           statsUpdated: {
+            // Unlike the fact/link subscriptions above, this has no scope filter — `stats` is an
+            // opaque, scope-less payload today (see publishStatsUpdated below) and there is
+            // currently no publisher wired up anywhere in the plugin. If a per-tenant stats
+            // feature is ever built, its payload will need scope info attached so this can gate
+            // on context.scopeFilter the same way the other subscriptions do.
             subscribe: () => pubSub.subscribe("statsUpdated"),
             resolve: (payload: StatsUpdatedPayload) => payload.stats,
           },
