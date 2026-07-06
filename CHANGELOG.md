@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.103] - 2026-07-06
+
+### Fixed
+
+Loop iteration 39 of the full-codebase review loop — fixes a data-loss bug on task completion.
+
+- **`active_task_checkpoint`'s closing call silently dropped its own closing note, title, and goal link when a tracked task already had an active row.** `syncMarkdownLedgerFromCheckpoint`'s terminal-status branch (`services/active-task-checkpoint.ts`) calls `completeTask(active, checkpoint.entity)` to mark a task done, but `completeTask` (`services/active-task.ts`) only spreads the *stale, pre-call* active row — it has no way to know this call's fresh `next`/`title`/`relatedGoal` values, which the function already builds into a separate `entry` object from the checkpoint's current input. So calling `active_task_checkpoint({entity: "forge-99", status: "done", next: "PR #42 merged, verified in prod", title: "..."})` on a task whose active row currently held `next: "Run smoke tests"` produced a "## Completed" row in `ACTIVE-TASKS.md` still showing the *old* "Run smoke tests" and title, discarding the closing note supplied in that same call. Only affects `ledger: "markdown"` mode (the facts backend isn't affected, and the no-prior-active-row fallback branch already used the fresh values correctly — confirming this was an inconsistency, not intentional). Fixed by overlaying the fresh `entry.description`/`entry.next`/`entry.relatedGoal` onto `completeTask`'s result before writing, leaving its `status`/`subagent`/`updated`/handoff-clearing fields untouched.
+
+Regression test added (`tests/active-task-checkpoint.test.ts`): checkpoints a task twice — once in-progress with an initial `next`, then again with `status: "done"` and a new closing `next`/`title` — and asserts the completed row reflects the closing call's values, not the stale ones. Verified via `git stash` to fail without the fix (completed row showed the stale "Run smoke tests"/title) and pass with it. tsc clean; biome clean (zero net-new). Related suites (active-task-checkpoint, task-ledger-facts, active-task): 211 passed, no regressions.
+
+---
+
 ## [2026.7.102] - 2026-07-06
 
 ### Fixed
@@ -106,7 +118,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 - `tools/memory/register-recall-tools.ts`: keyword recall applies the FTS row-limit before per-hit scope filtering, silently under-returning results in scoped multi-tenant deployments; graph expansion ignores per-result vault during multi-vault fan-out.
 
 **Data loss / correctness:**
-- `services/active-task-checkpoint.ts`'s `syncMarkdownLedgerFromCheckpoint`/`completeTask` discards the checkpoint call's fresh `next`/`title`/`relatedGoal` on terminal status, spreading the stale pre-call row instead.
 - Lost-update race between the heartbeat/cron `reconcileActiveTaskInProgressSessions` and `active_task_checkpoint` on `ACTIVE-TASKS.md` (plain read-then-write, no optimistic-concurrency check unlike sibling writers).
 - `cli/cmd-extract-directives.ts` advances its scan cursor past session files that failed to read/parse, permanently dropping any directives they contained (sibling `cmd-extract-procedures.ts` correctly gates cursor advancement on this).
 - `tools/memory/register-store-tools.ts`'s active-task-ledger mirror (`syncProjectStoreToActiveTaskLedger`) and `build-runtime.ts`'s `maybeRefreshProjectActiveTaskProjection` are closed over the default vault only, so a vault-scoped `memory_store` call's project-task mirror writes land in the wrong vault's ledger.

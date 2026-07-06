@@ -730,6 +730,39 @@ describe("active-task-checkpoint", () => {
     factsDb.close();
   });
 
+  it("preserves the closing checkpoint's own next/title, not the stale pre-completion values (loop iteration 39 regression)", async () => {
+    const { cfg, factsDb, vectorDb, embeddings, openclawDir } = setup();
+    const workspaceRoot = join(openclawDir, "workspace");
+    mkdirSync(workspaceRoot, { recursive: true });
+    const markdownCfg = {
+      ...cfg,
+      activeTask: { ...cfg.activeTask, ledger: "markdown" as const, filePath: "ACTIVE-TASKS.md" },
+    };
+    const activeTaskPath = join(workspaceRoot, "ACTIVE-TASKS.md");
+    const deps = { cfg: markdownCfg, factsDb, vectorDb, embeddings, openclawDir, workspaceRoot };
+
+    await runActiveTaskCheckpoint(deps, {
+      entity: "forge-deploy",
+      status: "in_progress",
+      next: "Run smoke tests",
+      title: "Forge deploy pipeline",
+    });
+
+    const result = await runActiveTaskCheckpoint(deps, {
+      entity: "forge-deploy",
+      status: "done",
+      next: "PR #42 merged, verified in prod",
+      title: "Forge deploy pipeline (closed)",
+    });
+
+    expect(result.ok).toBe(true);
+    const md = readFileSync(activeTaskPath, "utf-8");
+    expect(md).toContain("PR #42 merged, verified in prod");
+    expect(md).toContain("Forge deploy pipeline (closed)");
+    expect(md).not.toContain("Run smoke tests");
+    factsDb.close();
+  });
+
   it("skips wake scheduling when fact writes fail", async () => {
     const { cfg, factsDb, vectorDb, embeddings, openclawDir } = setup();
     const spy = vi.spyOn(taskLedgerFacts, "upsertProjectTaskKey").mockRejectedValue(new Error("write failed"));

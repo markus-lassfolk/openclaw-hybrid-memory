@@ -349,7 +349,18 @@ export async function syncMarkdownLedgerFromCheckpoint(
     const result = completeTask(active, checkpoint.entity);
     active = result.updated;
     if (result.completed) {
-      completed = [...completed.filter((t) => t.label !== checkpoint.entity), result.completed];
+      // completeTask() only spreads the stale pre-call active row (this checkpoint call's own
+      // next/title/relatedGoal live in `entry`, built above from the checkpoint's fresh values)
+      // — overlay them here so a closing checkpoint call doesn't silently drop its own closing
+      // note/title/goal-link. Leave completeTask()'s own fields (status/subagent/updated/handoff
+      // clearing) untouched.
+      const closedEntry: ActiveTaskEntry = {
+        ...result.completed,
+        description: entry.description,
+        next: entry.next,
+        relatedGoal: entry.relatedGoal,
+      };
+      completed = [...completed.filter((t) => t.label !== checkpoint.entity), closedEntry];
     } else {
       completed = [...completed.filter((t) => t.label !== checkpoint.entity), { ...entry, status: "Done" }];
     }
