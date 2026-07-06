@@ -297,6 +297,20 @@ describe("EventBus.pruneArchived", () => {
 });
 
 // ---------------------------------------------------------------------------
+// permanentClose
+// ---------------------------------------------------------------------------
+
+describe("EventBus.permanentClose", () => {
+  it("stays closed instead of silently reopening on the next operation (loop iteration 14 regression)", () => {
+    bus.appendEvent("sensor.test", "test", {});
+    bus.permanentClose();
+    expect(bus.closed).toBe(true);
+    expect(() => bus.appendEvent("sensor.test", "test", {})).toThrow(/EventBus is closed/);
+    expect(() => bus.queryEvents()).toThrow(/EventBus is closed/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // computeFingerprint
 // ---------------------------------------------------------------------------
 

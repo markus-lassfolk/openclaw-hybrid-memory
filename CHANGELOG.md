@@ -23,6 +23,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.78] - 2026-07-06
+
+### Fixed
+
+Loop iteration 14 of the full-codebase review loop — picked up the second deferred finding from iteration 12's CHANGELOG entry.
+
+- **`EventBus` didn't override `BaseSqliteStore.permanentClose()`, so plugin teardown couldn't actually terminate it.** `EventBus` tracks its own terminal state via a private `_terminallyClosed` flag (checked by its own `liveDb` getter override), separate from the base class's private `closePhase`/`_closed` fields. Calling the inherited `permanentClose()` (as `plugin-service.ts`'s `closeStorePermanently()` does during `stop()`/re-registration, issue #1550) closed the native SQLite handle and flipped the base class's own shutdown state — but never touched `_terminallyClosed`, so `EventBus`'s `liveDb` getter still saw `_dbOpen === false` and unconditionally reopened the handle on the very next call, silently resurrecting a database that was supposed to be permanently closed. Fixed by overriding `permanentClose()` to delegate to `EventBus`'s own already-terminal `close()`, which its `liveDb` getter does correctly respect.
+
+Regression test verified via `git stash` to fail without the fix (`closed` stayed `false` and the next operation succeeded instead of throwing) and pass with it. tsc clean; biome checked against each file's pre-existing baseline — zero net-new lint/format issues.
+
+### Deferred (carried over from iteration 12, still not fixed)
+
+- `backends/edict-store.ts`'s duplicate-text check-then-insert isn't transactional and has no UNIQUE index, so concurrent writers can both pass the dedup check.
+- `backends/issue-store.ts`'s `linkFact()` does a non-atomic JS-level read-modify-write on a JSON column, risking lost updates under concurrent calls.
+- `backends/vector-db/vector-db-class.ts`'s `swapShadowTable()` closes the connection and renames table directories without draining in-flight readers or the path-containment guard `resetTableForReindex()` applies; `count()`/`countSemanticQueryCacheRows()` release their reader-lock slot immediately on timeout even though the underlying native call keeps running.
+
 ## [2026.7.77] - 2026-07-06
 
 ### Fixed

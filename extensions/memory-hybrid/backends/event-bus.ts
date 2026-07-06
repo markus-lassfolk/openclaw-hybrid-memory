@@ -102,6 +102,17 @@ export class EventBus extends BaseSqliteStore {
     super.close();
   }
 
+  /**
+   * `close()` above is already terminal for EventBus (unlike the base class default), so
+   * permanentClose() just delegates to it. Without this override, the base class's
+   * permanentClose() would flip its own private shutdown state — which this class's `liveDb`
+   * getter never consults — leaving `_terminallyClosed` false and letting the very next
+   * `liveDb` access silently reopen the "permanently closed" native handle (#1550).
+   */
+  public permanentClose(): void {
+    this.close();
+  }
+
   private migrate(): void {
     this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS memory_events (
