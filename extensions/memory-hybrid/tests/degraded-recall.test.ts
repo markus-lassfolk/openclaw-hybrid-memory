@@ -69,3 +69,64 @@ describe("buildDegradedFtsHotRecallStage narrative block", () => {
     }
   });
 });
+
+describe("buildDegradedFtsHotRecallStage resilience (loop iteration 91 regression)", () => {
+  let tmpDir: string;
+  let factsDb: FactsDB;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "degraded-recall-resilience-"));
+    factsDb = new FactsDB(join(tmpDir, "facts.db"));
+  });
+
+  afterEach(() => {
+    factsDb.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("does not reject when getHotFacts throws — the timeout/queue fallback must never itself crash", async () => {
+    const ctx = buildRecallLifecycleContext(tmpDir, factsDb, {
+      memoryTiering: { enabled: true, hotMaxTokens: 500 },
+      autoRecall: { degradationQueueDepth: 1 },
+    });
+    vi.spyOn(factsDb, "getHotFacts").mockImplementation(() => {
+      throw new Error("simulated getHotFacts failure");
+    });
+    vi.spyOn(factsDb, "search").mockReturnValue([]);
+    const sessionState = makeRecallSessionState();
+    seedSessionRecallQueueDepth(sessionState, 1);
+    const api = makeMockStageApi();
+
+    await expect(
+      buildDegradedFtsHotRecallStage(
+        { prompt: "what happened with the deploy pipeline?" },
+        api as never,
+        ctx,
+        sessionState,
+        "timeout",
+      ),
+    ).resolves.toBeDefined();
+  });
+
+  it("does not reject when factsDb.search throws — the timeout/queue fallback must never itself crash", async () => {
+    const ctx = buildRecallLifecycleContext(tmpDir, factsDb, {
+      autoRecall: { degradationQueueDepth: 1 },
+    });
+    vi.spyOn(factsDb, "search").mockImplementation(() => {
+      throw new Error("simulated search failure");
+    });
+    const sessionState = makeRecallSessionState();
+    seedSessionRecallQueueDepth(sessionState, 1);
+    const api = makeMockStageApi();
+
+    await expect(
+      buildDegradedFtsHotRecallStage(
+        { prompt: "what happened with the deploy pipeline?" },
+        api as never,
+        ctx,
+        sessionState,
+        "timeout",
+      ),
+    ).resolves.toBeDefined();
+  });
+});
