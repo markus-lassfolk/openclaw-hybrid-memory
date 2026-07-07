@@ -112,6 +112,7 @@ describe("user-friendly CLI registration", () => {
     const localVectorDb = { getAllIds: vi.fn(async () => ["a", "b", "c"]) };
     registerHealthCommand(root as never, cfg as never, factsDb as never, localVectorDb as never);
     const health = root.children.find((child) => child.name === "health");
+    vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
     await health?.handler?.({ json: true });
     expect(localVectorDb.getAllIds).toHaveBeenCalledTimes(1);
   });
@@ -136,6 +137,7 @@ describe("user-friendly CLI registration", () => {
       );
       const health = root.children.find((child) => child.name === "health");
       const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
       await health?.handler?.({ json: true });
       const output = log.mock.calls.at(-1)?.[0];
       const parsed = JSON.parse(String(output)) as { indicators: Array<{ name: string; status: string }> };
@@ -163,6 +165,7 @@ describe("user-friendly CLI registration", () => {
     registerHealthCommand(root as never, cfg as never, localFactsDb as never, localVectorDb as never);
     const health = root.children.find((child) => child.name === "health");
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
     await health?.handler?.({ json: true });
     const payload = JSON.parse(String(log.mock.calls.at(-1)?.[0] ?? "{}")) as {
       indicators: Array<{ name: string; status: string; detail: string }>;

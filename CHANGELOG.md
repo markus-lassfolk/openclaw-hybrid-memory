@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.140] - 2026-07-07
+
+### Fixed
+
+Loop iteration 76 of the full-codebase review loop — fixes the `cli/cmd-health.ts` bullet flagged during iteration 34's sweep, closing out the standalone "Lower-severity / cosmetic" list item.
+
+- **`health --json` never reflected an `unhealthy` overall status in its exit code.** `hasErrors`/`hasWarnings` (and the `overall` field embedded in the JSON body) were only computed once, after the `--json` branch had already printed its report and unconditionally `return`ed. The human-readable branch, reached only when `--json` is absent, separately recomputed the same booleans and called `process.exit(1)` on errors — but the JSON branch never did, so a script running `health --json` and gating on exit code (rather than parsing the JSON body for `overall: "unhealthy"`) would see a passing (0) exit even with real error-status indicators present. Fixed by hoisting the `hasErrors`/`hasWarnings`/`overall` computation before both branches and calling `process.exit(1)` from the `--json` branch when `hasErrors` is true, mirroring the human-readable branch's existing behavior.
+
+Regression test added (`tests/cmd-health-json-exit-code.test.ts`, new file): asserts `process.exit(1)` is called when `health --json` reports an error-status indicator, and is not called when all indicators are healthy/degraded-only. Verified via `git stash` to fail without the fix (`process.exit` never invoked) and pass with it. tsc clean; biome clean (zero new findings). Three pre-existing tests in `tests/user-friendly-cli.test.ts` that exercise `health --json` against a real (unavailable-in-sandbox) Ollama embedding provider started legitimately triggering the now-correct `process.exit(1)` call and needed `vi.spyOn(process, "exit")` added to match — not a regression, just tests that predated the fix reflecting the newly-correct behavior. Related suites (cmd-health-json-exit-code, user-friendly-cli, cmd-doctor-resilience, register-maintenance-health-cli, health-dashboard, hybrid-mem-version-flag, hybrid-mem-root-flags-no-shadow): 65 passed, no regressions.
+
+---
+
 ## [2026.7.139] - 2026-07-07
 
 ### Fixed
@@ -537,7 +549,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 - ~~Lost-update race between the heartbeat/cron `reconcileActiveTaskInProgressSessions` and `active_task_checkpoint` on `ACTIVE-TASKS.md` (plain read-then-write, no optimistic-concurrency check unlike sibling writers).~~ — **fully fixed**: `reconcileActiveTaskInProgressSessions`'s half in loop iteration 66, `syncMarkdownLedgerFromCheckpoint`'s half in loop iteration 67 (see below).
 - ~~`lifecycle/stage-cleanup.ts`'s `subagent_spawned` handler only guards against reopening a `"Done"` task, not `"Failed"`~~ — **investigated in loop iteration 41 and NOT a bug**: `subagent_spawned` reopening a `"Failed"` task is deliberate, tested behavior (`stage-cleanup-facts-ledger.test.ts`'s "subagent_spawned reopens Failed tasks when session metadata is present" / "...clears stale handoff when reopening Failed tasks") — a new subagent dispatched against a failed task's label is an explicit retry and is meant to reopen it. Separately, adding `"failed"` to the shared `TERMINAL` set in `services/task-ledger/canonical.ts` breaks `factNewerThan`'s timestamp-tie-break comparator (which prefers "terminal" status on a tie) — it would let a stale `"failed"` fact block a legitimate retry's fresh `"in_progress"` write when both share the same second-granularity `createdAt`, confirmed by 9 existing test failures across `task-ledger-facts.test.ts`/`stage-cleanup-facts-ledger.test.ts` when tried. If the narrower gap (an arbitrary `memory_store` call regressing a `Failed` project-task status via `mirrorMemoryStoreToActiveTaskLedger`'s guard at `task-ledger-facts.ts:136`, which is a *different* write path than `subagent_spawned`'s `syncActiveTaskEntryToFacts`) still needs closing, it must be done as a change local to that one guard, not via the shared `TERMINAL` set.
 **Lower-severity / cosmetic:**
-- `cli/cmd-health.ts --json` never reflects an `unhealthy` overall status in its exit code.
 - `cli/cmd-selfcorrection.ts`: a MEMORY_STORE remediation with an object `remediationContent` missing `text` stringifies to `"[object Object]"` and gets stored as a real fact instead of being skipped.
 - `cli/cmd-mine.ts --undo` filters only by `mine_batch_id` with no scope check, a plausible cross-tenant supersede.
 - `cli/cmd-backfill.ts`'s `runBackfillForCli`/`runIngestFilesForCli` don't increment the `skipped` stat on pre-store-guard rejections (sibling `cmd-distill.ts` does), understating the CLI's summary output.
