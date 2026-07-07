@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.114] - 2026-07-06
+
+### Fixed
+
+Loop iteration 50 of the full-codebase review loop — fixes a cross-tenant fact-content leak flagged during iteration 34's sweep.
+
+- **`resolveRecallInjectionText` hydrated a fragment's parent fact via an unscoped `getById`, leaking a different tenant's fact content into recall/injection output.** When a search result is a "fragment" (a chunked child of a larger document), this function looks up the parent fact by ID to build a `[§ parent title]` prefix — but the `factsDb.getById(parentId)` call carried no scope filter, so a cross-tenant ID collision (or, more directly, `register-agent-verb-tools.ts`'s multi-vault fan-out path, which the file's own adjacent SECURITY comment already flags as having this exact risk) could substitute a foreign tenant's parent fact text into the caller's recall output. All three production call sites were affected: `tools/memory/register-agent-verb-tools.ts`'s `memory_retrieve` handler (which already computes a `scopeFilter` a few lines above for its own `getEntry` scope-check, but never passed it to this call), `services/recalled-context-assembler.ts`'s `finalizeInjectionMemoryContent` (which also already receives a `scopeFilter` parameter), and `lifecycle/stage-injection.ts`'s auto-recall injection path (which had no scope filter computed at all). Fixed by adding an optional `scopeFilter` parameter to `resolveRecallInjectionText`, threading `factsDb.getById(parentId, { scopeFilter })`, and wiring each of the three call sites to their already-available (or, for `stage-injection.ts`, newly-added via the existing `resolveRecallScopeFilter(ctx)` helper) scope filter.
+
+Regression test added (`tests/fragment-recall.test.ts`): stores a real parent fact scoped to `tenantB`, then calls `resolveRecallInjectionText` on a fragment referencing it with a `tenantA` scope filter (parent hydration must be skipped, falling back to the fragment's own text) versus a matching `tenantB` scope filter (parent hydration succeeds, proving the fix doesn't break the legitimate same-tenant case). Verified via `git stash` to fail without the fix (tenant B's parent text leaked into tenant A's result) and pass with it. tsc clean; biome clean (zero net-new against baseline — the touched files' pre-existing import-order/formatting findings predate this change, confirmed via `git stash`). Related suites (fragment-recall, lifecycle-stage-injection, recalled-context-assembler, memory-recall-injection-hardening, memory-journey-e2e): 53 passed, no regressions.
+
+---
+
 ## [2026.7.113] - 2026-07-06
 
 ### Fixed
@@ -218,7 +230,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 ### Deferred (confirmed findings from iteration 34's sweep, not yet fixed — grouped by rough severity)
 
 **Security/cross-tenant:**
-- `tools/memory/register-agent-verb-tools.ts`'s `memory_retrieve` → `services/fragment-recall.ts`'s `resolveRecallInjectionText` hydrates a fragment's parent fact via `getById` with no scope filter, bypassing the scope guard applied a few lines earlier in the same tool.
 - `tools/provenance-tools.ts`'s `buildDerivedFrom` returns `event_log`-sourced text with no scope filter (event_log has no tenant column), inconsistent with the scoped `fact_chain`/`consolidationChain` handling in the same function.
 - `services/apitap-service.ts`'s `validateUrl` only blocks path keywords, never resolved host/IP — no protection against SSRF to private/link-local ranges or cloud metadata endpoints (`169.254.169.254`, etc.) via `apitap_capture`/`apitap_peek`.
 - `tools/memory/register-recall-tools.ts`: keyword recall applies the FTS row-limit before per-hit scope filtering, silently under-returning results in scoped multi-tenant deployments; graph expansion ignores per-result vault during multi-vault fan-out.

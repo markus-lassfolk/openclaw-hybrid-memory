@@ -227,7 +227,9 @@ async function runInjection(
   };
 
   const recallBodyText = (entry: (typeof candidates)[number]["entry"], useSummary: boolean): string =>
-    sanitizeFactForInjection(resolveRecallInjectionText(entry, resolveFactsDbForCandidate(entry), useSummary));
+    sanitizeFactForInjection(
+      resolveRecallInjectionText(entry, resolveFactsDbForCandidate(entry), useSummary, resolveRecallScopeFilter(ctx)),
+    );
 
   const edictMaxTokens = Math.max(
     0,

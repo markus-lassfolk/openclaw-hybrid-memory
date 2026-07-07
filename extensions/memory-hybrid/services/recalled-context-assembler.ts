@@ -119,6 +119,7 @@ export function finalizeInjectionMemoryContent(
         c.entry,
         resolveFactsDbForEntry(c.entry, ctx.factsDb, vaultHandles),
         Boolean(c.entry.summary?.trim()),
+        scopeFilter,
       ),
     })),
   );

@@ -164,8 +164,8 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
             ? (vaultHandleByName.get(vaultName)?.factsDb ?? activeFactsDb)
             : activeFactsDb;
           const text = args.full
-            ? resolveRecallInjectionText(r.entry, factsDbForEntry, false)
-            : resolveRecallInjectionText(r.entry, factsDbForEntry, true).slice(0, 200);
+            ? resolveRecallInjectionText(r.entry, factsDbForEntry, false, scopeFilter)
+            : resolveRecallInjectionText(r.entry, factsDbForEntry, true, scopeFilter).slice(0, 200);
           return `- [${r.entry.category}] ${text} (id=${r.entry.id})`;
         });
         const escalate =
