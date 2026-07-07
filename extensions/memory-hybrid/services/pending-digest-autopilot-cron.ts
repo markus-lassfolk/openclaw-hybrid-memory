@@ -433,14 +433,19 @@ export async function runPendingDigestAutopilotCron(
       emitProgress(`error.summary-write ${stringifyError(err)}`);
     }
   } finally {
+    // Write the guard timestamp BEFORE releasing the lock: the guard window is meant to stop a
+    // second cron invocation from running a duplicate apply pass, but that only works if the
+    // updated timestamp is visible before the lock frees up. Writing it after release left a
+    // window where a concurrent invocation could read the stale (pre-run) guard timestamp, pass
+    // its own guard-check, then acquire the just-released lock and run a full duplicate pass.
+    if (status === "ok" && !skipReason) {
+      mkdirSync(dirname(guardPath), { recursive: true });
+      writeFileSync(guardPath, `${Date.now()}`, "utf-8");
+    }
     if (acquiredLock) releaseAutopilotLock(lockPath, runId);
   }
 
   emitProgress(`run.finish status=${summary.status} skip_reason=${summary.skipReason ?? "none"}`);
-  if (status === "ok" && !skipReason) {
-    mkdirSync(dirname(guardPath), { recursive: true });
-    writeFileSync(guardPath, `${Date.now()}`, "utf-8");
-  }
   if (status === "skipped") skipRemaining(skipReason ?? "skipped");
 
   return { summary, humanSummary, autopilotResult };

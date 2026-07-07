@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.106] - 2026-07-06
+
+### Fixed
+
+Loop iteration 42 of the full-codebase review loop — fixes a TOCTOU duplicate-run race flagged during iteration 34's sweep.
+
+- **`runPendingDigestAutopilotCron` released its apply-mode lock before writing the guard-window timestamp, letting a concurrent invocation slip through and run a full duplicate apply pass.** The guard-window check (`readGuardTimestampMs`) runs *before* lock acquisition, and the guard timestamp is only written after a successful run — but the write happened in a block placed entirely *after* the `try/finally` that released the lock, so releasing the lock and writing the guard timestamp were two separate, un-synchronized steps. A second cron invocation starting in the gap between them would read the *stale* pre-run guard timestamp (still outside the guard window), pass its own guard-check, then successfully acquire the now-freed lock and run its own full apply pass — defeating the guard window's entire purpose of preventing duplicate applies. Fixed by moving the guard-timestamp write into the `finally` block, immediately before the lock release, so any subsequent lock-acquirer is guaranteed to observe the updated timestamp.
+
+Regression test added (`tests/pending-digest-autopilot-cron-guard-lock-order.test.ts`): mocks `node:fs`'s `writeFileSync`/`rmSync` to record call order, runs a full successful apply-mode cron pass, and asserts the guard-file write happens before the lock-file removal. Verified via `git stash` to fail without the fix (guard write observed *after* lock release) and pass with it. tsc clean; biome clean (zero net-new against baseline — the source file's two pre-existing formatter/import-order findings predate this change, confirmed via `git stash`). Related suites (pending-digest-autopilot-cron, pending-digest-autopilot-cron-guard-lock-order, pending-digest-autopilot-cron-notification-write-failure, pending-digest-autopilot): 32 passed, no regressions.
+
+---
+
 ## [2026.7.105] - 2026-07-06
 
 ### Fixed
@@ -86,7 +98,6 @@ Regression test added (`tests/pending-autopilot-redaction.test.ts`, 4 cases): a 
 - `services/unified-proposals.ts`'s `countPendingUnifiedProposals` filters out `procedure-skill` proposals only after `listUnifiedProposals` has already sorted-and-truncated to the default top-100, so a burst of recent procedure-skill candidates can push real pending persona/tool/crystallization proposals out of the count window and let `enforceMaxPendingCap` admit more than configured.
 - `services/workboard-rpc-client.ts`'s HTTP/CLI `isAvailable()` omits the `shouldAbort`/`workboardRpcSkipped` check every sibling method honors, so it can still fire a live network/process call during plugin shutdown.
 - `services/crystallization-proposer.ts`'s `restoreProposal` rollback path can delete the just-restored skill directory (`removeCrystallizedSkillDir`) if the DB status flip and the rollback rename-back both fail, destroying the only surviving copy instead of leaving it for reconciliation.
-- `services/pending-digest-autopilot-cron.ts` releases its lock in `finally` before writing the guard timestamp, so a second cron invocation in that gap can re-acquire the just-freed lock and run a full duplicate autopilot apply pass.
 - `services/issue-retrieval.ts` + `backends/issue-store.ts`'s `IssueStore.list()` applies `ORDER BY created_at DESC LIMIT ?` before severity is considered, so older critical issues can be excluded entirely from an "always-surface-critical" baseline when enough newer high-severity issues exist.
 
 ---
