@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.138] - 2026-07-07
+
+### Fixed
+
+Loop iteration 74 of the full-codebase review loop — fixes the consolidated-cron standalone-job install gap flagged during iteration 34's sweep.
+
+- **Under the default consolidated-cron mode, standalone/optional jobs (`weekly-pending-digest`, `maintenance-log-analyzer`, `sensor-sweep` — all `supersededByOrchestrator: false`) were never actually installed, even on a fresh setup.** `buildMaintenanceCronJobDefsForEnsure()` correctly includes these jobs alongside `CONSOLIDATED_CRON_JOBS` in the defs it hands to the install loop (its own doc comment: "Standalone / optional jobs still normalized in consolidated orchestrator mode"), but the install loop's own separate `shouldSkipAddingMaintenanceCronJob()` check re-derived membership in `CONSOLIDATED_CRON_JOBS` from scratch for anything not already existing in the cron store — and since these standalone jobs were never part of that set by design, the check silently skipped adding them, undoing what the defs list had already correctly computed. Fixed by short-circuiting `shouldSkipAddingMaintenanceCronJob()` to never skip a job with `supersededByOrchestrator: false`, matching `buildMaintenanceCronJobDefsForEnsure()`'s own inclusion criteria exactly.
+
+Regression test added (`tests/cron-jobs-consolidated-standalone-install.test.ts`, new file): calls `ensureMaintenanceCronJobs` with `consolidatedCronJobs: true` against an empty cron store and asserts both `weekly-pending-digest` and `maintenance-log-analyzer` are actually added (not just `maintenance-nightly`). Verified via `git stash` to fail without the fix (`result.added` contained only `maintenance-nightly`) and pass with it. tsc clean; biome clean (zero new findings). Related suites (cron-jobs-consolidated-standalone-install, cron-jobs-verify-fix, cron-jobs-concurrency, verify-consolidated-cron, pending-digest-delivery): 18 passed, no regressions.
+
+---
+
 ## [2026.7.137] - 2026-07-07
 
 ### Fixed
@@ -512,7 +524,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 - ~~Lost-update race between the heartbeat/cron `reconcileActiveTaskInProgressSessions` and `active_task_checkpoint` on `ACTIVE-TASKS.md` (plain read-then-write, no optimistic-concurrency check unlike sibling writers).~~ — **fully fixed**: `reconcileActiveTaskInProgressSessions`'s half in loop iteration 66, `syncMarkdownLedgerFromCheckpoint`'s half in loop iteration 67 (see below).
 - ~~`lifecycle/stage-cleanup.ts`'s `subagent_spawned` handler only guards against reopening a `"Done"` task, not `"Failed"`~~ — **investigated in loop iteration 41 and NOT a bug**: `subagent_spawned` reopening a `"Failed"` task is deliberate, tested behavior (`stage-cleanup-facts-ledger.test.ts`'s "subagent_spawned reopens Failed tasks when session metadata is present" / "...clears stale handoff when reopening Failed tasks") — a new subagent dispatched against a failed task's label is an explicit retry and is meant to reopen it. Separately, adding `"failed"` to the shared `TERMINAL` set in `services/task-ledger/canonical.ts` breaks `factNewerThan`'s timestamp-tie-break comparator (which prefers "terminal" status on a tie) — it would let a stale `"failed"` fact block a legitimate retry's fresh `"in_progress"` write when both share the same second-granularity `createdAt`, confirmed by 9 existing test failures across `task-ledger-facts.test.ts`/`stage-cleanup-facts-ledger.test.ts` when tried. If the narrower gap (an arbitrary `memory_store` call regressing a `Failed` project-task status via `mirrorMemoryStoreToActiveTaskLedger`'s guard at `task-ledger-facts.ts:136`, which is a *different* write path than `subagent_spawned`'s `syncActiveTaskEntryToFacts`) still needs closing, it must be done as a change local to that one guard, not via the shared `TERMINAL` set.
 **Lower-severity / cosmetic:**
-- `cli/install/cron-jobs.ts`: under the default consolidated-cron mode, standalone jobs not in `CONSOLIDATED_CRON_JOBS` (e.g. `weekly-pending-digest`, `maintenance-log-analyzer`, `sensor-sweep`) are never installed even when enabled/feature-gated on.
 - `cli/commands/manage/register-storage-maintenance.ts`: `--json` mode on `rebuild-aliases`/`repair-vectors`/`classification-artifacts` swallows non-zero exit codes; `classification-artifacts --apply` can print duplicate entries in `verifiedSkippedIds`.
 - `cli/cmd-health.ts --json` never reflects an `unhealthy` overall status in its exit code.
 - `cli/cmd-selfcorrection.ts`: a MEMORY_STORE remediation with an object `remediationContent` missing `text` stringifies to `"[object Object]"` and gets stored as a real fact instead of being skipped.

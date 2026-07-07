@@ -699,6 +699,12 @@ function shouldSkipAddingMaintenanceCronJob(
 ): boolean {
   if (def.normalizeOnly === true) return true;
   if (!useConsolidated) return false;
+  // Standalone/optional jobs (supersededByOrchestrator: false — e.g. weekly-pending-digest,
+  // maintenance-log-analyzer, sensor-sweep) are still installed under consolidated mode; only jobs
+  // actually superseded by the orchestrator (and not part of CONSOLIDATED_CRON_JOBS itself) are
+  // skipped here. buildMaintenanceCronJobDefsForEnsure() already includes these standalone jobs in
+  // its returned defs for this exact reason — this check must not re-exclude them.
+  if (def.supersededByOrchestrator === false) return false;
   return !CONSOLIDATED_CRON_JOBS.some((job) => job.pluginJobId === def.pluginJobId);
 }
 
