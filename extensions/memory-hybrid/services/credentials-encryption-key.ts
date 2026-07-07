@@ -64,10 +64,13 @@ export function resolveCredentialsVaultKeyMaterial(raw: string, dbPath: string):
     return candidates[0];
   }
 
-  for (let i = 0; i < candidates.length; i++) {
-    const candidate = candidates[i];
+  for (const candidate of candidates) {
     if (probeCredentialsVaultKey(dbPath, candidate)) {
-      if (trimmed.startsWith("file:") && i > 0) {
+      // Warn exactly when the vault was opened using the literal `file:/path` ref string itself
+      // (the legacy passphrase behavior), not by array position — when the key file is missing,
+      // the literal ref is the *only* candidate (index 0), so an index-based check never fires
+      // for the most common trigger case.
+      if (trimmed.startsWith("file:") && candidate === trimmed) {
         warnLegacyFileRefLiteralKey(dbPath, trimmed);
       }
       return candidate;

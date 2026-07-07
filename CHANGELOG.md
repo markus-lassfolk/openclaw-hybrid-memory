@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.135] - 2026-07-07
+
+### Fixed
+
+Loop iteration 71 of the full-codebase review loop — fixes the legacy-key warning gap flagged during iteration 34's sweep. First item from the "Lower-severity / cosmetic" backlog.
+
+- **`resolveCredentialsVaultKeyMaterial`'s legacy-literal-key security warning was gated on the matched candidate's array index (`i > 0`) instead of whether it was actually the literal `file:/path` ref string — so it never fired for the most common trigger case: the key file missing entirely.** When the configured key file resolves successfully, `resolveCredentialsEncryptionKeyCandidates()` returns `[fileContents, literalRef]` — the literal ref sits at index 1, so `i > 0` happened to work by coincidence. When the key file is *missing* (unreadable, deleted, or never created — the actual legacy scenario this warning exists to catch, since it means the vault was originally encrypted using the literal ref string as a passphrase because no key file was ever configured), the resolver has no file-derived candidate to offer, so the literal ref becomes the *only* candidate, at index 0 — and the index-based check silently skipped the warning admins most need to see. Fixed by comparing the matched candidate directly against the trimmed literal ref (`candidate === trimmed`) instead of its array position, so the warning fires whenever the vault was actually opened using the legacy literal-ref passphrase, regardless of where it landed in the candidate list.
+
+Regression test added (`tests/credentials-encryption-key.test.ts`): a legacy vault encrypted with a `file:/path` ref whose key file was *never created* (distinct from the existing "file exists but has different content" test, which already exercised the index-1 case that happened to work before) — asserts the legacy-literal-key warning fires when the vault opens successfully via the literal ref. Verified via `git stash` to fail without the fix (only an unrelated "could not be resolved to a usable key" warning fired, not the legacy-key one) and pass with it. tsc clean; biome clean (zero new findings). Related suites (credentials-encryption-key, register-credentials-scope-cli): 18 passed, no regressions.
+
+---
+
 ## [2026.7.134] - 2026-07-07
 
 ### Fixed
@@ -475,7 +487,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 - ~~Lost-update race between the heartbeat/cron `reconcileActiveTaskInProgressSessions` and `active_task_checkpoint` on `ACTIVE-TASKS.md` (plain read-then-write, no optimistic-concurrency check unlike sibling writers).~~ — **fully fixed**: `reconcileActiveTaskInProgressSessions`'s half in loop iteration 66, `syncMarkdownLedgerFromCheckpoint`'s half in loop iteration 67 (see below).
 - ~~`lifecycle/stage-cleanup.ts`'s `subagent_spawned` handler only guards against reopening a `"Done"` task, not `"Failed"`~~ — **investigated in loop iteration 41 and NOT a bug**: `subagent_spawned` reopening a `"Failed"` task is deliberate, tested behavior (`stage-cleanup-facts-ledger.test.ts`'s "subagent_spawned reopens Failed tasks when session metadata is present" / "...clears stale handoff when reopening Failed tasks") — a new subagent dispatched against a failed task's label is an explicit retry and is meant to reopen it. Separately, adding `"failed"` to the shared `TERMINAL` set in `services/task-ledger/canonical.ts` breaks `factNewerThan`'s timestamp-tie-break comparator (which prefers "terminal" status on a tie) — it would let a stale `"failed"` fact block a legitimate retry's fresh `"in_progress"` write when both share the same second-granularity `createdAt`, confirmed by 9 existing test failures across `task-ledger-facts.test.ts`/`stage-cleanup-facts-ledger.test.ts` when tried. If the narrower gap (an arbitrary `memory_store` call regressing a `Failed` project-task status via `mirrorMemoryStoreToActiveTaskLedger`'s guard at `task-ledger-facts.ts:136`, which is a *different* write path than `subagent_spawned`'s `syncActiveTaskEntryToFacts`) still needs closing, it must be done as a change local to that one guard, not via the shared `TERMINAL` set.
 **Lower-severity / cosmetic:**
-- `services/credentials-encryption-key.ts`'s legacy-key security warning is gated on array index instead of matching the literal key, so it never fires when the key file is missing (the most common trigger case).
 - `cli/verify/sections/config-cron.ts`'s credentials-vault health check only test-decrypts one row, false-negative on partial vault corruption; `cli/verify/plugin-config-credentials.ts` logs a duplicate warning on parse failure.
 - `cli/verify/sections/llm-models.ts`'s `--test-llm` failures never affect verify's exit code/issues summary (unlike the parallel embeddings check).
 - `cli/install/cron-jobs.ts`: under the default consolidated-cron mode, standalone jobs not in `CONSOLIDATED_CRON_JOBS` (e.g. `weekly-pending-digest`, `maintenance-log-analyzer`, `sensor-sweep`) are never installed even when enabled/feature-gated on.
