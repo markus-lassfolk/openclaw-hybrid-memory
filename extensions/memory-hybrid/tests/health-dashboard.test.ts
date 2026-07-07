@@ -4,7 +4,8 @@
  * Coverage:
  *   - buildHealthReport: returns correct totalFacts count
  *   - buildHealthReport: returns correct activeFacts count (excludes expired)
- *   - buildHealthReport: supersededFacts counts facts with valid_until in the past
+ *   - buildHealthReport: supersededFacts counts facts with superseded_at set
+ *   - buildHealthReport: excludes a quota/token-budget-evicted fact from activeFacts (loop iteration 64)
  *   - buildHealthReport: categoryDistribution groups active facts by category
  *   - buildHealthReport: decayClassDistribution groups all facts by decay class
  *   - buildHealthReport: tierDistribution groups all facts by tier
@@ -56,6 +57,7 @@ function storeMinimalFact(
     tier?: string;
     validUntil?: number | null;
     expiresAt?: number | null;
+    supersededAt?: number | null;
   } = {},
 ) {
   const raw = db.getRawDb();
@@ -70,13 +72,14 @@ function storeMinimalFact(
     tier = "warm",
     validUntil = null,
     expiresAt = null,
+    supersededAt = null,
   } = overrides;
   raw
     .prepare(
-      `INSERT INTO facts (id, text, category, importance, source, created_at, decay_class, confidence, tier, valid_until, expires_at)
-     VALUES (?, ?, ?, 0.7, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO facts (id, text, category, importance, source, created_at, decay_class, confidence, tier, valid_until, expires_at, superseded_at)
+     VALUES (?, ?, ?, 0.7, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(id, text, category, source, nowSec, decayClass, confidence, tier, validUntil, expiresAt);
+    .run(id, text, category, source, nowSec, decayClass, confidence, tier, validUntil, expiresAt, supersededAt);
   return id;
 }
 
@@ -121,11 +124,24 @@ describe("buildHealthReport", () => {
     expect(report.activeFacts).toBe(1);
   });
 
-  it("supersededFacts counts facts with valid_until in the past", async () => {
+  it("supersededFacts counts facts with superseded_at set", async () => {
     storeMinimalFact(factsDb); // active
-    storeMinimalFact(factsDb, { validUntil: 1 }); // superseded
+    storeMinimalFact(factsDb, { supersededAt: 1 }); // superseded
     const report = await buildHealthReport(factsDb, join(tmpDir, "facts.db"), join(tmpDir, "lance"));
     expect(report.supersededFacts).toBe(1);
+  });
+
+  it("excludes a quota/token-budget-evicted fact from activeFacts and counts it as superseded (loop iteration 64 regression)", async () => {
+    // Daily-quota eviction (backends/facts-db/crud.ts) and token-budget trim
+    // (backends/facts-db/maintenance.ts) both set only superseded_at, never valid_until --
+    // activeFacts/supersededFacts must be driven by superseded_at, not valid_until, or an
+    // evicted fact silently keeps showing as "active" forever.
+    storeMinimalFact(factsDb); // active
+    storeMinimalFact(factsDb, { supersededAt: 1000 }); // evicted, valid_until untouched (still null)
+    const report = await buildHealthReport(factsDb, join(tmpDir, "facts.db"), join(tmpDir, "lance"));
+    expect(report.activeFacts).toBe(1);
+    expect(report.supersededFacts).toBe(1);
+    expect(report.lastPruneAt).not.toBeNull();
   });
 
   it("categoryDistribution groups active facts by category", async () => {

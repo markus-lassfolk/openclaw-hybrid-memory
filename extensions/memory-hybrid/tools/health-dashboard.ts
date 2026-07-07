@@ -71,34 +71,34 @@ export async function buildHealthReport(
   const totalRow = db.prepare("SELECT COUNT(*) AS cnt FROM facts").get() as { cnt: number };
   const totalFacts = totalRow.cnt;
 
-  // Active facts (not superseded, not expired)
+  // Active facts (not superseded, not expired). Uses the codebase's standard liveness marker,
+  // superseded_at IS NULL — quota/token-budget eviction (backends/facts-db/crud.ts,
+  // backends/facts-db/maintenance.ts) sets superseded_at without touching valid_until, so a
+  // valid_until-based check here would undercount evicted facts as still "active".
   const activeRow = db
     .prepare(
       `SELECT COUNT(*) AS cnt FROM facts
-     WHERE (valid_until IS NULL OR valid_until > ?)
+     WHERE superseded_at IS NULL
        AND (expires_at IS NULL OR expires_at > ?)`,
     )
-    .get(nowSec, nowSec) as { cnt: number };
+    .get(nowSec) as { cnt: number };
   const activeFacts = activeRow.cnt;
 
-  // Superseded facts (valid_until <= now or has a superseder)
+  // Superseded facts
   const supersededRow = db
-    .prepare(
-      `SELECT COUNT(*) AS cnt FROM facts
-     WHERE valid_until IS NOT NULL AND valid_until <= ?`,
-    )
-    .get(nowSec) as { cnt: number };
+    .prepare("SELECT COUNT(*) AS cnt FROM facts WHERE superseded_at IS NOT NULL")
+    .get() as { cnt: number };
   const supersededFacts = supersededRow.cnt;
 
   // Category distribution (active facts only)
   const catRows = db
     .prepare(
       `SELECT category, COUNT(*) AS cnt FROM facts
-       WHERE (valid_until IS NULL OR valid_until > ?)
+       WHERE superseded_at IS NULL
          AND (expires_at IS NULL OR expires_at > ?)
        GROUP BY category ORDER BY cnt DESC`,
     )
-    .all(nowSec, nowSec) as Array<{ category: string; cnt: number }>;
+    .all(nowSec) as Array<{ category: string; cnt: number }>;
   const categoryDistribution: Record<string, number> = {};
   for (const row of catRows) {
     categoryDistribution[row.category] = row.cnt;
@@ -128,17 +128,17 @@ export async function buildHealthReport(
   const confRow = db
     .prepare(
       `SELECT AVG(confidence) AS avg_conf FROM facts
-       WHERE (valid_until IS NULL OR valid_until > ?)
+       WHERE superseded_at IS NULL
          AND (expires_at IS NULL OR expires_at > ?)`,
     )
-    .get(nowSec, nowSec) as { avg_conf: number | null };
+    .get(nowSec) as { avg_conf: number | null };
   const avgConfidence = confRow.avg_conf != null ? Math.round(confRow.avg_conf * 1000) / 1000 : 0;
 
   // Orphan facts: facts with no links (neither source nor target) — active facts only
   const orphanRow = db
     .prepare(
       `SELECT COUNT(*) AS cnt FROM facts
-       WHERE (valid_until IS NULL OR valid_until > ?)
+       WHERE superseded_at IS NULL
          AND (expires_at IS NULL OR expires_at > ?)
          AND id NOT IN (
            SELECT source_fact_id FROM memory_links
@@ -146,7 +146,7 @@ export async function buildHealthReport(
            SELECT target_fact_id FROM memory_links
          )`,
     )
-    .get(nowSec, nowSec) as { cnt: number };
+    .get(nowSec) as { cnt: number };
   const orphanFacts = orphanRow.cnt;
 
   // Stale facts: confidence < 0.3, not permanent decay class, active
@@ -155,10 +155,10 @@ export async function buildHealthReport(
       `SELECT COUNT(*) AS cnt FROM facts
        WHERE confidence < 0.3
          AND decay_class != 'permanent'
-         AND (valid_until IS NULL OR valid_until > ?)
+         AND superseded_at IS NULL
          AND (expires_at IS NULL OR expires_at > ?)`,
     )
-    .get(nowSec, nowSec) as { cnt: number };
+    .get(nowSec) as { cnt: number };
   const staleFacts = staleRow.cnt;
 
   // Total links (only count links where at least one endpoint is an active fact)
@@ -167,16 +167,16 @@ export async function buildHealthReport(
       `SELECT COUNT(*) AS cnt FROM memory_links
      WHERE source_fact_id IN (
        SELECT id FROM facts
-       WHERE (valid_until IS NULL OR valid_until > ?)
+       WHERE superseded_at IS NULL
          AND (expires_at IS NULL OR expires_at > ?)
      )
      OR target_fact_id IN (
        SELECT id FROM facts
-       WHERE (valid_until IS NULL OR valid_until > ?)
+       WHERE superseded_at IS NULL
          AND (expires_at IS NULL OR expires_at > ?)
      )`,
     )
-    .get(nowSec, nowSec, nowSec, nowSec) as { cnt: number };
+    .get(nowSec, nowSec) as { cnt: number };
   const totalLinks = linksRow.cnt;
 
   // #1195: per-link-type breakdown (graph table) + provenance count (JSON column).
@@ -255,10 +255,10 @@ export async function buildHealthReport(
   };
   const lastReflectionAt = reflRow.last_at != null ? formatTimestampUtc(reflRow.last_at) : null;
 
-  // Last prune: derived from MAX(valid_until) of superseded facts (best approximation)
+  // Last prune: derived from MAX(superseded_at) of superseded facts (best approximation)
   const pruneRow = db
-    .prepare("SELECT MAX(valid_until) AS last_at FROM facts WHERE valid_until IS NOT NULL AND valid_until <= ?")
-    .get(nowSec) as { last_at: number | null };
+    .prepare("SELECT MAX(superseded_at) AS last_at FROM facts WHERE superseded_at IS NOT NULL")
+    .get() as { last_at: number | null };
   const lastPruneAt = pruneRow.last_at != null ? formatTimestampUtc(pruneRow.last_at) : null;
 
   // Storage sizes (async I/O — avoids sync stat hot-path blocking; Issue #880)

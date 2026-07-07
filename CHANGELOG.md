@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.128] - 2026-07-07
+
+### Fixed
+
+Loop iteration 64 of the full-codebase review loop — fixes the `health-dashboard.ts` liveness-marker mismatch flagged during iteration 34's sweep.
+
+- **`memory_health`'s liveness queries used `valid_until` instead of the codebase's standard `superseded_at IS NULL` marker, so facts evicted by the daily-quota or token-budget-trim paths permanently showed as "active".** Daily-quota eviction (`backends/facts-db/crud.ts`) and token-budget trim (`backends/facts-db/maintenance.ts`) both retire a fact by setting only `superseded_at`, never `valid_until` — only the normal `supersede()` path (used when a fact is explicitly replaced by a newer one) sets both columns. Every liveness-dependent query in `tools/health-dashboard.ts` (`activeFacts`, `categoryDistribution`, `avgConfidence`, `orphanFacts`, `staleFacts`, `totalLinks`, and `lastPruneAt`'s `MAX()`) checked `valid_until` instead, so an evicted fact kept counting toward "active" totals and category/confidence/orphan/staleness stats forever, and eviction events never moved `lastPruneAt`. `supersededFacts` had the same gap in reverse — it never counted evicted facts as superseded at all. Fixed by switching every one of these queries to `superseded_at IS NULL` (active) / `superseded_at IS NOT NULL` (superseded), matching the predicate used consistently everywhere else in the codebase (e.g. `backends/facts-db/stats.ts`).
+
+Regression test added (`tests/health-dashboard.test.ts`): stores one active fact and one evicted-but-not-superseded-via-`supersede()` fact (`superseded_at` set, `valid_until` left `null`, matching the real eviction paths' write pattern) — asserts `activeFacts` excludes it, `supersededFacts` counts it, and `lastPruneAt` reflects it. The existing `supersededFacts` test (previously encoding the old `valid_until`-based semantics) was updated to match the corrected behavior. Verified via `git stash` to fail without the fix (evicted fact counted as active, not superseded) and pass with it. tsc clean; biome clean (zero new findings). Related suites (health-dashboard, tool-search-wrapper-args): 41 passed, no regressions.
+
+---
+
 ## [2026.7.127] - 2026-07-07
 
 ### Fixed
@@ -390,7 +402,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 **Data loss / correctness:**
 - Lost-update race between the heartbeat/cron `reconcileActiveTaskInProgressSessions` and `active_task_checkpoint` on `ACTIVE-TASKS.md` (plain read-then-write, no optimistic-concurrency check unlike sibling writers).
 - `tools/memory/register-store-tools.ts`'s active-task-ledger mirror (`syncProjectStoreToActiveTaskLedger`) and `build-runtime.ts`'s `maybeRefreshProjectActiveTaskProjection` are closed over the default vault only, so a vault-scoped `memory_store` call's project-task mirror writes land in the wrong vault's ledger.
-- `tools/health-dashboard.ts`'s liveness queries use `valid_until` instead of the codebase's standard `superseded_at IS NULL` marker, undercounting facts trimmed/evicted by the token-budget and daily-quota paths as still "active".
 - ~~`lifecycle/stage-cleanup.ts`'s `subagent_spawned` handler only guards against reopening a `"Done"` task, not `"Failed"`~~ — **investigated in loop iteration 41 and NOT a bug**: `subagent_spawned` reopening a `"Failed"` task is deliberate, tested behavior (`stage-cleanup-facts-ledger.test.ts`'s "subagent_spawned reopens Failed tasks when session metadata is present" / "...clears stale handoff when reopening Failed tasks") — a new subagent dispatched against a failed task's label is an explicit retry and is meant to reopen it. Separately, adding `"failed"` to the shared `TERMINAL` set in `services/task-ledger/canonical.ts` breaks `factNewerThan`'s timestamp-tie-break comparator (which prefers "terminal" status on a tie) — it would let a stale `"failed"` fact block a legitimate retry's fresh `"in_progress"` write when both share the same second-granularity `createdAt`, confirmed by 9 existing test failures across `task-ledger-facts.test.ts`/`stage-cleanup-facts-ledger.test.ts` when tried. If the narrower gap (an arbitrary `memory_store` call regressing a `Failed` project-task status via `mirrorMemoryStoreToActiveTaskLedger`'s guard at `task-ledger-facts.ts:136`, which is a *different* write path than `subagent_spawned`'s `syncActiveTaskEntryToFacts`) still needs closing, it must be done as a change local to that one guard, not via the shared `TERMINAL` set.
 - `services/context-engine.ts`'s `prepareSubagentSpawn` calls `buildContextBlock` with no token budget (so every candidate fact is recorded as "injected") and only trims to the real budget afterward — facts trimmed off the end are marked injected anyway and never shown to that sub-agent again in any future turn.
 - `services/graph-retrieval.ts`: `hubScorePenalty` (score-attenuation for high-degree hub nodes) is only implemented in the iterative-BFS fallback; the real production CTE-based expansion path (`expandGraphWithCTE`) never applies it, hard-skipping over-cap hub links entirely instead of attenuating them as both shipped "enhanced"/"complete" presets document.
