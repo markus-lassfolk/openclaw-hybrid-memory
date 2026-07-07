@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.111] - 2026-07-06
+
+### Fixed
+
+Loop iteration 47 of the full-codebase review loop — fixes an inflated-diagnostics bug flagged during iteration 34's sweep.
+
+- **`parseBatchContent` in `services/reinforcement-batch-analyze.ts` counted a `parseFailures` diagnostic for every batch that needed JSON repair, even when the repair fully recovered the batch.** The sibling `self-correction-batch-analyze.ts` only increments `parseFailures` at the two actual failure exits (the repair attempt throwing, or repair returning no items) — this file incremented it eagerly *before* even attempting the repair, and never reverted it on the `repaired.items !== null` success path. Since `parseFailures` feeds operator-facing diagnostics and an adaptive-maintenance A/B penalty, a batch that ultimately parsed fine (just needed one repair pass — a routine occurrence, not a real failure) was still counted against both, understating repair effectiveness and over-penalizing otherwise-healthy batches.
+
+Regression test added (`tests/reinforcement-batch-analyze.test.ts`): mocks a non-JSON LLM response with a successful `attemptAnalysisJsonRepair` recovery and asserts `result.diagnostics.parseFailures` is `0`. Verified via `git stash` to fail without the fix (`parseFailures` was `1` despite full recovery) and pass with it. tsc clean; biome clean (zero net-new against baseline — both files' pre-existing import-order findings predate this change, confirmed via `git stash`). Related suites (reinforcement-batch-analyze, cmd-extract-reinforcement-batch, reinforcement-analysis): 29 passed, no regressions.
+
+---
+
 ## [2026.7.110] - 2026-07-06
 
 ### Fixed
@@ -141,7 +153,6 @@ Regression test added (`tests/pending-autopilot-redaction.test.ts`, 4 cases): a 
 
 ### Deferred (remaining confirmed findings from iteration 34's sweep, not yet fixed)
 
-- `services/reinforcement-batch-analyze.ts` increments `diagnostics.parseFailures` before attempting JSON repair and never reverts it on successful repair (sibling `self-correction-batch-analyze.ts` does this correctly), inflating operator diagnostics and an A/B benchmark penalty for batches that ultimately parsed fine.
 - `services/unified-proposals.ts`'s `countPendingUnifiedProposals` filters out `procedure-skill` proposals only after `listUnifiedProposals` has already sorted-and-truncated to the default top-100, so a burst of recent procedure-skill candidates can push real pending persona/tool/crystallization proposals out of the count window and let `enforceMaxPendingCap` admit more than configured.
 
 ---

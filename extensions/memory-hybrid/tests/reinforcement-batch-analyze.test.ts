@@ -108,4 +108,43 @@ describe("analyzeReinforcementIncidentBatchWithSplit", () => {
     expect(result.diagnostics.retries).toBe(1);
     expect(result.items?.length).toBe(1);
   });
+
+  it("does not count a batch as a parse failure when JSON repair recovers it", async () => {
+    vi.spyOn(adaptiveLlm, "chatCompleteWithAdaptiveMaintenanceRetry").mockResolvedValue({
+      content: "not valid json at all",
+      modelUsed: "test-model",
+      finishReason: "stop",
+      attemptChain: ["test-model"],
+    });
+
+    const result = await analyzeReinforcementIncidentBatchWithSplit(
+      {
+        model: "test-model",
+        modelSource: "test",
+        openai: {} as never,
+        fallbackModels: [],
+        maxTokens: 8000,
+        adaptiveEnabled: false,
+        logger: {},
+        attemptAnalysisJsonRepair: vi.fn(async () => ({
+          items: [{ ...SAMPLE_ITEM, incidentIndex: 0 }],
+          fallbacks: 1,
+        })),
+      },
+      [
+        {
+          userMessage: "good job",
+          sessionFile: "a.jsonl",
+          agentBehavior: "helpful",
+          precedingUserMessage: "",
+          recalledMemoryIds: [],
+          toolCallSequence: [],
+          confidence: 0.9,
+        },
+      ],
+    );
+
+    expect(result.items?.length).toBe(1);
+    expect(result.diagnostics.parseFailures).toBe(0);
+  });
 });
