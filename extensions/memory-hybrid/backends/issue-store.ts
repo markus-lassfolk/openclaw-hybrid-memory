@@ -104,7 +104,11 @@ export class IssueStore extends BaseSqliteStore {
     return this.rowToIssue(row);
   }
 
-  update(id: string, patch: Partial<Omit<Issue, "id" | "createdAt">>): Issue {
+  update(
+    id: string,
+    patch: Partial<Omit<Issue, "id" | "createdAt">>,
+    opts?: { expectedStatus?: IssueStatus },
+  ): Issue {
     const existing = this.get(id);
     if (!existing) throw new Error(`Issue not found: ${id}`);
 
@@ -162,7 +166,22 @@ export class IssueStore extends BaseSqliteStore {
     }
 
     params.push(id);
-    this.liveDb.prepare(`UPDATE issues SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+    let sql = `UPDATE issues SET ${sets.join(", ")} WHERE id = ?`;
+    // Compare-and-swap: transition() passes the status it read so the write only lands if
+    // nothing else changed the status in between (cross-process race — this class's SQLite
+    // calls are synchronous, so no other in-process caller can interleave). A concurrent writer
+    // that already changed the status makes this UPDATE affect zero rows instead of silently
+    // overwriting the other writer's transition.
+    if (opts?.expectedStatus !== undefined) {
+      sql += " AND status = ?";
+      params.push(opts.expectedStatus);
+    }
+    const result = this.liveDb.prepare(sql).run(...params);
+    if (opts?.expectedStatus !== undefined && result.changes === 0) {
+      throw new Error(
+        `Issue ${id} was modified concurrently (expected status "${opts.expectedStatus}"); refetch and retry.`,
+      );
+    }
 
     return this.get(id) as Issue;
   }
@@ -191,7 +210,7 @@ export class IssueStore extends BaseSqliteStore {
       patch.verifiedAt = now;
     }
 
-    return this.update(id, patch);
+    return this.update(id, patch, { expectedStatus: existing.status });
   }
 
   list(filter?: { status?: IssueStatus[]; severity?: string[]; tags?: string[]; limit?: number }): Issue[] {

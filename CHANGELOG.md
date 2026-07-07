@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.148] - 2026-07-07
+
+### Fixed
+
+Loop iteration 84 of the full-codebase review loop — fixes the `backends/issue-store.ts` bullet from the "Deferred (carried over from earlier iterations)" backlog.
+
+- **`IssueStore.transition()`/`update()` did a plain read-then-write with no compare-and-swap protection**, unlike this same file's `linkFact()` (already fixed for this exact class of bug with an `IMMEDIATE` transaction). `transition()` reads the issue's current status, validates the requested transition against the state machine, then calls `update()`, which does its own unconditional `UPDATE issues SET ... WHERE id = ?` — with no check that the status is still what `transition()` read. Cross-process only (`IssueStore`'s SQLite calls are synchronous, so nothing can interleave within a single process), but `IssueStore` is explicitly designed for multi-process access (CLI invocations, cron jobs, etc. all writing to the same file). Two processes racing a transition from the same stale status could both pass validation and both write, with whichever `UPDATE` lands last silently overwriting the other's transition (and any `rootCause`/`fix`/`rollback` data that came with it). Fixed by adding an optional `expectedStatus` option to `update()` that appends `AND status = ?` to the `UPDATE`'s `WHERE` clause and throws if the statement affects zero rows (meaning another writer already changed the status); `transition()` now passes the status it read as `expectedStatus`, making the check-and-write atomic at the database level instead of split across two separate statements. `update()`'s direct callers that don't touch status (e.g. `tools/issue-tools.ts`'s plain field updates) are unaffected — they don't pass `expectedStatus`, so behavior there is unchanged.
+
+Regression test added (`tests/issue-store.test.ts`): uses `vi.spyOn(store, "get")` with a `mockImplementationOnce` that captures the stale ("open") snapshot, then performs a real concurrent `transition()` to `"wont-fix"` before returning the stale value — mirroring this repo's established deterministic-race-injection pattern (same technique as the file's existing `linkFact` TOCTOU test). Asserts the racing `transition("diagnosed")` call throws instead of silently overwriting, and the issue's actual status stays `"wont-fix"` (the first writer's transition). Verified via `git stash` to fail without the fix (the stale-read transition silently succeeded and overwrote the racer's status) and pass with it. tsc clean; biome clean (zero new findings). Related suites (issue-store, issue-tools-scope-security, issue-tools, memory-correlation-recommendations, retrieval-orchestrator): 110 passed, no regressions.
+
+---
+
 ## [2026.7.147] - 2026-07-07
 
 ### Fixed
@@ -631,7 +643,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 - ~~`lifecycle/stage-cleanup.ts`'s `subagent_spawned` handler only guards against reopening a `"Done"` task, not `"Failed"`~~ — **investigated in loop iteration 41 and NOT a bug**: `subagent_spawned` reopening a `"Failed"` task is deliberate, tested behavior (`stage-cleanup-facts-ledger.test.ts`'s "subagent_spawned reopens Failed tasks when session metadata is present" / "...clears stale handoff when reopening Failed tasks") — a new subagent dispatched against a failed task's label is an explicit retry and is meant to reopen it. Separately, adding `"failed"` to the shared `TERMINAL` set in `services/task-ledger/canonical.ts` breaks `factNewerThan`'s timestamp-tie-break comparator (which prefers "terminal" status on a tie) — it would let a stale `"failed"` fact block a legitimate retry's fresh `"in_progress"` write when both share the same second-granularity `createdAt`, confirmed by 9 existing test failures across `task-ledger-facts.test.ts`/`stage-cleanup-facts-ledger.test.ts` when tried. If the narrower gap (an arbitrary `memory_store` call regressing a `Failed` project-task status via `mirrorMemoryStoreToActiveTaskLedger`'s guard at `task-ledger-facts.ts:136`, which is a *different* write path than `subagent_spawned`'s `syncActiveTaskEntryToFacts`) still needs closing, it must be done as a change local to that one guard, not via the shared `TERMINAL` set.
 ### Deferred (carried over from earlier iterations; still tracked)
 
-- `backends/issue-store.ts`'s `transition()`/`update()` lacking compare-and-swap protection (cross-process race only).
 - An off-by-one output-line overwrite in `tools/apitap-tools.ts`; an inverted enabled/disabled detection in an unwired ESPHome YAML converter.
 
 ---

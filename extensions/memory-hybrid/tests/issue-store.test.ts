@@ -269,6 +269,27 @@ describe("IssueStore.transition — invalid transitions", () => {
   it("throws transition on nonexistent id", () => {
     expect(() => store.transition("fake-id", "diagnosed")).toThrow("Issue not found");
   });
+
+  it("throws instead of silently overwriting a concurrent status change (compare-and-swap, loop iteration 84 regression)", () => {
+    const issue = store.create({ title: "CAS race", symptoms: ["s"] });
+    const getSpy = vi.spyOn(store, "get");
+    // Simulate a concurrent process (or, cross-process in reality) transitioning the issue to
+    // "wont-fix" between this transition() call's read and its underlying UPDATE — the read
+    // returns the STALE ("open") snapshot, matching the exact race window transition()/update()
+    // are exposed to since neither locks the row between the read and the write.
+    getSpy.mockImplementationOnce((id) => {
+      const stale = store.get(id);
+      store.transition(issue.id, "wont-fix");
+      return stale;
+    });
+
+    expect(() => store.transition(issue.id, "diagnosed")).toThrow(/modified concurrently/);
+
+    // The racer's transition must be the one that stuck — our stale-read transition must not
+    // have silently overwritten it.
+    const after = store.get(issue.id);
+    expect(after?.status).toBe("wont-fix");
+  });
 });
 
 // ---------------------------------------------------------------------------
