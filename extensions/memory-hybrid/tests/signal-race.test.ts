@@ -33,3 +33,31 @@ describe("raceWithAbortSignal (loop iteration 34 regression)", () => {
     }
   });
 });
+
+describe("raceWithAbortSignal — resolves fallback on abort even when the raced promise never settles (loop iteration 87 regression)", () => {
+  it("resolves the fallback promptly on abort when the raced promise hangs forever", async () => {
+    const controller = new AbortController();
+    // A promise that never resolves or rejects — simulates a genuinely stuck call (e.g. a hung
+    // embedding request), which is exactly the scenario the stage-timeout abort exists to bound.
+    const hanging = new Promise<number>(() => {});
+
+    const racePromise = raceWithAbortSignal(hanging, controller.signal, -1);
+    setTimeout(() => controller.abort(), 20);
+
+    const result = await Promise.race([
+      racePromise,
+      new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), 500)),
+    ]);
+
+    expect(result).toBe(-1);
+  });
+
+  it("still lets the raced promise's own resolution win when it settles before abort", async () => {
+    const controller = new AbortController();
+    const resolving = new Promise<number>((resolve) => setTimeout(() => resolve(42), 5));
+
+    const result = await raceWithAbortSignal(resolving, controller.signal, -1);
+
+    expect(result).toBe(42);
+  });
+});
