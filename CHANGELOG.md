@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.141] - 2026-07-07
+
+### Fixed
+
+Loop iteration 77 of the full-codebase review loop — fixes the `cli/cmd-selfcorrection.ts` bullet flagged during iteration 34's sweep.
+
+- **A `MEMORY_STORE` remediation whose `remediationContent` is an object missing the `text` field stringified to the literal `"[object Object]"` and got stored as a real fact instead of being skipped.** The object-vs-string normalization only checked `typeof c === "object" && c && "text" in c` — when that failed (object present, but no `text` key at all, as opposed to `text: undefined`), it fell through to the string-coercion fallback `{ text: String(c), ... }`, meant for the primitive-`remediationContent` case. `String()` on a plain object produces `"[object Object]"`, which is truthy and passes the `if (!rawText) continue;` empty-text guard, so a malformed LLM remediation item silently became a garbage fact. Fixed by giving the "object but no `text` key" case its own branch that yields `text: ""` (so the existing empty-text guard correctly skips it), instead of falling into the string-coercion path.
+
+Regression tests added (`tests/cmd-selfcorrection-memory-store-object-remediation.test.ts`, new file): asserts a `MEMORY_STORE` remediation with `remediationContent: { entity: "Fact", tags: [...] }` (no `text` key) results in zero facts stored and no fact with text `"[object Object]"`; a companion test asserts the normal `{ text: "...", ... }` shape still stores correctly. Verified via `git stash` to fail without the fix (one fact stored, `autoFixed === 1`) and pass with it. tsc clean; biome clean (zero new findings). Related suites (cmd-selfcorrection-memory-store-object-remediation, self-correction-m3-hardening-1876, cmd-selfcorrection-atomic, cmd-selfcorrection-json-parse, self-correction-run-parser, self-correction-batch-analyze): 99 passed, no regressions.
+
+---
+
 ## [2026.7.140] - 2026-07-07
 
 ### Fixed
@@ -549,7 +561,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 - ~~Lost-update race between the heartbeat/cron `reconcileActiveTaskInProgressSessions` and `active_task_checkpoint` on `ACTIVE-TASKS.md` (plain read-then-write, no optimistic-concurrency check unlike sibling writers).~~ — **fully fixed**: `reconcileActiveTaskInProgressSessions`'s half in loop iteration 66, `syncMarkdownLedgerFromCheckpoint`'s half in loop iteration 67 (see below).
 - ~~`lifecycle/stage-cleanup.ts`'s `subagent_spawned` handler only guards against reopening a `"Done"` task, not `"Failed"`~~ — **investigated in loop iteration 41 and NOT a bug**: `subagent_spawned` reopening a `"Failed"` task is deliberate, tested behavior (`stage-cleanup-facts-ledger.test.ts`'s "subagent_spawned reopens Failed tasks when session metadata is present" / "...clears stale handoff when reopening Failed tasks") — a new subagent dispatched against a failed task's label is an explicit retry and is meant to reopen it. Separately, adding `"failed"` to the shared `TERMINAL` set in `services/task-ledger/canonical.ts` breaks `factNewerThan`'s timestamp-tie-break comparator (which prefers "terminal" status on a tie) — it would let a stale `"failed"` fact block a legitimate retry's fresh `"in_progress"` write when both share the same second-granularity `createdAt`, confirmed by 9 existing test failures across `task-ledger-facts.test.ts`/`stage-cleanup-facts-ledger.test.ts` when tried. If the narrower gap (an arbitrary `memory_store` call regressing a `Failed` project-task status via `mirrorMemoryStoreToActiveTaskLedger`'s guard at `task-ledger-facts.ts:136`, which is a *different* write path than `subagent_spawned`'s `syncActiveTaskEntryToFacts`) still needs closing, it must be done as a change local to that one guard, not via the shared `TERMINAL` set.
 **Lower-severity / cosmetic:**
-- `cli/cmd-selfcorrection.ts`: a MEMORY_STORE remediation with an object `remediationContent` missing `text` stringifies to `"[object Object]"` and gets stored as a real fact instead of being skipped.
 - `cli/cmd-mine.ts --undo` filters only by `mine_batch_id` with no scope check, a plausible cross-tenant supersede.
 - `cli/cmd-backfill.ts`'s `runBackfillForCli`/`runIngestFilesForCli` don't increment the `skipped` stat on pre-store-guard rejections (sibling `cmd-distill.ts` does), understating the CLI's summary output.
 - `services/fact-mutation-gateway.ts`'s `hybrid-mem.facts.create` doesn't clamp `importance` to `[0,1]` unlike the sibling `confidence` field in the same handler.

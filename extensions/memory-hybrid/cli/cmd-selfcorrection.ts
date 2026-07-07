@@ -350,7 +350,11 @@ async function applySelfCorrectionRemediations(params: {
     if (a.remediationType === "MEMORY_STORE") {
       const c = a.remediationContent;
       const obj =
-        typeof c === "object" && c && "text" in c ? c : { text: String(c), entity: "Fact", tags: [] as string[] };
+        typeof c === "object" && c
+          ? "text" in c
+            ? c
+            : { text: "", entity: "Fact", tags: [] as string[] }
+          : { text: String(c), entity: "Fact", tags: [] as string[] };
       const rawText = (obj.text ?? "").trim();
       if (!rawText) continue;
       const remediationKey = typeof obj.key === "string" ? obj.key : null;
