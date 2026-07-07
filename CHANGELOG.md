@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.120] - 2026-07-06
+
+### Fixed
+
+Loop iteration 56 of the full-codebase review loop — fixes an oversized-result-set bug flagged during iteration 34's sweep.
+
+- **`runRecallPipelineQuery`'s FTS-only abort early-return skipped the `.slice(0, limitNum)` every other exit path in the function applies.** In FTS-only mode (no semantic strategy), `sqliteResults` concatenates entity-lookup rows with FTS rows — each independently capped to `limitNum` by its own query, but the concatenation can hold up to `2 × limitNum` entries when both an entity lookup and an FTS search each return a full batch. Every other return point in the function re-slices to `limitNum` after obtaining `sqliteResults` for exactly this reason — except the abort-signal early-return reached after `await yieldEventLoop()`, which returned the raw, unsliced, un-deduped concatenation directly to the caller. A parent recall stage aborting mid-flight during that yield window would get back up to twice the requested result count, un-ranked and potentially containing duplicate-adjacent entity/FTS entries.
+
+Regression test added (`tests/recall-pipeline.test.ts`): seeds `limitNum` entity-lookup results and `limitNum` FTS results (6 total for a limit of 3), schedules the abort via a `setImmediate` registered *before* the pipeline call (guaranteeing it fires before the pipeline's own `yieldEventLoop()` immediate, deterministically landing the abort at the exact early-return check), and asserts the returned result count never exceeds `limitNum`. Verified via `git stash` to fail without the fix (returned all 6 unsliced rows) and pass with it. tsc clean; biome clean (zero net-new against baseline — both files' pre-existing import-order findings predate this change, confirmed via `git stash`). Related suites (recall-pipeline, lifecycle-stage-recall, post-compaction-recall): 55 passed, no regressions.
+
+---
+
 ## [2026.7.119] - 2026-07-06
 
 ### Fixed
@@ -303,7 +315,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 - ~~`lifecycle/stage-cleanup.ts`'s `subagent_spawned` handler only guards against reopening a `"Done"` task, not `"Failed"`~~ — **investigated in loop iteration 41 and NOT a bug**: `subagent_spawned` reopening a `"Failed"` task is deliberate, tested behavior (`stage-cleanup-facts-ledger.test.ts`'s "subagent_spawned reopens Failed tasks when session metadata is present" / "...clears stale handoff when reopening Failed tasks") — a new subagent dispatched against a failed task's label is an explicit retry and is meant to reopen it. Separately, adding `"failed"` to the shared `TERMINAL` set in `services/task-ledger/canonical.ts` breaks `factNewerThan`'s timestamp-tie-break comparator (which prefers "terminal" status on a tie) — it would let a stale `"failed"` fact block a legitimate retry's fresh `"in_progress"` write when both share the same second-granularity `createdAt`, confirmed by 9 existing test failures across `task-ledger-facts.test.ts`/`stage-cleanup-facts-ledger.test.ts` when tried. If the narrower gap (an arbitrary `memory_store` call regressing a `Failed` project-task status via `mirrorMemoryStoreToActiveTaskLedger`'s guard at `task-ledger-facts.ts:136`, which is a *different* write path than `subagent_spawned`'s `syncActiveTaskEntryToFacts`) still needs closing, it must be done as a change local to that one guard, not via the shared `TERMINAL` set.
 - `services/context-engine.ts`'s `prepareSubagentSpawn` calls `buildContextBlock` with no token budget (so every candidate fact is recorded as "injected") and only trims to the real budget afterward — facts trimmed off the end are marked injected anyway and never shown to that sub-agent again in any future turn.
 - `services/graph-retrieval.ts`: `hubScorePenalty` (score-attenuation for high-degree hub nodes) is only implemented in the iterative-BFS fallback; the real production CTE-based expansion path (`expandGraphWithCTE`) never applies it, hard-skipping over-cap hub links entirely instead of attenuating them as both shipped "enhanced"/"complete" presets document.
-- `services/recall-pipeline.ts`: the FTS-only-results abort-signal early-return skips the `.slice(0, limitNum)` every other exit path applies, so an in-flight abort can return an oversized, un-deduped, unranked result set.
 - `services/embeddings/factory.ts`'s Google-in-chain dimension guard only covers the OpenAI-model case (`OPENAI_ONLY_EMBED_MODELS`); an Ollama/ONNX model with dims≠768 chained with Google silently builds a mismatched-dimensions chain that only fails later, confusingly, at `vectorDb.store()`.
 
 **Lower-severity / cosmetic:**
