@@ -23,6 +23,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.123] - 2026-07-07
+
+### Fixed
+
+Loop iteration 59 of the full-codebase review loop — fixes the keyword-recall FTS-limit-before-scope-filter gap flagged during iteration 34's sweep, plus a deeper `node:sqlite` FTS5 parameter-binding bug discovered while fixing it.
+
+- **Keyword recall (`memory_keyword_recall` and `memory_recall`'s keyword mode) applied its row limit to raw FTS5 hits before scope-filtering them, silently under-returning results in scoped multi-tenant deployments.** `keywordRecallResults` called `searchFts(..., { limit: recallLimit })` and only checked each hit's scope afterward, one at a time, via `searchFactsDb.getById(hit.factId, { scopeFilter })` — discarding any out-of-scope hit. `searchFts` itself already has a retry loop that widens its internal candidate window ("expand FTS LIMIT when post-filters reject most candidates") specifically to compensate for exactly this class of problem, but that loop only knew about the filters `searchFts` applied internally (entity, tag, superseded, snoozed) — it had no idea the caller was about to drop more hits for scope reasons, so in a busy multi-tenant deployment a caller could get back far fewer than `recallLimit` results (even zero) despite there being enough in-scope matches, if enough other tenants' facts happened to outrank them. Fixed by adding a `scopeFilter` option to `searchFts` itself, applied inside its own Phase 2 SQL filter (the same pass as entity/tag/superseded), so its existing expand-and-retry loop now correctly accounts for scope the same way it already does for every other filter.
+- **While building the regression test above, found and fixed a separate, more fundamental bug: `node:sqlite`'s FTS5 virtual table integration silently ignores a *parameterized* `rowid IN (?, ?, ...)` constraint when combined with `MATCH`** — it returns every row that matches the FTS query regardless of the IN-list, whereas the equivalent *literal* `rowid IN (1, 2, ...)` filters correctly. `searchFts`'s Phase 3 snippet/matchInfo lookup used the parameterized form, so whenever Phase 2's own filters (entity, tag, superseded, or now scope) narrowed a fact's candidate set to rowids that were not the top bm25-ranked matches, Phase 3 silently returned snippet data for the *wrong* (unfiltered, top-ranked) rows instead — and since the final assembly step cross-checks against the correctly-filtered rowid list, this dropped the legitimately-matching fact from the results entirely rather than leaking the wrong one. This is not scope-specific: any keyword search whose entity/tag/superseded filters excluded the single best-ranked FTS candidate was silently losing results before this fix. Fixed by embedding the (always internally-sourced, numeric, never user-controlled) rowid list directly into the SQL string for that one clause instead of binding it as parameters, working around the node:sqlite quirk.
+
+Regression test added (`tests/fts-search.test.ts`): 100 out-of-scope "noise" facts (strong, repeated exact-term matches guaranteed to outrank a diluted single-mention document, saturating `searchFts`'s initial 100-row candidate window) plus one in-scope fact set up to rank far worse; a scoped `limit: 1` query must still return the in-scope fact, not silently come back empty or leak the wrong tenant's data. Verified via `git stash` to fail without the fix (returned the out-of-scope tenant's fact, ignoring `scopeFilter` entirely) and pass with it. During development this test also caught the node:sqlite `rowid IN (?)` bug directly (isolated via a series of minimal raw-SQL repros comparing parameterized vs. literal IN-lists) before the scope fix alone could pass it. tsc clean; biome clean (zero new findings). Related suites (fts-search, cmd-doctor-fts, constrained-search-filters, facts-db, facts-db-modules, plugin-e2e, memory-tools-execute-boundaries, comprehensive-e2e, memory-journey-e2e): 310 passed, no regressions.
+
+---
+
 ## [2026.7.122] - 2026-07-07
 
 ### Fixed
@@ -328,7 +341,7 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 ### Deferred (confirmed findings from iteration 34's sweep, not yet fixed — grouped by rough severity)
 
 **Security/cross-tenant:**
-- `tools/memory/register-recall-tools.ts`: keyword recall applies the FTS row-limit before per-hit scope filtering, silently under-returning results in scoped multi-tenant deployments; graph expansion ignores per-result vault during multi-vault fan-out.
+- `tools/memory/register-recall-tools.ts`: graph expansion ignores per-result vault during multi-vault fan-out.
 
 **Data loss / correctness:**
 - Lost-update race between the heartbeat/cron `reconcileActiveTaskInProgressSessions` and `active_task_checkpoint` on `ACTIVE-TASKS.md` (plain read-then-write, no optimistic-concurrency check unlike sibling writers).

@@ -515,6 +515,11 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
             tagFilter: opts.tag,
             includeSuperseded: opts.includeSuperseded,
             asOf: opts.asOfSec,
+            // Filter by scope inside searchFts's own SQL (before its internal row limit), not
+            // just here afterward -- otherwise scoped-out hits would still consume slots in the
+            // capped FTS candidate window, silently under-returning results in multi-tenant
+            // deployments even though more in-scope matches exist beyond that window.
+            scopeFilter: opts.scopeFilter,
           })
         : [];
     const out: SearchResult[] = [];

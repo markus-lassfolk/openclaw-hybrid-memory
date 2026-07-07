@@ -363,6 +363,45 @@ describe("entity filter", () => {
   });
 });
 
+describe("scope filter (loop iteration 59)", () => {
+  it("does not let out-of-scope hits crowd a scoped-in match out of the capped FTS candidate window", () => {
+    // searchFts's internal candidate window starts at Math.max(limit * 10, 100). Insert enough
+    // strictly-better-ranked, out-of-scope "noise" facts to fully saturate that initial 100-row
+    // window on their own (repeated exact term -> strong bm25), plus a couple of in-scope facts
+    // that only mention the term once inside a long filler document (diluted term frequency over
+    // a longer doc -> deliberately weaker bm25, so they'd never survive an unscoped top-100 cut).
+    for (let i = 0; i < 100; i++) {
+      db.store({
+        text: "zzznoisetoken zzznoisetoken zzznoisetoken zzznoisetoken zzznoisetoken",
+        category: "fact",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "conversation",
+        scope: "agent",
+        scopeTarget: "tenantB",
+      });
+    }
+    db.store({
+      text: `zzznoisetoken ${"filler word ".repeat(50)}`,
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "agent",
+      scopeTarget: "tenantA",
+    });
+
+    const results = searchFts(rawDb(db), "zzznoisetoken", { limit: 1, scopeFilter: { agentId: "tenantA" } });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].text).toContain("filler word");
+  });
+});
+
 describe("tag filter", () => {
   beforeEach(() => {
     db.store({
