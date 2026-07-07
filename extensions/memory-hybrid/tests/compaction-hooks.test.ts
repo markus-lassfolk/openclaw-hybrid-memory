@@ -81,6 +81,30 @@ describe("compaction lifecycle hooks", () => {
     expect(api.logger.error).toHaveBeenCalledWith(expect.stringContaining("before_compaction — WAL pre-flush failed"));
   });
 
+  it("before_compaction scopes getHotFacts via the canonical lifecycleContext resolver, not the weaker api.context (loop iteration 89 regression)", async () => {
+    const api = makeHooksApi();
+    // api.context reports "main" — a stale/wrong agent id relative to the actual current
+    // sub-agent below, matching the codebase's own documented caveat that api.context is the
+    // weakest/last-resort identity source.
+    api.context.agentId = "main";
+    const pluginApi = buildPluginApiForRegisterHooks(tmpDir, factsDb);
+    // Simulate a non-orchestrator sub-agent actually running — resolveRecallScopeFilter should
+    // scope to THIS agent, not to api.context's stale "main".
+    (pluginApi.currentAgentIdRef as { value: string | null }).value = "sub-agent-x";
+    const getHotFactsSpy = vi.spyOn(factsDb, "getHotFacts");
+    registerLifecycleHooks(pluginApi as never, api as never);
+    const handler = captureHookHandler(api, "before_compaction");
+
+    await handler?.({ messageCount: 10, tokenCount: 5000 }, {});
+
+    expect(getHotFactsSpy).toHaveBeenCalledWith(
+      4000,
+      expect.objectContaining({ agentId: "sub-agent-x" }),
+    );
+    // Must not use api.context's stale agentId ("main") for the filter.
+    expect(getHotFactsSpy.mock.calls[0]?.[1]).not.toMatchObject({ agentId: "main" });
+  });
+
   it("after_compaction returns undefined in silent verbosity without injecting", async () => {
     const api = makeHooksApi();
     const pluginApi = buildPluginApiForRegisterHooks(tmpDir, factsDb, { verbosity: "silent" });
