@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.122] - 2026-07-07
+
+### Fixed
+
+Loop iteration 58 of the full-codebase review loop — fixes the `memory_provenance` event_log leak flagged during iteration 34's sweep.
+
+- **`memory_provenance`'s `buildDerivedFrom` could hand back another tenant's raw conversation text through a shared "global"-scope fact's provenance chain.** The `event_log` table has no scope/tenant column at all (only `session_id`), so unlike the FACT-to-FACT `DERIVED_FROM`/`CONSOLIDATED_FROM` edges in the same function — which are explicitly gated with `factsDb.getById(edge.sourceId, { scopeFilter })` before their content is ever traversed or revealed (per the existing "SECURITY: gate recursion on the source fact resolving in-scope" comments) — the `event_log`-sourced branch called `eventLog.getById(edge.sourceId)` and returned its live, potentially richer extracted text completely unconditionally. A fact promoted to `scope: "global"` is, by design, visible to every tenant in a multi-agent deployment, but the raw session event that produced it can still belong to one specific tenant's private conversation and may contain far more detail than what was distilled into the shared fact's own text. Any tenant able to see that global fact (which is exactly the point of `scope: "global"`) could call `memory_provenance` on it and recover the originating tenant's raw conversation snippet via `derivedFrom[].event_text`, bypassing scope entirely. Fixed by only performing the live `eventLog.getById()` lookup when either no multi-tenant scope restriction is active for this call (mirrors the same `!filter || (!filter.userId && !filter.agentId && !filter.sessionId)` "unrestricted" check already used in `scope-sql.ts`), or the fact this edge is attached to already resolved via a non-global, caller-identity-matched scope (i.e. it's confirmed to be this same tenant's own data). Otherwise the code now falls back to the edge's own stored `sourceText` snapshot — never any more revealing than the fact's own already-authorized text.
+
+Regression tests added (`tests/provenance-tools.test.ts`): a "global"-scope fact viewed by a different tenant (`currentAgentIdRef: "tenantB"`) gets the safe `sourceText` snapshot, not the richer live event content; the same setup with no multi-tenant scoping active (`currentAgentIdRef: null`, matching the existing single-tenant test) still gets the live event text; and a tenant viewing their own non-global-scoped fact still gets the live event text for their own data. Verified via `git stash` to fail without the fix (the cross-tenant test's live event text, containing an internal-only detail, leaked through) and pass with it — the other two new tests, and all pre-existing tests in the file, passed on both sides of the stash, confirming no regression to legitimate single-tenant or same-tenant provenance tracing. tsc clean; biome clean (zero new findings). Related suites (provenance-tools, graph-tools-scope-security, verification-tools-scope-security, issue-tools-scope-security): 16 passed, no regressions.
+
+---
+
 ## [2026.7.121] - 2026-07-07
 
 ### Fixed
@@ -316,7 +328,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 ### Deferred (confirmed findings from iteration 34's sweep, not yet fixed — grouped by rough severity)
 
 **Security/cross-tenant:**
-- `tools/provenance-tools.ts`'s `buildDerivedFrom` returns `event_log`-sourced text with no scope filter (event_log has no tenant column), inconsistent with the scoped `fact_chain`/`consolidationChain` handling in the same function.
 - `tools/memory/register-recall-tools.ts`: keyword recall applies the FTS row-limit before per-hit scope filtering, silently under-returning results in scoped multi-tenant deployments; graph expansion ignores per-result vault during multi-vault fan-out.
 
 **Data loss / correctness:**

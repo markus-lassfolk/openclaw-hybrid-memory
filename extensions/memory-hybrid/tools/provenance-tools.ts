@@ -61,13 +61,25 @@ function buildDerivedFrom(
   depth: number,
   maxDepth: number,
   scopeFilter: ScopeFilter | undefined,
+  factScope: string | undefined,
 ): DerivedFromEntry[] {
+  // event_log has no scope/tenant column at all, so its rows can never be scope-filtered the way
+  // facts.getById() filters fact-to-fact edges below. A "global" fact is visible to every tenant
+  // by design, but that doesn't make the raw conversation event that produced it safe to hand back
+  // to an arbitrary viewer -- unlike a narrowly-scoped fact (whose scope_target already had to
+  // match this caller's own identity to be reachable at all), a global fact's source event may
+  // belong to a completely different tenant's session. Only do the live lookup when either no
+  // multi-tenant scope restriction is active for this call, or the fact this edge is attached to
+  // already resolved via a non-global (caller-identity-matched) scope. Otherwise fall back to the
+  // edge's own stored sourceText snapshot, which is never more revealing than the fact itself.
+  const scopeIsRestrictive = Boolean(scopeFilter && (scopeFilter.userId || scopeFilter.agentId || scopeFilter.sessionId));
+  const canRevealLiveEvent = !scopeIsRestrictive || factScope !== "global";
   return edges
     .filter((e) => e.edgeType === "DERIVED_FROM")
     .map((edge) => {
       let eventText = edge.sourceText ?? "";
       let timestamp = edge.createdAt;
-      if (edge.sourceType === "event_log" && eventLog) {
+      if (edge.sourceType === "event_log" && eventLog && canRevealLiveEvent) {
         const event = eventLog.getById(edge.sourceId);
         if (event) {
           const extracted = extractEventText(event);
@@ -184,6 +196,7 @@ function buildProvenanceChain(
       depth,
       maxDepth,
       scopeFilter,
+      factEntry?.scope,
     ),
     consolidationChain,
   };
