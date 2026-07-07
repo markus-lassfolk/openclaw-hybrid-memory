@@ -11,7 +11,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { MemoryEntry } from "../types/memory.js";
+import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -44,6 +44,11 @@ export interface ClusterDetectionOptions {
    * Enables stable cluster IDs and createdAt timestamps across incremental re-runs.
    */
   existingClusterIds?: Map<string, { id: string; createdAt: number }>;
+  /**
+   * Restricts cluster detection to facts visible under this scope (global + the caller's own
+   * tenant). Omitting it preserves the historical unscoped behavior.
+   */
+  scopeFilter?: ScopeFilter | null;
 }
 
 /** Result of a cluster detection run. */
@@ -71,8 +76,8 @@ export interface ClusterFactLookup {
    * Used for building the adjacency map in one efficient DB query.
    */
   getAllLinks(): Array<{ sourceFactId: string; targetFactId: string }>;
-  /** Get a fact entry by ID. Returns null when not found or expired. */
-  getById(id: string): MemoryEntry | null;
+  /** Get a fact entry by ID. Returns null when not found, expired, or outside scopeFilter. */
+  getById(id: string, options?: { scopeFilter?: ScopeFilter | null }): MemoryEntry | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -219,18 +224,31 @@ export function detectClusters(
   factsDb: ClusterFactLookup,
   options: ClusterDetectionOptions = {},
 ): ClusterDetectionResult {
-  const { minClusterSize = 3, existingClusterIds } = options;
+  const { minClusterSize = 3, existingClusterIds, scopeFilter } = options;
   const minSize = Number.isFinite(minClusterSize) ? Math.max(1, Math.floor(minClusterSize)) : 3;
 
-  const linkedFactIds = factsDb.getAllLinkedFactIds();
+  // Scope-check every linked fact up front (before it can enter the adjacency graph or any
+  // cluster) so a tenant running detection never has another tenant's fact IDs/content surface
+  // in its clusters, and cache the resolved entries for reuse in label generation below.
+  const allLinkedFactIds = factsDb.getAllLinkedFactIds();
+  const scopedEntries = new Map<string, MemoryEntry>();
+  for (const id of allLinkedFactIds) {
+    const entry = factsDb.getById(id, { scopeFilter });
+    if (entry) scopedEntries.set(id, entry);
+  }
+  const linkedFactIds = [...scopedEntries.keys()];
   const totalLinkedFacts = linkedFactIds.length;
 
   if (totalLinkedFacts === 0) {
     return { clusters: [], isolatedFacts: 0, totalLinkedFacts: 0 };
   }
 
-  // Build adjacency from all links at once (efficient: single DB query)
-  const allEdges = factsDb.getAllLinks();
+  // Build adjacency from all links at once (efficient: single DB query), dropping any edge that
+  // touches a fact outside the caller's scope.
+  const allowedIds = new Set(linkedFactIds);
+  const allEdges = factsDb
+    .getAllLinks()
+    .filter((e) => allowedIds.has(e.sourceFactId) && allowedIds.has(e.targetFactId));
   const adj = buildAdjacency(linkedFactIds, allEdges);
 
   // BFS connected-component analysis
@@ -259,10 +277,10 @@ export function detectClusters(
     const clusterId = existing?.id ?? randomUUID();
     const createdAt = existing?.createdAt ?? now;
 
-    // Load entries for label generation (skips missing/expired facts)
+    // Reuse the already scope-checked entries fetched above for label generation.
     const entries: MemoryEntry[] = [];
     for (const id of sortedIds) {
-      const entry = factsDb.getById(id);
+      const entry = scopedEntries.get(id);
       if (entry) entries.push(entry);
     }
 

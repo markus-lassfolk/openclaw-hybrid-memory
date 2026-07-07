@@ -14,6 +14,7 @@ import { analyzeKnowledgeGaps } from "../services/knowledge-gaps.js";
 import type { ProvenanceService } from "../services/provenance.js";
 import { detectClusters } from "../services/topic-clusters.js";
 import { deleteVectorsForFactIds } from "../services/vector-maintenance.js";
+import type { BuildToolScopeFilterFn } from "../api/memory-plugin-api.js";
 
 export interface PluginContext {
   factsDb: FactsDB;
@@ -24,6 +25,8 @@ export interface PluginContext {
   wal: WriteAheadLog | null;
   resolvedSqlitePath: string;
   provenanceService?: ProvenanceService | null;
+  currentAgentIdRef: { value: string | null };
+  buildToolScopeFilter: BuildToolScopeFilterFn;
 }
 
 // Helper function types (exported for register-tools ToolsContext)
@@ -67,7 +70,8 @@ export function registerUtilityTools(
   _walWrite: (operation: "store" | "update", data: Record<string, unknown>) => Promise<string | null>,
   _walRemove: (id: string) => Promise<void>,
 ): void {
-  const { factsDb, vectorDb, embeddings, openai, cfg, provenanceService } = ctx;
+  const { factsDb, vectorDb, embeddings, openai, cfg, provenanceService, currentAgentIdRef, buildToolScopeFilter } =
+    ctx;
 
   // memory_checkpoint
   api.registerTool(
@@ -425,6 +429,7 @@ export function registerUtilityTools(
             : clustersCfg.minClusterSize;
 
         const shouldSave = params.save !== false;
+        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
 
         try {
           // Build existingClusterIds map for stable IDs across re-runs
@@ -436,7 +441,13 @@ export function registerUtilityTools(
             existingClusterIds.set(componentKey, { id: cluster.id, createdAt: cluster.createdAt });
           }
 
-          const result = detectClusters(factsDb, { minClusterSize, existingClusterIds });
+          // scopeFilter restricts which facts can enter the returned clusters (fact IDs/content
+          // outside the caller's own scope are excluded before any cluster is built), closing the
+          // cross-tenant disclosure this tool previously had no scope-awareness of at all. The
+          // underlying clusters/cluster_members tables themselves still have no scope column
+          // (a separate, larger schema change — see CHANGELOG), so shared cluster *storage*
+          // across tenants is unaffected by this fix; only what a single call can observe/leak is.
+          const result = detectClusters(factsDb, { minClusterSize, existingClusterIds, scopeFilter });
 
           if (shouldSave) {
             factsDb.saveClusters(result.clusters);

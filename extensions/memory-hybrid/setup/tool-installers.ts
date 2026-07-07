@@ -172,9 +172,31 @@ function installGraphTools(
 }
 
 function selectUtilityToolsContext(ctx: ToolsContext, api: ClawdbotPluginApi): UtilityInstallerContext {
-  const { factsDb, vectorDb, embeddings, openai, cfg, wal, resolvedSqlitePath, provenanceService } = ctx;
+  const {
+    factsDb,
+    vectorDb,
+    embeddings,
+    openai,
+    cfg,
+    wal,
+    resolvedSqlitePath,
+    provenanceService,
+    currentAgentIdRef,
+    buildToolScopeFilter,
+  } = ctx;
   return {
-    toolContext: { factsDb, vectorDb, embeddings, openai, cfg, wal, resolvedSqlitePath, provenanceService },
+    toolContext: {
+      factsDb,
+      vectorDb,
+      embeddings,
+      openai,
+      cfg,
+      wal,
+      resolvedSqlitePath,
+      provenanceService,
+      currentAgentIdRef,
+      buildToolScopeFilter,
+    },
     runReflection: ctx.runReflection,
     runReflectionRules: ctx.runReflectionRules,
     runReflectionMeta: ctx.runReflectionMeta,
