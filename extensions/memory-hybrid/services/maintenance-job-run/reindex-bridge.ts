@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
-import type { OffsetCheckpointState } from "./types.js";
-import { createOffsetCheckpointStore } from "./offset-checkpoint.js";
-import type { MaintenanceJobRun } from "./job-run.js";
 import type { ReindexCheckpoint } from "../../cli/commands/manage/storage-stats-helpers.js";
+import type { MaintenanceJobRun } from "./job-run.js";
+import { createOffsetCheckpointStore } from "./offset-checkpoint.js";
+import type { OffsetCheckpointState } from "./types.js";
 
 export function importLegacyReindexCheckpoint(
   jobRun: MaintenanceJobRun,
@@ -36,18 +36,20 @@ export function offsetCheckpointToReindex(state: OffsetCheckpointState): Reindex
   };
 }
 
-export function createReindexJobRunCheckpointAdapter(
-  jobRun: MaintenanceJobRun,
-  legacyPath?: string,
-): {
+/**
+ * `legacyPath` is intentionally NOT auto-imported here (see #reindex-bridge deferred note): the
+ * sole caller (`storage re-index`) already reads and validates that same legacy file itself
+ * (total match, `--resume` gating, offset-vs-fresh-shadow-table safety) via its own
+ * `resumeCheckpoint` fallback in `checkpoint.load()`. Auto-importing it into this job-run's own
+ * checkpoint store unconditionally would silently overwrite a fresh/native checkpoint with a
+ * stale, unvalidated one and short-circuit that caller-side validation entirely.
+ */
+export function createReindexJobRunCheckpointAdapter(jobRun: MaintenanceJobRun): {
   load: () => { offset: number } | null;
   save: (state: { offset: number; total: number; migrated: number; skipped: number; ts: number }) => void;
   clear: () => void;
 } {
   const store = createOffsetCheckpointStore(jobRun.checkpointPath);
-  if (legacyPath) {
-    importLegacyReindexCheckpoint(jobRun, legacyPath);
-  }
   return {
     load: () => {
       const state = store.load();

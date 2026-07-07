@@ -1333,10 +1333,7 @@ function registerManageStorageMaintenanceOnParent(
                 resumeCommand: "openclaw hybrid-mem storage re-index --resume",
               });
               jobRun.startPhase("embed");
-              const jobRunCheckpoint = createReindexJobRunCheckpointAdapter(
-                jobRun,
-                checkpointPath.length > 0 ? checkpointPath : undefined,
-              );
+              const jobRunCheckpoint = createReindexJobRunCheckpointAdapter(jobRun);
               const finishReindexJobRun = (outcome: "success" | "partial" | "failed", clear: boolean) => {
                 jobRun.endPhase("embed", outcome === "success" ? "completed" : "failed");
                 finishBatchJobRun(jobRun, outcome, { clearCheckpoint: clear });
