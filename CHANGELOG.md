@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.110] - 2026-07-06
+
+### Fixed
+
+Loop iteration 46 of the full-codebase review loop — fixes a lost-pattern bug on an interrupted maintenance run, flagged during iteration 34's sweep.
+
+- **`runReflection` recorded its input as "processed" even when a maintenance-run deadline cut the pattern-storage loop short, permanently losing any patterns extracted but never stored.** After the LLM extracts candidate patterns, `reflect()` embeds/dedupes/stores each one in a loop that checks `maintenanceRunDeadlineReached()` per iteration and `break`s if the run is out of budget. Regardless of whether the loop finished all candidates or broke early, the function unconditionally wrote `reflection_input_hash` afterward (gated only on `!opts.dryRun`) — so on the next run, an identical set of recent facts would hash to the same value, hit the "input unchanged, skip LLM call" fast path, and the deadline-interrupted candidates would never be re-extracted or stored. Fixed by tracking whether the loop broke early (`deadlineReached`) and skipping the hash write in that case, so the next run re-extracts from scratch instead of silently treating a partial run as complete.
+
+Regression test added (`tests/reflection.test.ts`, extending the existing "runReflection maintenance run deadline (#75)" suite): forces the deadline to cross during the top-level LLM call (same fixture as the existing deadline test) and asserts `setMaintenanceState` is never called with `"reflection_input_hash"`. Verified via `git stash` to fail without the fix (hash was written despite the interrupted loop) and pass with it. tsc clean; biome clean (zero net-new — no pre-existing findings in either file). Related suites (reflection, reflection-throttle-429, dream-cycle): 133 passed, 1 skipped, no regressions.
+
+---
+
 ## [2026.7.109] - 2026-07-06
 
 ### Fixed
@@ -129,7 +141,6 @@ Regression test added (`tests/pending-autopilot-redaction.test.ts`, 4 cases): a 
 
 ### Deferred (remaining confirmed findings from iteration 34's sweep, not yet fixed)
 
-- `services/reflection.ts` writes its `reflection_input_hash` unconditionally after the storage loop even when a maintenance-run deadline broke the loop early — patterns extracted but never stored are permanently lost, since the next run's identical-input hash match skips re-extraction.
 - `services/reinforcement-batch-analyze.ts` increments `diagnostics.parseFailures` before attempting JSON repair and never reverts it on successful repair (sibling `self-correction-batch-analyze.ts` does this correctly), inflating operator diagnostics and an A/B benchmark penalty for batches that ultimately parsed fine.
 - `services/unified-proposals.ts`'s `countPendingUnifiedProposals` filters out `procedure-skill` proposals only after `listUnifiedProposals` has already sorted-and-truncated to the default top-100, so a burst of recent procedure-skill candidates can push real pending persona/tool/crystallization proposals out of the count window and let `enforceMaxPendingCap` admit more than configured.
 
