@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.107] - 2026-07-06
+
+### Fixed
+
+Loop iteration 43 of the full-codebase review loop — fixes a shutdown-safety gap flagged during iteration 34's sweep.
+
+- **`WorkboardRpcClient.isAvailable()` fired a live network/process call during plugin shutdown instead of honoring `shouldAbort`.** Every RPC method (`listCards`, `createCard`, etc.) routes through `rpc()`/`runWorkboardGatewayCliCall()`, both of which check `workboardRpcSkipped(method, shouldAbort)` before doing any I/O — but `isAvailable()` on both the HTTP client and the CLI-fallback client skipped that check entirely, so a caller probing availability during plugin shutdown (including `createWorkboardRpcClient`'s own `resolveClient()`, which calls `isAvailable()` before every method to pick a transport) would still issue a real `fetch` or spawn a real `openclaw gateway call` process. The CLI client's `isAvailable()` also never passed its `shouldAbort` through to `runWorkboardGatewayCliCall` at all, so even a caller checking the option elsewhere had no way to short-circuit this specific call. Fixed by adding the same `workboardRpcSkipped("workboard.isAvailable", options?.shouldAbort)` guard used everywhere else in the file to both implementations, returning `false` immediately instead of probing.
+
+Regression tests added (`tests/workboard-rpc-client.test.ts`, 2 new): one per client (HTTP, CLI), each constructing the client with `shouldAbort: () => true` and asserting `isAvailable()` resolves to `false` without calling `fetch`/`spawn`. Verified via `git stash` to fail without the fix (both probes fired) and pass with it. tsc clean; biome clean (zero net-new against baseline — the file's two pre-existing import-order/formatter findings predate this change, confirmed via `git stash`). Related suites (workboard-rpc-client, workboard-facts-sync): 11 passed, no regressions.
+
+---
+
 ## [2026.7.106] - 2026-07-06
 
 ### Fixed
@@ -96,7 +108,6 @@ Regression test added (`tests/pending-autopilot-redaction.test.ts`, 4 cases): a 
 - `services/reflection.ts` writes its `reflection_input_hash` unconditionally after the storage loop even when a maintenance-run deadline broke the loop early — patterns extracted but never stored are permanently lost, since the next run's identical-input hash match skips re-extraction.
 - `services/reinforcement-batch-analyze.ts` increments `diagnostics.parseFailures` before attempting JSON repair and never reverts it on successful repair (sibling `self-correction-batch-analyze.ts` does this correctly), inflating operator diagnostics and an A/B benchmark penalty for batches that ultimately parsed fine.
 - `services/unified-proposals.ts`'s `countPendingUnifiedProposals` filters out `procedure-skill` proposals only after `listUnifiedProposals` has already sorted-and-truncated to the default top-100, so a burst of recent procedure-skill candidates can push real pending persona/tool/crystallization proposals out of the count window and let `enforceMaxPendingCap` admit more than configured.
-- `services/workboard-rpc-client.ts`'s HTTP/CLI `isAvailable()` omits the `shouldAbort`/`workboardRpcSkipped` check every sibling method honors, so it can still fire a live network/process call during plugin shutdown.
 - `services/crystallization-proposer.ts`'s `restoreProposal` rollback path can delete the just-restored skill directory (`removeCrystallizedSkillDir`) if the DB status flip and the rollback rename-back both fail, destroying the only surviving copy instead of leaving it for reconciliation.
 - `services/issue-retrieval.ts` + `backends/issue-store.ts`'s `IssueStore.list()` applies `ORDER BY created_at DESC LIMIT ?` before severity is considered, so older critical issues can be excluded entirely from an "always-surface-critical" baseline when enough newer high-severity issues exist.
 

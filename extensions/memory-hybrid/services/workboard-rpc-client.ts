@@ -275,6 +275,7 @@ export function createWorkboardHttpRpcClient(
     },
 
     async isAvailable() {
+      if (workboardRpcSkipped("workboard.isAvailable", options?.shouldAbort)) return false;
       try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 5000);
@@ -431,7 +432,8 @@ export function createWorkboardGatewayCliRpcClient(
     },
 
     async isAvailable() {
-      return (await runWorkboardGatewayCliCall("workboard.cards.list", {}, token)) != null;
+      if (workboardRpcSkipped("workboard.isAvailable", options?.shouldAbort)) return false;
+      return (await runWorkboardGatewayCliCall("workboard.cards.list", {}, token, options?.shouldAbort)) != null;
     },
   };
 }

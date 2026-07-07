@@ -152,4 +152,17 @@ describe("workboard-rpc-client (#1925)", () => {
       vi.useRealTimers();
     }
   });
+
+  it("createWorkboardHttpRpcClient.isAvailable() skips its network probe when shouldAbort() is true (shutdown)", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const client = createWorkboardHttpRpcClient("http://127.0.0.1:18789", undefined, { shouldAbort: () => true });
+    expect(await client.isAvailable()).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("createWorkboardGatewayCliRpcClient.isAvailable() skips its process spawn when shouldAbort() is true (shutdown)", async () => {
+    const client = createWorkboardGatewayCliRpcClient(undefined, { shouldAbort: () => true });
+    expect(await client.isAvailable()).toBe(false);
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
 });
