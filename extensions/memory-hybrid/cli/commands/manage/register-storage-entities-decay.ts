@@ -13,7 +13,11 @@ import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
 import { registerEntityLifecycleCommands } from "./register-lifecycle.js";
-import { buildHybridSearchScopeFilter, entryMatchesHybridSearchFilters } from "./storage-stats-helpers.js";
+import {
+  buildHybridSearchScopeFilter,
+  entryMatchesHybridSearchFilters,
+  resolveEntityCleanStopWords,
+} from "./storage-stats-helpers.js";
 
 export function registerManageStorageEntitiesDecay(mem: Chainable, b: ManageBindings): void {
   const {
@@ -52,7 +56,7 @@ export function registerManageStorageEntitiesDecay(mem: Chainable, b: ManageBind
           process.exitCode = 1;
           return;
         }
-        const stopWords = opts?.stopwords === false ? [] : ctx.cfg.entityExtraction.stopWords;
+        const stopWords = resolveEntityCleanStopWords(opts?.stopwords, ctx.cfg.entityExtraction.stopWords);
         const report = factsDb.cleanEntityStopwords({
           apply: opts?.apply === true,
           stopWords,

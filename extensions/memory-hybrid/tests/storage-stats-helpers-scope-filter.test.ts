@@ -10,7 +10,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
-import { buildHybridSearchScopeFilter } from "../cli/commands/manage/storage-stats-helpers.js";
+import {
+  buildHybridSearchScopeFilter,
+  resolveEntityCleanStopWords,
+} from "../cli/commands/manage/storage-stats-helpers.js";
 
 describe("buildHybridSearchScopeFilter (loop iteration 95 regression)", () => {
   it("returns undefined when no --scope is given", () => {
@@ -76,5 +79,54 @@ describe("hybrid-mem search --scope global (loop iteration 95 regression, end-to
 
     expect(results.length).toBeGreaterThan(0);
     expect(results.every((r) => r.entry.text.startsWith("Global"))).toBe(true);
+  });
+});
+
+describe("resolveEntityCleanStopWords (loop iteration 97 regression)", () => {
+  const configured = ["it", "this", "that"];
+
+  it("uses the configured stop-word list only when --stopwords is explicitly passed", () => {
+    expect(resolveEntityCleanStopWords(true, configured)).toEqual(configured);
+  });
+
+  it("uses an empty list when --stopwords is absent (Commander boolean flags are never `false`)", () => {
+    expect(resolveEntityCleanStopWords(undefined, configured)).toEqual([]);
+  });
+});
+
+describe("hybrid-mem entities clean --stopwords (loop iteration 97 regression, end-to-end)", () => {
+  let tmpDir: string;
+  let factsDb: FactsDB;
+  const configured = ["it", "this", "that"];
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "entities-clean-stopwords-"));
+    factsDb = new FactsDB(join(tmpDir, "facts.db"));
+    factsDb.store({
+      text: "Fact about the entity 'it'",
+      category: "fact",
+      importance: 0.5,
+      entity: "it",
+      key: null,
+      value: null,
+      source: "test",
+    });
+  });
+
+  afterEach(() => {
+    factsDb.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("matches nothing when --stopwords is omitted (the flag's own promised opt-in behavior)", () => {
+    const stopWords = resolveEntityCleanStopWords(undefined, configured);
+    const report = factsDb.cleanEntityStopwords({ apply: false, stopWords });
+    expect(report.matched).toBe(0);
+  });
+
+  it("matches the stopword entity when --stopwords is passed", () => {
+    const stopWords = resolveEntityCleanStopWords(true, configured);
+    const report = factsDb.cleanEntityStopwords({ apply: false, stopWords });
+    expect(report.matched).toBe(1);
   });
 });

@@ -360,6 +360,20 @@ export function buildHybridSearchScopeFilter(scope?: string, scopeTarget?: strin
   return filter;
 }
 
+/**
+ * Resolve the stop-word list for `hybrid-mem entities clean --stopwords`.
+ *
+ * `--stopwords` is a plain (non-negated) boolean Commander option, so `stopwordsFlag` is only
+ * ever `true` (flag passed) or `undefined` (flag absent) — it can never be `false`. Gate on
+ * truthiness rather than `=== false`, which would always be false and make the flag inert.
+ */
+export function resolveEntityCleanStopWords(
+  stopwordsFlag: boolean | undefined,
+  configuredStopWords: readonly string[],
+): readonly string[] {
+  return stopwordsFlag === true ? configuredStopWords : [];
+}
+
 /** Apply optional CLI filters to merged hybrid search results (category/entity/key/source/tier). */
 export function entryMatchesHybridSearchFilters(
   entry: MemoryEntry,
