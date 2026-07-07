@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.127] - 2026-07-07
+
+### Fixed
+
+Loop iteration 63 of the full-codebase review loop — fixes the `extractItemArray` first-match-only bug flagged during iteration 34's sweep.
+
+- **`utils/llm-json-array.ts`'s `extractItemArray` silently dropped items from every array element after the first one that needed nested envelope unwrapping.** When a parsed JSON array's elements don't all individually pass validation and aren't all JSON-encoded strings (the two cases already handled earlier in the function), it falls to a loop that recursively unwraps each element — but the loop `return`ed on the *first* element that successfully extracted anything, discarding whatever the remaining elements would have extracted. A batch LLM response shaped like `[{items:[A,B]}, {items:[C,D]}]` — one envelope per input chunk rather than a single flat array or envelope — would silently lose `C` and `D`. This function backs `parseStructuredItems`/`parseStructuredItemsAcceptingEmpty`, used by every structured-output parser in the codebase (self-correction, reinforcement analysis, feedback classification, proposal generation), so any of those could under-report results whenever a model split its output into multiple per-chunk envelopes instead of one combined one. Fixed by merging across every element instead of returning on the first, mirroring the array-of-JSON-strings case just above it in the same function (which already merges correctly).
+
+Regression tests added (`tests/llm-json-array.test.ts`, new `extractItemArray` describe block): a multi-element array of `{items:[...]}` envelopes must return the union of all their items, not just the first envelope's; a mixed array of directly-valid items and envelope-wrapped items must also merge correctly. Verified via `git stash` to fail without the fix (both cases silently truncated to the first element's contribution) and pass with it. tsc clean; biome clean (zero new findings). Related suites (llm-json-array, feedback-signal-classifier, reinforcement-batch-analyze, self-correction-llm-parser, reflection, cmd-extract-reinforcement-batch, generate-proposals-scope-filter, generate-proposals-cli-status): 121 passed, no regressions.
+
+---
+
 ## [2026.7.126] - 2026-07-07
 
 ### Fixed
@@ -378,7 +390,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 **Data loss / correctness:**
 - Lost-update race between the heartbeat/cron `reconcileActiveTaskInProgressSessions` and `active_task_checkpoint` on `ACTIVE-TASKS.md` (plain read-then-write, no optimistic-concurrency check unlike sibling writers).
 - `tools/memory/register-store-tools.ts`'s active-task-ledger mirror (`syncProjectStoreToActiveTaskLedger`) and `build-runtime.ts`'s `maybeRefreshProjectActiveTaskProjection` are closed over the default vault only, so a vault-scoped `memory_store` call's project-task mirror writes land in the wrong vault's ledger.
-- `utils/llm-json-array.ts`'s `extractItemArray` returns on the first matching nested envelope in a multi-element array instead of merging across all elements, silently dropping later batch items.
 - `tools/health-dashboard.ts`'s liveness queries use `valid_until` instead of the codebase's standard `superseded_at IS NULL` marker, undercounting facts trimmed/evicted by the token-budget and daily-quota paths as still "active".
 - ~~`lifecycle/stage-cleanup.ts`'s `subagent_spawned` handler only guards against reopening a `"Done"` task, not `"Failed"`~~ — **investigated in loop iteration 41 and NOT a bug**: `subagent_spawned` reopening a `"Failed"` task is deliberate, tested behavior (`stage-cleanup-facts-ledger.test.ts`'s "subagent_spawned reopens Failed tasks when session metadata is present" / "...clears stale handoff when reopening Failed tasks") — a new subagent dispatched against a failed task's label is an explicit retry and is meant to reopen it. Separately, adding `"failed"` to the shared `TERMINAL` set in `services/task-ledger/canonical.ts` breaks `factNewerThan`'s timestamp-tie-break comparator (which prefers "terminal" status on a tie) — it would let a stale `"failed"` fact block a legitimate retry's fresh `"in_progress"` write when both share the same second-granularity `createdAt`, confirmed by 9 existing test failures across `task-ledger-facts.test.ts`/`stage-cleanup-facts-ledger.test.ts` when tried. If the narrower gap (an arbitrary `memory_store` call regressing a `Failed` project-task status via `mirrorMemoryStoreToActiveTaskLedger`'s guard at `task-ledger-facts.ts:136`, which is a *different* write path than `subagent_spawned`'s `syncActiveTaskEntryToFacts`) still needs closing, it must be done as a change local to that one guard, not via the shared `TERMINAL` set.
 - `services/context-engine.ts`'s `prepareSubagentSpawn` calls `buildContextBlock` with no token budget (so every candidate fact is recorded as "injected") and only trims to the real budget afterward — facts trimmed off the end are marked injected anyway and never shown to that sub-agent again in any future turn.
