@@ -71,7 +71,11 @@ export async function runExtractDirectivesForCli(
       boundedPartialRetry: number;
     };
     cursorAdvanced?: boolean;
-    cursorBlockedReason?: "retryable_rejections" | "parser_or_model_failure" | "bounded_partial_retry";
+    cursorBlockedReason?:
+      | "session_read_failure"
+      | "retryable_rejections"
+      | "parser_or_model_failure"
+      | "bounded_partial_retry";
   }
 > {
   const { bypassScanCooldown, bypassWatermark } = resolveScanMaintenanceOverrides(opts);
@@ -362,8 +366,19 @@ export async function runExtractDirectivesForCli(
       directiveDedupeMode = "mixed";
     }
     let cursorAdvanced: boolean | undefined;
-    let cursorBlockedReason: "retryable_rejections" | "parser_or_model_failure" | "bounded_partial_retry" | undefined;
-    if (directiveRejected.parserOrModelFailure > 0) {
+    let cursorBlockedReason:
+      | "session_read_failure"
+      | "retryable_rejections"
+      | "parser_or_model_failure"
+      | "bounded_partial_retry"
+      | undefined;
+    // A session file that failed to read (or whose lines failed to parse) is a different failure
+    // mode than a rejected directive candidate: the file's content was never actually scanned, so
+    // advancing the cursor past it would permanently skip whatever directives it contained.
+    // Mirrors cmd-extract-procedures.ts's `readFailures` gate on cursor advancement.
+    if ((result.failures ?? 0) > 0) {
+      cursorBlockedReason = "session_read_failure";
+    } else if (directiveRejected.parserOrModelFailure > 0) {
       cursorBlockedReason = "parser_or_model_failure";
     } else if (directiveRejected.boundedPartialRetry > 0) {
       cursorBlockedReason = "bounded_partial_retry";
@@ -388,7 +403,7 @@ export async function runExtractDirectivesForCli(
     if (!opts.dryRun && cursorBlockedReason) {
       returnVal.cursorAdvanced = false;
       logger.info?.(
-        `memory-hybrid: extract-directives — cursor blocked (${cursorBlockedReason}); rejected={permanent:${directiveRejected.permanent},retryable:${directiveRejected.retryable},parserOrModelFailure:${directiveRejected.parserOrModelFailure},boundedPartialRetry:${directiveRejected.boundedPartialRetry}}`,
+        `memory-hybrid: extract-directives — cursor blocked (${cursorBlockedReason}); failures=${result.failures ?? 0} rejected={permanent:${directiveRejected.permanent},retryable:${directiveRejected.retryable},parserOrModelFailure:${directiveRejected.parserOrModelFailure},boundedPartialRetry:${directiveRejected.boundedPartialRetry}}`,
       );
     }
     return returnVal;
