@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.144] - 2026-07-07
+
+### Fixed
+
+Loop iteration 80 of the full-codebase review loop — fixes the `fact-mutation-gateway.ts` bullet flagged during iteration 34's sweep.
+
+- **`hybrid-mem.facts.create`'s gateway RPC handler didn't clamp `importance` to `[0,1]`, unlike the sibling `confidence` field in the same handler.** `confidence` is clamped with `Math.max(0, Math.min(1, params.confidence))` before being passed to `factsDb.store()`, but `importance` was passed through as-is. Since `FactsDB.store()` → `storeFact()` calls `validateStoreEntryInput()`, which throws `"importance must be a number in [0, 1]"` for any out-of-range value, an out-of-range `importance` from a Gateway RPC caller (memory-wiki, Workboard, or any other client) turned into a hard RPC failure instead of being silently normalized the way `confidence` already is — an inconsistency between two structurally identical fields in the same handler. Fixed by clamping `importance` the same way `confidence` is clamped.
+
+Regression test added (`tests/fact-mutation-gateway.test.ts`): asserts `hybrid-mem.facts.create` with `importance: 1.5, confidence: -3` calls `factsDb.store()` with both fields clamped to `1` and `0` respectively, and that the RPC still responds `true` (previously it would have thrown before clamping was added). Verified via `git stash` to fail without the fix (`importance: 1.5` passed through unclamped) and pass with it. tsc clean; biome clean (zero new findings). `tests/fact-mutation-gateway.test.ts`: 18 passed, no regressions.
+
+---
+
 ## [2026.7.143] - 2026-07-07
 
 ### Fixed
@@ -585,7 +597,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 - ~~Lost-update race between the heartbeat/cron `reconcileActiveTaskInProgressSessions` and `active_task_checkpoint` on `ACTIVE-TASKS.md` (plain read-then-write, no optimistic-concurrency check unlike sibling writers).~~ — **fully fixed**: `reconcileActiveTaskInProgressSessions`'s half in loop iteration 66, `syncMarkdownLedgerFromCheckpoint`'s half in loop iteration 67 (see below).
 - ~~`lifecycle/stage-cleanup.ts`'s `subagent_spawned` handler only guards against reopening a `"Done"` task, not `"Failed"`~~ — **investigated in loop iteration 41 and NOT a bug**: `subagent_spawned` reopening a `"Failed"` task is deliberate, tested behavior (`stage-cleanup-facts-ledger.test.ts`'s "subagent_spawned reopens Failed tasks when session metadata is present" / "...clears stale handoff when reopening Failed tasks") — a new subagent dispatched against a failed task's label is an explicit retry and is meant to reopen it. Separately, adding `"failed"` to the shared `TERMINAL` set in `services/task-ledger/canonical.ts` breaks `factNewerThan`'s timestamp-tie-break comparator (which prefers "terminal" status on a tie) — it would let a stale `"failed"` fact block a legitimate retry's fresh `"in_progress"` write when both share the same second-granularity `createdAt`, confirmed by 9 existing test failures across `task-ledger-facts.test.ts`/`stage-cleanup-facts-ledger.test.ts` when tried. If the narrower gap (an arbitrary `memory_store` call regressing a `Failed` project-task status via `mirrorMemoryStoreToActiveTaskLedger`'s guard at `task-ledger-facts.ts:136`, which is a *different* write path than `subagent_spawned`'s `syncActiveTaskEntryToFacts`) still needs closing, it must be done as a change local to that one guard, not via the shared `TERMINAL` set.
 **Lower-severity / cosmetic:**
-- `services/fact-mutation-gateway.ts`'s `hybrid-mem.facts.create` doesn't clamp `importance` to `[0,1]` unlike the sibling `confidence` field in the same handler.
 - `tools/goal-tools.ts`'s `goal_register` has a TOCTOU race on `maxActiveGoals` (no lock around the cap re-check, distinct from the four already-fixed terminal-status races).
 - `utils/llm-selection.ts` mislabels a configured `fallbackModel` as `"built-in"` in diagnostic source attribution (display-only, doesn't affect which model is used).
 
