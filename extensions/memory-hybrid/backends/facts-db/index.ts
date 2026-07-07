@@ -27,7 +27,6 @@ export {
 export { rowToMemoryEntry } from "./row-mapper.js";
 export {
   deleteFact,
-  getDuplicateIdByNormalizedHash,
   hasDuplicateText,
   refreshAccessedFacts,
   storeFact,

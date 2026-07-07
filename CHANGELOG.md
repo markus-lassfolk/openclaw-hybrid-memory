@@ -23,6 +23,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.163] - 2026-07-07
+
+### Fixed
+
+Loop iteration 99 of the fresh full-codebase sweep — fixes the top item from the "Deferred (fresh sweep, loop iterations 87-98)" backlog: `getDuplicateIdByNormalizedHash`'s scope-blindness, resolved by removing the dead code entirely.
+
+- **`backends/facts-db/procedures/crud.ts`'s (actually `backends/facts-db/crud.ts`'s) `getDuplicateIdByNormalizedHash(db, text)` ran an unscoped SQL lookup, unlike its scoped sibling hash lookups in `services/dedupe-policy.ts`.** Traced every call site across the codebase: the only references were its own `FactsDB` public-method wrapper (`facts-db-layer1.ts`) and the barrel re-export (`backends/facts-db/index.ts`) — zero internal callers anywhere, and `FactsDB` isn't re-exported from the plugin's top-level entrypoint either, so it isn't part of the package's external public API surface. Rather than adding a scope filter to code nothing calls (extra surface area with no behavior to verify), removed the function, its `FactsDB.getDuplicateIdByNormalizedHash` wrapper method, and both barrel re-exports entirely — closing the scope-blindness concern by eliminating the unscoped code path rather than just guarding it.
+
+Regression test added (new `tests/facts-db-dead-code-removed.test.ts`): asserts `FactsDB` instances no longer expose a `getDuplicateIdByNormalizedHash` method. Verified via `git stash` to fail without the fix — the method still existed and the test's `toBeUndefined()` assertion failed with the actual function reference. tsc clean; biome clean (zero new findings across all three changed files, verified against each file's pre-existing baseline). Related suites (facts-db-dead-code-removed, facts-db): 199 passed, no regressions.
+
+**Full-suite checkpoint (10th-iteration cadence, kicked off in the background at the start of iteration 98) completed cleanly**: 8925 passed, 23 skipped, only the same 3 known pre-existing failures (`crystallization-proposer`, `implicit-feedback-routing`, `memory-recall-timeline`) — zero new regressions across the full run of fixes from iterations 90-98. Next full-suite checkpoint due at iteration 108.
+
+### Deferred (fresh sweep, loop iterations 87-99 — not yet fixed, ranked by severity)
+
+- (Low severity) `utils/auth-failover.ts`'s `recordOAuthFailure`/`resetAllBackoff` do an unlocked read-modify-write on a JSON state file — a lost update across concurrent processes only under-applies backoff occasionally, not a security/correctness issue.
+- (Low severity, dev tooling only) `benchmark/offline-qa/verify-fixtures.ts`'s `daily-logs-memory-dir` fixture check is missing an `existsSync` guard a sibling check (`dailyInMemory`) has, so running `offline-qa:verify --sandbox` before the sandbox is populated crashes with `ENOENT` instead of reporting the fixture as missing. `benchmark/offline-qa/run-maintenance-qa.ts`'s spawned-subprocess handling has no `'error'` listener, only `'close'`.
+- `services/pending-autopilot/redaction.ts`'s free-text secret regex (line 9) relies on `\b` word-boundary matching around bare keywords (`password`, `secret`, `token`, `api[_-]?key`, etc.), so it redacts `token:`/`apiKey:` but misses the exact same keywords as the suffix of a compound identifier with no separator or a camelCase/underscore join — `sessionToken:`, `authToken:`, `auth_token:`, `clientSecret:`, `refreshToken:` all pass through `redactAutopilotText` unredacted and land verbatim in the persisted `pending_autopilot_decisions` audit trail (evidence/summary text). The structured object-key redaction a few lines below (`CREDENTIAL_KEY_NORMALIZED`) already treats these exact compound forms as sensitive, so the free-text regex just never got the equivalent treatment.
+
+---
+
 ## [2026.7.162] - 2026-07-07
 
 ### Fixed
@@ -33,14 +53,7 @@ Loop iteration 98 of the fresh full-codebase sweep — fixes the top item from t
 
 Regression tests added (new `tests/batch-job-run-bridge-checkpoint-default.test.ts`): seeds a `MaintenanceJobRun`'s own checkpoint store with valid progress, then asserts `finishBatchJobRun(jobRun, "monitoring")` and `finishBatchJobRun(jobRun, "success_with_review")` (both called with no `clearCheckpoint` option) *preserve* the checkpoint file; confirms `"success"` still clears and `"partial"` still preserves (no regression for the six already-agreeing outcomes); confirms an explicit `clearCheckpoint: true` still overrides both defaults. Verified via `git stash` to fail without the fix — both divergent-outcome tests failed (checkpoint was cleared when it should have been preserved), while the three non-divergent tests already passed under the old code, confirming the fix is behavior-preserving except for exactly the two previously-mismatched outcomes. tsc clean; biome clean (zero new findings on either changed file; formatting/import-sort nits from the new test file auto-fixed via `biome check --write`). Related suites (batch-job-run-bridge-checkpoint-default, maintenance-job-run): 17 passed, no regressions.
 
-Full-suite checkpoint (10th-iteration cadence, last run at iteration 88): background `npx vitest run` kicked off at the start of this iteration; will report results once complete.
-
-### Deferred (fresh sweep, loop iterations 87-98 — not yet fixed, ranked by severity)
-
-- (Lower confidence, likely unreachable) `backends/facts-db/procedures/crud.ts`'s `getDuplicateIdByNormalizedHash(db, text)` has no scope filter, unlike scoped hash lookups in `services/dedupe-policy.ts` — no live caller found besides its public `FactsDB` re-export, so may be dead code.
-- (Low severity) `utils/auth-failover.ts`'s `recordOAuthFailure`/`resetAllBackoff` do an unlocked read-modify-write on a JSON state file — a lost update across concurrent processes only under-applies backoff occasionally, not a security/correctness issue.
-- (Low severity, dev tooling only) `benchmark/offline-qa/verify-fixtures.ts`'s `daily-logs-memory-dir` fixture check is missing an `existsSync` guard a sibling check (`dailyInMemory`) has, so running `offline-qa:verify --sandbox` before the sandbox is populated crashes with `ENOENT` instead of reporting the fixture as missing. `benchmark/offline-qa/run-maintenance-qa.ts`'s spawned-subprocess handling has no `'error'` listener, only `'close'`.
-- `services/pending-autopilot/redaction.ts`'s free-text secret regex (line 9) relies on `\b` word-boundary matching around bare keywords (`password`, `secret`, `token`, `api[_-]?key`, etc.), so it redacts `token:`/`apiKey:` but misses the exact same keywords as the suffix of a compound identifier with no separator or a camelCase/underscore join — `sessionToken:`, `authToken:`, `auth_token:`, `clientSecret:`, `refreshToken:` all pass through `redactAutopilotText` unredacted and land verbatim in the persisted `pending_autopilot_decisions` audit trail (evidence/summary text). The structured object-key redaction a few lines below (`CREDENTIAL_KEY_NORMALIZED`) already treats these exact compound forms as sensitive, so the free-text regex just never got the equivalent treatment.
+Full-suite checkpoint (10th-iteration cadence, last run at iteration 88): background `npx vitest run` kicked off at the start of this iteration. Completed cleanly (see the v2026.7.163 entry above for results).
 
 ---
 
