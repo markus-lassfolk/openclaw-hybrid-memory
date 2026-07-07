@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.142] - 2026-07-07
+
+### Fixed
+
+Loop iteration 78 of the full-codebase review loop — fixes the `cli/cmd-mine.ts --undo` bullet flagged during iteration 34's sweep.
+
+- **`mine --undo <batchId>` superseded facts by `mine_batch_id` alone, with no scope check** — a plausible cross-tenant supersede. `mine` writes facts tagged with `scope`/`scopeTarget` (mirroring the rest of the scoped-fact system), but `--undo` didn't filter its `SELECT`/`UPDATE` by scope at all, even though `--scope`/`--scope-target` were already parseable CLI options on the same command (just unused in the undo branch). Anyone who learned another tenant's batch id — e.g. from a shared log, a `mine_batch_id: ...` line pasted into a support channel, or a database dump — could run `--undo <batchId>` with no scope arguments and supersede that tenant's facts regardless of which scope they were mined into. Fixed by threading `opts.scope`/`opts.scopeTarget` into the undo query with the same `scope = ? AND (scope_target IS ? OR scope_target IS NULL)` filter the mining write path already uses for its own dedup check, defaulting to `"global"` (matching mine's own default) when unspecified — so undoing a non-global-scoped batch now requires supplying the matching `--scope`/`--scope-target`, and an unscoped `--undo` no longer reaches facts outside the `global` scope.
+
+Regression tests added (`tests/cmd-mine.test.ts`): mines a batch into `scope: "user", scopeTarget: "user-42"`, then asserts `--undo <batchId>` with no `--scope` leaves the fact un-superseded (`superseded_at` stays `null`), and a companion test asserts `--undo <batchId> --scope user --scope-target user-42` does supersede it. Verified via `git stash` to fail without the fix (the mismatched-scope undo superseded the fact anyway) and pass with it. tsc clean; biome clean (zero new findings). `tests/cmd-mine.test.ts`: 6 passed, no regressions.
+
+---
+
 ## [2026.7.141] - 2026-07-07
 
 ### Fixed
@@ -561,7 +573,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 - ~~Lost-update race between the heartbeat/cron `reconcileActiveTaskInProgressSessions` and `active_task_checkpoint` on `ACTIVE-TASKS.md` (plain read-then-write, no optimistic-concurrency check unlike sibling writers).~~ — **fully fixed**: `reconcileActiveTaskInProgressSessions`'s half in loop iteration 66, `syncMarkdownLedgerFromCheckpoint`'s half in loop iteration 67 (see below).
 - ~~`lifecycle/stage-cleanup.ts`'s `subagent_spawned` handler only guards against reopening a `"Done"` task, not `"Failed"`~~ — **investigated in loop iteration 41 and NOT a bug**: `subagent_spawned` reopening a `"Failed"` task is deliberate, tested behavior (`stage-cleanup-facts-ledger.test.ts`'s "subagent_spawned reopens Failed tasks when session metadata is present" / "...clears stale handoff when reopening Failed tasks") — a new subagent dispatched against a failed task's label is an explicit retry and is meant to reopen it. Separately, adding `"failed"` to the shared `TERMINAL` set in `services/task-ledger/canonical.ts` breaks `factNewerThan`'s timestamp-tie-break comparator (which prefers "terminal" status on a tie) — it would let a stale `"failed"` fact block a legitimate retry's fresh `"in_progress"` write when both share the same second-granularity `createdAt`, confirmed by 9 existing test failures across `task-ledger-facts.test.ts`/`stage-cleanup-facts-ledger.test.ts` when tried. If the narrower gap (an arbitrary `memory_store` call regressing a `Failed` project-task status via `mirrorMemoryStoreToActiveTaskLedger`'s guard at `task-ledger-facts.ts:136`, which is a *different* write path than `subagent_spawned`'s `syncActiveTaskEntryToFacts`) still needs closing, it must be done as a change local to that one guard, not via the shared `TERMINAL` set.
 **Lower-severity / cosmetic:**
-- `cli/cmd-mine.ts --undo` filters only by `mine_batch_id` with no scope check, a plausible cross-tenant supersede.
 - `cli/cmd-backfill.ts`'s `runBackfillForCli`/`runIngestFilesForCli` don't increment the `skipped` stat on pre-store-guard rejections (sibling `cmd-distill.ts` does), understating the CLI's summary output.
 - `services/fact-mutation-gateway.ts`'s `hybrid-mem.facts.create` doesn't clamp `importance` to `[0,1]` unlike the sibling `confidence` field in the same handler.
 - `tools/goal-tools.ts`'s `goal_register` has a TOCTOU race on `maxActiveGoals` (no lock around the cap re-check, distinct from the four already-fixed terminal-status races).

@@ -51,6 +51,44 @@ describe("executeMineCommand scope", () => {
   });
 });
 
+describe("executeMineCommand --undo scope isolation (loop iteration 78 regression)", () => {
+  it("does not supersede a batch mined into a different scope when --undo omits --scope", async () => {
+    await executeMineCommand(transcriptPath, { source: "text", scope: "user", scopeTarget: "user-42" }, factsDb);
+    const batchId = (
+      factsDb.getRawDb().prepare("SELECT mine_batch_id FROM facts WHERE source LIKE 'mine:%'").get() as {
+        mine_batch_id: string;
+      }
+    ).mine_batch_id;
+
+    // Caller only knows the batch id (e.g. leaked via a shared log) but doesn't pass --scope
+    // user --scope-target user-42, so it defaults to global — must not touch the user-scoped fact.
+    await executeMineCommand("", { undo: batchId }, factsDb);
+
+    const row = factsDb
+      .getRawDb()
+      .prepare("SELECT superseded_at FROM facts WHERE mine_batch_id = ?")
+      .get(batchId) as { superseded_at: number | null };
+    expect(row.superseded_at).toBeNull();
+  });
+
+  it("supersedes the batch when --undo is called with the matching scope", async () => {
+    await executeMineCommand(transcriptPath, { source: "text", scope: "user", scopeTarget: "user-42" }, factsDb);
+    const batchId = (
+      factsDb.getRawDb().prepare("SELECT mine_batch_id FROM facts WHERE source LIKE 'mine:%'").get() as {
+        mine_batch_id: string;
+      }
+    ).mine_batch_id;
+
+    await executeMineCommand("", { undo: batchId, scope: "user", scopeTarget: "user-42" }, factsDb);
+
+    const row = factsDb
+      .getRawDb()
+      .prepare("SELECT superseded_at FROM facts WHERE mine_batch_id = ?")
+      .get(batchId) as { superseded_at: number | null };
+    expect(row.superseded_at).not.toBeNull();
+  });
+});
+
 describe("executeMineCommand embed ordering", () => {
   it("does not mark a fact as embedded when vectorDb.store fails", async () => {
     const vectorDb = {
