@@ -19,6 +19,7 @@ import { renderActiveTaskMarkdownFile } from "../services/task-ledger-facts.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
+import { buildToolScopeFilter } from "../utils/scope-filter.js";
 import { applyPrependBudget } from "../services/prepend-budget.js";
 import { runOptionalBeforeAgentStartStage } from "../services/before-agent-start-budget.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
@@ -56,7 +57,8 @@ export function registerGoalStewardshipInjection(
       const sessionKey = resolveSessionKeyFromHookEvent(event, resolvedApi);
       const subagent = isSubagentSession(sessionKey ?? undefined);
       if (subagent && sessionKey) {
-        const linkedGoals = await resolveGoalsForSubagentContext(sessionKey, goalsDir, ctx.factsDb, ctx.cfg);
+        const scopeFilter = buildToolScopeFilter({}, ctx.currentAgentIdRef.value, ctx.cfg);
+        const linkedGoals = await resolveGoalsForSubagentContext(sessionKey, goalsDir, ctx.factsDb, ctx.cfg, scopeFilter);
         if (linkedGoals.length === 0) {
           api.logger?.info?.("memory-hybrid: goal stewardship skipped — subagent session without linked goals");
           return undefined;

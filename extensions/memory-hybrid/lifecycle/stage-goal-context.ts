@@ -17,6 +17,7 @@ import { matchesHeartbeat } from "../services/goal-stewardship-heartbeat.js";
 import { applyPrependBudget } from "../services/prepend-budget.js";
 import { runOptionalBeforeAgentStartStage } from "../services/before-agent-start-budget.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
+import { buildToolScopeFilter } from "../utils/scope-filter.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
 import { resolveSessionKeyFromHookEvent } from "./session-state.js";
 import type { LifecycleContext } from "./types.js";
@@ -50,7 +51,8 @@ export function registerGoalContextInjection(
 
       let built: string | null;
       if (subagent && sessionKey) {
-        const linkedGoals = await resolveGoalsForSubagentContext(sessionKey, goalsDir, ctx.factsDb, ctx.cfg);
+        const scopeFilter = buildToolScopeFilter({}, ctx.currentAgentIdRef.value, ctx.cfg);
+        const linkedGoals = await resolveGoalsForSubagentContext(sessionKey, goalsDir, ctx.factsDb, ctx.cfg, scopeFilter);
         if (linkedGoals.length === 0) return undefined;
         built = buildSubagentLinkedGoalsPrepend(linkedGoals, { maxChars: gs.everyTurnGoalMaxChars });
       } else {
