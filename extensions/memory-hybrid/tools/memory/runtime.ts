@@ -12,6 +12,9 @@ export type MemoryToolRuntime = MemoryToolsContext & {
     factCategory: string,
     factId: string,
     factScope: string | null | undefined,
+    /** Vault-resolved factsDb override — required so a project-task fact stored in a named vault
+     * refreshes that same vault's ledger projection, not the plugin's default vault. */
+    factsDb?: FactsDB,
   ) => Promise<void>;
   storeActiveCanonicalVector: (options: {
     factId: string;

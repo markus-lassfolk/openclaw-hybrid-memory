@@ -69,12 +69,13 @@ export function buildMemoryToolRuntime(resolvedContext: MemoryToolsContext, api:
     factCategory: string,
     factId: string,
     factScope: string | null | undefined,
+    overrideFactsDb?: typeof factsDb,
   ): Promise<void> => {
     if (!activeTaskCfg?.enabled || activeTaskCfg.ledger !== "facts" || !activeTaskProjectionPath) return;
     if (factCategory !== TASK_LEDGER_CATEGORY) return;
     if ((factScope ?? "global") !== "global") return;
     await refreshActiveTaskProjectionBestEffort({
-      factsDb,
+      factsDb: overrideFactsDb ?? factsDb,
       staleMinutes: activeTaskStaleMinutes,
       filePath: activeTaskProjectionPath,
       projection: activeTaskCfg.projection,

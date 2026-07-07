@@ -134,11 +134,15 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
     key?: string | null;
     value?: string | null;
     scope?: string | null;
+    /** Vault-resolved backends — required so a project-task fact stored in a named vault mirrors
+     * to that same vault's ledger, not the plugin's default vault. */
+    factsDb?: typeof factsDb;
+    vectorDb?: typeof vectorDb;
   }): Promise<{ synced: boolean; autoTaskUpdated: boolean }> => {
     try {
       return await mirrorMemoryStoreToActiveTaskLedger({
-        factsDb,
-        vectorDb,
+        factsDb: opts.factsDb ?? factsDb,
+        vectorDb: opts.vectorDb ?? vectorDb,
         embeddings,
         activeTaskEnabled: cfg.activeTask?.enabled === true && cfg.activeTask.ledger === "facts",
         category: opts.category,
@@ -974,8 +978,15 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                       key,
                       value,
                       scope: newEntry.scope,
+                      factsDb: storeFactsDb,
+                      vectorDb: storeVectorDb,
                     });
-                    await maybeRefreshProjectActiveTaskProjection(newEntry.category, newEntry.id, newEntry.scope);
+                    await maybeRefreshProjectActiveTaskProjection(
+                      newEntry.category,
+                      newEntry.id,
+                      newEntry.scope,
+                      storeFactsDb,
+                    );
 
                     // Issue #159: enqueue contextual variant generation (non-blocking)
                     if (variantQueue) {
@@ -1256,8 +1267,10 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               key,
               value,
               scope: entry.scope,
+              factsDb: storeFactsDb,
+              vectorDb: storeVectorDb,
             });
-            await maybeRefreshProjectActiveTaskProjection(entry.category, entry.id, entry.scope);
+            await maybeRefreshProjectActiveTaskProjection(entry.category, entry.id, entry.scope, storeFactsDb);
 
             // Issue #150: write event to episodic event log
             if (eventLog) {
