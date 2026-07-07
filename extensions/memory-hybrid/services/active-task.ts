@@ -1268,6 +1268,61 @@ export interface ActiveTaskSessionReconcileResult {
 }
 
 /**
+ * Pure decision logic shared by `reconcileActiveTaskInProgressSessions`'s primary scan and its
+ * optimistic-write merge callback: for each "In progress" task with an OpenClaw-shaped session
+ * reference, if no session JSONL exists under ~/.openclaw/agents, move it to Completed as Failed.
+ * Does not emit progress events — callers that need progress reporting drive their own loop and
+ * only fall back to this helper when a concurrent writer changed the file between read and write.
+ */
+async function planActiveTaskReconciliation(
+  active: ActiveTaskEntry[],
+  completed: ActiveTaskEntry[],
+  openclawHome: string | undefined,
+): Promise<{
+  newActive: ActiveTaskEntry[];
+  newCompleted: ActiveTaskEntry[];
+  reconciledLabels: string[];
+  toFlush: ActiveTaskEntry[];
+}> {
+  const newActive: ActiveTaskEntry[] = [];
+  const newCompleted = [...completed];
+  const reconciledLabels: string[] = [];
+  const toFlush: ActiveTaskEntry[] = [];
+
+  for (const task of active) {
+    if (task.status !== "In progress") {
+      newActive.push(task);
+      continue;
+    }
+    const ref = task.subagent?.trim();
+    if (!ref || !looksLikeOpenClawSessionRef(ref)) {
+      newActive.push(task);
+      continue;
+    }
+    const present = await isOpenClawSessionLikelyPresent(ref, openclawHome);
+    if (present) {
+      newActive.push(task);
+      continue;
+    }
+
+    const now = nowIso();
+    const completedEntry: ActiveTaskEntry = {
+      ...task,
+      status: "Failed",
+      updated: now,
+      next: `Auto-reconciled: session transcript not found for ${ref} (subagent bookkeeping cleanup).`,
+      subagent: "",
+    };
+    clearActiveTaskHandoff(completedEntry);
+    newCompleted.push(completedEntry);
+    reconciledLabels.push(task.label);
+    toFlush.push(completedEntry);
+  }
+
+  return { newActive, newCompleted, reconciledLabels, toFlush };
+}
+
+/**
  * For each "In progress" task with an OpenClaw-shaped session reference, if no session JSONL
  * exists under ~/.openclaw/agents (per-agent sessions folders), move the task to the Completed
  * section as Failed with a note (missing transcript / abandoned bookkeeping cleanup).
@@ -1299,7 +1354,7 @@ export async function reconcileActiveTaskInProgressSessions(
   progress?.start();
   progress?.phaseStart("session-index");
 
-  const taskFile = await readActiveTaskFile(filePath, staleMinutes);
+  const taskFile = await readActiveTaskFileWithMtime(filePath, staleMinutes);
   if (!taskFile) {
     progress?.phaseComplete("session-index", { sessions: 0, candidates: 0 });
     return emptyResult();
@@ -1410,7 +1465,25 @@ export async function reconcileActiveTaskInProgressSessions(
 
   progress?.phaseStart("file-write", { candidates: reconciledLabels.length });
   try {
-    await writeActiveTaskFile(filePath, newActive, newCompleted);
+    // Optimistic concurrency: if the file changed since our read (e.g. the heartbeat/cron
+    // reconciler and a live subagent_ended/subagent_spawned checkpoint racing each other),
+    // re-derive the reconciliation decision against the freshly-read state instead of
+    // clobbering it with data computed from the stale snapshot (loop iteration 66 regression).
+    const wrote = await writeActiveTaskFileOptimistic(
+      filePath,
+      newActive,
+      newCompleted,
+      taskFile.mtime,
+      async (fresh) => {
+        const plan = await planActiveTaskReconciliation(fresh.active, fresh.completed, openclawHome);
+        return [plan.newActive, plan.newCompleted];
+      },
+    );
+    if (!wrote) {
+      if (progress) progress.failed += 1;
+      progress?.phaseComplete("file-write", { failed: 1 });
+      return { ...baseResult, wrote: false, failed: 1 };
+    }
   } catch {
     if (progress) {
       progress.failed += 1;
