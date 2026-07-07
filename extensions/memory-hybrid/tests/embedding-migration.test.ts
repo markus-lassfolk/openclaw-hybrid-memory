@@ -998,4 +998,36 @@ describe("migrateEmbeddings — checkpoint resume", () => {
     expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 6, total: 6 }));
     expect(clear).toHaveBeenCalledTimes(1);
   });
+
+  it("does not needlessly re-migrate when the checkpoint offset exactly equals total (loop iteration 55 regression)", async () => {
+    const facts = Array.from({ length: 6 }, (_, i) => makeFact(`cp-done-${i}`));
+    const factsDb = makeFactsDB({ getAll: vi.fn().mockReturnValue(facts) });
+    const vectorDb = makeVectorDB();
+    const embeddings = makeEmbeddings(1536, {
+      embedBatch: vi.fn(async (texts: string[]) => texts.map(() => Array(1536).fill(0.2))),
+    });
+    const clear = vi.fn();
+
+    const result = await migrateEmbeddings({
+      factsDb: factsDb as any,
+      vectorDb: vectorDb as any,
+      embeddings: embeddings as any,
+      batchSize: 2,
+      checkpoint: {
+        // A checkpoint saved right before an interrupted final cleanup: every fact was already
+        // processed (offset === total), so nothing should be re-embedded on resume.
+        load: () => ({ offset: 6 }),
+        save: vi.fn(),
+        clear,
+      },
+      logger: silentLogger(),
+    });
+
+    expect(result.total).toBe(6);
+    expect(result.processed).toBe(0);
+    expect(result.migrated).toBe(0);
+    expect(result.aborted).toBe(false);
+    expect(embeddings.embedBatch).not.toHaveBeenCalled();
+    expect(clear).toHaveBeenCalledTimes(1);
+  });
 });

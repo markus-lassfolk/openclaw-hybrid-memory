@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.119] - 2026-07-06
+
+### Fixed
+
+Loop iteration 55 of the full-codebase review loop — fixes a needless full re-migration flagged during iteration 34's sweep.
+
+- **`migrateEmbeddings`'s checkpoint-resume check rejected an exactly-completed checkpoint as "nothing to resume," forcing a full re-embed of every already-migrated fact.** The resume condition only accepted `checkpointState.offset < total` — but a checkpoint can legitimately be saved with `offset === total` (every fact processed) right before an interrupted final cleanup step (e.g. a crash between the last batch's checkpoint save and the trailing `checkpoint.clear()`). Since `offset < total` is false in that case, the resume logic was skipped entirely and `offset` stayed at its initialized `0`, silently re-embedding the whole dataset on the next run even though nothing needed it. The migration loop's own termination condition already treats `offset >= total` on the first `getBatch()` call as a clean, non-aborted drain (no warning logged) — so once resuming from `offset === total` was allowed, the loop exits immediately with zero wasted work and correctly finalizes (clearing the checkpoint) as if the run had just completed normally. Fixed by widening the resume condition to `offset <= total`, with a distinct, accurate log message for the exactly-completed case (the existing "MIXED-MODEL state" warning doesn't apply when there's nothing left unmigrated).
+
+Regression test added (`tests/embedding-migration.test.ts`): loads a checkpoint with `offset` exactly equal to `total` (6 facts) and asserts `embedBatch` is never called, `processed`/`migrated` are `0`, and the checkpoint is still cleared — proving the run finalizes cleanly without re-embedding anything. Verified via `git stash` to fail without the fix (all 6 facts were re-embedded) and pass with it. tsc clean; biome clean (zero net-new against baseline for the source file; the test file's only new findings are 3 `as any` casts matching this file's own dominant, pre-existing 127-instance convention for the same mock types). Related suites (embedding-migration, reindex-shadow-table): 43 passed, no regressions.
+
+---
+
 ## [2026.7.118] - 2026-07-06
 
 ### Fixed
@@ -292,7 +304,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 - `services/context-engine.ts`'s `prepareSubagentSpawn` calls `buildContextBlock` with no token budget (so every candidate fact is recorded as "injected") and only trims to the real budget afterward — facts trimmed off the end are marked injected anyway and never shown to that sub-agent again in any future turn.
 - `services/graph-retrieval.ts`: `hubScorePenalty` (score-attenuation for high-degree hub nodes) is only implemented in the iterative-BFS fallback; the real production CTE-based expansion path (`expandGraphWithCTE`) never applies it, hard-skipping over-cap hub links entirely instead of attenuating them as both shipped "enhanced"/"complete" presets document.
 - `services/recall-pipeline.ts`: the FTS-only-results abort-signal early-return skips the `.slice(0, limitNum)` every other exit path applies, so an in-flight abort can return an oversized, un-deduped, unranked result set.
-- `services/embedding-migration.ts`'s checkpoint-resume check (`offset > 0 && offset < total`) treats an exactly-completed checkpoint (`offset === total`, persisted right before an interrupted final cleanup) as "nothing to resume," forcing a full needless re-migration.
 - `services/embeddings/factory.ts`'s Google-in-chain dimension guard only covers the OpenAI-model case (`OPENAI_ONLY_EMBED_MODELS`); an Ollama/ONNX model with dims≠768 chained with Google silently builds a mismatched-dimensions chain that only fails later, confusingly, at `vectorDb.store()`.
 
 **Lower-severity / cosmetic:**
