@@ -587,8 +587,11 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     return getProcedureFailuresImpl(this.liveDb, procedureId);
   }
 
-  upsertProcedure(proc: Parameters<typeof upsertProcedureImpl>[1]): ProcedureEntry {
-    return upsertProcedureImpl(this.liveDb, proc);
+  upsertProcedure(
+    proc: Parameters<typeof upsertProcedureImpl>[1],
+    scopeFilter?: Parameters<typeof upsertProcedureImpl>[2],
+  ): ProcedureEntry {
+    return upsertProcedureImpl(this.liveDb, proc, scopeFilter);
   }
 
   listProcedures(limit = 100): ProcedureEntry[] {

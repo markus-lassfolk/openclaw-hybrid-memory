@@ -128,19 +128,26 @@ function bootstrapProcedureIfMissing(
   const { scope, scopeTarget } = params.scopeFilter
     ? scopeFieldsFromFilter(params.scopeFilter)
     : { scope: "global" as const, scopeTarget: undefined };
-  factsDb.upsertProcedure({
-    id: params.procedureId,
-    taskPattern,
-    recipeJson,
-    procedureType,
-    successCount: 0,
-    failureCount: 0,
-    lastValidated: null,
-    lastFailed: null,
-    confidence: 0.5,
-    scope,
-    scopeTarget,
-  });
+  // SECURITY: pass scopeFilter through so upsertProcedure's own existence check stays scoped —
+  // otherwise a caller-invented procedureId slug that collides with another tenant's existing
+  // procedure id would hit the UPDATE branch inside upsertProcedure and overwrite that tenant's
+  // row instead of this scoped bootstrap correctly treating it as "not found for me".
+  factsDb.upsertProcedure(
+    {
+      id: params.procedureId,
+      taskPattern,
+      recipeJson,
+      procedureType,
+      successCount: 0,
+      failureCount: 0,
+      lastValidated: null,
+      lastFailed: null,
+      confidence: 0.5,
+      scope,
+      scopeTarget,
+    },
+    params.scopeFilter,
+  );
   return { ok: true, created: true };
 }
 

@@ -156,4 +156,37 @@ describe("procedure-feedback-tool (#1965–#1967)", () => {
     const bobRead = db.getProcedureById(slug, { userId: "bob", agentId: null, sessionId: null });
     expect(bobRead).toBeNull();
   });
+
+  it("does not let registerIfMissing overwrite another tenant's procedure when the invented id collides (loop iteration 88 regression)", () => {
+    db = new FactsDB(":memory:");
+    const sharedId = "shared-workflow-slug";
+    const bobProc = db.upsertProcedure({
+      id: sharedId,
+      taskPattern: "Bob's private deploy workflow",
+      recipeJson: JSON.stringify([{ tool: "exec", summary: "bob-deploy" }]),
+      procedureType: "positive",
+      scope: "user",
+      scopeTarget: "bob",
+    });
+
+    // Alice independently invents the same human-readable slug for her own procedure — her
+    // scoped existence check correctly sees "not found for me" and proceeds to registerIfMissing.
+    expect(() =>
+      executeProcedureFeedbackTool(db, {
+        procedureId: sharedId,
+        success: true,
+        registerIfMissing: true,
+        taskPattern: "Alice's colliding workflow",
+        steps: [{ tool: "exec", summary: "alice-deploy" }],
+        scopeFilter: { userId: "alice", agentId: null, sessionId: null },
+      }),
+    ).toThrow(/already exists/);
+
+    // Bob's procedure must be completely untouched — not overwritten, not reassigned to Alice.
+    const unchanged = db.getProcedureById(sharedId, { userId: "bob", agentId: null, sessionId: null });
+    expect(unchanged?.taskPattern).toBe("Bob's private deploy workflow");
+    expect(unchanged?.scope).toBe("user");
+    expect(unchanged?.scopeTarget).toBe("bob");
+    expect(unchanged?.version).toBe(bobProc.version);
+  });
 });

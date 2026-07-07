@@ -521,10 +521,20 @@ export function upsertProcedure(
     /** Scope target (userId, agentId, or sessionId). Required when scope is user/agent/session. */
     scopeTarget?: string | null;
   },
+  /**
+   * SECURITY: when the caller identifies a scope, the existence check below must respect it —
+   * otherwise a caller-invented id (e.g. memory_procedure_feedback's registerIfMissing path,
+   * where an agent picks a human-readable slug like "fix-flaky-test") that happens to collide
+   * with another tenant's existing procedure id would take the UPDATE branch below and silently
+   * overwrite that tenant's row (including reassigning its scope/scope_target), instead of the
+   * caller's own scoped existence check (done by the caller before calling this) staying
+   * authoritative for whether "this id" exists from the caller's point of view.
+   */
+  scopeFilter?: ScopeFilter | null,
 ): ProcedureEntry {
   const id = proc.id ?? randomUUID();
   const now = Math.floor(Date.now() / 1000);
-  const existing = getProcedureById(db, id);
+  const existing = getProcedureById(db, id, scopeFilter);
   if (existing) {
     const successCount = proc.successCount ?? existing.successCount;
     const failureCount = proc.failureCount ?? existing.failureCount;
@@ -549,6 +559,13 @@ export function upsertProcedure(
       id,
     );
     return getProcedureById(db, id)!;
+  }
+  // Not found within the caller's scope — if a scope was given but the id already exists
+  // under a DIFFERENT scope, this is an id collision with another tenant's row, not a genuine
+  // "create new" case. Reject explicitly instead of either inserting (which would hit a raw
+  // PRIMARY KEY constraint error) or falling through to overwrite the foreign-scope row.
+  if (scopeFilter && getProcedureById(db, id)) {
+    throw new Error(`Procedure id "${id}" already exists outside the caller's scope`);
   }
   const scope = proc.scope ?? "global";
   const scopeTarget = proc.scopeTarget ?? null;
