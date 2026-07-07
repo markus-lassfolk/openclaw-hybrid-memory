@@ -332,6 +332,28 @@ describe("IssueStore.list", () => {
     const result = store.list({ status: ["verified"] });
     expect(result).toHaveLength(0);
   });
+
+  it("ranks a severity-filtered list by severity before recency, so an older critical issue survives a capped limit against newer high-severity ones", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-06-01T00:00:00.000Z"));
+      const oldCritical = store.create({ title: "Old critical outage", symptoms: ["s"], severity: "critical" });
+
+      // Three newer "high" issues, created after the critical one — without severity-aware
+      // ordering, a plain `created_at DESC LIMIT 3` would push the older critical issue out.
+      for (let i = 0; i < 3; i++) {
+        vi.setSystemTime(new Date(`2026-06-01T00:0${i + 1}:00.000Z`));
+        store.create({ title: `Newer high issue ${i}`, symptoms: ["s"], severity: "high" });
+      }
+
+      const capped = store.list({ severity: ["critical", "high"], limit: 3 });
+      expect(capped).toHaveLength(3);
+      expect(capped.map((i) => i.id)).toContain(oldCritical.id);
+      expect(capped[0].id).toBe(oldCritical.id);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

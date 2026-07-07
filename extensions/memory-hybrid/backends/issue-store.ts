@@ -218,7 +218,13 @@ export class IssueStore extends BaseSqliteStore {
       params.push(...lower);
     }
 
-    query += " ORDER BY created_at DESC";
+    // When the caller already narrowed to specific severities, rank the most severe first
+    // before applying LIMIT — otherwise a burst of newer lower-in-range issues (e.g. "high")
+    // can push an older, more severe one (e.g. "critical") out of a capped result entirely.
+    query +=
+      filter?.severity && filter.severity.length > 0
+        ? " ORDER BY CASE severity WHEN 'critical' THEN 3 WHEN 'high' THEN 2 WHEN 'medium' THEN 1 ELSE 0 END DESC, created_at DESC"
+        : " ORDER BY created_at DESC";
     if (filter?.limit && filter.limit > 0) {
       query += " LIMIT ?";
       params.push(filter.limit);

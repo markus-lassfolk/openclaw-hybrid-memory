@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.109] - 2026-07-06
+
+### Fixed
+
+Loop iteration 45 of the full-codebase review loop — fixes a severity-ordering bug flagged during iteration 34's sweep.
+
+- **`IssueStore.list()` ranked severity-filtered results by recency alone, so a burst of newer lower-severity issues could push an older, more severe one out of a capped result entirely.** `getOpenCriticalAndHighIssues()` (used by `searchAmbientIssues`'s always-on critical baseline and `runIssueRetrievalStrategy`'s RRF fusion) calls `issueStore.list({severity: ["critical", "high"], limit})`, then re-sorts the *already-truncated* result by severity in JS — but the DB query itself applied `ORDER BY created_at DESC LIMIT ?` before that JS sort ever ran, so an older `critical` issue could already be excluded from the row set entirely if enough newer `high`-severity issues existed within the same severity filter. Re-sorting rows that were never selected doesn't recover the missing ones. Fixed by having `list()` order by severity rank (critical > high > medium > low/other) before recency, but *only* when the caller has already narrowed the query with a `severity` filter — unfiltered/no-severity callers (Mission Control's dashboard listing, the plugin-shutdown "open issues" summary) keep their existing pure recency ordering unchanged.
+
+Regression test added (`tests/issue-store.test.ts`): seeds one older `critical` issue and three newer `high` issues (via fake timers for deterministic `created_at` ordering), calls `list({severity: ["critical", "high"], limit: 3})`, and asserts the older critical issue survives the cap and sorts first. Verified via `git stash` to fail without the fix (critical issue excluded from the capped result) and pass with it. tsc clean; biome clean (zero net-new against baseline — the source file's one pre-existing import-order finding and the test file's three pre-existing `noNonNullAssertion` warnings in unrelated `linkFact` tests both predate this change, confirmed via `git stash`). Related suites (issue-store, issue-tools, issue-tools-scope-security, ambient-retrieval, issues-1901-1904, open-issues-regression-gaps): 159 passed, no regressions.
+
+---
+
 ## [2026.7.108] - 2026-07-06
 
 ### Fixed
@@ -120,7 +132,6 @@ Regression test added (`tests/pending-autopilot-redaction.test.ts`, 4 cases): a 
 - `services/reflection.ts` writes its `reflection_input_hash` unconditionally after the storage loop even when a maintenance-run deadline broke the loop early — patterns extracted but never stored are permanently lost, since the next run's identical-input hash match skips re-extraction.
 - `services/reinforcement-batch-analyze.ts` increments `diagnostics.parseFailures` before attempting JSON repair and never reverts it on successful repair (sibling `self-correction-batch-analyze.ts` does this correctly), inflating operator diagnostics and an A/B benchmark penalty for batches that ultimately parsed fine.
 - `services/unified-proposals.ts`'s `countPendingUnifiedProposals` filters out `procedure-skill` proposals only after `listUnifiedProposals` has already sorted-and-truncated to the default top-100, so a burst of recent procedure-skill candidates can push real pending persona/tool/crystallization proposals out of the count window and let `enforceMaxPendingCap` admit more than configured.
-- `services/issue-retrieval.ts` + `backends/issue-store.ts`'s `IssueStore.list()` applies `ORDER BY created_at DESC LIMIT ?` before severity is considered, so older critical issues can be excluded entirely from an "always-surface-critical" baseline when enough newer high-severity issues exist.
 
 ---
 
