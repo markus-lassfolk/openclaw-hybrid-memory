@@ -128,7 +128,12 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
    */
   getRecentFacts(
     days: number,
-    options?: { excludeCategories?: string[]; excludeTags?: string[]; globalOnly?: boolean },
+    options?: {
+      excludeCategories?: string[];
+      excludeTags?: string[];
+      globalOnly?: boolean;
+      scopeFilter?: ScopeFilter | null;
+    },
   ): MemoryEntry[] {
     return getRecentFactsImpl(this.liveDb, days, options);
   }

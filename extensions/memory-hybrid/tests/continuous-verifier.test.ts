@@ -40,8 +40,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hybridConfigSchema } from "../config.js";
 import { _testing } from "../index.js";
 import {
-  ContinuousVerifier,
   buildVerificationPrompt,
+  ContinuousVerifier,
   parseVerificationOutcome,
   runVerificationCycle,
 } from "../services/continuous-verifier.js";
@@ -546,6 +546,65 @@ describe("ContinuousVerifier.runCycle — multiple facts", () => {
     expect(result.stale).toBe(1);
     expect(result.uncertain).toBe(1);
     expect(result.errors).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 9b. ContinuousVerifier.runCycle — scope isolation (loop iteration 105 regression)
+// ---------------------------------------------------------------------------
+
+/**
+ * Regression test (loop iteration 105): runCycle built its "recent facts about this entity"
+ * context via factsDb.getRecentFacts(days) with no scope option, so a due fact's re-verification
+ * prompt could include a *different tenant's* private facts about a same-named entity.
+ */
+describe("ContinuousVerifier.runCycle — scope isolation (loop iteration 105 regression)", () => {
+  it("does not include another tenant's private fact content in the re-verification prompt", async () => {
+    let capturedPrompt = "";
+    const mockOpenAI = {
+      chat: {
+        completions: {
+          create: vi.fn().mockImplementation(async (params: { messages: Array<{ content: string }> }) => {
+            capturedPrompt = params.messages.map((m) => m.content).join("\n");
+            return { choices: [{ message: { content: "CONFIRMED – still valid" } }] };
+          }),
+        },
+      },
+    };
+    const verifier = new ContinuousVerifier(store, factsDb, mockOpenAI as never);
+
+    // Tenant A's private fact about a same-named entity, containing an obviously-sensitive marker.
+    factsDb.store({
+      text: "TENANT-A-SECRET: shared-entity internal rotation key is zzz-marker-should-not-leak",
+      category: "technical",
+      importance: 0.8,
+      entity: "shared-entity",
+      key: "note",
+      value: null,
+      source: "test",
+      scope: "agent",
+      scopeTarget: "tenant-a",
+    });
+
+    // Tenant B's fact (same entity name), which is the one due for re-verification.
+    const tenantBEntry = factsDb.store({
+      text: "Tenant B public status update",
+      category: "technical",
+      importance: 0.8,
+      entity: "shared-entity",
+      key: "note2",
+      value: null,
+      source: "test",
+      scope: "agent",
+      scopeTarget: "tenant-b",
+    });
+    const storeId = await store.verify(tenantBEntry.id, "Tenant B public status update", "agent", "agent", "tenant-b");
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
+    db.prepare(`UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(storeId);
+
+    const result = await verifier.runCycle();
+    expect(result.checked).toBe(1);
+    expect(capturedPrompt).not.toContain("zzz-marker-should-not-leak");
   });
 });
 

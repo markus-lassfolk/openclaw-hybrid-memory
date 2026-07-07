@@ -217,7 +217,12 @@ export function getByIds(
 export function getRecentFacts(
   db: DatabaseSync,
   days: number,
-  options?: { excludeCategories?: string[]; excludeTags?: string[]; globalOnly?: boolean },
+  options?: {
+    excludeCategories?: string[];
+    excludeTags?: string[];
+    globalOnly?: boolean;
+    scopeFilter?: ScopeFilter | null;
+  },
 ): MemoryEntry[] {
   const nowSec = Math.floor(Date.now() / 1000);
   const windowStartSec = nowSec - Math.max(1, Math.min(90, days)) * 86400;
@@ -235,7 +240,13 @@ export function getRecentFacts(
   // otherwise a private observation becomes a globally-visible pattern/rule. Deliberate
   // cross-scope generalization is cross-agent-learning.ts's job (explicit opt-in, provenance
   // tracked); reflection's default input must stay scope-consistent with its output.
-  const scopeClause = options?.globalOnly ? " AND scope = 'global'" : "";
+  // scopeFilter: inclusive alternative to globalOnly — global facts plus the caller's own scope
+  // (e.g. continuous-verifier.ts building re-verification context for one tenant's fact). Ignored
+  // when globalOnly is also set, since globalOnly is the strictly narrower of the two.
+  const { clause: scopeFilterClause, params: scopeFilterParams } = options?.globalOnly
+    ? { clause: "", params: [] }
+    : scopeFilterClausePositional(options?.scopeFilter);
+  const scopeClause = options?.globalOnly ? " AND scope = 'global'" : scopeFilterClause;
   const rows = db
     .prepare(
       `SELECT * FROM facts WHERE (expires_at IS NULL OR expires_at > ?) AND superseded_at IS NULL
@@ -243,7 +254,7 @@ export function getRecentFacts(
          AND category NOT IN (${placeholders})${tagClause}${scopeClause}
          ORDER BY COALESCE(source_date, created_at) DESC`,
     )
-    .all(nowSec, windowStartSec, ...exclude, ...tagParams) as Array<Record<string, unknown>>;
+    .all(nowSec, windowStartSec, ...exclude, ...tagParams, ...scopeFilterParams) as Array<Record<string, unknown>>;
   return rows.map((row) => rowToMemoryEntry(row));
 }
 

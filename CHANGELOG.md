@@ -23,6 +23,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.169] - 2026-07-07
+
+### Fixed
+
+Loop iteration 105 — fixes the top item from the "Deferred (fresh sweep, loop iteration 103)" backlog: `continuous-verifier.ts`'s re-verification cycle leaked cross-tenant fact content into LLM prompts.
+
+- **`ContinuousVerifier.runCycle` built its "recent facts about this entity" context via `factsDb.getRecentFacts(days)` with no scope option**, pulling every tenant's facts into a single shared lookup. A due fact's re-verification prompt (sent to a third-party LLM) could then include a *different tenant's* private facts about a same-named entity — a cross-tenant content leak in transit, and since the LLM's CONFIRMED/STALE/UNCERTAIN verdict then drives a real confidence/tag mutation on the fact being verified, one tenant's private content could indirectly influence another tenant's fact state (`dream-cycle`/`runVerificationCycle`, reachable via `setup/cli-context/cli-services.ts`).
+- Fixed by adding an inclusive `scopeFilter` option to `getRecentFacts` (global + the caller's own scope, reusing the same `scopeFilterClausePositional` SQL-clause builder `getProjectFacts` already uses — kept separate from the existing `globalOnly` boolean, since that's a stricter, different semantic used by `reflection.ts` to keep its global-scope output consistent with global-only input). `runCycle` now groups the due facts by their own `(scope, scopeTarget)` — already tracked on `VerifiedFact` since the iteration-40 fix — and builds one scoped recent-facts context map per distinct group (not per fact, to avoid N redundant queries when most due facts share a scope), instead of a single global pull.
+
+Regression test added (`tests/continuous-verifier.test.ts`): seeds a tenant-A-scoped fact containing an obviously-sensitive marker string and a tenant-B-scoped fact (same entity name) that's due for re-verification, captures the actual LLM prompt sent via a mocked `chat.completions.create`, and asserts tenant A's marker string never appears in tenant B's verification prompt. Verified via `git stash` to fail without the fix — the captured prompt contained tenant A's full secret text verbatim under "Recent knowledge about \"shared-entity\"" against the pre-fix code. tsc clean; biome clean (zero new findings on the 3 changed source files, verified against each file's pre-existing baseline; one pre-existing import-sort nit and one new formatting nit in the test file both auto-fixed via `biome check --write`). Related suites (continuous-verifier, confidence-reinforcement, reflection, passive-observer, passive-observer-enoent, facts-db): 360 passed, no regressions.
+
+---
+
 ## [2026.7.168] - 2026-07-07
 
 ### Fixed
@@ -34,9 +47,8 @@ Loop iteration 104 — fixes the top item from the "Deferred (fresh sweep, loop 
 
 Regression tests added (`tests/consolidation.test.ts`): confirms two highly-similar facts in different tenant scopes are never clustered/merged (`clustersFound: 0`, `storeWithResult` never called), and confirms same-scope facts merge with the output correctly stamped `scope: "agent", scopeTarget: "tenant-a"` rather than the previous default of global. Verified via `git stash` to fail without the fix — both tests failed against the pre-fix code exactly as expected (the cross-tenant pair merged into one cluster, and the same-scope merge's `storeWithResult` call carried no scope fields at all). tsc clean; biome clean (zero new findings across all 4 changed files, verified against each file's pre-existing baseline). Related suites (consolidation, consolidate-heartbeat-cli, consolidation-controls, pre-consolidation-flush, dream-cycle-consolidate-lock, facts-db, find-duplicates): 232 passed, no regressions.
 
-### Deferred (fresh sweep, loop iteration 103 — remaining items, ranked by severity; superseded top item above already fixed)
+### Deferred (fresh sweep, loop iteration 103 — remaining items, ranked by severity; superseded top item above already fixed in this version, see v2026.7.169 for the next fix)
 
-- `services/continuous-verifier.ts:205`'s `runCycle` calls `getRecentFacts` with no scope option, pulling every tenant's facts into re-verification LLM prompts and letting one tenant's fact content influence another tenant's confidence/tag mutation (`dream-cycle`/`runVerificationCycle`).
 - `services/goal-registry.ts` (`readGoal`/`listGoals`/`updateGoal`/`terminateGoal`) has no scope concept at all — the `Goal` type carries no owner/tenant field, so `goal_list`/`goal_get`/`goal_complete`/`goal_abandon` in `tools/goal-tools.ts` operate across every tenant sharing a plugin instance. Larger fix than a single-iteration surgical patch (needs a scope field added to the Goal schema and threaded through every registry function and caller), so still deferred.
 - `services/workboard-facts-sync.ts`'s `applyWorkboardTaskStatusUpdate` and `setup/workboard-integration.ts:143`'s `loadTasks` both call `loadTaskLedgerFromFacts(factsDb)` with no scope filter — Workboard sync (opt-in feature) pushes/pulls active-task state across every tenant with no isolation.
 - `backends/facts-db/clusters.ts` (`getAllLinkedFactIds`/`getAllLinks`/`saveClusters`/`getClusters`) has zero scope filtering and is directly reachable via the `memory_clusters` tool (`tools/utility-tools.ts`), which by default also unconditionally wipes and rebuilds the shared `clusters`/`cluster_members` tables as a side effect of any single tenant's call.
