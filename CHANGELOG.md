@@ -23,6 +23,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.139] - 2026-07-07
+
+### Fixed
+
+Loop iteration 75 of the full-codebase review loop — fixes two bugs in `register-storage-maintenance.ts` flagged during iteration 34's sweep, in the same deferred bullet.
+
+- **`--json` mode on `rebuild-aliases`, `repair-vectors`, and `classification-artifacts` all returned right after printing the JSON report, before the block that sets `process.exitCode = 2` on real errors.** Each command's error/exit-code logic lived only in the human-readable (non-`--json`) branch, so a run with genuine errors reported them faithfully inside the JSON body but exited 0 anyway — silently defeating any CI/automation script that gates on the command's exit code instead of parsing the JSON. Fixed by computing the error condition and setting `process.exitCode` before the `--json` early-return in all three commands, so JSON mode reports failures via exit status too.
+- **`classification-artifacts --apply`'s pagination intentionally keeps `offset` at 0 while a batch supersedes at least one fact** (the active set shrinks under it, so re-querying at the same offset naturally advances past what was just removed) — **but a still-active *verified* fact sharing that same batch window gets re-fetched and re-processed on every such iteration**, and was pushed into `verifiedSkippedIds` once per re-fetch instead of once overall, since nothing tracked which ids had already been recorded. Fixed by adding a `Set`-backed dedup guard around the `verifiedSkippedIds.push()` call.
+
+Regression tests added (`tests/register-storage-maintenance-json-exit-code.test.ts`, new file): a mixed batch with one verified fact and one real artifact asserts `verifiedSkippedIds` contains the verified fact exactly once despite the offset-pinned re-fetch (proven by asserting the artifact really was superseded, so the re-fetch genuinely happened); separate tests assert `process.exitCode === 2` for `classification-artifacts --apply --json` (vector-delete error) and `rebuild-aliases --json` (rebuild error). Verified via `git stash` to fail without the fix (duplicate entry present; exit code stayed `undefined` in both `--json` cases) and pass with it. tsc clean; biome clean (zero new findings). Related suites (register-storage-maintenance-json-exit-code, register-storage-maintenance-artifacts, register-storage-maintenance-verbose, rebuild-aliases-cli, reembed-vectorless-cli): 20 passed, no regressions. `repair-vectors`'s identical fix was not given its own dedicated test — `runStorageRepairPipeline`'s orchestration surface is substantially larger to mock than the other two commands', and the fix there is a line-for-line mirror of the now-test-proven `rebuild-aliases`/`classification-artifacts` pattern; verified by direct code inspection instead.
+
+---
+
 ## [2026.7.138] - 2026-07-07
 
 ### Fixed
@@ -524,7 +537,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 - ~~Lost-update race between the heartbeat/cron `reconcileActiveTaskInProgressSessions` and `active_task_checkpoint` on `ACTIVE-TASKS.md` (plain read-then-write, no optimistic-concurrency check unlike sibling writers).~~ — **fully fixed**: `reconcileActiveTaskInProgressSessions`'s half in loop iteration 66, `syncMarkdownLedgerFromCheckpoint`'s half in loop iteration 67 (see below).
 - ~~`lifecycle/stage-cleanup.ts`'s `subagent_spawned` handler only guards against reopening a `"Done"` task, not `"Failed"`~~ — **investigated in loop iteration 41 and NOT a bug**: `subagent_spawned` reopening a `"Failed"` task is deliberate, tested behavior (`stage-cleanup-facts-ledger.test.ts`'s "subagent_spawned reopens Failed tasks when session metadata is present" / "...clears stale handoff when reopening Failed tasks") — a new subagent dispatched against a failed task's label is an explicit retry and is meant to reopen it. Separately, adding `"failed"` to the shared `TERMINAL` set in `services/task-ledger/canonical.ts` breaks `factNewerThan`'s timestamp-tie-break comparator (which prefers "terminal" status on a tie) — it would let a stale `"failed"` fact block a legitimate retry's fresh `"in_progress"` write when both share the same second-granularity `createdAt`, confirmed by 9 existing test failures across `task-ledger-facts.test.ts`/`stage-cleanup-facts-ledger.test.ts` when tried. If the narrower gap (an arbitrary `memory_store` call regressing a `Failed` project-task status via `mirrorMemoryStoreToActiveTaskLedger`'s guard at `task-ledger-facts.ts:136`, which is a *different* write path than `subagent_spawned`'s `syncActiveTaskEntryToFacts`) still needs closing, it must be done as a change local to that one guard, not via the shared `TERMINAL` set.
 **Lower-severity / cosmetic:**
-- `cli/commands/manage/register-storage-maintenance.ts`: `--json` mode on `rebuild-aliases`/`repair-vectors`/`classification-artifacts` swallows non-zero exit codes; `classification-artifacts --apply` can print duplicate entries in `verifiedSkippedIds`.
 - `cli/cmd-health.ts --json` never reflects an `unhealthy` overall status in its exit code.
 - `cli/cmd-selfcorrection.ts`: a MEMORY_STORE remediation with an object `remediationContent` missing `text` stringifies to `"[object Object]"` and gets stored as a real fact instead of being skipped.
 - `cli/cmd-mine.ts --undo` filters only by `mine_batch_id` with no scope check, a plausible cross-tenant supersede.

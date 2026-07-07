@@ -1579,6 +1579,11 @@ function registerManageStorageMaintenanceOnParent(
               after,
               ...result,
             };
+            // Set the exit code before the --json early-return so JSON output reports failures
+            // via process exit status too, not just human-readable console.warn output.
+            if (result.errors.length > 0) {
+              process.exitCode = 2;
+            }
             if (opts?.json) {
               console.log(JSON.stringify(report, null, 2));
               return;
@@ -1590,7 +1595,6 @@ function registerManageStorageMaintenanceOnParent(
             if (result.errors.length > 0) {
               console.warn(`Errors: ${result.errors.length}`);
               for (const err of result.errors.slice(0, 10)) console.warn(`  - ${err}`);
-              process.exitCode = 2;
             }
           },
         ),
@@ -1630,6 +1634,11 @@ function registerManageStorageMaintenanceOnParent(
               resolvedSqlitePath: ctx.resolvedSqlitePath,
             });
             const finishedAt = nowIso();
+            // Set the exit code before the --json early-return so JSON output reports failures
+            // via process exit status too, not just human-readable console output.
+            if (report.errors.length > 0) {
+              process.exitCode = 2;
+            }
             if (opts?.json) {
               console.log(JSON.stringify({ ...report, finishedAt }, null, 2));
               return;
@@ -1646,7 +1655,6 @@ function registerManageStorageMaintenanceOnParent(
             if (report.errors.length > 0) {
               console.log(`  errors=${report.errors.length}`);
               for (const err of report.errors.slice(0, 10)) console.log(`    - ${err}`);
-              process.exitCode = 2;
             }
           },
         ),
@@ -1667,6 +1675,12 @@ function registerManageStorageMaintenanceOnParent(
           const apply = opts?.apply === true;
           const supersededIds: string[] = [];
           const verifiedSkippedIds: string[] = [];
+          // In --apply mode, pagination offset intentionally stays at 0 while a batch supersedes
+          // at least one fact (the active set shrinks under it) — see the offset-retention comment
+          // below. A still-active verified fact within that window gets re-fetched and re-processed
+          // on every such iteration; without this guard it would be pushed into verifiedSkippedIds
+          // once per re-fetch instead of once overall.
+          const verifiedSkippedIdSet = new Set<string>();
           const vectorDeleteErrors: string[] = [];
           let vectorDeleteCount = 0;
           const verifiedLookup = (() => {
@@ -1685,7 +1699,10 @@ function registerManageStorageMaintenanceOnParent(
             for (const fact of facts) {
               if (!isPreStoreGuardBlocked({ text: fact.text, category: fact.category, source: fact.source })) continue;
               if (verifiedLookup?.get(fact.id)) {
-                verifiedSkippedIds.push(fact.id);
+                if (!verifiedSkippedIdSet.has(fact.id)) {
+                  verifiedSkippedIdSet.add(fact.id);
+                  verifiedSkippedIds.push(fact.id);
+                }
                 continue;
               }
               if (!apply) {
@@ -1761,6 +1778,11 @@ function registerManageStorageMaintenanceOnParent(
             vectorDeleteErrors,
           };
 
+          // Set the exit code before the --json early-return so JSON output reports failures via
+          // process exit status too, not just the human-readable console.warn output below.
+          if (vectorDeleteErrors.length > 0) {
+            process.exitCode = 2;
+          }
           if (opts?.json) {
             console.log(JSON.stringify(report, null, 2));
             return;
@@ -1790,7 +1812,6 @@ function registerManageStorageMaintenanceOnParent(
             if (vectorDeleteErrors.length > 0) {
               console.warn(`Errors: ${vectorDeleteErrors.length}`);
               for (const e of vectorDeleteErrors.slice(0, 10)) console.warn(`  - ${e}`);
-              process.exitCode = 2;
             }
           }
         }),
