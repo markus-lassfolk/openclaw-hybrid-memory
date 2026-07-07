@@ -5,10 +5,57 @@
  * backoff schedule: 5min → 30min → 1h → 2h → 4h. Counter resets every X hours.
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 
 const DEFAULT_BACKOFF_MINUTES = [5, 30, 60, 120, 240];
 const DEFAULT_RESET_AFTER_HOURS = 24;
+
+// SECURITY/CORRECTNESS: load-mutate-save on statePath has no cross-process synchronization on
+// its own -- two processes racing a read-modify-write can lose one process's update (e.g. two
+// concurrent OAuth failures on the same provider only advance the backoff level once instead of
+// twice). This is a brief, millisecond-scale critical section, so the lock below is deliberately
+// lightweight: a handful of quick retries, a short staleness window, and fail-open (proceed
+// without the lock) rather than block a hot LLM-failure-handling path -- losing the lock race
+// occasionally under contention just means an occasional under-applied backoff, which is already
+// the accepted (non-security) failure mode this file documents.
+const STATE_LOCK_STALE_MS = 2_000;
+const STATE_LOCK_RETRY_ATTEMPTS = 5;
+const STATE_LOCK_RETRY_SLEEP_MS = 5;
+const STATE_LOCK_SLEEP_BUFFER = new Int32Array(new SharedArrayBuffer(4));
+
+function sleepSyncMs(ms: number): void {
+  Atomics.wait(STATE_LOCK_SLEEP_BUFFER, 0, 0, ms);
+}
+
+function withStateLockSync<T>(statePath: string, fn: () => T): T {
+  const lockPath = `${statePath}.lock`;
+  for (let attempt = 0; attempt < STATE_LOCK_RETRY_ATTEMPTS; attempt++) {
+    try {
+      closeSync(openSync(lockPath, "wx"));
+      try {
+        return fn();
+      } finally {
+        try {
+          rmSync(lockPath, { force: true });
+        } catch {
+          /* best-effort */
+        }
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") break; // unexpected error, proceed unlocked
+      try {
+        if (existsSync(lockPath) && Date.now() - statSync(lockPath).mtimeMs > STATE_LOCK_STALE_MS) {
+          rmSync(lockPath, { force: true });
+          continue;
+        }
+      } catch {
+        /* lock vanished mid-check; loop will retry acquire */
+      }
+      sleepSyncMs(STATE_LOCK_RETRY_SLEEP_MS);
+    }
+  }
+  return fn(); // give up on the lock after a short window; proceed best-effort
+}
 
 type AuthFailoverOptions = {
   /** Backoff delays in minutes per level (0-indexed). Default [5, 30, 60, 120, 240]. */
@@ -57,20 +104,21 @@ export function isOAuthInBackoff(provider: string, options: AuthFailoverOptions 
   const _schedule = options.backoffScheduleMinutes ?? DEFAULT_BACKOFF_MINUTES;
   const resetHours = options.resetBackoffAfterHours ?? DEFAULT_RESET_AFTER_HOURS;
   const statePath = options.statePath;
-  const state = statePath ? loadState(statePath) : { lastResetTs: Date.now(), providers: {} };
-
-  const now = Date.now();
-  if (now - state.lastResetTs >= resetHours * 60 * 60 * 1000) {
-    state.lastResetTs = now;
-    state.providers = {};
-    if (statePath) saveState(statePath, state);
-    return false;
-  }
-
-  const entry = state.providers[provider];
-  if (!entry) return false;
-  if (now >= entry.backoffUntil) return false;
-  return true;
+  const readAndMaybeReset = (): boolean => {
+    const state = statePath ? loadState(statePath) : { lastResetTs: Date.now(), providers: {} };
+    const now = Date.now();
+    if (now - state.lastResetTs >= resetHours * 60 * 60 * 1000) {
+      state.lastResetTs = now;
+      state.providers = {};
+      if (statePath) saveState(statePath, state);
+      return false;
+    }
+    const entry = state.providers[provider];
+    if (!entry) return false;
+    if (now >= entry.backoffUntil) return false;
+    return true;
+  };
+  return statePath ? withStateLockSync(statePath, readAndMaybeReset) : readAndMaybeReset();
 }
 
 /**
@@ -80,14 +128,17 @@ export function isOAuthInBackoff(provider: string, options: AuthFailoverOptions 
 export function recordOAuthFailure(provider: string, options: AuthFailoverOptions = {}): void {
   const schedule = options.backoffScheduleMinutes ?? DEFAULT_BACKOFF_MINUTES;
   const statePath = options.statePath;
-  const state = statePath ? loadState(statePath) : { lastResetTs: Date.now(), providers: {} };
-
-  const now = Date.now();
-  const entry = state.providers[provider];
-  const nextLevel = entry ? Math.min(entry.level + 1, schedule.length - 1) : 0;
-  const delayMs = schedule[nextLevel] * 60 * 1000;
-  state.providers[provider] = { backoffUntil: now + delayMs, level: nextLevel };
-  if (statePath) saveState(statePath, state);
+  const readMutateSave = (): void => {
+    const state = statePath ? loadState(statePath) : { lastResetTs: Date.now(), providers: {} };
+    const now = Date.now();
+    const entry = state.providers[provider];
+    const nextLevel = entry ? Math.min(entry.level + 1, schedule.length - 1) : 0;
+    const delayMs = schedule[nextLevel] * 60 * 1000;
+    state.providers[provider] = { backoffUntil: now + delayMs, level: nextLevel };
+    if (statePath) saveState(statePath, state);
+  };
+  if (statePath) withStateLockSync(statePath, readMutateSave);
+  else readMutateSave();
 }
 
 /**
@@ -97,11 +148,13 @@ export function recordOAuthFailure(provider: string, options: AuthFailoverOption
 function _clearOAuthBackoff(provider: string, options: AuthFailoverOptions = {}): void {
   const statePath = options.statePath;
   if (!statePath) return;
-  const state = loadState(statePath);
-  if (state.providers[provider]) {
-    delete state.providers[provider];
-    saveState(statePath, state);
-  }
+  withStateLockSync(statePath, () => {
+    const state = loadState(statePath);
+    if (state.providers[provider]) {
+      delete state.providers[provider];
+      saveState(statePath, state);
+    }
+  });
 }
 
 /**
@@ -109,10 +162,14 @@ function _clearOAuthBackoff(provider: string, options: AuthFailoverOptions = {})
  */
 export function resetAllBackoff(options: AuthFailoverOptions & { resetTimer?: boolean } = {}): void {
   const statePath = options.statePath;
-  const state = statePath ? loadState(statePath) : { lastResetTs: Date.now(), providers: {} };
-  state.providers = {};
-  if (options.resetTimer !== false) state.lastResetTs = Date.now();
-  if (statePath) saveState(statePath, state);
+  const readMutateSave = (): void => {
+    const state = statePath ? loadState(statePath) : { lastResetTs: Date.now(), providers: {} };
+    state.providers = {};
+    if (options.resetTimer !== false) state.lastResetTs = Date.now();
+    if (statePath) saveState(statePath, state);
+  };
+  if (statePath) withStateLockSync(statePath, readMutateSave);
+  else readMutateSave();
 }
 
 export { DEFAULT_BACKOFF_MINUTES, DEFAULT_RESET_AFTER_HOURS };
