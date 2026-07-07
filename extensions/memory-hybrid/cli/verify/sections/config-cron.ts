@@ -141,10 +141,12 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
   if (cfg.credentials.enabled) {
     if (credentialsDb) {
       try {
+        // Test-decrypt every stored credential, not just the first — a single row can decrypt
+        // fine while others are corrupted (partial disk/migration failure), which a first-row-only
+        // check would silently miss and report as a healthy vault.
         const items = credentialsDb.list();
-        if (items.length > 0) {
-          const first = items[0];
-          credentialsDb.get(first.service, first.type as CredentialType);
+        for (const item of items) {
+          credentialsDb.get(item.service, item.type as CredentialType);
         }
         const st = credentialsDb.getVaultStatus();
         const stateLabel = st.encryptedAtRest

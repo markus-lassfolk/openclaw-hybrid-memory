@@ -47,6 +47,8 @@ export type VerifyRunState = {
   WARN_LINE: string;
   noEmoji: boolean;
   rawPluginConfig?: Record<string, unknown>;
+  /** Set once ensureRawPluginConfigOnState has attempted resolution (success or parse failure), so a failed attempt is not retried (and re-warned) on every subsequent call. */
+  rawPluginConfigAttempted?: boolean;
   lanceBindingsFailed: boolean;
   anyEmbOk: boolean;
   issues: string[];

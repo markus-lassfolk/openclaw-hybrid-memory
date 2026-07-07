@@ -23,6 +23,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.136] - 2026-07-07
+
+### Fixed
+
+Loop iteration 72 of the full-codebase review loop — fixes two `verify` command gaps flagged during iteration 34's sweep, in the same deferred bullet.
+
+- **`verify`'s credentials-vault health check only test-decrypted the first stored credential, so corruption in any later row was silently missed.** `runVerifyConfigCronSection` called `credentialsDb.get()` on `items[0]` only; a vault with multiple credentials where a later row was corrupted (partial disk write, botched migration) still reported "Credentials (vault): OK" as long as the first row happened to be intact. Fixed by test-decrypting every stored credential, matching the check's actual intent (confirm the vault is genuinely readable, not just its first entry).
+- **`ensureRawPluginConfigOnState`'s memoization guard checked `state.rawPluginConfig !== undefined`, which never distinguished "not yet attempted" from "attempted and failed to parse"** — both leave `rawPluginConfig` as `undefined`. Since two separate verify sections (`llm-models.ts` and `embeddings.ts`) each call this helper, a config parse failure caused every call after the first to re-read the file and re-push the same "could not be interpreted for plugin settings" warning, duplicating it in the summary. Fixed by tracking the attempt itself via a new `rawPluginConfigAttempted` flag on `VerifyRunState`, independent of whether resolution succeeded.
+
+Regression tests added: `tests/verify-credentials-vault-partial-corruption.test.ts` (new file) runs `runVerifyForCli` against a real `CredentialsDB` with two credentials where the alphabetically-later one is corrupted directly via raw SQL — asserts `FAIL` is reported (was silently `OK` before); `tests/verify-raw-plugin-config-duplicate-warning.test.ts` (new file) calls `ensureRawPluginConfigOnState` three times against a state pointing at a nonexistent config file — asserts exactly one warning is pushed (was three before). Verified via `git stash` to fail without the fixes (corruption missed; warning duplicated 3x) and pass with them. tsc clean; biome clean (zero new findings). Related suites (verify-credentials-vault-partial-corruption, verify-raw-plugin-config-duplicate-warning, verify-consolidated-cron, verify-model-alignment, verify-fix-config-error, credentials-encryption-key): 26 passed, no regressions.
+
+---
+
 ## [2026.7.135] - 2026-07-07
 
 ### Fixed
@@ -487,7 +500,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 - ~~Lost-update race between the heartbeat/cron `reconcileActiveTaskInProgressSessions` and `active_task_checkpoint` on `ACTIVE-TASKS.md` (plain read-then-write, no optimistic-concurrency check unlike sibling writers).~~ — **fully fixed**: `reconcileActiveTaskInProgressSessions`'s half in loop iteration 66, `syncMarkdownLedgerFromCheckpoint`'s half in loop iteration 67 (see below).
 - ~~`lifecycle/stage-cleanup.ts`'s `subagent_spawned` handler only guards against reopening a `"Done"` task, not `"Failed"`~~ — **investigated in loop iteration 41 and NOT a bug**: `subagent_spawned` reopening a `"Failed"` task is deliberate, tested behavior (`stage-cleanup-facts-ledger.test.ts`'s "subagent_spawned reopens Failed tasks when session metadata is present" / "...clears stale handoff when reopening Failed tasks") — a new subagent dispatched against a failed task's label is an explicit retry and is meant to reopen it. Separately, adding `"failed"` to the shared `TERMINAL` set in `services/task-ledger/canonical.ts` breaks `factNewerThan`'s timestamp-tie-break comparator (which prefers "terminal" status on a tie) — it would let a stale `"failed"` fact block a legitimate retry's fresh `"in_progress"` write when both share the same second-granularity `createdAt`, confirmed by 9 existing test failures across `task-ledger-facts.test.ts`/`stage-cleanup-facts-ledger.test.ts` when tried. If the narrower gap (an arbitrary `memory_store` call regressing a `Failed` project-task status via `mirrorMemoryStoreToActiveTaskLedger`'s guard at `task-ledger-facts.ts:136`, which is a *different* write path than `subagent_spawned`'s `syncActiveTaskEntryToFacts`) still needs closing, it must be done as a change local to that one guard, not via the shared `TERMINAL` set.
 **Lower-severity / cosmetic:**
-- `cli/verify/sections/config-cron.ts`'s credentials-vault health check only test-decrypts one row, false-negative on partial vault corruption; `cli/verify/plugin-config-credentials.ts` logs a duplicate warning on parse failure.
 - `cli/verify/sections/llm-models.ts`'s `--test-llm` failures never affect verify's exit code/issues summary (unlike the parallel embeddings check).
 - `cli/install/cron-jobs.ts`: under the default consolidated-cron mode, standalone jobs not in `CONSOLIDATED_CRON_JOBS` (e.g. `weekly-pending-digest`, `maintenance-log-analyzer`, `sensor-sweep`) are never installed even when enabled/feature-gated on.
 - `cli/commands/manage/register-storage-maintenance.ts`: `--json` mode on `rebuild-aliases`/`repair-vectors`/`classification-artifacts` swallows non-zero exit codes; `classification-artifacts --apply` can print duplicate entries in `verifiedSkippedIds`.
