@@ -11,6 +11,15 @@ import type { HybridMemoryConfig } from "../config.js";
 import { ApitapService } from "../services/apitap-service.js";
 import { registerApitapTools } from "../tools/apitap-tools.js";
 
+// validateUrl()'s SSRF host guard does a real DNS lookup; mock it to a public address so tests
+// exercising the successful-capture path don't depend on network access (same pattern as
+// apitap-service-ssrf.test.ts).
+const { lookupMock } = vi.hoisted(() => ({ lookupMock: vi.fn() }));
+vi.mock("node:dns/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:dns/promises")>();
+  return { ...actual, lookup: lookupMock };
+});
+
 // ---------------------------------------------------------------------------
 // Minimal mock API
 // ---------------------------------------------------------------------------
@@ -127,6 +136,40 @@ describe("apitap_capture", () => {
       expect(text).toMatch(/not installed/i);
     } finally {
       spy.mockRestore();
+    }
+  });
+
+  it("relabels the 'Discovered endpoints:' header in place instead of overwriting the blank line before the final line (loop iteration 85 regression)", async () => {
+    lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
+    const isAvailableSpy = vi.spyOn(ApitapService.prototype, "isAvailable").mockReturnValue(true);
+    const captureSpy = vi.spyOn(ApitapService.prototype, "capture").mockResolvedValue({
+      sessionId: "sess-1",
+      siteUrl: "https://api.example.com",
+      durationMs: 2500,
+      endpoints: [
+        { endpoint: "/v1/widgets", method: "GET" },
+        { endpoint: "/v1/orders", method: "POST" },
+      ],
+    });
+    try {
+      registerApitapTools({ apitapStore: store, cfg: makeEnabledConfig() }, api as any);
+      const result = (await api.callTool("apitap_capture", { url: "https://api.example.com" })) as any;
+      const text: string = result?.content?.[0]?.text ?? "";
+      const lines = text.split("\n");
+
+      // The header must be relabeled exactly once, and the original label must be gone.
+      expect(lines.filter((l: string) => l === "Discovered endpoints (pending review):")).toHaveLength(1);
+      expect(lines).not.toContain("Discovered endpoints:");
+
+      // The relabeled header must sit immediately before the endpoint list, not overwrite the
+      // blank spacer line right before the final "Use apitap_to_skill..." line.
+      const headerIdx = lines.indexOf("Discovered endpoints (pending review):");
+      expect(lines[headerIdx + 1]).toMatch(/^\s*1\. \[GET] \/v1\/widgets/);
+      expect(text).toContain("Use apitap_to_skill <id> to generate a skill scaffold.");
+      expect(text).toContain("Use apitap_list to see all discovered endpoints.");
+    } finally {
+      isAvailableSpy.mockRestore();
+      captureSpy.mockRestore();
     }
   });
 });

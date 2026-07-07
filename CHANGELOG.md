@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.149] - 2026-07-07
+
+### Fixed
+
+Loop iteration 85 of the full-codebase review loop — fixes the `tools/apitap-tools.ts` off-by-one bullet from the "Deferred (carried over from earlier iterations)" backlog.
+
+- **`apitap_capture`'s output formatting overwrote the wrong line when relabeling the endpoints header.** `persistAndFormatEndpoints()` builds an output with a `"Discovered endpoints:"` header followed by the endpoint list, a blank line, and a final `"Use apitap_to_skill..."` line. The `apitap_capture` handler then does `lines.splice(2, 0, durationLine)` to inject a duration line near the top — which shifts every subsequent line's index by one — and afterward tried to relabel the header to `"Discovered endpoints (pending review):"` via `lines[lines.length - 2]`. That index arithmetic was computed against the *post-splice* array length but never accounted for the splice's effect on which line sits at `length - 2`: it actually targeted the blank spacer line right before the final `"Use apitap_to_skill..."` line, not the header. The result was garbled output — the real `"Discovered endpoints:"` header stayed unchanged near the top, while `"Discovered endpoints (pending review):"` got injected in a nonsensical spot near the bottom, right where a blank separator used to be. Fixed by finding the header line via `lines.indexOf("Discovered endpoints:")` instead of fragile length-relative arithmetic — robust regardless of whether the optional "Blocked (filtered)" line or the duration splice are present.
+
+Regression test added (`tests/apitap-tools.test.ts`): mocks `ApitapService.prototype.capture` to return two endpoints (with `node:dns/promises`'s `lookup` mocked to a public IP so `validateUrl`'s SSRF check doesn't need real network access, mirroring `apitap-service-ssrf.test.ts`'s existing pattern) and asserts the relabeled header appears exactly once, the original `"Discovered endpoints:"` label is gone, and the relabeled header sits immediately before the first endpoint line rather than near the final lines. Verified via `git stash` to fail without the fix (the original header was left unchanged) and pass with it. tsc clean; biome clean (zero new findings). Related suites (apitap-tools, apitap-store, apitap-service-ssrf): 37 passed, no regressions.
+
+---
+
 ## [2026.7.148] - 2026-07-07
 
 ### Fixed
@@ -643,7 +655,7 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 - ~~`lifecycle/stage-cleanup.ts`'s `subagent_spawned` handler only guards against reopening a `"Done"` task, not `"Failed"`~~ — **investigated in loop iteration 41 and NOT a bug**: `subagent_spawned` reopening a `"Failed"` task is deliberate, tested behavior (`stage-cleanup-facts-ledger.test.ts`'s "subagent_spawned reopens Failed tasks when session metadata is present" / "...clears stale handoff when reopening Failed tasks") — a new subagent dispatched against a failed task's label is an explicit retry and is meant to reopen it. Separately, adding `"failed"` to the shared `TERMINAL` set in `services/task-ledger/canonical.ts` breaks `factNewerThan`'s timestamp-tie-break comparator (which prefers "terminal" status on a tie) — it would let a stale `"failed"` fact block a legitimate retry's fresh `"in_progress"` write when both share the same second-granularity `createdAt`, confirmed by 9 existing test failures across `task-ledger-facts.test.ts`/`stage-cleanup-facts-ledger.test.ts` when tried. If the narrower gap (an arbitrary `memory_store` call regressing a `Failed` project-task status via `mirrorMemoryStoreToActiveTaskLedger`'s guard at `task-ledger-facts.ts:136`, which is a *different* write path than `subagent_spawned`'s `syncActiveTaskEntryToFacts`) still needs closing, it must be done as a change local to that one guard, not via the shared `TERMINAL` set.
 ### Deferred (carried over from earlier iterations; still tracked)
 
-- An off-by-one output-line overwrite in `tools/apitap-tools.ts`; an inverted enabled/disabled detection in an unwired ESPHome YAML converter.
+- An inverted enabled/disabled detection in an unwired ESPHome YAML converter.
 
 ---
 
