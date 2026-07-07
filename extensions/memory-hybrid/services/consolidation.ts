@@ -180,6 +180,14 @@ export async function runConsolidate(
     for (let j = i + 1; j < ids.length; j++) {
       const vj = vectors[j];
       if (vj.length === 0) continue;
+      // Never cluster facts from different scopes together: merging a tenant-scoped fact into a
+      // global one (or vice versa) would either leak private content into the shared global
+      // output or silently narrow a previously-global fact's visibility once the merge deletes
+      // the sources. Facts must share the exact same (scope, scopeTarget) to be candidates for
+      // the same merge.
+      const factI = idToFact.get(ids[i]);
+      const factJ = idToFact.get(ids[j]);
+      if (factI?.scope !== factJ?.scope || factI?.scopeTarget !== factJ?.scopeTarget) continue;
       const score = dotProductSimilarity(vi, vj);
       if (score >= opts.threshold) edges.push([ids[i], ids[j]]);
     }
@@ -279,6 +287,11 @@ export async function runConsolidate(
         key: mergedKey,
         value: mergedValue,
         source: "consolidation",
+        // Every fact in this cluster shares the same (scope, scopeTarget) — enforced when edges
+        // were built above — so the merged output must carry that same scope forward rather than
+        // defaulting to global, which would leak a tenant-scoped source fact's content globally.
+        scope: (first?.scope as "global" | "user" | "agent" | "session" | undefined) ?? "global",
+        scopeTarget: first?.scopeTarget ?? null,
         decayClass: CONSOLIDATED_FACT_DECAY_CLASS,
         sourceDate: maxSourceDate,
         tags: mergedTags.length > 0 ? mergedTags : undefined,

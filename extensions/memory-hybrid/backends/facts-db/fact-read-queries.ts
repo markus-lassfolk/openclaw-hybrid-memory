@@ -153,11 +153,13 @@ export function getFactsForConsolidation(
   category: string;
   entity: string | null;
   key: string | null;
+  scope: string;
+  scopeTarget: string | null;
 }> {
   const nowSec = Math.floor(Date.now() / 1000);
   const rows = db
     .prepare(
-      `SELECT id, text, category, entity, key FROM facts
+      `SELECT id, text, category, entity, key, scope, scope_target FROM facts
          WHERE (expires_at IS NULL OR expires_at > ?)
            AND superseded_at IS NULL
            AND lower(COALESCE(source, '')) NOT IN ('consolidation', 'dream-cycle')
@@ -172,6 +174,8 @@ export function getFactsForConsolidation(
     category: row.category as string,
     entity: (row.entity as string) || null,
     key: (row.key as string) || null,
+    scope: (row.scope as string) || "global",
+    scopeTarget: (row.scope_target as string) || null,
   }));
 }
 

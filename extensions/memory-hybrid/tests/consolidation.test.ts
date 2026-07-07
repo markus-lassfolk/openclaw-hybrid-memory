@@ -321,3 +321,78 @@ describe("runConsolidate", () => {
     ]);
   });
 });
+
+/**
+ * Regression test (loop iteration 104): getFactsForConsolidation had no scope filtering at all,
+ * and runConsolidate's clustering step ignored scope entirely — two similar facts belonging to
+ * different tenants (scope+scopeTarget) could be clustered and LLM-merged together, with the
+ * merged output always stored at global scope (leaking the private content of every source fact
+ * to every tenant) while the original scoped facts were deleted.
+ */
+describe("runConsolidate scope isolation (loop iteration 104 regression)", () => {
+  it("does not cluster/merge facts belonging to different tenants even when highly similar", async () => {
+    const entries = [
+      makeEntry({ id: "a", text: "Tenant A private fact", scope: "agent", scopeTarget: "tenant-a" }),
+      makeEntry({ id: "b", text: "Tenant B private fact", scope: "agent", scopeTarget: "tenant-b" }),
+    ];
+    const factsDb = makeFactsDb(entries);
+    const vectorDb = { store: vi.fn().mockResolvedValue(undefined) };
+    const embeddings = makeEmbeddings({
+      "Tenant A private fact": [1, 0],
+      "Tenant B private fact": [1, 0],
+      "Merged fact": [1, 0],
+    });
+    const openai = {
+      chat: {
+        completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content: "Merged fact" } }] }) },
+      },
+    } as never;
+
+    const result = await runConsolidate(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai,
+      { threshold: 0.9, includeStructured: true, dryRun: false, limit: 10, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(result.clustersFound).toBe(0);
+    expect(result.merged).toBe(0);
+    expect(factsDb.storeWithResult).not.toHaveBeenCalled();
+    expect(factsDb.delete).not.toHaveBeenCalled();
+  });
+
+  it("stamps the merged fact with the source cluster's scope instead of defaulting to global", async () => {
+    const entries = [
+      makeEntry({ id: "a", text: "Tenant A fact one", scope: "agent", scopeTarget: "tenant-a" }),
+      makeEntry({ id: "b", text: "Tenant A fact two", scope: "agent", scopeTarget: "tenant-a" }),
+    ];
+    const factsDb = makeFactsDb(entries);
+    const vectorDb = { store: vi.fn().mockResolvedValue(undefined) };
+    const embeddings = makeEmbeddings({
+      "Tenant A fact one": [1, 0],
+      "Tenant A fact two": [1, 0],
+      "Merged fact": [1, 0],
+    });
+    const openai = {
+      chat: {
+        completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content: "Merged fact" } }] }) },
+      },
+    } as never;
+
+    await runConsolidate(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai,
+      { threshold: 0.9, includeStructured: true, dryRun: false, limit: 10, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(factsDb.storeWithResult).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: "agent", scopeTarget: "tenant-a" }),
+      expect.objectContaining({ warnContext: "consolidation" }),
+    );
+  });
+});

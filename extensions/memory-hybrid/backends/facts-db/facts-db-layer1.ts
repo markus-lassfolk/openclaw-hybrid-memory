@@ -559,13 +559,15 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     return findSimilarForClassificationImpl(this.liveDb, text, entity, key, limit, scope, scopeTarget);
   }
 
-  /** For consolidation (2.4): fetch facts with id, text, category, entity, key. Order by created_at DESC. Excludes superseded. */
+  /** For consolidation (2.4): fetch facts with id, text, category, entity, key, scope, scopeTarget. Order by created_at DESC. Excludes superseded. */
   getFactsForConsolidation(limit: number): Array<{
     id: string;
     text: string;
     category: string;
     entity: string | null;
     key: string | null;
+    scope: string;
+    scopeTarget: string | null;
   }> {
     return getFactsForConsolidationImpl(this.liveDb, limit);
   }
