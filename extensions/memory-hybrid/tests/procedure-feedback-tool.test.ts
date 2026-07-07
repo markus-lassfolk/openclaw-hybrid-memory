@@ -133,4 +133,27 @@ describe("procedure-feedback-tool (#1965–#1967)", () => {
     expect(unchanged?.successCount).toBe(proc.successCount);
     expect(unchanged?.version).toBe(proc.version);
   });
+
+  it("registerIfMissing scopes the auto-created procedure to the caller's tenant instead of defaulting to global (loop iteration 51 regression)", () => {
+    db = new FactsDB(":memory:");
+    const slug = "alice-only-deploy-workflow";
+    const result = executeProcedureFeedbackTool(db, {
+      procedureId: slug,
+      success: true,
+      registerIfMissing: true,
+      taskPattern: "Alice's private deploy workflow",
+      steps: [{ tool: "exec", summary: "deploy" }],
+      scopeFilter: { userId: "alice", agentId: null, sessionId: null },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(result.details.created).toBe(true);
+
+    const stored = db.getProcedureById(slug);
+    expect(stored?.scope).toBe("user");
+    expect(stored?.scopeTarget).toBe("alice");
+
+    // A different tenant scoped-reading the same id must not see it (it should read as not-found).
+    const bobRead = db.getProcedureById(slug, { userId: "bob", agentId: null, sessionId: null });
+    expect(bobRead).toBeNull();
+  });
 });

@@ -3,6 +3,7 @@
  */
 import type { FactsDB } from "../backends/facts-db.js";
 import type { ProcedureEntry, ProcedureStep, ScopeFilter } from "../types/memory.js";
+import { scopeFieldsFromFilter } from "../utils/scope-filter.js";
 import { minimalRecipe } from "./procedure-extractor.js";
 
 export type ProcedureFeedbackToolParams = {
@@ -122,6 +123,11 @@ function bootstrapProcedureIfMissing(
 
   const recipeJson = JSON.stringify(minimalRecipe(steps));
   const procedureType = params.procedureType ?? (params.success ? "positive" : "negative");
+  // SECURITY: without scope/scopeTarget, upsertProcedure defaults new rows to scope: "global",
+  // so a tenant-scoped caller's auto-registered procedure would leak visible to every tenant.
+  const { scope, scopeTarget } = params.scopeFilter
+    ? scopeFieldsFromFilter(params.scopeFilter)
+    : { scope: "global" as const, scopeTarget: undefined };
   factsDb.upsertProcedure({
     id: params.procedureId,
     taskPattern,
@@ -132,6 +138,8 @@ function bootstrapProcedureIfMissing(
     lastValidated: null,
     lastFailed: null,
     confidence: 0.5,
+    scope,
+    scopeTarget,
   });
   return { ok: true, created: true };
 }

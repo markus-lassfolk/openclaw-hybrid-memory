@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.115] - 2026-07-06
+
+### Fixed
+
+Loop iteration 51 of the full-codebase review loop — fixes a write-side multi-tenant isolation break flagged during iteration 34's sweep.
+
+- **`bootstrapProcedureIfMissing` auto-registered new procedures as `scope: "global"` regardless of the caller's actual tenant scope.** When `memory_procedure_feedback` is called with `registerIfMissing: true` against a procedure id that doesn't exist yet, it correctly scope-checks the *read* (`factsDb.getProcedureById(params.procedureId, params.scopeFilter)`) — but the subsequent `factsDb.upsertProcedure({...})` create call passed no `scope`/`scopeTarget` fields at all, and `upsertProcedure` defaults missing scope fields to `"global"` on insert. So a tenant-scoped caller (e.g. `scopeFilter: {userId: "alice"}`) auto-registering a new procedure would create one visible to every tenant, not just themselves — the opposite of the read-side scoping the same function already enforces. Fixed by deriving `scope`/`scopeTarget` from the caller's `scopeFilter` via the existing `scopeFieldsFromFilter` helper (the same pattern already used at every other tool call site that creates scoped records), defaulting to `global` only when no scope filter is present (unscoped/orchestrator callers).
+
+Regression test added (`tests/procedure-feedback-tool.test.ts`): registers a new procedure with `scopeFilter: {userId: "alice"}` and asserts the stored row has `scope: "user"`/`scopeTarget: "alice"`, and that a different tenant (`bob`) scope-reading the same id gets `null`. Verified via `git stash` to fail without the fix (stored as `scope: "global"`) and pass with it. tsc clean; biome clean (zero net-new — the test file's one pre-existing formatting finding predates this change, confirmed via `git stash`). Related suite (procedure-feedback-tool): 8 passed, no regressions.
+
+---
+
 ## [2026.7.114] - 2026-07-06
 
 ### Fixed
@@ -242,7 +254,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 - `services/task-queue-leases.ts`'s `withRegistryLock` stale-lock reclaim has a dead-code "recheck after unlink" — both branches of the recheck fall through to the same `continue`, so it provides no actual protection against reclaiming a lock another process just re-acquired.
 - `tools/health-dashboard.ts`'s liveness queries use `valid_until` instead of the codebase's standard `superseded_at IS NULL` marker, undercounting facts trimmed/evicted by the token-budget and daily-quota paths as still "active".
 - `services/procedure-skill-generator.ts`'s `generateAutoSkillForProcedure` (the default `requireApprovalForPromote`/quarantine path) reports/records `relativePath` under `skillsAutoPath` while physically writing the file under the quarantine `basePath`, so `markProcedurePromoted`/idempotency checks point at a nonexistent location (sibling `generateAutoSkills` does this correctly).
-- `services/procedure-feedback-tool.ts`'s `bootstrapProcedureIfMissing` correctly scope-checks the read but calls `upsertProcedure` with no `scope`/`scopeTarget` on create, defaulting new tenant-scoped procedures to `scope: "global"` — a write-side multi-tenant isolation break.
 - ~~`lifecycle/stage-cleanup.ts`'s `subagent_spawned` handler only guards against reopening a `"Done"` task, not `"Failed"`~~ — **investigated in loop iteration 41 and NOT a bug**: `subagent_spawned` reopening a `"Failed"` task is deliberate, tested behavior (`stage-cleanup-facts-ledger.test.ts`'s "subagent_spawned reopens Failed tasks when session metadata is present" / "...clears stale handoff when reopening Failed tasks") — a new subagent dispatched against a failed task's label is an explicit retry and is meant to reopen it. Separately, adding `"failed"` to the shared `TERMINAL` set in `services/task-ledger/canonical.ts` breaks `factNewerThan`'s timestamp-tie-break comparator (which prefers "terminal" status on a tie) — it would let a stale `"failed"` fact block a legitimate retry's fresh `"in_progress"` write when both share the same second-granularity `createdAt`, confirmed by 9 existing test failures across `task-ledger-facts.test.ts`/`stage-cleanup-facts-ledger.test.ts` when tried. If the narrower gap (an arbitrary `memory_store` call regressing a `Failed` project-task status via `mirrorMemoryStoreToActiveTaskLedger`'s guard at `task-ledger-facts.ts:136`, which is a *different* write path than `subagent_spawned`'s `syncActiveTaskEntryToFacts`) still needs closing, it must be done as a change local to that one guard, not via the shared `TERMINAL` set.
 - `services/context-engine.ts`'s `prepareSubagentSpawn` calls `buildContextBlock` with no token budget (so every candidate fact is recorded as "injected") and only trims to the real budget afterward — facts trimmed off the end are marked injected anyway and never shown to that sub-agent again in any future turn.
 - `services/graph-retrieval.ts`: `hubScorePenalty` (score-attenuation for high-degree hub nodes) is only implemented in the iterative-BFS fallback; the real production CTE-based expansion path (`expandGraphWithCTE`) never applies it, hard-skipping over-cap hub links entirely instead of attenuating them as both shipped "enhanced"/"complete" presets document.
