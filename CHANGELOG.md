@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.125] - 2026-07-07
+
+### Fixed
+
+Loop iteration 61 of the full-codebase review loop — closes the deferred `getSnoozeCandidates()` cross-tenant count leak in `buildMemoryNudge()`, left open since iteration 21 because `recall_events` has no scope column.
+
+- **`buildMemoryNudge()`'s third signal (auto-snooze candidates) counted surfaced-but-never-referenced facts across every tenant, not just the caller's own scope.** Iteration 21 fixed the nudge's other two signals (duplicate-count, never-referenced-count) by scope-filtering their `facts` table queries directly, but explicitly deferred this third one: it's driven by `recall_events`, which has no scope/tenant column at all (only `session_key`), so it looked unscopeable without a schema change. The actual fix doesn't need one — `recall_events` only ever needs to resolve to real fact ids, and every one of those ids can be checked against the already-scoped `facts` table. Fixed by scope-filtering the `facts` lookup inside `enrichReferenceCountsFromFacts()` (threaded through `aggregateRecallStats()` → `getSnoozeCandidates()` → `buildMemoryNudge()`) and dropping any fact id that doesn't resolve in-scope from the stats map entirely, rather than just leaving its reference count at zero — so an out-of-scope fact can no longer influence the snooze-candidate list (or, via the same aggregated stats, a cross-domain-boost score) at all. `services/retrieval-v2.ts`'s separate, lower-severity use of `aggregateRecallStats()` for ranking is left unscoped for now (see updated Deferred note above) — the new `scopeFilter` parameter is optional and backward compatible, so that call site's existing behavior is unchanged.
+
+Regression test added (`tests/memory-nudge.test.ts`): two tenants each store facts surfaced well past the snooze threshold but never accessed — tenant A alone has too few to trigger the nudge, but combined with tenant B's the total would cross the threshold. Verified via `git stash` to fail without the fix (the combined 5-fact count triggered the nudge for tenant A alone) and pass with it. tsc clean; biome clean (zero new findings). Related suites (memory-nudge, recall-signals): 6 passed, no regressions.
+
+---
+
 ## [2026.7.124] - 2026-07-07
 
 ### Fixed
@@ -550,8 +562,7 @@ Regression tests added for both fixes, verified via `git stash` to fail without 
 
 ### Deferred (found this iteration, tracked for a future pass)
 
-- `services/workboard-facts-sync.ts`'s `applyWorkboardGoalStatusUpdate()` can resurrect a completed/failed/abandoned goal: unlike every other `updateGoal()` call site that touches `status` (`goal-subagent.ts`, `goal-health.ts`), it has no `isTerminalStatus()` guard before writing a new status derived from a dragged Workboard card. Live as soon as `workboard.enabled` is on (default config has `bidirectional: true`/`syncGoals: true`) — a user dragging a terminal goal's card to a non-terminal column silently reopens it on the next sync. Not fixed this iteration due to time budget; next candidate for iteration 25.
-- `services/recall-signals.ts`'s `aggregateRecallStats()`/`fetchRecallEventRows()` aggregate `recall_events` globally with no scope filter, feeding `retrieval-v2.ts`'s cross-domain-boost scoring. Lower severity than the fixes above — it only adjusts the ranking of facts already scope-filtered upstream, so this is a ranking-fairness quirk in multi-tenant setups rather than a data-exposure bug.
+- `services/retrieval-v2.ts`'s `applyRetrievalV2` calls `aggregateRecallStats()` unscoped for cross-domain-boost scoring. Lower severity — it only adjusts the ranking of facts already scope-filtered upstream (the fact ids it scores are all in-scope), so this is a ranking-fairness quirk in multi-tenant setups rather than a data-exposure bug. (`aggregateRecallStats()` itself gained an optional `scopeFilter` parameter in loop iteration 61 to fix a real leak in `buildMemoryNudge()`'s snooze-candidate count — `retrieval-v2.ts` just doesn't pass one yet.)
 
 ## [2026.7.87] - 2026-07-06
 
@@ -587,10 +598,6 @@ Loop iteration 21 (first iteration of the third batch) of the full-codebase revi
 - **`buildMemoryNudge()` (the session-start "memory nudge" feature) counted duplicate/never-referenced facts across every tenant instead of just the caller's own scope.** Unlike every sibling recall/capture call site, its two raw SQL `COUNT(*)` queries against the `facts` table had no scope filter at all, so a multi-tenant deployment with the nudge feature enabled would leak presence/volume signals about another tenant's stored facts (e.g. "6 facts have near-duplicate observations" surfaced to tenant A even when all 6 belonged to tenant B) into the current chat. Fixed by threading the same `resolveRecallScopeFilter()` result every other recall hook uses through `buildMemoryNudge()`, applying `scopeFilterClausePositional()` to both count queries.
 
 Regression test added, verified via `git stash` to fail without the fix (leaked the combined cross-tenant count) and pass with it. tsc clean; biome checked against each file's pre-existing baseline — zero net-new lint/format issues (one pre-existing warning incidentally resolved as a side effect of the fix).
-
-### Deferred (found this iteration, tracked for a future pass)
-
-- `buildMemoryNudge()`'s third signal, `getSnoozeCandidates()` (via `services/recall-signals.ts`'s `aggregateRecallStats`), remains unscoped. It reads from `recall_events`, which has no scope column at all (only `session_key`), and the facts it references are looked up via a JSON-encoded `fact_ids` array — scoping it properly needs either a schema change or a per-fact join, out of proportion for this iteration given it's the same low-severity "count leak" as the fix above and behind the same default-disabled flag.
 
 ## [2026.7.84] - 2026-07-06
 

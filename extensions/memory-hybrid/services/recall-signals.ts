@@ -3,6 +3,8 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
+import { scopeFilterClausePositional } from "../backends/facts-db/scope-sql.js";
+import type { ScopeFilter } from "../types/memory.js";
 
 export type RecallSignalConfig = {
   crossDomainMinQueries: number;
@@ -51,7 +53,11 @@ function fetchRecallEventRows(db: DatabaseSync, windowDays: number): RecallEvent
     .all(cutoff) as RecallEventRow[];
 }
 
-function buildRecallStatsFromRows(rows: RecallEventRow[], db: DatabaseSync): Map<string, FactRecallStats> {
+function buildRecallStatsFromRows(
+  rows: RecallEventRow[],
+  db: DatabaseSync,
+  scopeFilter?: ScopeFilter | null,
+): Map<string, FactRecallStats> {
   const stats = new Map<string, FactRecallStats>();
   for (const row of rows) {
     let ids: string[] = [];
@@ -115,32 +121,56 @@ function buildRecallStatsFromRows(rows: RecallEventRow[], db: DatabaseSync): Map
     s.distinctDays = dayTracker.get(factId)?.size ?? 0;
   }
 
-  enrichReferenceCountsFromFacts(db, stats);
+  enrichReferenceCountsFromFacts(db, stats, scopeFilter);
 
   return stats;
 }
 
 /** Aggregate recall_events stats per fact (last N days). */
-export function aggregateRecallStats(db: DatabaseSync, windowDays = 30): Map<string, FactRecallStats> {
-  return buildRecallStatsFromRows(fetchRecallEventRows(db, windowDays), db);
+export function aggregateRecallStats(
+  db: DatabaseSync,
+  windowDays = 30,
+  scopeFilter?: ScopeFilter | null,
+): Map<string, FactRecallStats> {
+  return buildRecallStatsFromRows(fetchRecallEventRows(db, windowDays), db, scopeFilter);
 }
 
-/** Map confirmed access (full injection / explicit recall) onto recall-event surface stats. */
-export function enrichReferenceCountsFromFacts(db: DatabaseSync, stats: Map<string, FactRecallStats>): void {
+/**
+ * Map confirmed access (full injection / explicit recall) onto recall-event surface stats.
+ *
+ * `recall_events` itself has no scope/tenant column (only `session_key`), so it can't be
+ * scope-filtered directly -- but every fact id it references still resolves against the scoped
+ * `facts` table here. Facts that don't resolve in-scope (another tenant's, or since deleted) are
+ * dropped from `stats` entirely rather than left with a zero reference count, so they can never
+ * influence a scoped caller's snooze-candidate list or cross-domain-boost score.
+ */
+export function enrichReferenceCountsFromFacts(
+  db: DatabaseSync,
+  stats: Map<string, FactRecallStats>,
+  scopeFilter?: ScopeFilter | null,
+): void {
   const factIds = [...stats.keys()];
   if (factIds.length === 0) return;
 
+  const { clause: scopeClause, params: scopeParams } = scopeFilterClausePositional(scopeFilter);
+  const inScopeIds = new Set<string>();
   const BATCH = 500;
   for (let i = 0; i < factIds.length; i += BATCH) {
     const batch = factIds.slice(i, i + BATCH);
     const placeholders = batch.map(() => "?").join(",");
     const rows = db
-      .prepare(`SELECT id, COALESCE(access_count, 0) AS access_count FROM facts WHERE id IN (${placeholders})`)
-      .all(...batch) as Array<{ id: string; access_count: number }>;
+      .prepare(
+        `SELECT id, COALESCE(access_count, 0) AS access_count FROM facts WHERE id IN (${placeholders})${scopeClause}`,
+      )
+      .all(...batch, ...scopeParams) as Array<{ id: string; access_count: number }>;
     for (const row of rows) {
       const s = stats.get(row.id);
       if (s) s.referenceCount = row.access_count;
+      inScopeIds.add(row.id);
     }
+  }
+  for (const factId of factIds) {
+    if (!inScopeIds.has(factId)) stats.delete(factId);
   }
 }
 
@@ -161,8 +191,9 @@ export function snoozeCandidatesFromStats(
 export function getSnoozeCandidates(
   db: DatabaseSync,
   config: RecallSignalConfig = DEFAULT_RECALL_SIGNAL_CONFIG,
+  scopeFilter?: ScopeFilter | null,
 ): string[] {
-  const stats = aggregateRecallStats(db, config.neverReferencedWindowDays);
+  const stats = aggregateRecallStats(db, config.neverReferencedWindowDays, scopeFilter);
   return snoozeCandidatesFromStats(stats, config);
 }
 

@@ -37,11 +37,9 @@ export type MemoryNudgePayload = {
 /**
  * Build top-3 nudge actions from vault backlog.
  *
- * `scopeFilter` restricts the duplicate/never-referenced counts to the caller's own scope,
- * matching every other recall/capture call site — otherwise a multi-tenant deployment would
- * leak presence/volume signals about another tenant's stored facts into the current chat.
- * `getSnoozeCandidates()` is not yet scoped (`recall_events` has no scope column, only
- * `session_key`) — tracked separately, see CHANGELOG.
+ * `scopeFilter` restricts the duplicate/never-referenced/snooze-candidate counts to the caller's
+ * own scope, matching every other recall/capture call site — otherwise a multi-tenant deployment
+ * would leak presence/volume signals about another tenant's stored facts into the current chat.
  */
 export function buildMemoryNudge(
   db: DatabaseSync,
@@ -51,7 +49,7 @@ export function buildMemoryNudge(
   if (!config.enabled) return null;
 
   const actions: NudgeAction[] = [];
-  const snoozeCandidates = getSnoozeCandidates(db);
+  const snoozeCandidates = getSnoozeCandidates(db, undefined, scopeFilter);
   if (snoozeCandidates.length >= config.snoozeCandidateThreshold) {
     actions.push({
       label: `${snoozeCandidates.length} facts are surfaced often but never used`,
