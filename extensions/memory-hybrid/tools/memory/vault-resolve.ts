@@ -50,6 +50,33 @@ export function listToolVaultHandles(runtime: MemoryToolRuntime, vaultParam?: st
   ];
 }
 
+/**
+ * Group items by the vault their fact id actually belongs to (via `vaultByFactId`), falling
+ * back to `defaultFactsDb` for ids with no vault entry — single-vault mode, or an id merged in
+ * from a non-fan-out source (e.g. entity lookup). Used to route per-vault operations like graph
+ * expansion (expandGraph, getConnectedFactIds) so they traverse each seed's OWN vault's data
+ * instead of unconditionally the resolved/default vault, which during multi-vault fan-out
+ * (`vault: "all"`) silently drops expansion for every non-default-vault seed.
+ */
+export function groupByResultVault<T, D>(
+  items: Iterable<T>,
+  getFactId: (item: T) => string,
+  vaultByFactId: Map<string, string> | undefined,
+  vaultHandles: Array<{ name: string; factsDb: D }>,
+  defaultFactsDb: D,
+): Map<D, T[]> {
+  const groups = new Map<D, T[]>();
+  for (const item of items) {
+    const vaultName = vaultByFactId?.get(getFactId(item));
+    const handle = vaultName ? vaultHandles.find((h) => h.name === vaultName) : undefined;
+    const targetDb = handle ? handle.factsDb : defaultFactsDb;
+    const bucket = groups.get(targetDb);
+    if (bucket) bucket.push(item);
+    else groups.set(targetDb, [item]);
+  }
+  return groups;
+}
+
 export function shouldFanOutVaultRecall(cfg: HybridMemoryConfig, vaultParam?: string): boolean {
   const trimmed = vaultParam?.trim();
   if (trimmed === "all") return true;

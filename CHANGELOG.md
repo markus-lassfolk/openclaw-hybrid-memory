@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.147] - 2026-07-07
+
+### Fixed
+
+Loop iteration 83 of the full-codebase review loop — fixes the last remaining Security/cross-tenant bullet from iteration 34's sweep (the "Data loss/correctness" and "Lower-severity/cosmetic" groups from that same sweep were already fully closed out in earlier iterations).
+
+- **`tools/memory/register-recall-tools.ts`'s graph expansion ignored per-result vault during multi-vault fan-out (`vault: "all"`).** Both the modern `expandGraph`-based BFS path and the legacy flat-score `getConnectedFactIds` path called their graph traversal unconditionally against `recallFactsDb` — the resolved/default vault's factsDb — even though `results` (the seed set for expansion) can contain facts from *multiple* vaults once `vaultHandles.length > 1`. Since `memory_links` tables are per-vault SQLite databases, this meant graph expansion silently produced nothing for any seed that came from a non-default vault (the traversal call never even reaches that vault's link data), contradicting the per-result-vault routing this same file's `getByIdInResultVault`/`isContradictedInResultVault` helpers already apply to the cold-tier and `asOf` filters a few lines above. Fixed by adding `groupByResultVault()` to `tools/memory/vault-resolve.ts` — a small generic helper that buckets items by the vault their fact id actually resolved to (via `vaultByFactId`, falling back to the default factsDb for ids with no vault entry, e.g. single-vault mode or entity-lookup merges) — and using it in both graph-expansion branches to run the traversal separately per vault group before merging the results back together. In single-vault mode the grouping collapses to one group, so behavior there is unchanged.
+
+Regression tests added (`tests/vault-resolve.test.ts`): four tests on the extracted `groupByResultVault()` helper — routes items to their own vault per `vaultByFactId`, falls back to the default factsDb when an id has no vault entry, falls back when `vaultByFactId` names a vault absent from `vaultHandles`, and collapses to a single group in single-vault mode (no behavior change). Verified via `git stash` to fail without the fix (`groupByResultVault is not a function` — the helper doesn't exist yet) and pass with it. tsc clean; biome clean (zero new findings). A full end-to-end integration test (real multi-vault RRF fan-out + graph expansion through the actual `memory_recall` tool) was not added — wiring the full RRF/embedding/FTS pipeline across two vaults is disproportionately larger mocking surface than this fix, which is a direct, minimal generalization of the already-tested `getByIdInResultVault` pattern in the same function, using the same `vaultByFactId`/`vaultHandles` inputs; verified by code inspection of the call-site wiring instead. Related suites (vault-resolve, graph-retrieval, graph-retrieval-cte-hub-penalty, auto-linking, memory-tools-execute-boundaries, memory-forget-promote-vault-resolution, memory-store-vault-active-task-ledger-isolation, comprehensive-e2e): 141 passed, no regressions.
+
+---
+
 ## [2026.7.146] - 2026-07-07
 
 ### Fixed
@@ -613,9 +625,6 @@ Loop iteration 34 of the full-codebase review loop. This iteration's review fann
 Regression test added: races a promise that rejects (via `setTimeout`) with a signal, listens for `process.on("unhandledRejection", ...)` during the call, and asserts none fired. Verified via `git stash` to fail without the fix (unhandled rejection observed) and pass with it. tsc clean; biome clean (zero net-new). Related suites (recall-pipeline, lifecycle-stage-recall, constrained-recall, degraded-recall): 59 passed, no regressions. Full background vitest suite: only the 3 known pre-existing unrelated failures.
 
 ### Deferred (confirmed findings from iteration 34's sweep, not yet fixed — grouped by rough severity)
-
-**Security/cross-tenant:**
-- `tools/memory/register-recall-tools.ts`: graph expansion ignores per-result vault during multi-vault fan-out.
 
 **Data loss / correctness:**
 - ~~Lost-update race between the heartbeat/cron `reconcileActiveTaskInProgressSessions` and `active_task_checkpoint` on `ACTIVE-TASKS.md` (plain read-then-write, no optimistic-concurrency check unlike sibling writers).~~ — **fully fixed**: `reconcileActiveTaskInProgressSessions`'s half in loop iteration 66, `syncMarkdownLedgerFromCheckpoint`'s half in loop iteration 67 (see below).
