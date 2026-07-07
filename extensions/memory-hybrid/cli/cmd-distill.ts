@@ -1066,9 +1066,16 @@ export async function runDistillForCli(
           context: "distill",
         });
         try {
+          // When storeWithResult merged this call's text onto an existing fact (newlyStored:
+          // false, embeddingStale: true), entry.text is the ACTUAL persisted content, not
+          // redactedText alone -- re-embed from entry.text so the vector backend encodes the
+          // same content as the fact row (mirrors register-store-tools.ts's ADD-path merge fix).
+          const isMerge = storeResult.newlyStored === false && storeResult.embeddingStale === true;
+          const vectorText = isMerge ? entry.text : redactedText;
+          const vectorForStore = isMerge ? await embeddings.embed(entry.text) : vector;
           await vectorDb.store({
-            text: redactedText,
-            vector,
+            text: vectorText,
+            vector: vectorForStore,
             importance: BATCH_STORE_IMPORTANCE,
             category: fact.category,
             id: entry.id,

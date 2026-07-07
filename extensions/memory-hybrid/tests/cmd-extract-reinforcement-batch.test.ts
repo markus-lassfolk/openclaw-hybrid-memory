@@ -147,6 +147,95 @@ describe("extract-reinforcement batching", () => {
   });
 });
 
+describe("extract-reinforcement MEMORY_STORE merge re-embeds the merged text (loop iteration 62 regression)", () => {
+  it("stores entry.text (the merged content), not the pre-merge fragment, when storeWithResult merges", async () => {
+    // fuzzyDedupe + onDuplicate: merge for the "reinforcement-analysis" source, matching the
+    // convention in tests/memory-store-merge-dedupe-vector.test.ts, so a plain case-insensitive
+    // hash duplicate deterministically merges without needing a real embedding-similarity feed.
+    factsDb.close();
+    factsDb = new FactsDB(join(tmpDir, "facts.db"), {
+      fuzzyDedupe: true,
+      storeConfig: { fuzzyDedupe: true, sourceProfiles: { "reinforcement-analysis": { onDuplicate: "merge" } } },
+    });
+
+    const firstText = "Deployed the payment service to production version one.";
+    const secondText = "DEPLOYED THE PAYMENT SERVICE TO PRODUCTION VERSION ONE.";
+
+    vi.mocked(runReinforcementExtract).mockResolvedValue({
+      incidents: [
+        { ...incident, sessionFile: "a.jsonl" },
+        { ...incident, sessionFile: "b.jsonl" },
+      ],
+      sessionsScanned: 2,
+    });
+
+    const embedCalls: string[] = [];
+    const create = vi.fn().mockResolvedValue({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify([
+              {
+                remediationType: "MEMORY_STORE",
+                category: "technical",
+                severity: "low",
+                remediationContent: { text: firstText },
+                incidentIndex: 0,
+              },
+              {
+                remediationType: "MEMORY_STORE",
+                category: "technical",
+                severity: "low",
+                remediationContent: { text: secondText },
+                incidentIndex: 1,
+              },
+            ]),
+          },
+        },
+      ],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    });
+
+    const vectorDbStore = vi.fn().mockResolvedValue(undefined);
+    const ctx = makeCtx({ chat: { completions: { create } } });
+    ctx.factsDb = factsDb;
+    ctx.vectorDb = {
+      hasDuplicate: vi.fn().mockResolvedValue(false),
+      store: vectorDbStore,
+    } as unknown as HandlerContext["vectorDb"];
+    ctx.embeddings = {
+      embed: vi.fn(async (text: string) => {
+        embedCalls.push(text);
+        return [0.1, 0.2, 0.3, 0.4];
+      }),
+      modelName: "test",
+    } as unknown as HandlerContext["embeddings"];
+    (ctx.cfg as HandlerContext["cfg"]).reinforcement = {
+      ...(ctx.cfg.reinforcement ?? {}),
+      maxIncidentsPerRun: 2,
+      analysisBatchSize: 2,
+    };
+
+    // Bypass the cheap pre-check so the real storeWithResult merge path runs.
+    vi.spyOn(factsDb, "hasDuplicate").mockReturnValue(false);
+
+    await runExtractReinforcementForCli(ctx, { workspace, full: true, force: true });
+
+    // list()'s category filter validates against a stricter enum than storeWithResult's own
+    // write-time validation, so filtering by category:"technical" here would silently return []
+    // even though the fact really was stored with that category -- list unfiltered instead.
+    const stored = factsDb.list(20, {}).find((f) => f.source === "reinforcement-analysis");
+    expect(stored?.text).toContain(firstText);
+    expect(stored?.text).toContain(secondText);
+    expect(stored?.text).not.toBe(firstText);
+
+    const storedTexts = vectorDbStore.mock.calls.map((call) => (call[0] as { text: string }).text);
+    expect(storedTexts).toContain(stored?.text);
+    expect(storedTexts.every((t) => t !== secondText)).toBe(true);
+    expect(embedCalls.some((t) => t === stored?.text)).toBe(true);
+  });
+});
+
 describe("extract-reinforcement batch heartbeat (cron silence audit)", () => {
   afterEach(() => {
     vi.useRealTimers();

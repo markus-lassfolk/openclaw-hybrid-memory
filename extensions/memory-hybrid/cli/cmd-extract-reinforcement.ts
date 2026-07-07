@@ -752,9 +752,16 @@ export async function runExtractReinforcementForCli(
               context: "extract-reinforcement",
             });
             if (vector) {
+              // When storeWithResult merged this call's text onto an existing fact (newlyStored:
+              // false, embeddingStale: true), entry.text is the ACTUAL persisted content, not
+              // text alone -- re-embed from entry.text so the vector backend encodes the same
+              // content as the fact row (mirrors register-store-tools.ts's ADD-path merge fix).
+              const isMerge = storeResult.newlyStored === false && storeResult.embeddingStale === true;
+              const vectorText = isMerge ? entry.text : text;
+              const vectorForStore = isMerge ? await embeddings.embed(entry.text) : vector;
               await vectorDb.store({
-                text,
-                vector,
+                text: vectorText,
+                vector: vectorForStore,
                 importance: CLI_STORE_IMPORTANCE,
                 category: remediationCategory,
                 id: entry.id,
