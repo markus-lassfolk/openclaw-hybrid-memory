@@ -323,6 +323,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
                 cfg,
                 logger: api.logger,
                 workspaceRoot,
+                scopeFilter: buildToolScopeFilter({}, currentAgentIdRef.value, cfg),
               },
               {
                 entity: taskEntity,

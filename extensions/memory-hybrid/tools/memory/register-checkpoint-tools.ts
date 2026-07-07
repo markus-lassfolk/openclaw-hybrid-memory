@@ -104,6 +104,7 @@ export function registerCheckpointTools(runtime: MemoryToolRuntime): void {
             embeddings,
             cfg,
             logger: api.logger,
+            scopeFilter,
             episodeScopeFilter: scopeFilter,
           },
           params as {

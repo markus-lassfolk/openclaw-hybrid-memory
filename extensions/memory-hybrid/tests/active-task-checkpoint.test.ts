@@ -787,3 +787,90 @@ describe("active-task-checkpoint", () => {
     }
   });
 });
+
+/**
+ * Regression test (loop iteration 103): findLatestActiveTaskKeyFact/upsertProjectTaskKey read and
+ * wrote active-task project facts with no scope filtering at all, unlike sibling task-ledger
+ * functions (loadTaskLedgerFromFacts, getProjectFacts) that were already scope-filtered. A
+ * checkpoint call from one agent/tenant could read a colliding-entity checkpoint's fields
+ * (owner/next/title/etc.) written by a different tenant as its own "existing" defaults, and its
+ * write was always stored at global scope, retiring the other tenant's fact via supersede().
+ */
+describe("active-task-checkpoint scope isolation (loop iteration 103 regression)", () => {
+  const dirs: string[] = [];
+
+  afterEach(() => {
+    while (dirs.length > 0) {
+      const dir = dirs.pop();
+      if (dir) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  function setup() {
+    const root = mkdtempSync(join(tmpdir(), "hm-active-task-checkpoint-scope-"));
+    dirs.push(root);
+    const cfg = makeConfig(root);
+    const factsDb = new FactsDB(cfg.sqlitePath);
+    const vectorDb = makeVectorDb();
+    const embeddings = makeEmbeddings();
+    const openclawDir = join(root, "openclaw");
+    return { root, cfg, factsDb, vectorDb, embeddings, openclawDir };
+  }
+
+  it("does not leak another tenant's checkpoint fields as this tenant's 'existing' defaults", async () => {
+    const { cfg, factsDb, vectorDb, embeddings, openclawDir } = setup();
+
+    await runActiveTaskCheckpoint(
+      { cfg, factsDb, vectorDb, embeddings, openclawDir, scopeFilter: { agentId: "tenant-a" } },
+      { entity: "shared-deploy", status: "in_progress", owner: "tenant-a-owner", next: "tenant-a-next" },
+    );
+
+    const result = await runActiveTaskCheckpoint(
+      { cfg, factsDb, vectorDb, embeddings, openclawDir, scopeFilter: { agentId: "tenant-b" } },
+      { entity: "shared-deploy", status: "in_progress" },
+    );
+
+    expect(result.ok).toBe(true);
+    // Tenant B supplied no owner/next; read back tenant B's own scoped view specifically (an
+    // unscoped read would now also match tenant A's separate, correctly-scoped row, which is a
+    // meaningless tie-break once both rows legitimately coexist post-fix). Pre-fix, this scoped
+    // read of tenant B's own fact would have resolved to tenant A's leaked values; post-fix it
+    // must resolve to the empty defaults instead.
+    const tenantBOwner = factsDb.lookup("shared-deploy", "owner", undefined, {
+      includeSuperseded: false,
+      limit: 1,
+      scopeFilter: { agentId: "tenant-b" },
+    })[0]?.entry;
+    const tenantBNext = factsDb.lookup("shared-deploy", "next", undefined, {
+      includeSuperseded: false,
+      limit: 1,
+      scopeFilter: { agentId: "tenant-b" },
+    })[0]?.entry;
+    expect(tenantBOwner?.value ?? tenantBOwner?.text).not.toBe("tenant-a-owner");
+    expect(tenantBNext?.value ?? tenantBNext?.text).not.toBe("tenant-a-next");
+    factsDb.close();
+  });
+
+  it("does not let a colliding-entity checkpoint from another tenant supersede this tenant's fact", async () => {
+    const { cfg, factsDb, vectorDb, embeddings, openclawDir } = setup();
+
+    await runActiveTaskCheckpoint(
+      { cfg, factsDb, vectorDb, embeddings, openclawDir, scopeFilter: { agentId: "tenant-a" } },
+      { entity: "shared-deploy", status: "in_progress", owner: "tenant-a-owner" },
+    );
+    await runActiveTaskCheckpoint(
+      { cfg, factsDb, vectorDb, embeddings, openclawDir, scopeFilter: { agentId: "tenant-b" } },
+      { entity: "shared-deploy", status: "in_progress", owner: "tenant-b-owner" },
+    );
+
+    // Tenant A's own scoped view of the fact must still show its own value, not have been
+    // retired/overwritten by tenant B's unrelated checkpoint on the same entity label.
+    const tenantAOwner = factsDb.lookup("shared-deploy", "owner", undefined, {
+      includeSuperseded: false,
+      limit: 1,
+      scopeFilter: { agentId: "tenant-a" },
+    })[0]?.entry;
+    expect(tenantAOwner?.value ?? tenantAOwner?.text).toBe("tenant-a-owner");
+    factsDb.close();
+  });
+});

@@ -61,6 +61,8 @@ export interface ActiveTaskCheckpointDeps {
   openclawDir?: string;
   workspaceRoot?: string;
   now?: () => Date;
+  /** Restricts project-fact reads/writes to the caller's own scope; see task-ledger-facts.ts. */
+  scopeFilter?: ScopeFilter | null;
   episodeScopeFilter?: ScopeFilter | null;
   scheduleWakeFn?: (args: ActiveTaskWakeScheduleInput) => Promise<ActiveTaskWakeScheduleResult>;
   refreshProjectionFn?: (args: ActiveTaskProjectionRefreshInput) => Promise<ActiveTaskProjectionRefreshResult>;
@@ -432,6 +434,7 @@ function primeLatestProjectFactCacheForEntityKeys(
   cache: Map<string, MemoryEntry>,
   entity: string,
   keys: readonly string[],
+  scopeFilter?: ScopeFilter | null,
 ): void {
   const normalizedEntity = entity.trim().toLowerCase();
   for (const key of keys) {
@@ -439,7 +442,11 @@ function primeLatestProjectFactCacheForEntityKeys(
     if (!normalizedKey) continue;
     const cacheKey = taskEntityKey(normalizedEntity, normalizedKey);
     if (cache.has(cacheKey)) continue;
-    const hit = factsDb.lookup(entity, normalizedKey, undefined, { includeSuperseded: false, limit: 1 })[0]?.entry;
+    const hit = factsDb.lookup(entity, normalizedKey, undefined, {
+      includeSuperseded: false,
+      limit: 1,
+      scopeFilter,
+    })[0]?.entry;
     if (!hit) continue;
     if ((hit.category ?? "").trim() !== "project") continue;
     cache.set(cacheKey, hit);
@@ -804,15 +811,13 @@ export async function runActiveTaskCheckpoint(
 
   const checkpoint = validation.normalized;
   const latestProjectFacts = new Map<string, MemoryEntry>();
-  primeLatestProjectFactCacheForEntityKeys(deps.factsDb, latestProjectFacts, checkpoint.entity, [
-    "status",
-    "owner",
-    "next",
-    "related_session",
-    "related_goal",
-    "title",
-    "resume_at",
-  ]);
+  primeLatestProjectFactCacheForEntityKeys(
+    deps.factsDb,
+    latestProjectFacts,
+    checkpoint.entity,
+    ["status", "owner", "next", "related_session", "related_goal", "title", "resume_at"],
+    deps.scopeFilter,
+  );
   const existingStatus = getLatestProjectValue(latestProjectFacts, checkpoint.entity, "status");
   const resolvedStatus = checkpoint.status ?? normalizeExistingStatus(existingStatus) ?? "in_progress";
   const resolvedOwner = checkpoint.owner ?? getLatestProjectValue(latestProjectFacts, checkpoint.entity, "owner") ?? "";
@@ -881,6 +886,7 @@ export async function runActiveTaskCheckpoint(
     latestProjectFacts,
     checkpoint.entity,
     updates.map((u) => u.key),
+    deps.scopeFilter,
   );
 
   for (const update of updates) {
@@ -893,7 +899,7 @@ export async function runActiveTaskCheckpoint(
         update.key,
         update.value,
         deps.logger,
-        { latestByEntityKey: latestProjectFacts },
+        { latestByEntityKey: latestProjectFacts, scopeFilter: deps.scopeFilter },
       );
       updatedKeys.push(update.key);
     } catch (err) {
