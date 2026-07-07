@@ -16,6 +16,7 @@
 import { randomBytes } from "node:crypto";
 import type { ApiTapConfig } from "../config/types/features.js";
 import { spawn, spawnSync } from "../utils/process-runner.js";
+import { getBlockedVerificationHostReason } from "./goal-health.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -105,7 +106,7 @@ export function isEndpointBlocked(endpointUrl: string, cfg: ApiTapConfig): strin
  * Validate a URL against allowed/blocked patterns.
  * Returns null if allowed, or an error message if blocked.
  */
-export function validateUrl(url: string, cfg: ApiTapConfig): string | null {
+export async function validateUrl(url: string, cfg: ApiTapConfig): Promise<string | null> {
   // Parse and validate URL first to normalize percent-encoded paths
   let parsed: URL;
   try {
@@ -115,6 +116,20 @@ export function validateUrl(url: string, cfg: ApiTapConfig): string | null {
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     return `URL scheme "${parsed.protocol}" is not allowed. Only http: and https: are permitted.`;
+  }
+
+  // blockedPatterns below only match path/host keywords (e.g. "auth", "login") -- they have no
+  // idea what IP a hostname resolves to. Without this check, apitap_capture/apitap_peek would
+  // happily launch a real headless browser against loopback/private/link-local targets, including
+  // cloud metadata endpoints (169.254.169.254). Reuses the goal-health SSRF host guard rather than
+  // re-implementing IP-range checks. Note this only pins the DNS answer at validation time -- the
+  // apitap CLI performs its own, later, independent navigation/resolution, so a DNS-rebinding
+  // attacker could still slip a second lookup past this point; this closes the common case, not
+  // the fully rebinding-proof one (goal-health's http_ok check can pin the connection IP because it
+  // owns the request; this validator doesn't own the browser apitap spawns).
+  const blockedHostReason = await getBlockedVerificationHostReason(parsed.hostname);
+  if (blockedHostReason) {
+    return `URL host "${parsed.hostname}" is not allowed: ${blockedHostReason}.`;
   }
 
   // Build normalized URL string for pattern matching (protocol + host + pathname only)

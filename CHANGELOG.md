@@ -23,6 +23,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.121] - 2026-07-07
+
+### Fixed
+
+Loop iteration 57 of the full-codebase review loop — fixes the ApiTap SSRF gap flagged during iteration 34's sweep.
+
+- **`apitap-service.ts`'s `validateUrl` had no protection against SSRF to private/loopback/link-local hosts, including cloud metadata endpoints.** The gate run before `apitap_capture`/`apitap_peek` launch a real headless browser at an agent-supplied URL only checked `allowedPatterns`/`blockedPatterns` — glob-style matches against the URL's literal text (path keywords like `oauth`/`login`, by default). It never resolved the hostname, so a URL like `http://169.254.169.254/latest/meta-data/` or `http://10.0.0.5/admin` sailed through as long as its text didn't contain a blocked keyword, letting a compromised or misled agent point the capture browser at internal network targets or cloud-instance credential endpoints. Fixed by reusing `getBlockedVerificationHostReason` — the SSRF host guard `services/goal-health.ts`'s `http_ok` goal verification already uses (DNS-resolves the hostname, or reads an IP literal directly, and rejects loopback/private/link-local/unique-local addresses) — inside `validateUrl` before the pattern checks run. `validateUrl` is now async; its two call sites in `tools/apitap-tools.ts` (`apitap_capture`, `apitap_peek`) now `await` it.
+
+Regression test added (`tests/apitap-service-ssrf.test.ts`, new file): blocks a literal loopback IP (no DNS lookup needed) and a literal link-local metadata IP; mocks `node:dns/promises`'s `lookup` to prove a hostname resolving to a private address is blocked and one resolving to a public address still passes through to (and can still be rejected by) the existing pattern checks. Verified via `git stash` to fail without the fix (the async signature change meant the old synchronous `validateUrl` returned a `Promise` object instead of a string, and the private/loopback checks never ran) and pass with it. tsc clean; biome clean (zero new findings). Related suites (apitap-service-ssrf, apitap-tools, apitap-store, goal-health-http-ok-dns-pinning, goal-stewardship-health): 68 passed, no regressions.
+
+Note: this closes the common case, not a fully DNS-rebinding-proof one — `validateUrl` resolves the hostname once at validation time, but the external `apitap` CLI performs its own, later, independent navigation and resolution outside this process's control, so it doesn't pin the actual outbound connection to the validated IP the way `goal-health.ts`'s `http_ok` check does (which owns the request and can pass a custom `lookup` option to `node:http`/`node:https`).
+
+---
+
 ## [2026.7.120] - 2026-07-06
 
 ### Fixed
@@ -303,7 +317,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 
 **Security/cross-tenant:**
 - `tools/provenance-tools.ts`'s `buildDerivedFrom` returns `event_log`-sourced text with no scope filter (event_log has no tenant column), inconsistent with the scoped `fact_chain`/`consolidationChain` handling in the same function.
-- `services/apitap-service.ts`'s `validateUrl` only blocks path keywords, never resolved host/IP — no protection against SSRF to private/link-local ranges or cloud metadata endpoints (`169.254.169.254`, etc.) via `apitap_capture`/`apitap_peek`.
 - `tools/memory/register-recall-tools.ts`: keyword recall applies the FTS row-limit before per-hit scope filtering, silently under-returning results in scoped multi-tenant deployments; graph expansion ignores per-result vault during multi-vault fan-out.
 
 **Data loss / correctness:**

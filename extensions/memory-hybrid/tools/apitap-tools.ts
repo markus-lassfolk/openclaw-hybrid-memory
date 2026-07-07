@@ -165,7 +165,7 @@ export function registerApitapTools(ctx: ApitapToolsContext, api: ClawdbotPlugin
           };
         }
 
-        const urlError = validateUrl(url, cfg.apiTap);
+        const urlError = await validateUrl(url, cfg.apiTap);
         if (urlError) {
           return {
             content: [{ type: "text", text: `Cannot capture: ${urlError}` }],
@@ -254,7 +254,7 @@ export function registerApitapTools(ctx: ApitapToolsContext, api: ClawdbotPlugin
           };
         }
 
-        const urlError = validateUrl(url, cfg.apiTap);
+        const urlError = await validateUrl(url, cfg.apiTap);
         if (urlError) {
           return {
             content: [{ type: "text", text: `Cannot peek: ${urlError}` }],
