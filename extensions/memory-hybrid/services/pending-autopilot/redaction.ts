@@ -7,6 +7,16 @@ const SECRET_PATTERNS: RegExp[] = [
   // `:`/`=` (e.g. `{"password":"hunter2"}`), which the original whitespace-only gap missed
   // entirely — any JSON-quoted credential key produced zero redactions.
   /\b(?:password|passwd|pwd|secret|token|api[_-]?key|authorization)\b[\s"']*[:=]\s*[^\s,;}{[\]]+/gi,
+  // The `\b` above only matches when the keyword is preceded by a non-word character, so a
+  // keyword glued directly onto a lowercase prefix with no separator -- the classic camelCase
+  // compound-identifier form (`sessionToken:`, `authToken:`, `clientSecret:`, `refreshToken:`)
+  // -- was invisible to it, since a lowercase letter followed by an uppercase letter is not a
+  // `\b` transition. Case-sensitive (not `i`) so the capitalized suffix reliably signals a
+  // compound boundary rather than matching case-insensitively at arbitrary positions.
+  /(?<=[a-z0-9])(?:Password|Passwd|Pwd|Secret|Token|Api[_-]?Key|Authorization)\b[\s"']*[:=]\s*[^\s,;}{[\]]+/g,
+  // Same gap for underscore-joined compounds (`auth_token:`, `client_secret:`) -- `_` is a word
+  // character, so the plain `\b` above doesn't create a boundary there either.
+  /(?<=_)(?:password|passwd|pwd|secret|token|api[_-]?key|authorization)\b[\s"']*[:=]\s*[^\s,;}{[\]]+/gi,
   /\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi,
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:[^\s@/]+@[^\s]+/gi,
 ];

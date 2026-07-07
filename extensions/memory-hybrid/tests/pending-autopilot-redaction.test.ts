@@ -34,3 +34,38 @@ describe("redactAutopilotText JSON-quoted credential keys (loop iteration 37 reg
     expect(redacted).not.toContain("hunter2");
   });
 });
+
+/**
+ * Regression test (loop iteration 102): SECRET_PATTERNS' `\b(?:...|token|...)\b` word-boundary
+ * match requires the keyword to be preceded by a non-word character, but a lowercase-to-uppercase
+ * transition (camelCase) and `_` (a word character) are both NOT `\b` transitions -- so a
+ * credential keyword glued onto a compound identifier (`sessionToken:`, `auth_token:`) passed
+ * through unredacted, even though the structured object-key redaction a few lines below already
+ * treats these exact compound forms as sensitive via CREDENTIAL_KEY_NORMALIZED.
+ */
+describe("redactAutopilotText compound credential-key identifiers (loop iteration 102 regression)", () => {
+  it("redacts camelCase-compound keyword forms", () => {
+    for (const raw of [
+      'sessionToken: "sekrit-value-1"',
+      'authToken: "sekrit-value-2"',
+      'clientSecret: "sekrit-value-3"',
+      'refreshToken: "sekrit-value-4"',
+    ]) {
+      const { redacted, redactionCount } = redactAutopilotText(raw);
+      expect(redactionCount).toBeGreaterThan(0);
+      expect(redacted).not.toContain("sekrit-value");
+    }
+  });
+
+  it("redacts underscore-joined compound keyword forms", () => {
+    const raw = 'auth_token: "sekrit-value-5"';
+    const { redacted, redactionCount } = redactAutopilotText(raw);
+    expect(redactionCount).toBeGreaterThan(0);
+    expect(redacted).not.toContain("sekrit-value-5");
+  });
+
+  it("still redacts the plain standalone form (no regression on the original case)", () => {
+    const { redacted } = redactAutopilotText('token: "sekrit-value-6"');
+    expect(redacted).not.toContain("sekrit-value-6");
+  });
+});

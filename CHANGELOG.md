@@ -23,6 +23,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.166] - 2026-07-07
+
+### Fixed
+
+Loop iteration 102 of the fresh full-codebase sweep — fixes the last remaining item in the "Deferred (fresh sweep, loop iterations 87-101)" backlog: `redaction.ts`'s free-text secret regex missed credential keywords used as the suffix of a compound identifier.
+
+- **The `\b(?:password|...|token|...)\b` word-boundary match in `SECRET_PATTERNS` only fires when the keyword is preceded by a non-word character**, but a lowercase-to-uppercase transition (camelCase) and `_` (itself a word character) are both *not* `\b` transitions. So `sessionToken:`, `authToken:`, `clientSecret:`, `refreshToken:`, and `auth_token:` all passed through `redactAutopilotText` unredacted and landed verbatim in the persisted `pending_autopilot_decisions` audit trail (evidence/summary text), even though the structured object-key redaction a few lines below (`CREDENTIAL_KEY_NORMALIZED`/`isCredentialKey`) already treats these exact compound forms as sensitive. Fixed by adding two more entries to `SECRET_PATTERNS`: a case-sensitive pattern using a `(?<=[a-z0-9])` lookbehind to catch the capitalized suffix of a camelCase compound (`Token`, `Secret`, `Password`, etc.), and a case-insensitive pattern using a `(?<=_)` lookbehind to catch the underscore-joined form — both scoped narrowly to their specific boundary gap rather than loosening the original pattern's `\b` (which would risk matching the keyword inside unrelated words).
+
+Regression tests added (`tests/pending-autopilot-redaction.test.ts`): confirms `sessionToken:`, `authToken:`, `clientSecret:`, `refreshToken:` (camelCase) and `auth_token:` (underscore-joined) are all now redacted, alongside a no-regression check on the original standalone `token:` form. Verified via `git stash` to fail without the fix — both new tests failed with `redactionCount` of `0` (no redaction occurred at all) against the pre-fix regex. tsc clean; biome clean (zero findings on either changed file). Related suites (pending-autopilot-redaction, skill-quality-hardening): 37 passed, no regressions.
+
+**This closes the last item in the "Deferred (fresh sweep, loop iterations 87-101)" backlog — the entire fresh-sweep backlog opened at iteration 87 is now fully resolved.** The next iteration starts a new fresh full-codebase sweep for new findings.
+
+---
+
 ## [2026.7.165] - 2026-07-07
 
 ### Fixed
@@ -35,11 +49,7 @@ Loop iteration 101 of the fresh full-codebase sweep — fixes the top item from 
 
 Regression tests added (new `tests/offline-qa-dev-tooling-guards.test.ts`): three tests on `sandboxHasDailyLogs` (missing dir doesn't throw and returns `false`; a matching `YYYY-MM-DD.md` returns `true`; a non-matching file returns `false`); one test mocks a spawned child's `'error'` event (via `vi.mock` on `utils/process-runner.js`) and confirms `runTaskSubprocess` resolves with a failure result instead of hanging or throwing. Verified via `git stash` to fail without the fix — with both files unguarded, importing the test file triggered `main()`'s `process.exit()` at module load and the entire suite failed to load (0 tests ran, "process.exit unexpectedly called with '1'"), a stronger proof than a per-assertion failure since the bug prevented the test file from loading at all. tsc clean; biome clean (zero new findings on either changed file, verified against each file's pre-existing baseline — the two pre-existing unsorted-import and two pre-existing unused-variable findings in these files predate this change and are unrelated to it). Related suites: no other module imports either file besides the new test and the `package.json` npm scripts (confirmed via search), so the new test file is the full regression surface.
 
-**With this fix, the "Deferred (fresh sweep, loop iterations 87-100)" backlog is reduced to a single remaining item** (the `redaction.ts` compound-credential-keyword gap below).
-
-### Deferred (fresh sweep, loop iterations 87-101 — not yet fixed, ranked by severity)
-
-- `services/pending-autopilot/redaction.ts`'s free-text secret regex (line 9) relies on `\b` word-boundary matching around bare keywords (`password`, `secret`, `token`, `api[_-]?key`, etc.), so it redacts `token:`/`apiKey:` but misses the exact same keywords as the suffix of a compound identifier with no separator or a camelCase/underscore join — `sessionToken:`, `authToken:`, `auth_token:`, `clientSecret:`, `refreshToken:` all pass through `redactAutopilotText` unredacted and land verbatim in the persisted `pending_autopilot_decisions` audit trail (evidence/summary text). The structured object-key redaction a few lines below (`CREDENTIAL_KEY_NORMALIZED`) already treats these exact compound forms as sensitive, so the free-text regex just never got the equivalent treatment.
+**With this fix, the "Deferred (fresh sweep, loop iterations 87-100)" backlog is reduced to a single remaining item** (the `redaction.ts` compound-credential-keyword gap, fixed in the v2026.7.166 entry above).
 
 ---
 
