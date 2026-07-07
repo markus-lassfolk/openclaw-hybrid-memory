@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.112] - 2026-07-06
+
+### Fixed
+
+Loop iteration 48 of the full-codebase review loop — fixes a pending-cap bypass flagged during iteration 34's sweep, and closes out the last remaining item from that sweep's "batch 4" deferred list.
+
+- **`countPendingUnifiedProposals` could undercount pending proposals when a burst of recent `procedure-skill` candidates crowded them out of the default 100-row list window.** `listUnifiedProposals()` gathers persona/crystallization/tool/procedure-skill proposals, sorts everything by `createdAt` descending, and truncates to `limit` (default 100) — only *after* that truncation does `countPendingUnifiedProposals` filter out `procedure-skill` entries to compute the real pending count. Since procedure-skill's `createdAt` is derived from `lastValidated`/`updatedAt` (near-current for freshly-validated procedures), a large batch of recently-validated procedures could occupy the entire top-100 window, truncating away older but still-genuinely-pending persona/tool/crystallization proposals before the type filter ever saw them — undercounting the real pending total and letting `enforceMaxPendingCap` admit more proposals than the configured cap. Fixed by having `countPendingUnifiedProposals` request an effectively unlimited row count from `listUnifiedProposals` so the procedure-skill exclusion runs before any truncation, not after.
+
+Regression test added (`tests/unified-proposals.test.ts`): seeds one old pending persona proposal alongside 100 recently-validated procedure-skill candidates (enough alone to fill the default list window) and asserts `countPendingUnifiedProposals` still returns `1`. Verified via `git stash` to fail without the fix (returned `0` — the persona proposal was truncated away before the type filter ran) and pass with it. tsc clean; biome clean (zero net-new against baseline — both files' pre-existing import-order findings predate this change, confirmed via `git stash`). Related suites (unified-proposals, workshop-service, proposal-gateway-methods, proposal-routes): 44 passed, no regressions.
+
+---
+
 ## [2026.7.111] - 2026-07-06
 
 ### Fixed
@@ -150,10 +162,6 @@ Loop iteration 37 of the full-codebase review loop — fixes a PII/secret redact
 - **`redactAutopilotText`'s credential-keyword patterns never matched a JSON-serialized secret.** The `SECRET_PATTERNS` regex for `password`/`secret`/`token`/`api_key`/`authorization` required its `:`/`=` to follow the keyword with only whitespace in between (`\s*[:=]`). A JSON-serialized credential — `{"password":"hunter2"}` — has a closing quote between the keyword and the colon (`password":`), which `\s*` never matches, so the entire pattern silently failed to match and the secret passed through unredacted. This is reachable in practice: `redactAutopilotText` is called directly on captured shell/API command strings (`procedure-skill-recipe.ts`'s `args.command`) and other free text that can plausibly embed a JSON body with credentials (e.g. a captured `curl -d '{"password":"..."}'` invocation), and those redacted strings are written into audit logs, verification metadata, and skill-recipe artifacts. Fixed by widening the pattern to `[\s"']*[:=]`, tolerating an optional JSON closing quote (or single quote) between the keyword and the operator.
 
 Regression test added (`tests/pending-autopilot-redaction.test.ts`, 4 cases): a bare JSON-serialized password, multiple JSON-serialized secret/token/api_key values, the original plain `key: value` form (no regression), and a JSON credential embedded inside a captured shell command. Verified via `git stash` to fail without the fix (3 of 4 cases leaked the secret) and pass with it. tsc clean; biome clean (zero net-new). Related suites (skill-quality-hardening, procedure-promotion-policy, procedure-skill-recipe, procedure-skill-generator, procedure-skill-workflow, pending-digest-autopilot-cron): 106 passed, no regressions.
-
-### Deferred (remaining confirmed findings from iteration 34's sweep, not yet fixed)
-
-- `services/unified-proposals.ts`'s `countPendingUnifiedProposals` filters out `procedure-skill` proposals only after `listUnifiedProposals` has already sorted-and-truncated to the default top-100, so a burst of recent procedure-skill candidates can push real pending persona/tool/crystallization proposals out of the count window and let `enforceMaxPendingCap` admit more than configured.
 
 ---
 
