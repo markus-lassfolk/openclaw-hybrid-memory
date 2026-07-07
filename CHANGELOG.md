@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.143] - 2026-07-07
+
+### Fixed
+
+Loop iteration 79 of the full-codebase review loop — fixes the `cli/cmd-backfill.ts` bullet flagged during iteration 34's sweep.
+
+- **`runBackfillForCli`/`runIngestFilesForCli` didn't increment the `skipped` stat when `factsDb.storeWithResult(...)` reported a pre-store-guard rejection** (`skipped: true` — e.g. text that looks like an LLM classifier artifact, per `isPromptArtifactOrReasoningTrace`). Only the sibling skip branch (`newlyStored === false`, a dedupe boost) incremented `skipped`; the pre-store-guard branch just `continue`d. The sibling `cmd-distill.ts` increments `skipped` on both branches. This understated the CLI's summary output — a candidate silently dropped by the pre-store guard counted as neither `stored` nor `skipped`, so `stored + skipped < candidates` with no accounting for where the item went. In `runBackfillForCli` this branch also skipped the loop's `processed++` counter, which drives the progress-bar position, so enough guard-blocked candidates would leave the progress display trailing behind the true completion count. Fixed by adding `skipped++` (and, in `runBackfillForCli`, `processed++`) to the pre-store-guard branch in both functions, mirroring `cmd-distill.ts`'s existing pattern.
+
+Regression test added (`tests/cmd-backfill-skipped-stat.test.ts`, new file): a `MEMORY.md` fixture with one normal fact and one classifier-artifact-shaped line (`"NOOP | duplicate content flagged during triage"`, which trips `isPromptArtifactOrReasoningTrace`) asserts `stored + skipped === candidates` after `runBackfillForCli`. Verified via `git stash` to fail without the fix (`skipped` stayed `0` instead of `1`) and pass with it. tsc clean; biome clean (zero new findings). `runIngestFilesForCli`'s identical one-line fix wasn't given its own dedicated test — mocking its LLM-driven extraction pipeline is disproportionately larger than the bug it fixes, and the fix is a line-for-line mirror of the now-test-proven `runBackfillForCli` pattern; verified by direct code inspection instead. Related suites (cmd-backfill-skipped-stat, cmd-backfill-analyze-feedback, cmd-backfill-jsonl, register-backfill-maintenance-errors): 9 passed, no regressions.
+
+---
+
 ## [2026.7.142] - 2026-07-07
 
 ### Fixed
@@ -573,7 +585,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 - ~~Lost-update race between the heartbeat/cron `reconcileActiveTaskInProgressSessions` and `active_task_checkpoint` on `ACTIVE-TASKS.md` (plain read-then-write, no optimistic-concurrency check unlike sibling writers).~~ — **fully fixed**: `reconcileActiveTaskInProgressSessions`'s half in loop iteration 66, `syncMarkdownLedgerFromCheckpoint`'s half in loop iteration 67 (see below).
 - ~~`lifecycle/stage-cleanup.ts`'s `subagent_spawned` handler only guards against reopening a `"Done"` task, not `"Failed"`~~ — **investigated in loop iteration 41 and NOT a bug**: `subagent_spawned` reopening a `"Failed"` task is deliberate, tested behavior (`stage-cleanup-facts-ledger.test.ts`'s "subagent_spawned reopens Failed tasks when session metadata is present" / "...clears stale handoff when reopening Failed tasks") — a new subagent dispatched against a failed task's label is an explicit retry and is meant to reopen it. Separately, adding `"failed"` to the shared `TERMINAL` set in `services/task-ledger/canonical.ts` breaks `factNewerThan`'s timestamp-tie-break comparator (which prefers "terminal" status on a tie) — it would let a stale `"failed"` fact block a legitimate retry's fresh `"in_progress"` write when both share the same second-granularity `createdAt`, confirmed by 9 existing test failures across `task-ledger-facts.test.ts`/`stage-cleanup-facts-ledger.test.ts` when tried. If the narrower gap (an arbitrary `memory_store` call regressing a `Failed` project-task status via `mirrorMemoryStoreToActiveTaskLedger`'s guard at `task-ledger-facts.ts:136`, which is a *different* write path than `subagent_spawned`'s `syncActiveTaskEntryToFacts`) still needs closing, it must be done as a change local to that one guard, not via the shared `TERMINAL` set.
 **Lower-severity / cosmetic:**
-- `cli/cmd-backfill.ts`'s `runBackfillForCli`/`runIngestFilesForCli` don't increment the `skipped` stat on pre-store-guard rejections (sibling `cmd-distill.ts` does), understating the CLI's summary output.
 - `services/fact-mutation-gateway.ts`'s `hybrid-mem.facts.create` doesn't clamp `importance` to `[0,1]` unlike the sibling `confidence` field in the same handler.
 - `tools/goal-tools.ts`'s `goal_register` has a TOCTOU race on `maxActiveGoals` (no lock around the cap re-check, distinct from the four already-fixed terminal-status races).
 - `utils/llm-selection.ts` mislabels a configured `fallbackModel` as `"built-in"` in diagnostic source attribution (display-only, doesn't affect which model is used).
