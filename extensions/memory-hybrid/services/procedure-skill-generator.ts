@@ -680,7 +680,12 @@ export function generateAutoSkillForProcedure(
 
   let allocated: AllocatedSkillDir | null = null;
   try {
-    allocated = allocateDraftSkillDir(basePath, options.skillsAutoPath, item.payload.skillSlug);
+    // Use writeRelativePath (not options.skillsAutoPath) so the recorded relativePath matches
+    // where the file is actually written under basePath — under the quarantine/pending path
+    // when requireApprovalForPromote is on (default), matching the dry-run branch above and
+    // the sibling generateAutoSkills. Recording the live skillsAutoPath here instead would
+    // point markProcedurePromoted/idempotency checks at a location the file was never written to.
+    allocated = allocateDraftSkillDir(basePath, writeRelativePath, item.payload.skillSlug);
     writeDraftSkill(allocated.skillDir, rebaseDraftSlug(evaluation.draft, allocated.slug, allocated.relativePath));
     void bumpSkillsSnapshotBestEffort({
       changedPath: join(allocated.skillDir, "SKILL.md"),

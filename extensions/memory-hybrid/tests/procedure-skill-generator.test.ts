@@ -1140,4 +1140,46 @@ description: Existing legacy skill created before completion markers.
       else setEnv("OPENCLAW_WORKSPACE", undefined);
     }
   });
+
+  it("single-procedure apply records relativePath under the quarantine path it actually wrote to, not the live skillsAutoPath (loop iteration 53 regression)", () => {
+    const proc = db.upsertProcedure({
+      taskPattern: "Validate single quarantine relative path",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: "Check status" },
+        { tool: "exec", args: { command: "npm test" }, summary: "Run validation test" },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
+      ]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "single-quarantine-relpath-1",
+    });
+    recordDistinctSuccesses(proc.id);
+
+    const pendingAbs = join(tmpDir, "skills-pending");
+    const result = generateAutoSkillForProcedure(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        skillsPendingPath: pendingAbs,
+        requireApprovalForPromote: true,
+        validationThreshold: 3,
+        skillTTLDays: 30,
+        procedureId: proc.id,
+        apply: true,
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // The file is physically written under the quarantine path (pendingAbs) — the recorded
+    // relativePath must reflect that, not the live skillsAutoPath it was never written under.
+    expect(result.relativePath?.startsWith(skillsDir)).toBe(false);
+    expect(existsSync(join(pendingAbs, "validate-single-quarantine-relative-path", "SKILL.md"))).toBe(true);
+
+    const stored = db.getProcedureById(proc.id);
+    expect(stored?.skillPath).toBe(result.relativePath);
+    expect(stored?.skillPath?.startsWith(skillsDir)).toBe(false);
+  });
 });
