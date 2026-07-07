@@ -860,7 +860,11 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
     state.lanceOk &&
     state.embeddingOk &&
     state.embeddingAlignmentOk &&
-    (!cfg.credentials.enabled || state.credentialsOk);
+    (!cfg.credentials.enabled || state.credentialsOk) &&
+    // Only gate on llmOk when --test-llm actually ran live tests — llmOk degrades to a plain
+    // credential-presence check outside --test-llm, and requiring LLM credentials unconditionally
+    // would be a scope change for embeddings-only setups that intentionally have none configured.
+    (!opts.testLlm || state.llmOk);
 
   // Surface overdue / never-run cron jobs as warnings so the summary mentions them even when health checks pass.
   for (const [key, job] of allJobs) {

@@ -59,6 +59,8 @@ export type VerifyRunState = {
   lanceOk: boolean;
   embeddingOk: boolean;
   embeddingAlignmentOk: boolean;
+  /** True when at least one credentialed LLM provider is available; with --test-llm, requires an actual configured-model test to succeed. */
+  llmOk: boolean;
   loadBlocking: string[];
   extDir: string;
   defaultConfigPath: string;
@@ -132,6 +134,7 @@ export function createVerifyRunState(ctx: HandlerContext, opts: VerifyRunOpts, s
     lanceOk: false,
     embeddingOk: false,
     embeddingAlignmentOk: true,
+    llmOk: false,
     loadBlocking: [],
     extDir,
     defaultConfigPath,

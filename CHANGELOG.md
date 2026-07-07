@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.137] - 2026-07-07
+
+### Fixed
+
+Loop iteration 73 of the full-codebase review loop — fixes the `verify --test-llm` exit-code gap flagged during iteration 34's sweep.
+
+- **`openclaw hybrid-mem verify --test-llm` ran live tests against every configured LLM model and displayed per-row results, but a failure never affected `state.allOk`, `state.issues`, or `process.exitCode`** — unlike the parallel embeddings `--test-llm` check, which already gates `allOk`/exit code on `anyEmbOk`. A CI or automation script gating on `verify --test-llm`'s exit code would silently pass even when every configured LLM model actually failed to respond. Fixed by adding a `state.llmOk` field (mirroring `embeddingOk`'s pattern): when `--test-llm` actually exercised at least one of the user's *configured* models (`llm.nano`/`maintenance`/`default`/`heavy` — not the always-shown reference-only rows like Opus/GPT-5.4/Codex that most users never configure), `llmOk` requires at least one of those tests to have succeeded, and pushes an issue+fix when none did. `config-cron.ts`'s `allOk` computation now includes `(!opts.testLlm || state.llmOk)` — gated on `opts.testLlm` specifically, so normal (non-`--test-llm`) verify runs are unaffected and embeddings-only setups without any LLM credentials configured don't newly fail.
+
+Regression test added (`tests/verify-llm-test-failure-exit-code.test.ts`, new file): configures a real model with a valid-looking API key but an unreachable `baseURL` (deterministic, fast connection-refused failure, no real network dependency) and runs `verify --test-llm` — asserts the issue message appears, the run doesn't print "All checks passed", and `process.exitCode === 1`; a second test with `--test-llm` omitted confirms the same broken config doesn't fail the normal run. Verified via `git stash` to fail without the fix (the specific issue message never appeared) and pass with it. tsc clean; biome clean (zero new findings). Related suites (verify-llm-test-failure-exit-code, verify-consolidated-cron, verify-model-alignment, verify-fix-config-error, cmd-verify-orphans, cmd-verify-fact-count): 26 passed, no regressions.
+
+---
+
 ## [2026.7.136] - 2026-07-07
 
 ### Fixed
@@ -500,7 +512,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 - ~~Lost-update race between the heartbeat/cron `reconcileActiveTaskInProgressSessions` and `active_task_checkpoint` on `ACTIVE-TASKS.md` (plain read-then-write, no optimistic-concurrency check unlike sibling writers).~~ — **fully fixed**: `reconcileActiveTaskInProgressSessions`'s half in loop iteration 66, `syncMarkdownLedgerFromCheckpoint`'s half in loop iteration 67 (see below).
 - ~~`lifecycle/stage-cleanup.ts`'s `subagent_spawned` handler only guards against reopening a `"Done"` task, not `"Failed"`~~ — **investigated in loop iteration 41 and NOT a bug**: `subagent_spawned` reopening a `"Failed"` task is deliberate, tested behavior (`stage-cleanup-facts-ledger.test.ts`'s "subagent_spawned reopens Failed tasks when session metadata is present" / "...clears stale handoff when reopening Failed tasks") — a new subagent dispatched against a failed task's label is an explicit retry and is meant to reopen it. Separately, adding `"failed"` to the shared `TERMINAL` set in `services/task-ledger/canonical.ts` breaks `factNewerThan`'s timestamp-tie-break comparator (which prefers "terminal" status on a tie) — it would let a stale `"failed"` fact block a legitimate retry's fresh `"in_progress"` write when both share the same second-granularity `createdAt`, confirmed by 9 existing test failures across `task-ledger-facts.test.ts`/`stage-cleanup-facts-ledger.test.ts` when tried. If the narrower gap (an arbitrary `memory_store` call regressing a `Failed` project-task status via `mirrorMemoryStoreToActiveTaskLedger`'s guard at `task-ledger-facts.ts:136`, which is a *different* write path than `subagent_spawned`'s `syncActiveTaskEntryToFacts`) still needs closing, it must be done as a change local to that one guard, not via the shared `TERMINAL` set.
 **Lower-severity / cosmetic:**
-- `cli/verify/sections/llm-models.ts`'s `--test-llm` failures never affect verify's exit code/issues summary (unlike the parallel embeddings check).
 - `cli/install/cron-jobs.ts`: under the default consolidated-cron mode, standalone jobs not in `CONSOLIDATED_CRON_JOBS` (e.g. `weekly-pending-digest`, `maintenance-log-analyzer`, `sensor-sweep`) are never installed even when enabled/feature-gated on.
 - `cli/commands/manage/register-storage-maintenance.ts`: `--json` mode on `rebuild-aliases`/`repair-vectors`/`classification-artifacts` swallows non-zero exit codes; `classification-artifacts --apply` can print duplicate entries in `verifiedSkippedIds`.
 - `cli/cmd-health.ts --json` never reflects an `unhealthy` overall status in its exit code.
