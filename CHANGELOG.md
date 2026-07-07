@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.118] - 2026-07-06
+
+### Fixed
+
+Loop iteration 54 of the full-codebase review loop — fixes an authorization-lockout bypass flagged during iteration 34's sweep.
+
+- **`parsePersonaProposalsConfig` silently reopened the full default `allowedFiles` allowlist when an operator explicitly configured an empty array.** `allowedFiles: []` is a legitimate configuration meaning "persona proposals may not write to any file" — but the parser treated a post-filter-empty result the same as "not configured," falling back to the full default allowlist (`SOUL.md`, `IDENTITY.md`, `USER.md`, `AGENTS.md`, `TOOLS.md`). Every consumer (`workshop-service.ts`, `persona-proposal-triage.ts`, `persona-tools.ts`, `cli/proposals.ts`, etc.) trusts this list via `.includes(...)` checks, so an operator who explicitly locked persona proposals out of every file would instead get every default file writable — the opposite of what was configured. This is the same "explicit empty array silently replaced by default" class already fixed for `maintenance.privacyRedaction.exemptCategories`/`exemptKeys`, just not yet applied to this sibling authorization allowlist. Fixed by returning the filtered array as-is (which may legitimately be empty) whenever the raw config value is an array at all, only falling back to the default when the field isn't an array/wasn't configured.
+
+Regression test added (`tests/config.test.ts`): parses `personaProposals: {enabled: true, allowedFiles: []}` and asserts the resolved config keeps `allowedFiles` empty rather than refilling it with the default list. Verified via `git stash` to fail without the fix (returned the full 5-file default) and pass with it. tsc clean; biome clean (zero net-new against baseline — both files' pre-existing findings predate this change, confirmed via `git stash`). Related suites (config, persona-proposal-triage, persona-rule-router, proposals, dream-cycle-proposal-bridge, workshop-service): 295 passed, no regressions.
+
+---
+
 ## [2026.7.117] - 2026-07-06
 
 ### Fixed
@@ -280,7 +292,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 - `services/context-engine.ts`'s `prepareSubagentSpawn` calls `buildContextBlock` with no token budget (so every candidate fact is recorded as "injected") and only trims to the real budget afterward — facts trimmed off the end are marked injected anyway and never shown to that sub-agent again in any future turn.
 - `services/graph-retrieval.ts`: `hubScorePenalty` (score-attenuation for high-degree hub nodes) is only implemented in the iterative-BFS fallback; the real production CTE-based expansion path (`expandGraphWithCTE`) never applies it, hard-skipping over-cap hub links entirely instead of attenuating them as both shipped "enhanced"/"complete" presets document.
 - `services/recall-pipeline.ts`: the FTS-only-results abort-signal early-return skips the `.slice(0, limitNum)` every other exit path applies, so an in-flight abort can return an oversized, un-deduped, unranked result set.
-- `config/parsers/features.ts`'s `parsePersonaProposalsConfig` collapses an explicitly-configured empty `allowedFiles: []` back to the full default allowlist — the same "explicit empty array silently replaced by default" class already fixed for `maintenance.privacyRedaction.exemptCategories`/`exemptKeys`, not applied to this sibling authorization allowlist.
 - `services/embedding-migration.ts`'s checkpoint-resume check (`offset > 0 && offset < total`) treats an exactly-completed checkpoint (`offset === total`, persisted right before an interrupted final cleanup) as "nothing to resume," forcing a full needless re-migration.
 - `services/embeddings/factory.ts`'s Google-in-chain dimension guard only covers the OpenAI-model case (`OPENAI_ONLY_EMBED_MODELS`); an Ollama/ONNX model with dims≠768 chained with Google silently builds a mismatched-dimensions chain that only fails later, confusingly, at `vectorDb.store()`.
 

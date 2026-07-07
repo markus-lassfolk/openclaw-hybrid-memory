@@ -977,6 +977,17 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.maintenance.privacyRedaction.exemptKeys).toEqual([]);
   });
 
+  it("respects an explicit empty personaProposals.allowedFiles array as a full lock-out, not the default allowlist (loop iteration 54 regression)", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      personaProposals: {
+        enabled: true,
+        allowedFiles: [],
+      },
+    });
+    expect(result.personaProposals.allowedFiles).toEqual([]);
+  });
+
   it("parses custom categories", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,

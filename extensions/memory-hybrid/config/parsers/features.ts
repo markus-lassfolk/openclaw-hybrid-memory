@@ -431,11 +431,13 @@ export function parsePersonaProposalsConfig(cfg: Record<string, unknown>): Perso
       if (!Array.isArray(proposalsRaw?.allowedFiles)) {
         return [...PERSONA_PROPOSAL_TARGET_FILES];
       }
-      const filtered = (proposalsRaw.allowedFiles as string[]).filter((f) =>
+      // An explicitly configured empty array (or one that filters down to empty) means the
+      // operator locked persona proposals out of every file — respect that instead of
+      // silently reopening the full default allowlist (same class as maintenance.
+      // privacyRedaction.exemptCategories/exemptKeys).
+      return (proposalsRaw.allowedFiles as string[]).filter((f) =>
         PERSONA_PROPOSAL_TARGET_FILES.includes(f as PersonaProposalTargetFile),
       ) as PersonaProposalTargetFile[];
-      // Fallback to defaults if filter produces empty array
-      return filtered.length > 0 ? filtered : [...PERSONA_PROPOSAL_TARGET_FILES];
     })(),
     maxProposalsPerWeek:
       typeof proposalsRaw?.maxProposalsPerWeek === "number" && proposalsRaw.maxProposalsPerWeek > 0
