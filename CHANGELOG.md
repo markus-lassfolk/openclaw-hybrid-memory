@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.124] - 2026-07-07
+
+### Fixed
+
+Loop iteration 60 of the full-codebase review loop — fixes the lower-severity sibling of iteration 35's change-feed cross-session IDOR, deferred at the time.
+
+- **`memory_workshop`'s in-chat `revert_by_ordinal` action accepted a caller-supplied `sessionKey` param and used it to revert a *different* session's proposal without ever checking it against the caller's own trusted session identity.** `resolveWorkshopRevertSessionKey()` prioritizes an explicit `sessionKey` argument over the caller's real (spoof-proof) `api.context.sessionKey`/`sessionId` — by design, since some legitimate callers (the HTTP/RPC change-feed routes) need to accept a broadcast pseudo-session. Those routes were fixed in iteration 35 by additionally gating the resolved session through `isAuthorizedChangeFeedSessionKey()` before acting on it — but `tools/workshop-tool.ts`'s tool-call surface for the same action never got that same second check, so an agent tool call naming another session's key could revert that session's pending/applied persona proposal, tool/skill change, or crystallization by ordinal. Fixed by applying the identical `isAuthorizedChangeFeedSessionKey(sessionKey, chatSessionKey)` gate used by the HTTP/RPC routes.
+
+Regression tests added (`tests/workshop-tool-revert-session-key.test.ts`, new file): seeds a real end-to-end revertible persona proposal (via `ProposalsDB` + a matching change-feed "proposed" entry) owned by one session, then calls `memory_workshop`'s `revert_by_ordinal` from a different trusted session with an explicit `sessionKey` override naming the victim's session — asserts the revert is rejected and the victim's proposal/change-feed status is untouched; a second test confirms the caller's own session can still revert their own change with no override. Verified via `git stash` to fail without the fix (the cross-session revert actually succeeded — `ok: true` — proving the vulnerability was live, not just theoretical) and pass with it. tsc clean; biome clean (zero new findings). Related suites (workshop-tool-revert-session-key, workshop-config, workshop-service, proposal-routes, proposal-gateway-methods): 43 passed, no regressions.
+
+---
+
 ## [2026.7.123] - 2026-07-07
 
 ### Fixed
@@ -321,10 +333,6 @@ Loop iteration 35 of the full-codebase review loop — fixes the highest-severit
 - **`tools/proposal-routes.ts`'s `/plugins/memory-changes/list`/`/revert` and `tools/proposal-gateway-methods.ts`'s `hybrid-mem.changes.list`/`hybrid-mem.changes.revert` let a caller name an arbitrary `session`/`sessionKey` to read or revert a *different* session's proposal/change-feed history.** These endpoints derived their scoping session entirely from client-supplied input (`?session=` query param, or `body.session`/`body.sessionKey`/`params.sessionKey`, via `resolveWorkshopRevertSessionKey`, which prioritizes the explicit param over the caller's real session) — never checking it against the caller's own trusted session identity (`api.context.sessionKey`/`sessionId`, which the caller cannot spoof). Any caller who knew or guessed another session's key could list that session's full change history, or revert its pending/applied proposals (persona edits, tool/skill changes, crystallizations) by ordinal. Separately, the id-based revert path (`revertChangeById`) resolves purely by primary key with no session check of its own at all — even a properly-scoped caller could revert an arbitrary other session's change event just by supplying its id, since `revertChangeByOrdinal`'s scoped `getByOrdinal(sessionKey, ordinal)` lookup has no equivalent in the id-based path. Fixed by adding `isAuthorizedChangeFeedSessionKey()` (`services/workshop-config.ts`), which only allows the caller's own trusted session or the `__broadcast__` pseudo-session, applied to both the list-scoping session and (for id-based revert) the resolved event's actual `sessionKey` before reverting. Mission Control's dashboard is unaffected — it calls the change-feed service directly in-process and never goes through these caller-facing HTTP/RPC entry points, so its own legitimate cross-session admin access still works.
 
 Regression tests added (6 new tests across `tests/proposal-routes.test.ts` and `tests/proposal-gateway-methods.test.ts`): list/revert-by-ordinal reject a session/sessionKey mismatched from the caller's trusted identity, and revert-by-id rejects an event belonging to a different session even when no explicit override is supplied. All 6 verified via `git stash` to fail without the fix (reachable, one variant even proceeding into an unrelated downstream error rather than being blocked upfront) and pass with it. Two pre-existing tests needed their mock `api.context` updated to a matching session identity, since they simulate a legitimate same-session call. tsc clean; biome clean (zero net-new against baseline, including 2 own new-code non-null-assertions converted to optional chaining to avoid new lint warnings). Related suites (proposal-routes, proposal-routes-body, proposal-gateway-methods, change-feed-revert, change-feed, change-feed-lifecycle-e2e, workshop-config, workshop-tool): 71 passed, no regressions.
-
-### Deferred (related, not fixed here)
-
-- `tools/workshop-tool.ts`'s in-chat `memory_workshop` `revert_by_ordinal` action accepts the same kind of caller-supplied `sessionKey` override via `resolveWorkshopRevertSessionKey` — a lower-severity variant of this iteration's fix (agent-tool-call surface, not a raw network endpoint) worth hardening in a future iteration.
 
 ---
 
