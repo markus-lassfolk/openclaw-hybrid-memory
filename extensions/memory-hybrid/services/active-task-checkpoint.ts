@@ -20,9 +20,9 @@ import {
 import { factStatusToDisplay } from "./task-ledger/canonical.js";
 import {
   completeTask,
-  readActiveTaskFile,
+  readActiveTaskFileWithMtime,
   upsertTask,
-  writeActiveTaskFile,
+  writeActiveTaskFileOptimistic,
   type ActiveTaskEntry,
   type ActiveTaskStatus,
 } from "./active-task.js";
@@ -307,28 +307,28 @@ function checkpointStatusToDisplay(status: string): ActiveTaskStatus {
   return factStatusToDisplay(status);
 }
 
-/** Keep markdown ledger in sync when checkpoint writes canonical facts (#1973 split-brain). */
-export async function syncMarkdownLedgerFromCheckpoint(
-  deps: Pick<ActiveTaskCheckpointDeps, "cfg" | "workspaceRoot">,
-  checkpoint: {
-    entity: string;
-    status: string;
-    owner: string;
-    next: string;
-    relatedSession: string;
-    title?: string;
-    taskUpdated: string;
-    relatedGoal?: string;
-  },
-): Promise<{ attempted: boolean; synced: boolean; path?: string; reason?: string }> {
-  if (!deps.cfg.activeTask.enabled || deps.cfg.activeTask.ledger !== "markdown") {
-    return { attempted: false, synced: false, reason: "ledger_not_markdown" };
-  }
-  const workspaceRoot = resolveWorkspaceRoot(deps.workspaceRoot);
-  const activeTaskPath = isAbsolute(deps.cfg.activeTask.filePath)
-    ? deps.cfg.activeTask.filePath
-    : join(workspaceRoot, deps.cfg.activeTask.filePath);
-  const staleMinutes = parseDuration(deps.cfg.activeTask.staleThreshold);
+interface ActiveTaskCheckpointFields {
+  entity: string;
+  status: string;
+  owner: string;
+  next: string;
+  relatedSession: string;
+  title?: string;
+  taskUpdated: string;
+  relatedGoal?: string;
+}
+
+/**
+ * Pure decision logic for `syncMarkdownLedgerFromCheckpoint`: given the current active/completed
+ * arrays and a checkpoint, returns the arrays to write. Shared by the primary write attempt and
+ * its optimistic-write merge callback so a concurrent writer's fresh state is re-derived against,
+ * not clobbered by, a decision computed from a stale read.
+ */
+function planActiveTaskCheckpointSync(
+  active: ActiveTaskEntry[],
+  completed: ActiveTaskEntry[],
+  checkpoint: ActiveTaskCheckpointFields,
+): { active: ActiveTaskEntry[]; completed: ActiveTaskEntry[] } {
   const displayStatus = checkpointStatusToDisplay(checkpoint.status);
   const entry: ActiveTaskEntry = {
     label: checkpoint.entity,
@@ -341,13 +341,12 @@ export async function syncMarkdownLedgerFromCheckpoint(
     updated: checkpoint.taskUpdated,
   };
 
-  const existing = (await readActiveTaskFile(activeTaskPath, staleMinutes)) ?? { active: [], completed: [], raw: "" };
-  let active = existing.active;
-  let completed = existing.completed;
+  let newActive = active;
+  let newCompleted = completed;
 
   if (displayStatus === "Done" || isTerminalCheckpointStatus(checkpoint.status)) {
-    const result = completeTask(active, checkpoint.entity);
-    active = result.updated;
+    const result = completeTask(newActive, checkpoint.entity);
+    newActive = result.updated;
     if (result.completed) {
       // completeTask() only spreads the stale pre-call active row (this checkpoint call's own
       // next/title/relatedGoal live in `entry`, built above from the checkpoint's fresh values)
@@ -360,16 +359,52 @@ export async function syncMarkdownLedgerFromCheckpoint(
         next: entry.next,
         relatedGoal: entry.relatedGoal,
       };
-      completed = [...completed.filter((t) => t.label !== checkpoint.entity), closedEntry];
+      newCompleted = [...newCompleted.filter((t) => t.label !== checkpoint.entity), closedEntry];
     } else {
-      completed = [...completed.filter((t) => t.label !== checkpoint.entity), { ...entry, status: "Done" }];
+      newCompleted = [...newCompleted.filter((t) => t.label !== checkpoint.entity), { ...entry, status: "Done" }];
     }
   } else {
-    active = upsertTask(active, entry, true);
-    completed = completed.filter((t) => t.label !== checkpoint.entity);
+    newActive = upsertTask(newActive, entry, true);
+    newCompleted = newCompleted.filter((t) => t.label !== checkpoint.entity);
   }
 
-  await writeActiveTaskFile(activeTaskPath, active, completed);
+  return { active: newActive, completed: newCompleted };
+}
+
+/** Keep markdown ledger in sync when checkpoint writes canonical facts (#1973 split-brain). */
+export async function syncMarkdownLedgerFromCheckpoint(
+  deps: Pick<ActiveTaskCheckpointDeps, "cfg" | "workspaceRoot">,
+  checkpoint: ActiveTaskCheckpointFields,
+): Promise<{ attempted: boolean; synced: boolean; path?: string; reason?: string }> {
+  if (!deps.cfg.activeTask.enabled || deps.cfg.activeTask.ledger !== "markdown") {
+    return { attempted: false, synced: false, reason: "ledger_not_markdown" };
+  }
+  const workspaceRoot = resolveWorkspaceRoot(deps.workspaceRoot);
+  const activeTaskPath = isAbsolute(deps.cfg.activeTask.filePath)
+    ? deps.cfg.activeTask.filePath
+    : join(workspaceRoot, deps.cfg.activeTask.filePath);
+  const staleMinutes = parseDuration(deps.cfg.activeTask.staleThreshold);
+
+  const existing = await readActiveTaskFileWithMtime(activeTaskPath, staleMinutes);
+  const plan = planActiveTaskCheckpointSync(existing?.active ?? [], existing?.completed ?? [], checkpoint);
+
+  // Optimistic concurrency: a live heartbeat/cron reconcile pass or a different checkpoint call
+  // (e.g. two subagents checkpointing distinct tasks concurrently) could write ACTIVE-TASKS.md
+  // between our read and our write. Re-derive this checkpoint's own decision against the fresh
+  // state on conflict instead of clobbering it with data computed from the stale snapshot.
+  const wrote = await writeActiveTaskFileOptimistic(
+    activeTaskPath,
+    plan.active,
+    plan.completed,
+    existing?.mtime ?? 0,
+    async (fresh) => {
+      const freshPlan = planActiveTaskCheckpointSync(fresh.active, fresh.completed, checkpoint);
+      return [freshPlan.active, freshPlan.completed];
+    },
+  );
+  if (!wrote) {
+    return { attempted: true, synced: false, path: activeTaskPath, reason: "conflict" };
+  }
   return { attempted: true, synced: true, path: activeTaskPath };
 }
 
