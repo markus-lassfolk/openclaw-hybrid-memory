@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.150] - 2026-07-07
+
+### Fixed
+
+Loop iteration 86 of the full-codebase review loop — fixes the last remaining item on the "Deferred (carried over from earlier iterations)" backlog, closing it out entirely. Combined with iteration 83's closure of the iteration-34 sweep's own deferred list, every confirmed finding from loop iterations 34 through 86 is now fixed or resolved-as-not-a-bug.
+
+- **`tools/converters/esphome-yaml-converter.ts` inverted its API/OTA enabled detection.** In ESPHome's YAML config format, a bare `api:` or `ota:` key with no sub-options YAML-parses to `null`, and that's the *normal* way to enable those components with default settings — presence of the key is what turns a component on, not any particular value under it. The converter's `apiEnabled`/`otaEnabled` checks were `x !== false && x !== null`, which reported `Enabled: false` for exactly this common case (a bare key parsing to `null`), while only reporting `true` for a non-null, non-false value like an object with sub-options. Fixed by dropping the `&& x !== null` term — since the surrounding `if (x !== undefined)` guard already excludes "key absent entirely" (the true disabled case), only an explicit `x: false` should report disabled. This converter is defined but not currently registered into any production conversion path (no other file imports `esphomeYamlConverter`), so the bug had no live user impact, but the fix keeps it correct for whenever it is wired in.
+
+Regression tests added (`tests/esphome-yaml-converter.test.ts`, new file — none existed for this converter before): asserts a bare `api:`/`ota:` key reports `Enabled: true`, sub-configured `api:`/`ota:` blocks report `Enabled: true`, an explicit `api: false`/`ota: false` reports `Enabled: false`, and absent keys omit the sections entirely. Verified via `git stash` to fail without the fix (bare-key case reported `Enabled: false`) and pass with it. tsc clean; biome clean (zero new findings); no other test file exercises this converter, so no related-suite run was needed beyond the new file's own 4 tests.
+
+---
+
 ## [2026.7.149] - 2026-07-07
 
 ### Fixed
@@ -653,10 +665,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 **Data loss / correctness:**
 - ~~Lost-update race between the heartbeat/cron `reconcileActiveTaskInProgressSessions` and `active_task_checkpoint` on `ACTIVE-TASKS.md` (plain read-then-write, no optimistic-concurrency check unlike sibling writers).~~ — **fully fixed**: `reconcileActiveTaskInProgressSessions`'s half in loop iteration 66, `syncMarkdownLedgerFromCheckpoint`'s half in loop iteration 67 (see below).
 - ~~`lifecycle/stage-cleanup.ts`'s `subagent_spawned` handler only guards against reopening a `"Done"` task, not `"Failed"`~~ — **investigated in loop iteration 41 and NOT a bug**: `subagent_spawned` reopening a `"Failed"` task is deliberate, tested behavior (`stage-cleanup-facts-ledger.test.ts`'s "subagent_spawned reopens Failed tasks when session metadata is present" / "...clears stale handoff when reopening Failed tasks") — a new subagent dispatched against a failed task's label is an explicit retry and is meant to reopen it. Separately, adding `"failed"` to the shared `TERMINAL` set in `services/task-ledger/canonical.ts` breaks `factNewerThan`'s timestamp-tie-break comparator (which prefers "terminal" status on a tie) — it would let a stale `"failed"` fact block a legitimate retry's fresh `"in_progress"` write when both share the same second-granularity `createdAt`, confirmed by 9 existing test failures across `task-ledger-facts.test.ts`/`stage-cleanup-facts-ledger.test.ts` when tried. If the narrower gap (an arbitrary `memory_store` call regressing a `Failed` project-task status via `mirrorMemoryStoreToActiveTaskLedger`'s guard at `task-ledger-facts.ts:136`, which is a *different* write path than `subagent_spawned`'s `syncActiveTaskEntryToFacts`) still needs closing, it must be done as a change local to that one guard, not via the shared `TERMINAL` set.
-### Deferred (carried over from earlier iterations; still tracked)
-
-- An inverted enabled/disabled detection in an unwired ESPHome YAML converter.
-
 ---
 
 ## [2026.7.97] - 2026-07-06
