@@ -380,6 +380,52 @@ describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
     const bulletCount = (extended.contextAddition?.match(/^- /gm) ?? []).length;
     expect(bulletCount).toBeLessThanOrEqual(15);
   });
+
+  it("does not mark facts as injected that were trimmed off by the token budget (loop iteration 65 regression)", async () => {
+    // Store facts whose combined serialized size exceeds a tight token budget, so
+    // buildContextBlock must trim some of them off the returned contextAddition.
+    const stored = [];
+    for (let i = 0; i < 10; i++) {
+      const entry = factsDb.store({
+        entity: null,
+        key: null,
+        value: null,
+        text: `Fact number ${i} with some reasonably long padding content to consume more tokens than a tiny budget allows`,
+        category: "fact",
+        importance: 0.9,
+        source: "parent",
+      });
+      stored.push(entry);
+    }
+
+    const injectedFactIdsBySession = new Map<string, Set<string>>();
+    const cfg = {
+      ...makeSubagentSpawnConfig(),
+      retrieval: { ambientBudgetTokens: 200 },
+    } as never;
+
+    const engine = makeEngine({ cfg, injectedFactIdsBySession });
+    const prep = await engine.prepareSubagentSpawn?.({
+      parentSessionKey: "parent",
+      childSessionKey: "child-trim-test",
+    });
+
+    const extended = prep as { contextAddition?: string };
+    expect(extended.contextAddition).toBeDefined();
+
+    const injectedSet = injectedFactIdsBySession.get("child-trim-test") ?? new Set<string>();
+    expect(injectedSet.size).toBeGreaterThan(0);
+    // A 90-token budget cannot fit all 10 facts — some must have been trimmed off.
+    expect(injectedSet.size).toBeLessThan(stored.length);
+
+    // A fact must be marked injected if and only if its text actually made it into
+    // the returned block. Before the fix, ALL 10 facts were marked injected regardless
+    // of the budget, permanently hiding the trimmed-off facts from this child session.
+    for (const entry of stored) {
+      const includedInBlock = extended.contextAddition!.includes(entry.text);
+      expect(injectedSet.has(entry.id)).toBe(includedInBlock);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
