@@ -2,18 +2,19 @@
  * Link subagent_spawned / subagent_ended to goal registry when goal stewardship is enabled.
  */
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import { type ActiveTaskEntry, clearActiveTaskHandoff, isTerminalActiveTaskStatus } from "../services/active-task.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { isTerminalActiveTaskStatus, clearActiveTaskHandoff, type ActiveTaskEntry } from "../services/active-task.js";
 import {
-  markGoalDispatchFailure,
   type GoalSubagentSpawnEvent,
   linkSubagentToGoal,
+  markGoalDispatchFailure,
   resolveGoalForSpawn,
   updateGoalOnSubagentEnd,
 } from "../services/goal-stewardship.js";
 import { loadTaskLedgerFromFacts, syncActiveTaskEntryToFacts } from "../services/task-ledger-facts.js";
-import { type SubagentEndedEvent, subagentEndedIsSuccess, taskLabelsMatch } from "../utils/subagent-ended-utils.js";
 import { nowIso } from "../utils/dates.js";
+import { buildToolScopeFilter } from "../utils/scope-filter.js";
+import { type SubagentEndedEvent, subagentEndedIsSuccess, taskLabelsMatch } from "../utils/subagent-ended-utils.js";
 import type { LifecycleContext } from "./types.js";
 
 async function syncGoalLinkedTaskToFactsLedger(
@@ -26,7 +27,11 @@ async function syncGoalLinkedTaskToFactsLedger(
   overrides?: { status?: ActiveTaskEntry["status"]; next?: string },
 ): Promise<void> {
   if (!ctx.cfg.activeTask.enabled || ctx.cfg.activeTask.ledger !== "facts") return;
-  const { active } = loadTaskLedgerFromFacts(ctx.factsDb);
+  // SECURITY: loadTaskLedgerFromFacts accepts an optional scopeFilter but silently returns
+  // every tenant's task facts when it's omitted — must be threaded through explicitly
+  // (matches active-task-tools-loader.ts's loadActiveTasksForTools).
+  const scopeFilter = buildToolScopeFilter({}, ctx.currentAgentIdRef.value, ctx.cfg);
+  const { active } = loadTaskLedgerFromFacts(ctx.factsDb, undefined, scopeFilter);
   const existing = active.find((t) => taskLabelsMatch(t.label, label));
   const now = nowIso();
   const reopeningFromTerminal =

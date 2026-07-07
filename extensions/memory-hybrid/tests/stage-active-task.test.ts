@@ -1,5 +1,5 @@
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
@@ -168,7 +168,7 @@ describe("stage-active-task long-running registration", () => {
       },
     });
     const factsDb = new FactsDB(join(workspaceRoot, "facts.db"));
-    const ctx = { cfg, factsDb } as LifecycleContext;
+    const ctx = { cfg, factsDb, currentAgentIdRef: { value: "main" } } as LifecycleContext;
     const api = createMockPluginApi();
     const logger = {
       info: vi.fn(),
