@@ -606,8 +606,8 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     return getProcedureByIdImpl(this.liveDb, id, scopeFilter);
   }
 
-  findProcedureByTaskPattern(taskPattern: string, limit = 5): ProcedureEntry[] {
-    return findProcedureByTaskPatternImpl(this.liveDb, taskPattern, limit);
+  findProcedureByTaskPattern(taskPattern: string, limit = 5, scopeFilter?: ScopeFilter | null): ProcedureEntry[] {
+    return findProcedureByTaskPatternImpl(this.liveDb, taskPattern, limit, scopeFilter);
   }
 
   searchProcedures(
@@ -632,12 +632,22 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     return getNegativeProceduresMatchingImpl(this.liveDb, taskDescription, limit, scopeFilter);
   }
 
-  recordProcedureSuccess(id: string, recipeJson?: string, sessionId?: string): boolean {
-    return recordProcedureSuccessImpl(this.liveDb, id, recipeJson, sessionId);
+  recordProcedureSuccess(
+    id: string,
+    recipeJson?: string,
+    sessionId?: string,
+    scopeFilter?: ScopeFilter | null,
+  ): boolean {
+    return recordProcedureSuccessImpl(this.liveDb, id, recipeJson, sessionId, scopeFilter);
   }
 
-  recordProcedureFailure(id: string, recipeJson?: string, sessionId?: string): boolean {
-    return recordProcedureFailureImpl(this.liveDb, id, recipeJson, sessionId);
+  recordProcedureFailure(
+    id: string,
+    recipeJson?: string,
+    sessionId?: string,
+    scopeFilter?: ScopeFilter | null,
+  ): boolean {
+    return recordProcedureFailureImpl(this.liveDb, id, recipeJson, sessionId, scopeFilter);
   }
 
   getProceduresReadyForSkill(validationThreshold: number, limit = 50, skillTTLDays?: number): ProcedureEntry[] {

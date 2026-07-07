@@ -13,7 +13,7 @@ import {
 } from "../../../types/memory.js";
 import { recordEpisode } from "../episodes.js";
 import { sanitizeFts5QueryForFacts } from "../fts-text.js";
-import { scopedRowMatchesFilter } from "../scope-sql.js";
+import { scopedRowMatchesFilter, scopeFilterClausePositional } from "../scope-sql.js";
 
 // ---------- Procedural memory: procedures table CRUD ----------
 
@@ -645,7 +645,12 @@ export function getProcedureById(
 }
 
 /** Find procedure by task_pattern hash or normalized match (for dedupe). */
-export function findProcedureByTaskPattern(db: DatabaseSync, taskPattern: string, limit = 5): ProcedureEntry[] {
+export function findProcedureByTaskPattern(
+  db: DatabaseSync,
+  taskPattern: string,
+  limit = 5,
+  scopeFilter?: ScopeFilter | null,
+): ProcedureEntry[] {
   const sanitized = sanitizeFts5QueryForFacts(taskPattern);
   const safeQuery = sanitized
     .split(/\s+/)
@@ -655,11 +660,16 @@ export function findProcedureByTaskPattern(db: DatabaseSync, taskPattern: string
     .join(" OR ");
   if (!safeQuery) return [];
   try {
+    // SECURITY: mirror searchProcedures/searchProceduresRanked's scope clause — this is the
+    // merge-candidate lookup used by services/procedure-extractor.ts to decide whether an
+    // extracted task pattern should update an existing procedure; without a scope filter it
+    // could match (and its caller then mutate) another tenant's procedure.
+    const { clause: scopeClause, params: scopeParams } = scopeFilterClausePositional(scopeFilter);
     const rows = db
       .prepare(
-        "SELECT p.* FROM procedures p JOIN procedures_fts fts ON p.rowid = fts.rowid WHERE procedures_fts MATCH ? ORDER BY rank LIMIT ?",
+        `SELECT p.* FROM procedures p JOIN procedures_fts fts ON p.rowid = fts.rowid WHERE procedures_fts MATCH ?${scopeClause} ORDER BY rank LIMIT ?`,
       )
-      .all(safeQuery, limit) as Array<Record<string, unknown>>;
+      .all(safeQuery, ...scopeParams, limit) as Array<Record<string, unknown>>;
     return rows.map((r) => procedureRowToEntry(db, r));
   } catch (err) {
     capturePluginError(err as Error, {

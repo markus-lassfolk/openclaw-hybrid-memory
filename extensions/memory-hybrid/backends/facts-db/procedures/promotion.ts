@@ -1,14 +1,22 @@
 import type { DatabaseSync } from "node:sqlite";
 
-import type { ProcedureEntry } from "../../../types/memory.js";
+import type { ProcedureEntry, ScopeFilter } from "../../../types/memory.js";
 
 import type { ProcedureTriageReport } from "./types.js";
 import { procedureBlockReason, slugForProcedure, summarizeProcedureTriage } from "./internal.js";
 import { getProcedureById, POSITIVE_PROCEDURE_TYPE_SQL, procedureRowToEntry } from "./crud.js";
 
-export function recordProcedureSuccess(db: DatabaseSync, id: string, recipeJson?: string, sessionId?: string): boolean {
+export function recordProcedureSuccess(
+  db: DatabaseSync,
+  id: string,
+  recipeJson?: string,
+  sessionId?: string,
+  /** SECURITY: threaded into the existence check below — out-of-scope ids read as "not found",
+   * matching getProcedureById's own contract, so this never mutates another tenant's row. */
+  scopeFilter?: ScopeFilter | null,
+): boolean {
   const now = Math.floor(Date.now() / 1000);
-  const proc = getProcedureById(db, id);
+  const proc = getProcedureById(db, id, scopeFilter);
   if (!proc) return false;
 
   // Read raw DB values to avoid inflating implied-success values back into the database
@@ -54,9 +62,16 @@ export function recordProcedureSuccess(db: DatabaseSync, id: string, recipeJson?
 }
 
 /** Record a failed use (bump failure_count, last_failed). */
-export function recordProcedureFailure(db: DatabaseSync, id: string, recipeJson?: string, sessionId?: string): boolean {
+export function recordProcedureFailure(
+  db: DatabaseSync,
+  id: string,
+  recipeJson?: string,
+  sessionId?: string,
+  /** SECURITY: see recordProcedureSuccess's scopeFilter doc above. */
+  scopeFilter?: ScopeFilter | null,
+): boolean {
   const now = Math.floor(Date.now() / 1000);
-  const proc = getProcedureById(db, id);
+  const proc = getProcedureById(db, id, scopeFilter);
   if (!proc) return false;
 
   // Read raw DB values to avoid inflating implied-success values back into the database
