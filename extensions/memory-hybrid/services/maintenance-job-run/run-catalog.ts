@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { parseJobRunEvents } from "./event-log.js";
 import { resolveMaintenanceLogRoot } from "./artifact-paths.js";
+import { parseJobRunEvents } from "./event-log.js";
 import type { MaintenanceJobRunRecord, MaintenanceRunRollupSummary, OrchestratorRunSummary } from "./types.js";
 
 export interface ListedMaintenanceRun {
@@ -36,12 +36,17 @@ function walkDirs(root: string, out: string[]): void {
   }
 }
 
-function isJobRunSummaryPath(file: string): boolean {
-  return file.endsWith("summary.json") && (file.includes("/job-runs/") || file.includes("/job-runs-standalone/"));
+// Paths are built via node:path's join() (walkDirs), which uses the OS-native separator (`\` on
+// Windows) -- match either separator explicitly so job-run summaries aren't silently dropped
+// (matched by neither classifier) when this runs on Windows.
+const JOB_RUN_SEGMENT_RE = /[/\\]job-runs(?:-standalone)?[/\\]/;
+
+export function isJobRunSummaryPath(file: string): boolean {
+  return file.endsWith("summary.json") && JOB_RUN_SEGMENT_RE.test(file);
 }
 
-function isOrchestratorSummaryPath(file: string): boolean {
-  return file.endsWith(".summary.json") && !file.includes("/job-runs/") && !file.includes("/job-runs-standalone/");
+export function isOrchestratorSummaryPath(file: string): boolean {
+  return file.endsWith(".summary.json") && !JOB_RUN_SEGMENT_RE.test(file);
 }
 
 export function listMaintenanceRuns(opts?: {
@@ -181,14 +186,16 @@ export function resolveRunArtifacts(listed: ListedMaintenanceRun): Record<string
     };
   }
   // Orchestrator summaries live under DAY_DIR (e.g., YYYYMMDD/) while HM_LOG/HM_EXIT stay at log root.
-  // Derive the root path from the dated summary path: strip /YYYYMMDD/ segment.
-  const match = listed.path.match(/^(.+)\/\d{8}\/([^/]+)\.summary\.json$/);
+  // Derive the root path from the dated summary path: strip the /YYYYMMDD/ (or \YYYYMMDD\ on
+  // Windows, where listed.path is built via node:path's join()) segment. The `\2` backreference
+  // keeps the reconstructed path's separator consistent with whichever one the source path used.
+  const match = listed.path.match(/^(.+)([/\\])\d{8}\2([^/\\]+)\.summary\.json$/);
   if (match) {
-    const [, logRoot, baseFile] = match;
+    const [, logRoot, sep, baseFile] = match;
     return {
       summary: listed.path,
-      log: `${logRoot}/${baseFile}.log`,
-      exit: `${logRoot}/${baseFile}.exit.txt`,
+      log: `${logRoot}${sep}${baseFile}.log`,
+      exit: `${logRoot}${sep}${baseFile}.exit.txt`,
       validation: listed.path.replace(/\.summary\.json$/, ".validation.json"),
     };
   }
