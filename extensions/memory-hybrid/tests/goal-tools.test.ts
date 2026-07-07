@@ -222,6 +222,70 @@ describe("goal tools registry primitives", () => {
     expect(ok?.details?.goal?.label).toBe("clear-goal");
   });
 
+  it("goal_register does not exceed maxActiveGoals when a concurrent registration lands in the check-then-write race window (loop iteration 81 regression)", async () => {
+    const cfg = hybridConfigSchema.parse({
+      embedding: {
+        apiKey: "sk-test-key-that-is-long-enough-to-pass",
+        model: "text-embedding-3-small",
+      },
+      goalStewardship: {
+        enabled: true,
+        goalsDir: "state/goals",
+        globalLimits: { maxActiveGoals: 1, maxDispatchesPerHour: 6 },
+      },
+    });
+    const tools = new Map<string, { execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }>();
+    const api: Pick<ClawdbotPluginApi, "registerTool"> = {
+      registerTool(toolDefinition: { name: string; execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }) {
+        tools.set(toolDefinition.name, { execute: toolDefinition.execute });
+      },
+    };
+    registerGoalTools(
+      {
+        cfg,
+        goalsDir,
+        workspaceRoot,
+        resolvedActiveTaskPath: join(workspaceRoot, "ACTIVE-TASKS.md"),
+        factsDb: null,
+        vectorDb: null,
+        embeddings: null,
+        eventLog: null,
+        memoryDir: join(workspaceRoot, "memory"),
+        currentAgentIdRef: { value: null },
+        buildToolScopeFilter,
+      },
+      api as ClawdbotPluginApi,
+    );
+    const goalRegister = tools.get("goal_register");
+
+    // Simulate a concurrent goal_register landing in the race window between this call's
+    // early fast-path count check and its lock-protected write: the spy returns the STALE
+    // (still-under-cap) snapshot after a genuine concurrent registration has already claimed
+    // the only slot.
+    const listSpy = vi.spyOn(goalRegistry, "listActiveGoals");
+    listSpy.mockImplementationOnce(async (dir) => {
+      const stale = await goalRegistry.listActiveGoals(dir);
+      await goalRegistry.createGoal(dir, { label: "racer", description: "d", acceptanceCriteria: ["a"] }, defaults);
+      return stale;
+    });
+
+    try {
+      const result = (await goalRegister?.execute("tc", {
+        label: "loser",
+        description: "Should be rejected because the racer already filled the only slot.",
+        acceptance_criteria: ["Operator confirms this registration was rejected"],
+        confirmed: true,
+      })) as { details?: { error?: string } };
+      expect(result?.details?.error).toBe("max_active_goals");
+
+      const active = await goalRegistry.listActiveGoals(goalsDir);
+      expect(active.length).toBe(1);
+      expect(active[0]?.label).toBe("racer");
+    } finally {
+      listSpy.mockRestore();
+    }
+  });
+
   it("goal_list and goal_get expose registry goals", async () => {
     await createGoal(
       goalsDir,

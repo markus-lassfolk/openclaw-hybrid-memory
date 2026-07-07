@@ -652,6 +652,30 @@ export async function createGoal(
   return goal;
 }
 
+/** Global lock key serializing the active-goal-count cap check against concurrent registrations. */
+const GOAL_REGISTER_CAP_LOCK_KEY = "_active-goal-count";
+
+/**
+ * Create a goal only if doing so would not exceed `maxActiveGoals`, with the count
+ * check and the write serialized under a global lock — closes the TOCTOU race where
+ * two concurrent `goal_register` calls both read a stale active count that's still
+ * under the cap and both proceed to write, pushing the active count past the cap.
+ * Returns `null` (no goal created) when the cap is hit inside the lock.
+ */
+export async function createGoalWithCapCheck(
+  goalsDir: string,
+  input: CreateGoalInput,
+  defaults: GoalDefaults,
+  maxActiveGoals: number,
+  eventLog?: EventLog | null,
+): Promise<Goal | null> {
+  return withGoalLock(goalsDir, GOAL_REGISTER_CAP_LOCK_KEY, async () => {
+    const active = await listActiveGoals(goalsDir);
+    if (active.length >= maxActiveGoals) return null;
+    return createGoal(goalsDir, input, defaults, eventLog);
+  });
+}
+
 export type GoalUpdatePatch = Partial<
   Pick<
     Goal,

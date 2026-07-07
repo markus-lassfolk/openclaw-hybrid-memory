@@ -20,7 +20,7 @@ import type { Goal, GoalHistoryEntry } from "../services/goal-stewardship-types.
 import {
   type GoalUpdatePatch,
   type GoalVerification,
-  createGoal,
+  createGoalWithCapCheck,
   goalStewardshipDefaultsFromConfig,
   isGlobalRateLimited,
   isTerminalStatus,
@@ -280,7 +280,10 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           if (p.verification_type && p.verification_target) {
             verification = { type: p.verification_type, target: p.verification_target };
           }
-          const goal = await createGoal(
+          // Re-checked atomically under a global lock (see createGoalWithCapCheck) — the
+          // earlier active.length check above is only a fast-path; two concurrent
+          // registrations could otherwise both pass it before either one writes.
+          const goal = await createGoalWithCapCheck(
             goalsDir,
             {
               label: p.label,
@@ -293,8 +296,15 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
               cooldownMinutes: p.cooldown_minutes,
             },
             defaults,
+            gs.globalLimits.maxActiveGoals,
             eventLog,
           );
+          if (!goal) {
+            return {
+              content: [{ type: "text", text: `Max active goals (${gs.globalLimits.maxActiveGoals}) reached.` }],
+              details: { error: "max_active_goals" },
+            };
+          }
 
           let taskLinkMessage = "";
           const taskEntity = p.task_entity?.trim();

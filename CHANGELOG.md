@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.145] - 2026-07-07
+
+### Fixed
+
+Loop iteration 81 of the full-codebase review loop — fixes the `goal_register` `maxActiveGoals` TOCTOU bullet flagged during iteration 34's sweep.
+
+- **`goal_register` had a TOCTOU race on `maxActiveGoals`: no lock around the cap re-check.** The handler read `listActiveGoals(goalsDir)` and compared its length against `gs.globalLimits.maxActiveGoals`, then — several `await` points later (clarity/confirmation checks, `createGoal`'s own write) — wrote a new goal file if the check passed. Two concurrent `goal_register` calls could both read the same stale active count, both see it under the cap, and both proceed to write, pushing the active goal count past `maxActiveGoals`. `createGoal` itself only locks on `label:${label}`, which serializes duplicate-label writes but does nothing to serialize the cap check across different labels. Fixed by adding `createGoalWithCapCheck()` to `services/goal-registry.ts`, which re-checks the active count and performs the write together under a new global lock key (`_active-goal-count`) — closing the race window between the count read and the write. The original fast-path check in `goal-tools.ts` is kept as-is (avoids lock-acquisition overhead for the common already-over-cap case); the new lock-protected check is the authoritative one.
+
+Regression test added (`tests/goal-tools.test.ts`): sets `maxActiveGoals: 1`, then uses `vi.spyOn(goalRegistry, "listActiveGoals")` to deterministically inject a concurrent `createGoal` call between the snapshot read and its return (mirroring this file's existing TOCTOU-injection pattern for `goal_assess`) — asserts the racing `goal_register` call is rejected with `error: "max_active_goals"` and the active count stays at `1`. Verified via `git stash` to fail without the fix (the racing registration silently succeeded, leaving 2 active goals against a cap of 1) and pass with it. tsc clean; biome clean (zero new findings). Full goal-subsystem test surface (22 files covering goal-tools, goal-stewardship, goal-registry, workboard, heartbeat): 202 passed, no regressions.
+
+---
+
 ## [2026.7.144] - 2026-07-07
 
 ### Fixed
@@ -597,7 +609,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 - ~~Lost-update race between the heartbeat/cron `reconcileActiveTaskInProgressSessions` and `active_task_checkpoint` on `ACTIVE-TASKS.md` (plain read-then-write, no optimistic-concurrency check unlike sibling writers).~~ — **fully fixed**: `reconcileActiveTaskInProgressSessions`'s half in loop iteration 66, `syncMarkdownLedgerFromCheckpoint`'s half in loop iteration 67 (see below).
 - ~~`lifecycle/stage-cleanup.ts`'s `subagent_spawned` handler only guards against reopening a `"Done"` task, not `"Failed"`~~ — **investigated in loop iteration 41 and NOT a bug**: `subagent_spawned` reopening a `"Failed"` task is deliberate, tested behavior (`stage-cleanup-facts-ledger.test.ts`'s "subagent_spawned reopens Failed tasks when session metadata is present" / "...clears stale handoff when reopening Failed tasks") — a new subagent dispatched against a failed task's label is an explicit retry and is meant to reopen it. Separately, adding `"failed"` to the shared `TERMINAL` set in `services/task-ledger/canonical.ts` breaks `factNewerThan`'s timestamp-tie-break comparator (which prefers "terminal" status on a tie) — it would let a stale `"failed"` fact block a legitimate retry's fresh `"in_progress"` write when both share the same second-granularity `createdAt`, confirmed by 9 existing test failures across `task-ledger-facts.test.ts`/`stage-cleanup-facts-ledger.test.ts` when tried. If the narrower gap (an arbitrary `memory_store` call regressing a `Failed` project-task status via `mirrorMemoryStoreToActiveTaskLedger`'s guard at `task-ledger-facts.ts:136`, which is a *different* write path than `subagent_spawned`'s `syncActiveTaskEntryToFacts`) still needs closing, it must be done as a change local to that one guard, not via the shared `TERMINAL` set.
 **Lower-severity / cosmetic:**
-- `tools/goal-tools.ts`'s `goal_register` has a TOCTOU race on `maxActiveGoals` (no lock around the cap re-check, distinct from the four already-fixed terminal-status races).
 - `utils/llm-selection.ts` mislabels a configured `fallbackModel` as `"built-in"` in diagnostic source attribution (display-only, doesn't affect which model is used).
 
 ### Deferred (carried over from earlier iterations; still tracked)
