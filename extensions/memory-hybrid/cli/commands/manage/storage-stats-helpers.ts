@@ -7,10 +7,11 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { dirname, join } from "node:path";
 import type { GraphConnectedStats } from "../../../backends/facts-db/links.js";
 import type { ProcedurePromotionBlockReason } from "../../../backends/facts-db/procedures.js";
-import { type GraphExpansionStats, expandGraph, resolveGraphHubDegreeCap } from "../../../services/graph-retrieval.js";
-import type { MemoryEntry } from "../../../types/memory.js";
-import { isEntityStopWord } from "../../../utils/entity-stopwords.js";
+import { expandGraph, type GraphExpansionStats, resolveGraphHubDegreeCap } from "../../../services/graph-retrieval.js";
+import type { MemoryEntry, ScopeFilter } from "../../../types/memory.js";
 import { nowIso } from "../../../utils/dates.js";
+import { isEntityStopWord } from "../../../utils/entity-stopwords.js";
+import { globalOnlyScopeFilter } from "../../../utils/scope-filter.js";
 import { SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER } from "../../cmd-feedback.js";
 import type { ManageBindings } from "./bindings.js";
 /** Max rows sampled for implicit-feedback prefix histogram (#1193); keeps audit bounded on huge pattern tables. */
@@ -337,6 +338,26 @@ export function recordStorageGrowthSample(
     reason: null,
     sample,
   };
+}
+
+/**
+ * Build a `ScopeFilter` from the `hybrid-mem search --scope/--scope-target` CLI options.
+ *
+ * SECURITY: `scopeFilterClausePositional`/`filterByScope` treat a filter with no
+ * userId/agentId/sessionId as "no restriction" (matches every scope) — a plain `{}` for
+ * `--scope global` would silently return every user's/agent's/session's facts instead of only
+ * global-scoped ones. `globalOnlyScopeFilter()`'s sentinel agentId is the established idiom for
+ * expressing "global only" under that same read-path semantic (see
+ * services/memory-corpus-supplement.ts and friends).
+ */
+export function buildHybridSearchScopeFilter(scope?: string, scopeTarget?: string): ScopeFilter | undefined {
+  if (!scope) return undefined;
+  if (scope === "global") return globalOnlyScopeFilter();
+  const filter: ScopeFilter = {};
+  if (scope === "user") filter.userId = scopeTarget || null;
+  else if (scope === "agent") filter.agentId = scopeTarget || null;
+  else if (scope === "session") filter.sessionId = scopeTarget || null;
+  return filter;
 }
 
 /** Apply optional CLI filters to merged hybrid search results (category/entity/key/source/tier). */
