@@ -1,9 +1,9 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import type { BatchCheckpointState, JobRunSemanticOutcome } from "./types.js";
+import { nowIso } from "../../utils/dates.js";
 import { BATCH_CHECKPOINT_VERSION, createBatchCheckpointStore, isBatchResumeCompatible } from "./batch-checkpoint.js";
 import type { MaintenanceJobRun } from "./job-run.js";
-import { nowIso } from "../../utils/dates.js";
+import type { BatchCheckpointState, JobRunSemanticOutcome } from "./types.js";
 
 export type LegacyBatchState<TItem> = {
   version: number;
@@ -84,9 +84,12 @@ export function finishBatchJobRun(
 ): string | undefined {
   if (!jobRun) return undefined;
   jobRun.setSemanticOutcome(outcome, options?.reason);
-  const clearCheckpoint =
-    options?.clearCheckpoint ?? (outcome !== "partial" && outcome !== "failed" && outcome !== "failed_semantic_empty");
-  jobRun.finish({ clearCheckpoint });
+  // Pass the caller's clearCheckpoint through unchanged when given; when omitted, delegate to
+  // MaintenanceJobRun.finish()'s own default instead of re-deriving a separate rule here. The two
+  // used to disagree for "monitoring"/"success_with_review" (this file's denylist cleared;
+  // finish()'s allowlist preserves) -- a latent trap for any caller that reaches one of those
+  // outcomes without passing clearCheckpoint explicitly.
+  jobRun.finish({ clearCheckpoint: options?.clearCheckpoint });
   return jobRun.jobRunId;
 }
 
