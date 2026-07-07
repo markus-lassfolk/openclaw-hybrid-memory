@@ -160,6 +160,21 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
           `or set embedding.dimensions: ${GOOGLE_EMBED_DEFAULT_DIMENSIONS} to acknowledge the Google chain dimensions.`,
       );
     }
+    // #1192-sibling: Ollama's local embedding models have a fixed native output size (unlike
+    // OpenAI/Google's flexible-dimension models) that this codebase has no static lookup table
+    // for — so, unlike the OpenAI-only-model case above, we can't safely auto-correct
+    // `chainDimensions` to a value we know is right. Warn instead, so a real mismatch surfaces
+    // here with an actionable message rather than silently building a broken chain that only
+    // fails later, confusingly, inside vectorDb.store()'s dimension check.
+    const googleInChainWithLocalOnlyModel = preferredProviders.includes("google") && isLocalOnlyEmbeddingModelId(model);
+    if (googleInChainWithLocalOnlyModel) {
+      pluginLogger.warn(
+        `memory-hybrid: embedding chain includes Google with local-only model '${model}' — ` +
+          `Ollama's local models use a fixed native output size and cannot be resized on request, unlike Google's ` +
+          `flexible-dimension embeddings. Set embedding.dimensions explicitly to '${model}'s real native output ` +
+          `size, or the chain may silently produce mismatched-dimension vectors that only fail later at vectorDb.store().`,
+      );
+    }
     const ollamaModel =
       model && !["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"].includes(model)
         ? model

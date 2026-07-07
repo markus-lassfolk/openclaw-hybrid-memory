@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.134] - 2026-07-07
+
+### Fixed
+
+Loop iteration 70 of the full-codebase review loop — fixes the Google-chain dimension-mismatch gap flagged during iteration 34's sweep. This closes out the last remaining item in iteration 34's "Security/cross-tenant" and "Data loss / correctness" deferred groups.
+
+- **`createEmbeddingProvider`'s Google-in-chain dimension guard only covered OpenAI-model names, silently missing the equivalent Ollama local-model case.** When `preferredProviders` chains Google with an OpenAI-only model name (e.g. `text-embedding-3-small`), the factory already detects the mismatch and forces both legs to `GOOGLE_EMBED_DEFAULT_DIMENSIONS` (768) with a warning — safe because 768 is a value both OpenAI and Google can actually produce. Chaining Google with a known local-only Ollama model (`mxbai-embed-large`, `bge-m3`, `bge-large`, `snowflake-arctic-embed`, etc. — all fixed-dimension models that, unlike OpenAI/Google's newer embeddings, generally can't be resized on request) hit none of that guard's conditions, so `chainDimensions` passed through unchanged to both legs. Since this codebase has no static table of each Ollama model's real native output size, the two providers could end up reporting different `.dimensions` values with no warning at chain-build time — the mismatch would only surface later as a confusing dimension error deep inside `vectorDb.store()`, far from its actual cause. Fixed by detecting `preferredProviders.includes("google") && isLocalOnlyEmbeddingModelId(model)` and emitting an actionable warning (this codebase can't auto-correct to the right value the way it can for the known-768 OpenAI case, so it surfaces the risk instead of silently building a chain that may not work).
+
+Regression tests added (`tests/embedding-providers.test.ts`, new describe block): asserts the warning fires for a `["ollama", "google"]` chain using `mxbai-embed-large`, and does not fire for the existing, unrelated `["openai", "google"]` chain case. Verified via `git stash` to fail without the fix (no warning emitted for the local-model case) and pass with it. tsc clean; biome clean (zero new findings). Related suites (embedding-providers, embedding-migration): 146 passed, no regressions.
+
+---
+
 ## [2026.7.133] - 2026-07-07
 
 ### Fixed
@@ -462,8 +474,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 **Data loss / correctness:**
 - ~~Lost-update race between the heartbeat/cron `reconcileActiveTaskInProgressSessions` and `active_task_checkpoint` on `ACTIVE-TASKS.md` (plain read-then-write, no optimistic-concurrency check unlike sibling writers).~~ — **fully fixed**: `reconcileActiveTaskInProgressSessions`'s half in loop iteration 66, `syncMarkdownLedgerFromCheckpoint`'s half in loop iteration 67 (see below).
 - ~~`lifecycle/stage-cleanup.ts`'s `subagent_spawned` handler only guards against reopening a `"Done"` task, not `"Failed"`~~ — **investigated in loop iteration 41 and NOT a bug**: `subagent_spawned` reopening a `"Failed"` task is deliberate, tested behavior (`stage-cleanup-facts-ledger.test.ts`'s "subagent_spawned reopens Failed tasks when session metadata is present" / "...clears stale handoff when reopening Failed tasks") — a new subagent dispatched against a failed task's label is an explicit retry and is meant to reopen it. Separately, adding `"failed"` to the shared `TERMINAL` set in `services/task-ledger/canonical.ts` breaks `factNewerThan`'s timestamp-tie-break comparator (which prefers "terminal" status on a tie) — it would let a stale `"failed"` fact block a legitimate retry's fresh `"in_progress"` write when both share the same second-granularity `createdAt`, confirmed by 9 existing test failures across `task-ledger-facts.test.ts`/`stage-cleanup-facts-ledger.test.ts` when tried. If the narrower gap (an arbitrary `memory_store` call regressing a `Failed` project-task status via `mirrorMemoryStoreToActiveTaskLedger`'s guard at `task-ledger-facts.ts:136`, which is a *different* write path than `subagent_spawned`'s `syncActiveTaskEntryToFacts`) still needs closing, it must be done as a change local to that one guard, not via the shared `TERMINAL` set.
-- `services/embeddings/factory.ts`'s Google-in-chain dimension guard only covers the OpenAI-model case (`OPENAI_ONLY_EMBED_MODELS`); an Ollama/ONNX model with dims≠768 chained with Google silently builds a mismatched-dimensions chain that only fails later, confusingly, at `vectorDb.store()`.
-
 **Lower-severity / cosmetic:**
 - `services/credentials-encryption-key.ts`'s legacy-key security warning is gated on array index instead of matching the literal key, so it never fires when the key file is missing (the most common trigger case).
 - `cli/verify/sections/config-cron.ts`'s credentials-vault health check only test-decrypts one row, false-negative on partial vault corruption; `cli/verify/plugin-config-credentials.ts` logs a duplicate warning on parse failure.
