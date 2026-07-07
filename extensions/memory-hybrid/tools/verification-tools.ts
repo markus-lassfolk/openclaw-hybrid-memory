@@ -26,13 +26,11 @@ interface PluginContext {
  *
  * This includes: memory_verify, memory_verified_list, memory_verification_status.
  *
- * SECURITY (loop iteration 9): verified_facts has no scope column of its own — verifying a fact
- * copies its text into that global table, and memory_verified_list lists every row with no way
- * to filter by scope. Gating memory_verify/memory_verification_status on the caller's scope
- * blocks copying an out-of-scope fact's text in (or probing its verification status), but
- * memory_verified_list itself still needs a schema change (a scope/scope_target column plus a
- * migration) to stop broadcasting every tenant's already-verified facts to every other tenant —
- * tracked separately, not fixed here.
+ * SECURITY (loop iteration 40): verified_facts now carries a scope/scope_target column (migrated
+ * in VerificationStore.initSchema()), populated from the source fact's own scope at verify() time
+ * and carried forward on update(). memory_verified_list filters by the caller's scope via
+ * listLatestVerified(limit, scopeFilter); memory_verify/memory_verification_status continue to
+ * gate on the caller's scope via factsDb.getById(..., {scopeFilter}) as before.
  */
 export function registerVerificationTools(ctx: PluginContext, api: ClawdbotPluginApi): void {
   const { factsDb, verificationStore, cfg, currentAgentIdRef, buildToolScopeFilter } = ctx;
@@ -70,7 +68,7 @@ export function registerVerificationTools(ctx: PluginContext, api: ClawdbotPlugi
           };
         }
         try {
-          const verifiedId = verificationStore.verify(factId, fact.text, "agent");
+          const verifiedId = verificationStore.verify(factId, fact.text, "agent", fact.scope, fact.scopeTarget);
           return {
             content: [{ type: "text", text: `Verified fact ${factId} (verification id: ${verifiedId}).` }],
             details: { status: "verified", id: factId, verificationId: verifiedId },
@@ -99,7 +97,8 @@ export function registerVerificationTools(ctx: PluginContext, api: ClawdbotPlugi
       description: "List all verified facts with their latest verification metadata.",
       parameters: Type.Object({}),
       async execute() {
-        const verified = verificationStore.listLatestVerified();
+        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
+        const verified = verificationStore.listLatestVerified(undefined, scopeFilter);
         if (verified.length === 0) {
           return {
             content: [{ type: "text", text: "No verified facts found." }],

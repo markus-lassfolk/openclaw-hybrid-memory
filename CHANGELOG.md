@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.104] - 2026-07-06
+
+### Fixed
+
+Loop iteration 40 of the full-codebase review loop (first iteration of a new 20-iteration batch, per user request to continue) — fixes a cross-tenant fact-content leak flagged since loop iteration 9 as needing a schema change.
+
+- **`memory_verified_list` broadcast every tenant's verified-fact content to every other tenant.** `verified_facts` had no scope column at all — verifying a fact (`memory_verify`) copied its text into that global table with no way to distinguish which tenant it belonged to, and `memory_verified_list` unconditionally listed every row regardless of who was asking. `memory_verify`/`memory_verification_status` already gated on the caller's scope for the fact *lookup* (via `factsDb.getById(..., {scopeFilter})`), which blocked copying a foreign fact's text in — but that only prevented the initial write; it did nothing to scope the *read* side once a fact was legitimately verified by its own tenant. Any other tenant calling `memory_verified_list` still saw its full canonical text (first 120 chars) alongside their own. Fixed with a real schema migration: `VerificationStore.initSchema()` now adds `scope`/`scope_target` columns to `verified_facts` (guarded via `PRAGMA table_info`, matching the codebase's established migration pattern; NULL/pre-migration rows default to `'global'`, i.e. visible to everyone, preserving existing behavior for already-verified facts). `verify()` now accepts and stores the source fact's `scope`/`scopeTarget` (threaded through from `memory_verify`'s already-scope-checked lookup, `memory_store`'s auto-verify path using the newly-stored entry's own scope, and the Mission Control dashboard's verify action); `update()` carries the original entry's scope forward onto new versions. `listLatestVerified()` now accepts an optional `scopeFilter` and filters via the same `scopeFilterClauseForAlias` helper used elsewhere in the codebase; `memory_verified_list` passes the caller's resolved scope filter through. Mission Control's own dashboard collectors intentionally keep calling `listLatestVerified()` unscoped (admin surface, same precedent as the iteration-35 change-feed fix) — verified visibility there is unaffected.
+
+Regression tests added (`tests/verification-store.test.ts`, 4 new): default scope is `'global'` when unspecified; `update()` carries scope forward; `listLatestVerified()` with no filter returns every tenant's facts (admin case); with a scope filter, only returns the caller's own scope plus global facts, not a different tenant's. The scoped-filter test is the direct proof of the fix — verified via `git stash` to fail without it (all three tenants' facts returned, including the foreign one) and pass with it. tsc clean; biome clean (zero net-new against baseline). Related suites (verification-store, verification-tools-scope-security, verified-fact-triage, memory-store-early-validation, memory-store-merge-dedupe-vector, dashboard-routes, dashboard-server, health-dashboard, memory-store-event-log, memory-store-variant-queue, memory-store-vault-vector-isolation): 232 passed, no regressions.
+
+---
+
 ## [2026.7.103] - 2026-07-06
 
 ### Fixed
@@ -110,7 +122,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 ### Deferred (confirmed findings from iteration 34's sweep, not yet fixed — grouped by rough severity)
 
 **Security/cross-tenant:**
-- `tools/verification-tools.ts`'s `memory_verified_list` has no scope filter at all (already flagged as a known open gap in the file's own doc comment) — broadcasts every tenant's verified-fact content to every other tenant.
 - `services/goal-context-injection.ts`'s `resolveGoalsForSubagentContext` omits `scopeFilter` when loading task-ledger facts (sibling `active-task-tools-loader.ts` has an explicit SECURITY comment about this exact gap).
 - `tools/memory/register-agent-verb-tools.ts`'s `memory_retrieve` → `services/fragment-recall.ts`'s `resolveRecallInjectionText` hydrates a fragment's parent fact via `getById` with no scope filter, bypassing the scope guard applied a few lines earlier in the same tool.
 - `tools/provenance-tools.ts`'s `buildDerivedFrom` returns `event_log`-sourced text with no scope filter (event_log has no tenant column), inconsistent with the scoped `fact_chain`/`consolidationChain` handling in the same function.

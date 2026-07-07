@@ -451,6 +451,8 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             autoEntity?: string | null,
             autoKey?: string | null,
             autoValue?: string | null,
+            entryScope?: "global" | "user" | "agent" | "session" | null,
+            entryScopeTarget?: string | null,
           ) => {
             if (!cfg.verification?.enabled || !verificationStore) return;
             const shouldEnroll =
@@ -468,7 +470,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             if (!shouldEnroll) return;
             try {
               const verifiedBy = explicitVerificationTier === "critical" ? "agent" : "system";
-              verificationStore.verify(factId, factText, verifiedBy);
+              verificationStore.verify(factId, factText, verifiedBy, entryScope, entryScopeTarget);
             } catch (err) {
               api.logger.warn?.(`memory-hybrid: auto-verify failed for ${factId}: ${err}`);
             }
@@ -928,6 +930,8 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                       newEntry.entity,
                       newEntry.key,
                       newEntry.value,
+                      newEntry.scope,
+                      newEntry.scopeTarget,
                     );
 
                     const finalImportance = Math.max(importance, oldFact.importance);
@@ -1133,7 +1137,16 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               // ADD path (the vast majority of memory_store calls) never enrolls a fact in
               // verificationStore, so verification_tier:"critical" and cfg.verification.autoClassify
               // silently no-op for every genuinely new fact.
-              maybeAutoVerify(entry.id, textToStore, entry.tags ?? tags, entry.entity, entry.key, entry.value);
+              maybeAutoVerify(
+                entry.id,
+                textToStore,
+                entry.tags ?? tags,
+                entry.entity,
+                entry.key,
+                entry.value,
+                entry.scope,
+                entry.scopeTarget,
+              );
             }
             // Only set once the write actually superseded the requested fact. When the write
             // dedupe-merged into a different existing fact (newlyStored === false), the caller's

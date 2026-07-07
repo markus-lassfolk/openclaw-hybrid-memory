@@ -1253,7 +1253,7 @@ export async function performFactAction(
     if (action === "verify") {
       if (!ctx.verificationStore) return { ok: false, message: "Verification store not available" };
       const verifiedBy = (body.verifiedBy as "agent" | "user" | "system") ?? "agent";
-      ctx.verificationStore.verify(factId, fact.text, verifiedBy);
+      ctx.verificationStore.verify(factId, fact.text, verifiedBy, fact.scope, fact.scopeTarget);
       clearVerifiedFactIdCache(ctx);
       return { ok: true, message: `Fact ${factId} verified as ${verifiedBy}` };
     }

@@ -14,6 +14,8 @@ import { expandTilde } from "../utils/path.js";
 import { nowIso, addDaysUtcIso } from "../utils/dates.js";
 import { backfillVerifiedFactsTextTimestamps } from "../utils/timestamp-migration.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
+import { scopeFilterClauseForAlias } from "../backends/facts-db/scope-sql.js";
+import type { MemoryScope, ScopeFilter } from "../types/memory.js";
 import { VAULT_POINTER_PREFIX } from "./auto-capture.js";
 import { capturePluginError } from "./error-reporter.js";
 
@@ -32,6 +34,8 @@ export interface VerifiedFact {
   version: number;
   previousVersionId: string | null;
   createdAt: string;
+  scope: MemoryScope;
+  scopeTarget: string | null;
 }
 
 interface IntegrityReport {
@@ -95,6 +99,8 @@ export interface VerifiedFactRow {
   version: number;
   previous_version_id: string | null;
   created_at: string;
+  scope: string | null;
+  scope_target: string | null;
 }
 
 export function rowToVerifiedFact(row: VerifiedFactRow): VerifiedFact {
@@ -109,6 +115,8 @@ export function rowToVerifiedFact(row: VerifiedFactRow): VerifiedFact {
     version: row.version,
     previousVersionId: row.previous_version_id,
     createdAt: row.created_at,
+    scope: (row.scope as MemoryScope | null) ?? "global",
+    scopeTarget: row.scope_target,
   };
 }
 
@@ -225,6 +233,17 @@ export class VerificationStore {
       CREATE INDEX IF NOT EXISTS idx_verified_facts_fact_id ON verified_facts(fact_id);
       CREATE INDEX IF NOT EXISTS idx_verified_facts_next_verification ON verified_facts(next_verification);
     `);
+    // SECURITY (loop iteration 40): verified_facts had no scope column at all, so
+    // memory_verified_list broadcast every tenant's already-verified fact content to every
+    // other tenant. NULL/missing scope on pre-migration rows is treated as "global" (visible to
+    // everyone) — the same default used everywhere else in this codebase for un-scoped rows.
+    const columns = this.db.prepare("PRAGMA table_info(verified_facts)").all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === "scope")) {
+      this.db.exec("ALTER TABLE verified_facts ADD COLUMN scope TEXT DEFAULT 'global'");
+    }
+    if (!columns.some((column) => column.name === "scope_target")) {
+      this.db.exec("ALTER TABLE verified_facts ADD COLUMN scope_target TEXT");
+    }
     backfillVerifiedFactsTextTimestamps(this.db);
   }
 
@@ -232,7 +251,13 @@ export class VerificationStore {
   // verify — add a fact to the verification store
   // -------------------------------------------------------------------------
 
-  verify(factId: string, text: string, verifiedBy: "agent" | "user" | "system"): string {
+  verify(
+    factId: string,
+    text: string,
+    verifiedBy: "agent" | "user" | "system",
+    scope?: MemoryScope | null,
+    scopeTarget?: string | null,
+  ): string {
     const existing = this.db.prepare("SELECT 1 FROM verified_facts WHERE fact_id = ? LIMIT 1").get(factId);
     if (existing) {
       throw new VerificationError(`Fact ${factId} is already verified; use update() to create a new version`);
@@ -242,14 +267,16 @@ export class VerificationStore {
     const now = nowIso();
     const nextVerification = addDaysUtcIso(this.reverificationDays);
     const checksum = computeChecksum(text);
+    const resolvedScope = scope ?? "global";
+    const resolvedScopeTarget = resolvedScope === "global" ? null : (scopeTarget ?? null);
 
     this.db
       .prepare(
         `INSERT INTO verified_facts
-          (id, fact_id, canonical_text, checksum, verified_at, verified_by, next_verification, version, previous_version_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 1, NULL, ?)`,
+          (id, fact_id, canonical_text, checksum, verified_at, verified_by, next_verification, version, previous_version_id, created_at, scope, scope_target)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?, ?)`,
       )
-      .run(id, factId, text, checksum, now, verifiedBy, nextVerification, now);
+      .run(id, factId, text, checksum, now, verifiedBy, nextVerification, now, resolvedScope, resolvedScopeTarget);
 
     this.writeBackup({
       action: "verify",
@@ -349,8 +376,14 @@ export class VerificationStore {
   // listLatestVerified — latest versions for each fact_id
   // -------------------------------------------------------------------------
 
-  listLatestVerified(limit?: number): VerifiedFact[] {
+  /**
+   * SECURITY: `scopeFilter` gates which tenants' verified facts are visible — omit it only for
+   * trusted admin/dashboard callers (Mission Control), never for an agent-facing tool. See the
+   * SECURITY comment on `registerVerificationTools`.
+   */
+  listLatestVerified(limit?: number, scopeFilter?: ScopeFilter | null): VerifiedFact[] {
     const limitClause = limit ? `LIMIT ${limit}` : "";
+    const scope = scopeFilterClauseForAlias(scopeFilter, "vf");
     const rows = this.db
       .prepare(
         `SELECT vf.*
@@ -361,9 +394,10 @@ export class VerificationStore {
            GROUP BY fact_id
          ) latest
          ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
+         WHERE 1=1 ${scope.clause}
          ORDER BY vf.verified_at DESC ${limitClause}`,
       )
-      .all() as unknown as VerifiedFactRow[];
+      .all(...scope.params) as unknown as VerifiedFactRow[];
 
     return rows.filter((row) => this.validateRowChecksum(row)).map(rowToVerifiedFact);
   }
@@ -400,10 +434,23 @@ export class VerificationStore {
       this.db
         .prepare(
           `INSERT INTO verified_facts
-          (id, fact_id, canonical_text, checksum, verified_at, verified_by, next_verification, version, previous_version_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, fact_id, canonical_text, checksum, verified_at, verified_by, next_verification, version, previous_version_id, created_at, scope, scope_target)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(newId, existing.fact_id, newText, checksum, now, verifiedBy, nextVerification, newVersion, id, now);
+        .run(
+          newId,
+          existing.fact_id,
+          newText,
+          checksum,
+          now,
+          verifiedBy,
+          nextVerification,
+          newVersion,
+          id,
+          now,
+          existing.scope ?? "global",
+          existing.scope_target,
+        );
       this.db.prepare("UPDATE verified_facts SET next_verification = NULL WHERE id = ?").run(id);
     })();
 
