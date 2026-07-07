@@ -36,6 +36,7 @@ export function resolveTierPreferenceWithSources(
   const configuredTierList = readTierList(cfg, tier);
   const explicit = configuredTierList != null;
   const configuredDefault = readTierList(cfg, "default");
+  const fallbackModel = cfg.llm?.fallbackModel?.trim() || undefined;
 
   for (let i = 0; i < models.length; i++) {
     if (configuredTierList && configuredTierList[i] === models[i]) {
@@ -49,6 +50,13 @@ export function resolveTierPreferenceWithSources(
       configuredDefault[i] === models[i]
     ) {
       sources.push(`llm.default[${i}]`);
+      continue;
+    }
+    // getLLMModelPreferenceUnfiltered appends the user's configured llm.fallbackModel past the
+    // end of the explicit tier/default lists (both the fallbackToDefault-append path and the
+    // no-explicit-list built-in-defaults path) — that entry is user-configured, not built-in.
+    if (fallbackModel && fallbackModel === models[i]) {
+      sources.push("llm.fallbackModel");
       continue;
     }
     sources.push("built-in");

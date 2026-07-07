@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.146] - 2026-07-07
+
+### Fixed
+
+Loop iteration 82 of the full-codebase review loop — fixes the `llm-selection.ts` bullet flagged during iteration 34's sweep, closing out the entire "Lower-severity / cosmetic" list from that sweep (all items are now fixed or resolved-as-not-a-bug).
+
+- **`utils/llm-selection.ts`'s `resolveTierPreferenceWithSources` mislabeled a configured `llm.fallbackModel` as `"built-in"` in diagnostic source attribution.** `getLLMModelPreferenceUnfiltered` appends the user's configured `llm.fallbackModel` past the end of the explicit tier/default list (both when `fallbackToDefault` appends it after an explicit list, and when no explicit list is configured and it's appended to the built-in defaults) — but the source-attribution loop only recognized entries matching `llm.<tier>[i]` or `llm.default[i]` by position; anything else fell through to the generic `"built-in"` label, including a fallback model the user explicitly set. Display-only (doesn't affect which model is actually used), but it made the verify/diagnostic output describe a user-configured setting as a hardcoded default. Fixed by adding a check for `models[i] === cfg.llm?.fallbackModel` before the `"built-in"` fallback, labeling it `"llm.fallbackModel"` instead.
+
+Regression test added (`tests/llm-selection.test.ts`): configures `default: ["explicit-default-model"], fallbackToDefault: true, fallbackModel: "my-fallback-model"` and asserts `resolveTierPreferenceWithSources(config, "default").sources` is `["llm.default[0]", "llm.fallbackModel"]` (not `"built-in"` for the second entry). Verified via `git stash` to fail without the fix (`sources[1]` was `"built-in"`) and pass with it. tsc clean; biome clean (zero new findings). `tests/llm-selection.test.ts`: 29 passed, no regressions.
+
+---
+
 ## [2026.7.145] - 2026-07-07
 
 ### Fixed
@@ -608,9 +620,6 @@ Regression test added: races a promise that rejects (via `setTimeout`) with a si
 **Data loss / correctness:**
 - ~~Lost-update race between the heartbeat/cron `reconcileActiveTaskInProgressSessions` and `active_task_checkpoint` on `ACTIVE-TASKS.md` (plain read-then-write, no optimistic-concurrency check unlike sibling writers).~~ — **fully fixed**: `reconcileActiveTaskInProgressSessions`'s half in loop iteration 66, `syncMarkdownLedgerFromCheckpoint`'s half in loop iteration 67 (see below).
 - ~~`lifecycle/stage-cleanup.ts`'s `subagent_spawned` handler only guards against reopening a `"Done"` task, not `"Failed"`~~ — **investigated in loop iteration 41 and NOT a bug**: `subagent_spawned` reopening a `"Failed"` task is deliberate, tested behavior (`stage-cleanup-facts-ledger.test.ts`'s "subagent_spawned reopens Failed tasks when session metadata is present" / "...clears stale handoff when reopening Failed tasks") — a new subagent dispatched against a failed task's label is an explicit retry and is meant to reopen it. Separately, adding `"failed"` to the shared `TERMINAL` set in `services/task-ledger/canonical.ts` breaks `factNewerThan`'s timestamp-tie-break comparator (which prefers "terminal" status on a tie) — it would let a stale `"failed"` fact block a legitimate retry's fresh `"in_progress"` write when both share the same second-granularity `createdAt`, confirmed by 9 existing test failures across `task-ledger-facts.test.ts`/`stage-cleanup-facts-ledger.test.ts` when tried. If the narrower gap (an arbitrary `memory_store` call regressing a `Failed` project-task status via `mirrorMemoryStoreToActiveTaskLedger`'s guard at `task-ledger-facts.ts:136`, which is a *different* write path than `subagent_spawned`'s `syncActiveTaskEntryToFacts`) still needs closing, it must be done as a change local to that one guard, not via the shared `TERMINAL` set.
-**Lower-severity / cosmetic:**
-- `utils/llm-selection.ts` mislabels a configured `fallbackModel` as `"built-in"` in diagnostic source attribution (display-only, doesn't affect which model is used).
-
 ### Deferred (carried over from earlier iterations; still tracked)
 
 - `backends/issue-store.ts`'s `transition()`/`update()` lacking compare-and-swap protection (cross-process race only).
