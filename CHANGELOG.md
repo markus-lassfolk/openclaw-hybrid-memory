@@ -23,6 +23,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.7.108] - 2026-07-06
+
+### Fixed
+
+Loop iteration 44 of the full-codebase review loop — fixes a data-destruction bug in a double-failure rollback path flagged during iteration 34's sweep.
+
+- **`CrystallizationProposer.restoreProposal`'s rollback path could delete the only surviving copy of a just-restored skill.** When restoring a quarantined skill, the skill directory is first moved on disk (quarantine → active output tree), then the DB row is flipped to `installed`. If that DB update fails (e.g. the proposal's status changed underneath it), the rollback tries to move the skill directory back to quarantine — but if *that* rename also fails (e.g. a permissions issue, or the quarantine parent directory can't be recreated), the `catch` block called `removeCrystallizedSkillDir(restoreResult.outputPath)`, which deletes the skill directory at its *current* (active) location. Since the file was moved, not copied, out of quarantine, this was the only remaining copy — the "rollback" for a double failure permanently destroyed the data instead of leaving it in place for manual reconciliation. Fixed by removing the destructive cleanup call: on a failed rollback, the skill directory is now left at its current active-tree location (orphaned from the DB's still-`quarantined` status, but intact) instead of being deleted.
+
+Regression test added (`tests/crystallization-proposer-restore-rollback-data-loss.test.ts`): mocks `node:fs`'s `renameSync` to let the forward restore succeed but fail specifically on the rename-back-to-quarantine call, combined with a mocked `restoreFromQuarantine` DB failure (the existing double-failure trigger), and asserts the skill's `SKILL.md` still exists at its restored location afterward. Verified via `git stash` to fail without the fix (directory deleted, assertion failed) and pass with it. tsc clean; biome clean (zero net-new against baseline — the source file's one pre-existing import-order finding predates this change, confirmed via `git stash`). Related suites (crystallization-proposer, crystallization-proposer-restore-rollback-data-loss): 36 passed (1 known pre-existing failure unrelated to this change — a read-only-directory chmod test that doesn't hold under a root test runner), no new regressions.
+
+---
+
 ## [2026.7.107] - 2026-07-06
 
 ### Fixed
@@ -108,7 +120,6 @@ Regression test added (`tests/pending-autopilot-redaction.test.ts`, 4 cases): a 
 - `services/reflection.ts` writes its `reflection_input_hash` unconditionally after the storage loop even when a maintenance-run deadline broke the loop early — patterns extracted but never stored are permanently lost, since the next run's identical-input hash match skips re-extraction.
 - `services/reinforcement-batch-analyze.ts` increments `diagnostics.parseFailures` before attempting JSON repair and never reverts it on successful repair (sibling `self-correction-batch-analyze.ts` does this correctly), inflating operator diagnostics and an A/B benchmark penalty for batches that ultimately parsed fine.
 - `services/unified-proposals.ts`'s `countPendingUnifiedProposals` filters out `procedure-skill` proposals only after `listUnifiedProposals` has already sorted-and-truncated to the default top-100, so a burst of recent procedure-skill candidates can push real pending persona/tool/crystallization proposals out of the count window and let `enforceMaxPendingCap` admit more than configured.
-- `services/crystallization-proposer.ts`'s `restoreProposal` rollback path can delete the just-restored skill directory (`removeCrystallizedSkillDir`) if the DB status flip and the rollback rename-back both fail, destroying the only surviving copy instead of leaving it for reconciliation.
 - `services/issue-retrieval.ts` + `backends/issue-store.ts`'s `IssueStore.list()` applies `ORDER BY created_at DESC LIMIT ?` before severity is considered, so older critical issues can be excluded entirely from an "always-surface-critical" baseline when enough newer high-severity issues exist.
 
 ---
