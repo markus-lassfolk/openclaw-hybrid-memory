@@ -749,14 +749,35 @@ function resolveCronJobModel(
  * so the job runner never tries to send a WhatsApp/channel notification for plugin-internal jobs.
  * If the def has minIntervalMs, prepends a guard prefix to the message to prevent re-runs on gateway restart (#304). */
 function resolveWeeklyPendingDigestDelivery(del?: DigestWeeklyDeliveryConfig): Record<string, unknown> {
-  const mode = del?.mode ?? "system";
+  // Issue #2056: never emit `mode: "announce"` without an explicit `channel` + `to`. The
+  // OpenClaw cron safety guard refuses the unsafe `isolated + agentTurn + announce` shape
+  // because the target would otherwise be inferred from a shared session bucket that can
+  // span conversations and replay into the wrong chat after a restart. Map every
+  // destinationless mode (including the historical "system" default) to `mode: "none"` so
+  // the job body still runs and writes its digest to the maintenance log without producing
+  // an undeliverable cron record.
+  const mode = del?.mode ?? "none";
   if (mode === "none") return { mode: "none" };
   if (mode === "telegram") {
     const chatId = del?.chatId?.trim();
-    if (!chatId) return { mode: "announce" };
-    return { mode: "announce", channel: "telegram", chatId };
+    if (!chatId) return { mode: "none" };
+    // Emit both `to` (cron safety guard) and `chatId` (legacy digest dispatch consumer).
+    return { mode: "announce", channel: "telegram", to: chatId, chatId, bestEffort: true };
   }
-  return { mode: "announce" };
+  return { mode: "none" };
+}
+
+/** Jobs that have historically shipped with `delivery.mode = "announce"` and no destination.
+ * Issue #2056: those legacy jobs caused the OpenClaw cron safety guard to reject delivery.
+ * Plugin-internal maintenance logs do not need an operator-visible announce channel by
+ * default; the work output is captured in the maintenance log and any operator-visible
+ * notification should be opt-in via a future explicit configuration. Until then, default
+ * these jobs to `mode: "none"` so they never get installed in the unsafe shape. */
+function isPluginInternalAnnounceJob(pluginJobId: string): boolean {
+  return (
+    pluginJobId === `${PLUGIN_JOB_ID_PREFIX}workshop-approval-reminder` ||
+    pluginJobId === `${PLUGIN_JOB_ID_PREFIX}maintenance-log-analyzer`
+  );
 }
 
 function resolveCronJob(
@@ -775,13 +796,18 @@ function resolveCronJob(
   }
   const pluginJobId = rest.pluginJobId;
   const stableId = typeof pluginJobId === "string" && pluginJobId.trim().length > 0 ? pluginJobId.trim() : undefined;
-  const delivery =
-    stableId === `${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest`
-      ? resolveWeeklyPendingDigestDelivery(digestWeeklyDelivery)
-      : stableId === `${PLUGIN_JOB_ID_PREFIX}workshop-approval-reminder` ||
-          stableId === `${PLUGIN_JOB_ID_PREFIX}maintenance-log-analyzer`
-        ? { mode: "announce" as const }
-        : { mode: "none" as const };
+  // Issue #2056: prefer `mode: "none"` over the unsafe `announce` shape for plugin-internal
+  // jobs. Only `weekly-pending-digest` keeps announce as a possibility, and only when the
+  // operator has configured an explicit destination (telegram + chatId).
+  const delivery: Record<string, unknown> = (() => {
+    if (stableId === `${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest`) {
+      return resolveWeeklyPendingDigestDelivery(digestWeeklyDelivery);
+    }
+    if (stableId && isPluginInternalAnnounceJob(stableId)) {
+      return { mode: "none" };
+    }
+    return { mode: "none" };
+  })();
   return { ...rest, ...(stableId ? { id: stableId } : {}), model, delivery };
 }
 
@@ -790,6 +816,26 @@ function hasIsolatedCronSessionTarget(job: Record<string, unknown>): boolean {
   const payload = job.payload as Record<string, unknown> | undefined;
   if (!payload) return false;
   return payload.sessionTarget === "isolated" || payload.isolated === true;
+}
+
+/** Issue #2056: a hybrid-mem cron job's `delivery` is considered "unsafe implicit announce"
+ * when:
+ *   - `delivery.mode === "announce"`, AND
+ *   - EITHER `delivery.channel` is missing/blank, OR `delivery.to` is missing/blank.
+ * In that shape the OpenClaw cron safety guard refuses delivery because the target would
+ * otherwise be inherited from the shared agent-main session bucket's last recipient, which
+ * is ambiguous across conversations and can deliver to the wrong room (and replay there
+ * after a restart). `chatId` is treated as an explicit destination only when `to` is also
+ * present (gateway cron uses `to`; `chatId` is the legacy field kept for in-process digest
+ * dispatch but is not sufficient on its own for the cron safety guard). */
+function hasUnsafeImplicitAnnounceDelivery(job: Record<string, unknown>): boolean {
+  const d = job.delivery as { mode?: unknown; channel?: unknown; to?: unknown; chatId?: unknown } | undefined;
+  if (!d || typeof d !== "object") return false;
+  if (d.mode !== "announce") return false;
+  const channel = typeof d.channel === "string" ? d.channel.trim() : "";
+  const to = typeof d.to === "string" ? d.to.trim() : "";
+  if (channel.length > 0 && to.length > 0) return false;
+  return true;
 }
 
 const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolean> = {
@@ -1077,14 +1123,35 @@ function ensureMaintenanceCronJobsLocked(
           if (!normalized.includes(name)) normalized.push(name);
         }
         // Fix delivery: "announce" + channel "system" or "last" requires WhatsApp target (E.164); maintenance jobs don't need delivery.
-        const d = existing.delivery as { mode?: string; channel?: string } | undefined;
+        // Issue #2056: apply uniformly to every hybrid-mem:* job, including the three jobs that
+        // were previously excluded (weekly-pending-digest, workshop-approval-reminder,
+        // maintenance-log-analyzer). Those jobs historically shipped with implicit announce that
+        // the OpenClaw cron safety guard now rejects. The dedicated pass below (unsafeImplicitAnnounce)
+        // additionally repairs the wider `announce` shape with no channel at all.
+        const d = existing.delivery as { mode?: string; channel?: string; to?: string; chatId?: string } | undefined;
         if (
-          id !== `${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest` &&
-          id !== `${PLUGIN_JOB_ID_PREFIX}workshop-approval-reminder` &&
-          id !== `${PLUGIN_JOB_ID_PREFIX}maintenance-log-analyzer` &&
+          id.startsWith(PLUGIN_JOB_ID_PREFIX) &&
           d &&
           d.mode === "announce" &&
           (d.channel === "system" || d.channel === "last")
+        ) {
+          existing.delivery = { mode: "none" };
+          jobsChanged = true;
+          if (!normalized.includes(name)) normalized.push(name);
+        }
+
+        // Issue #2056: repair `isolated + agentTurn + announce` with missing explicit destination.
+        // Newer OpenClaw cron delivery safety refuses this shape and records the job as `error`
+        // even when the body work succeeded. For hybrid-mem:* jobs we never want implicit
+        // recipient inference from the shared main-session bucket, so collapse to `mode: "none"`.
+        // `weekly-pending-digest` is the one job that is allowed to use announce (only with a
+        // non-empty chatId from digest.weekly.delivery); its normalization is handled by
+        // `resolveWeeklyPendingDigestDelivery` later in this loop, so the only remaining
+        // announce-without-destination cases on that job are repaired here as well.
+        if (
+          id.startsWith(PLUGIN_JOB_ID_PREFIX) &&
+          hasIsolatedCronSessionTarget(existing) &&
+          hasUnsafeImplicitAnnounceDelivery(existing)
         ) {
           existing.delivery = { mode: "none" };
           jobsChanged = true;

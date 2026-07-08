@@ -684,6 +684,51 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
     }
   }
 
+  // Issue #2056: detect plugin-owned `isolated + agentTurn + announce` jobs that are
+  // missing an explicit delivery destination. The OpenClaw cron safety guard refuses
+  // this shape and records the job as `error` even when the body work succeeded. Surface
+  // the issue as a warning so operators learn about it before the next scheduled run,
+  // and recommend `verify --fix` to repair the delivery field.
+  if (cronStoreHasJobs) {
+    const unsafeAnnounceJobs: string[] = [];
+    const rawJobs = Array.isArray(cronStoreSnapshot.store.jobs) ? cronStoreSnapshot.store.jobs : [];
+    for (const j of rawJobs) {
+      if (typeof j !== "object" || j === null) continue;
+      const job = j as Record<string, unknown>;
+      const pid = String(job.pluginJobId ?? job.id ?? "");
+      if (!pid.startsWith("hybrid-mem:")) continue;
+      const sessionTarget = job.sessionTarget;
+      const payload = job.payload as { kind?: unknown; sessionTarget?: unknown; isolated?: unknown } | undefined;
+      const isolated =
+        sessionTarget === "isolated" ||
+        job.isolated === true ||
+        payload?.sessionTarget === "isolated" ||
+        payload?.isolated === true;
+      if (!isolated) continue;
+      if (payload?.kind !== "agentTurn") continue;
+      const d = job.delivery as { mode?: unknown; channel?: unknown; to?: unknown } | undefined;
+      if (!d || d.mode !== "announce") continue;
+      const channel = typeof d.channel === "string" ? d.channel.trim() : "";
+      const to = typeof d.to === "string" ? d.to.trim() : "";
+      if (channel.length > 0 && to.length > 0) continue;
+      unsafeAnnounceJobs.push(pid);
+    }
+    if (unsafeAnnounceJobs.length > 0) {
+      const WARN = noEmoji ? "[WARN]" : "⚠️";
+      const sample = unsafeAnnounceJobs.slice(0, 5).join(", ");
+      const more = unsafeAnnounceJobs.length > 5 ? `, … (${unsafeAnnounceJobs.length - 5} more)` : "";
+      log(
+        `\n${WARN} Cron delivery safety (issue #2056): ${sample}${more} are isolated + agentTurn + announce without an explicit channel/to. OpenClaw cron delivery will refuse to send and record the run as error. Fix: run \`openclaw hybrid-mem verify --fix\` to repair delivery to \`{ mode: "none" }\` (or set digest.weekly.delivery.mode=telegram + chatId for weekly-pending-digest).`,
+      );
+      state.warnings.push(
+        `cron jobs with implicit announce delivery (issue #2056): ${sample}${more}. Run 'openclaw hybrid-mem verify --fix' to repair.`,
+      );
+      state.fixes.push(
+        "Run 'openclaw hybrid-mem verify --fix' to repair hybrid-mem cron jobs with unsafe implicit announce delivery (issue #2056).",
+      );
+    }
+  }
+
   // Warn if the stored cron messages or recent exit logs reference deprecated CLI commands/steps.
   const deprecatedCronJobs = Array.from(allJobs.values()).filter(
     (j) => (j.deprecatedCronTokens?.length ?? 0) > 0 && j.featureGateDisabled !== true,

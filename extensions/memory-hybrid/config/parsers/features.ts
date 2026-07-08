@@ -1077,28 +1077,40 @@ export function parseFrequencyCaptureConfig(cfg: Record<string, unknown>): Frequ
   };
 }
 
-/** Safe parse for cron install paths that do not run the full hybrid config validator. */
+/** Safe parse for cron install paths that do not run the full hybrid config validator.
+ * Issue #2056: prefer `mode: "none"` as the default so plugin-owned weekly-pending-digest
+ * never installs with the unsafe `isolated + agentTurn + announce` shape that the OpenClaw
+ * cron safety guard rejects. Operators who want announce delivery must opt in with
+ * `mode: "telegram"` AND a non-empty `chatId`. The legacy `"system"` value is still
+ * accepted as input for backwards compatibility but is normalized here to `"none"` because
+ * the cron job resolver has no safe way to construct an explicit destination for it. */
 export function parseDigestWeeklyDeliveryOnly(cfg: Record<string, unknown>): DigestWeeklyDeliveryConfig {
   const digest = cfg.digest as Record<string, unknown> | undefined;
   const weekly = digest?.weekly as Record<string, unknown> | undefined;
   const delivery = weekly?.delivery as Record<string, unknown> | undefined;
   const modeRaw = delivery?.mode;
   const valid = ["telegram", "system", "none"] as const;
-  let mode: (typeof valid)[number] = "system";
+  let mode: (typeof valid)[number] = "none";
   if (typeof modeRaw === "string" && (valid as readonly string[]).includes(modeRaw)) {
     mode = modeRaw as (typeof valid)[number];
   } else if (modeRaw !== undefined) {
     pluginLogger.warn(
-      `memory-hybrid: invalid digest.weekly.delivery.mode "${modeRaw}"; expected telegram|system|none. Using "system".`,
+      `memory-hybrid: invalid digest.weekly.delivery.mode "${modeRaw}"; expected telegram|none. Using "none".`,
     );
   }
   const chatId =
     typeof delivery?.chatId === "string" && delivery.chatId.trim().length > 0 ? delivery.chatId.trim() : undefined;
   if (mode === "telegram" && !chatId) {
     pluginLogger.warn(
-      `memory-hybrid: digest.weekly.delivery.mode is "telegram" but chatId is missing; using "system".`,
+      `memory-hybrid: digest.weekly.delivery.mode is "telegram" but chatId is missing; using "none".`,
     );
-    return { mode: "system" };
+    return { mode: "none" };
+  }
+  if (mode === "system") {
+    // Legacy/destinationless mode; the cron job resolver cannot safely emit an explicit
+    // destination for it. Downgrade to "none" so issue #2056 cannot reintroduce the unsafe
+    // shape on installations that still carry the old "system" config in their YAML/JSON.
+    return { mode: "none" };
   }
   return { mode, ...(chatId ? { chatId } : {}) };
 }
