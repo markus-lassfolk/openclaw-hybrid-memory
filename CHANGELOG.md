@@ -21,6 +21,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **Cron delivery safety (issue #2056):** plugin-owned `hybrid-mem:*` cron jobs no longer install in the unsafe `sessionTarget=isolated + payload.kind=agentTurn + delivery.mode=announce` shape (with no explicit `delivery.channel` and no `delivery.to`). The OpenClaw cron safety guard refuses delivery in that shape and records the run as `error` even when the body work succeeded (e.g. `digest-pending exit=0` plus `validate-cron-exit exit=0` plus `state.lastStatus=error`).
+  - `cli/install/cron-jobs.ts` `resolveCronJob` now defaults `workshop-approval-reminder` and `maintenance-log-analyzer` to `delivery: { mode: "none" }` (these are plugin-internal logs; the work output is captured in the maintenance log and any operator-visible notification should be opt-in via a future explicit configuration).
+  - `cli/install/cron-jobs.ts` `resolveWeeklyPendingDigestDelivery` now maps every destinationless mode — including the historical `"system"` default and any `telegram` config without a non-empty `chatId` — to `delivery: { mode: "none" }`. When the operator configures `digest.weekly.delivery.mode = "telegram"` together with a non-empty `chatId`, the job is installed with `delivery: { mode: "announce", channel: "telegram", to: <chatId>, chatId: <chatId>, bestEffort: true }` so the cron safety guard sees both `channel` and `to`.
+  - `config/parsers/features.ts` `parseDigestWeeklyDeliveryOnly` now defaults `digest.weekly.delivery.mode` to `"none"` (was `"system"`), and treats the legacy `"system"` value as destinationless (also normalized to `"none"`).
+  - `cli/install/cron-jobs.ts` `ensureMaintenanceCronJobsLocked` normalizeExisting pass now (a) repairs the `announce + channel=system|channel=last` shape uniformly across every `hybrid-mem:*` job (the three jobs that were previously excluded — `weekly-pending-digest`, `workshop-approval-reminder`, `maintenance-log-analyzer` — are now included so legacy installs converge on the safe shape), and (b) adds a dedicated repair for the wider `isolated + agentTurn + announce` shape with no explicit `channel`+`to`, collapsing it to `delivery: { mode: "none" }` so `openclaw hybrid-mem verify --fix` repairs existing unsafe jobs.
+  - `cli/verify/sections/config-cron.ts` `runVerifyConfigCronSection` now scans the cron store for the unsafe shape and surfaces a warning + recommended fix in `openclaw hybrid-mem verify` output (so operators learn about the issue even before running `--fix`).
+  - Regression coverage in `tests/cron-implicit-announce-delivery.test.ts` (19 tests across generation, repair/migration, and parser-default axes) and an updated assertion in `tests/cron-session-key-normalization.test.ts` for the new safe default. No Markus-specific values are referenced in any test (uses `telegram` + `12345` as a safe dummy destination, or `mode=none` fallback).
+
 ---
 
 ## [2026.7.170] - 2026-07-07

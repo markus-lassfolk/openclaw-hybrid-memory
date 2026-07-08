@@ -58,7 +58,10 @@ describe("ensureMaintenanceCronJobs sessionKey normalization (#977)", () => {
     expect(target).toBeTruthy();
     expect(target?.name).toBe("weekly-pending-digest");
     expect(JSON.stringify(target)).toContain("openclaw hybrid-mem digest pending --since 7d --format md");
-    expect(target?.delivery).toMatchObject({ mode: "announce" });
+    // Issue #2056: without an explicit digest.weekly.delivery.mode=telegram + chatId, the job
+    // must default to delivery.mode=none. The unsafe `announce` shape with no channel/to is
+    // rejected by the OpenClaw cron safety guard, so we never install that.
+    expect(target?.delivery).toEqual({ mode: "none" });
   });
 
   it("publishes the weekly pending digest autopilot maintenance job", () => {
