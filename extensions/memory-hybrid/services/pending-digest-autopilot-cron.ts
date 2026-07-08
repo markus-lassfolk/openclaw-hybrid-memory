@@ -438,9 +438,25 @@ export async function runPendingDigestAutopilotCron(
     // updated timestamp is visible before the lock frees up. Writing it after release left a
     // window where a concurrent invocation could read the stale (pre-run) guard timestamp, pass
     // its own guard-check, then acquire the just-released lock and run a full duplicate pass.
+    // SECURITY: wrap the guard write in its own try/catch so an unwritable guard path
+    // (permissions, read-only home, disk-full, ENOSPC) cannot throw out of `finally` and skip
+    // the lock release below. A throw from this block would leave the cron lock held until its
+    // TTL and cause every subsequent autopilot-cron run to skip as locked, even after the run
+    // that "succeeded" finishes. Mark the run `failed` instead so the operator notices and the
+    // next guarded run still re-acquires the lock cleanly.
     if (status === "ok" && !skipReason) {
-      mkdirSync(dirname(guardPath), { recursive: true });
-      writeFileSync(guardPath, `${Date.now()}`, "utf-8");
+      try {
+        mkdirSync(dirname(guardPath), { recursive: true });
+        writeFileSync(guardPath, `${Date.now()}`, "utf-8");
+      } catch (err) {
+        // Use emitProgress (not markStep) so the failure surfaces in the per-run log but is
+        // not added to REQUIRED_STEPS — adding it would conflate this post-flight guard write
+        // with the pre-flight step validator.
+        status = "failed";
+        summary.status = "failed";
+        summary.skipReason = undefined;
+        emitProgress(`error.guard-write ${stringifyError(err)}`);
+      }
     }
     if (acquiredLock) releaseAutopilotLock(lockPath, runId);
   }

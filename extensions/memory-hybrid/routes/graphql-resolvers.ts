@@ -349,7 +349,16 @@ export const resolvers: GraphQLResolvers = {
         // way here as it does in the untyped branch below (previously this only ever looked at
         // factId's direct/1-hop links, silently ignoring maxDepth > 1).
         const linkTypeSet = new Set(linkTypes);
-        const relevantLinks = getAllLinks(context.factsDb).filter((link) => linkTypeSet.has(link.linkType));
+        // SECURITY: scope the BFS at the link layer, not just at the final getById post-filter.
+        // Without this, a visible fact A linked to hidden B linked to visible C would add B and C
+        // to `visited` at depth >= 2; the later `getById(...scopeFilter)` strips B but C still
+        // returns, surfacing a path that has no fully visible links and indirectly confirming
+        // that hidden B exists. isLinkVisible requires BOTH endpoints to resolve under the
+        // caller's scopeFilter, matching link()/links() above and the relatedFacts root oracle
+        // check.
+        const relevantLinks = getAllLinks(context.factsDb).filter(
+          (link) => linkTypeSet.has(link.linkType) && isLinkVisible(context.factsDb, link, context.scopeFilter),
+        );
         const visited = new Set<string>([factId]);
         let frontier = new Set<string>([factId]);
         for (let depth = 0; depth < maxDepth && frontier.size > 0; depth++) {

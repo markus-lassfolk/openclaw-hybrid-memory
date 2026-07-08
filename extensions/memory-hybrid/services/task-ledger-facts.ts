@@ -1352,10 +1352,19 @@ export async function syncActiveTaskEntryToFacts(
   opts?: {
     statusOverride?: string;
     latestByEntityKey?: Map<string, MemoryEntry>;
+    /**
+     * Optional scope to stamp on every upserted fact (and to use when finding/retiring the
+     * previous fact for a key). When omitted, writes fall through to the historical
+     * global-scope behavior — Workboard sync and other cross-tenant admin callers rely on
+     * that. Lifecycle callers (e.g. stage-active-task's long-running auto-registration)
+     * must thread the caller's resolved scopeFilter so the auto-created task does not bleed
+     * into another tenant's active-task ledger.
+     */
+    scopeFilter?: ScopeFilter | null;
   },
 ): Promise<void> {
   const entity = entry.label;
-  const upsertOpts = { latestByEntityKey: opts?.latestByEntityKey };
+  const upsertOpts = { latestByEntityKey: opts?.latestByEntityKey, scopeFilter: opts?.scopeFilter };
   const pendingMutations: ActiveTaskFactsSyncMutation[] = [];
   const upsertKey = async (key: string, value: string): Promise<void> => {
     const result = await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, key, value, log, upsertOpts);
@@ -1364,8 +1373,14 @@ export async function syncActiveTaskEntryToFacts(
     }
   };
   const retireKey = (key: string): void => {
-    const previous = findLatestActiveTaskKeyFact(factsDb, entity, key, upsertOpts.latestByEntityKey);
-    const retired = retireProjectTaskKeyFacts(factsDb, entity, key);
+    const previous = findLatestActiveTaskKeyFact(
+      factsDb,
+      entity,
+      key,
+      upsertOpts.latestByEntityKey,
+      upsertOpts.scopeFilter,
+    );
+    const retired = retireProjectTaskKeyFacts(factsDb, entity, key, upsertOpts.scopeFilter);
     if (retired > 0 && previous) {
       pendingMutations.push({ kind: "retire", key, previous });
     }

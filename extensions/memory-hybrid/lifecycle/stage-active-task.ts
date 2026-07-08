@@ -68,6 +68,13 @@ export function registerActiveTaskInjection(
             | null = null;
           let factsSelectionStartMs: number | null = null;
           let staleSkippedFromFacts = 0;
+          // SECURITY: resolved at the outer scope so both the facts-ledger read branch and the
+          // long-running auto-register branch below can use the same scopeFilter. Omitting scope
+          // from loadTaskLedgerFromFactsWithMetrics silently returns every tenant's task facts,
+          // and omitting scope from syncActiveTaskEntryToFacts writes the auto-created task at
+          // global scope so it leaks into other tenants' active-task ledgers. Initialized to
+          // null when ledger !== "facts" because the markdown branch never persists to facts.
+          let scopeFilter: ReturnType<typeof buildToolScopeFilter> | null = null;
 
           if (ctx.cfg.activeTask.ledger === "facts") {
             const coherence = await flushActiveTaskCoherenceRepairs(ctx.factsDb, ctx.vectorDb, ctx.embeddings, {
@@ -80,10 +87,7 @@ export function registerActiveTaskInjection(
               );
             }
             factsSelectionStartMs = Date.now();
-            // SECURITY: loadTaskLedgerFromFactsWithMetrics accepts an optional scopeFilter but silently
-            // returns every tenant's task facts when it's omitted — must be threaded through explicitly
-            // (matches active-task-tools-loader.ts's loadActiveTasksForTools).
-            const scopeFilter = buildToolScopeFilter({}, ctx.currentAgentIdRef.value, ctx.cfg);
+            scopeFilter = buildToolScopeFilter({}, ctx.currentAgentIdRef.value, ctx.cfg);
             const { active, metrics } = loadTaskLedgerFromFactsWithMetrics(ctx.factsDb, undefined, scopeFilter);
             activeForInjection = detectStaleTasks(active, staleMinutes);
             factsSelectionMetrics = metrics;
@@ -126,7 +130,13 @@ export function registerActiveTaskInjection(
 
             if (!alreadyActive && shouldAutoRegisterLongRunningTask(longRunningMode, sessionKey)) {
               if (ctx.cfg.activeTask.ledger === "facts") {
-                await syncActiveTaskEntryToFacts(ctx.factsDb, ctx.vectorDb, ctx.embeddings, draft, api.logger);
+                // SECURITY: pass the same scopeFilter we used to read in-scope tasks so the
+                // auto-created long-running task is stamped with the caller's agent/user/session
+                // scope. Without this, the new task fact is written at global scope and surfaces
+                // in other tenants' active-task ledgers.
+                await syncActiveTaskEntryToFacts(ctx.factsDb, ctx.vectorDb, ctx.embeddings, draft, api.logger, {
+                  scopeFilter,
+                });
                 activeForInjection = upsertTask(activeForInjection, draft, true);
                 autoCreated = true;
               } else {
