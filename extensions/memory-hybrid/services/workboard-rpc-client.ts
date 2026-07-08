@@ -275,6 +275,7 @@ export function createWorkboardHttpRpcClient(
     },
 
     async isAvailable() {
+      if (workboardRpcSkipped("workboard.isAvailable", options?.shouldAbort)) return false;
       try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 5000);
@@ -431,7 +432,8 @@ export function createWorkboardGatewayCliRpcClient(
     },
 
     async isAvailable() {
-      return (await runWorkboardGatewayCliCall("workboard.cards.list", {}, token)) != null;
+      if (workboardRpcSkipped("workboard.isAvailable", options?.shouldAbort)) return false;
+      return (await runWorkboardGatewayCliCall("workboard.cards.list", {}, token, options?.shouldAbort)) != null;
     },
   };
 }
@@ -446,18 +448,25 @@ export function createWorkboardRpcClient(
 ): WorkboardRpcClient {
   const httpClient = createWorkboardHttpRpcClient(gatewayUrl, token, options);
   const cliClient = createWorkboardGatewayCliRpcClient(token, options);
+  // Cached pin expires so a recovered/better transport (e.g. HTTP coming back up after a
+  // CLI-fallback pin) is picked up without restarting the plugin.
+  const RESOLVE_TTL_MS = 5 * 60 * 1000;
   let activeClient: WorkboardRpcClient | null = null;
+  let activeClientResolvedAt = 0;
 
   async function resolveClient(): Promise<WorkboardRpcClient> {
-    if (activeClient) return activeClient;
+    if (activeClient && Date.now() - activeClientResolvedAt < RESOLVE_TTL_MS) return activeClient;
     if (await httpClient.isAvailable()) {
       activeClient = httpClient;
+      activeClientResolvedAt = Date.now();
       return httpClient;
     }
     if (await cliClient.isAvailable()) {
       activeClient = cliClient;
+      activeClientResolvedAt = Date.now();
       return cliClient;
     }
+    activeClient = null;
     return httpClient;
   }
 

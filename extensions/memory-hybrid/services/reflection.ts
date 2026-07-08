@@ -743,11 +743,13 @@ export async function runReflection(
   const reflectionRunId = provenanceService ? randomUUID() : null;
   const candidateStartMs = Date.now();
   let candidateIndex = 0;
+  let deadlineReached = false;
   const inRunFactVectors = new Map<string, { vector: number[]; embeddingModel: string }>();
 
   for (const patternText of uniqueNewPatterns) {
     if (maintenanceRunDeadlineReached()) {
       logger.warn("memory-hybrid: reflection stopped — maintenance run deadline reached");
+      deadlineReached = true;
       break;
     }
     candidateIndex++;
@@ -1139,7 +1141,10 @@ export async function runReflection(
     }
   }
 
-  if (!opts.dryRun) {
+  // Skip the input-hash write when the deadline cut the storage loop short: some candidate
+  // patterns were extracted but never embedded/stored, so recording this input as "processed"
+  // would make the next run's identical-input hash match skip re-extracting them entirely.
+  if (!opts.dryRun && !deadlineReached) {
     factsDb.setMaintenanceState("reflection_input_hash", inputHash);
   }
   logger.info(

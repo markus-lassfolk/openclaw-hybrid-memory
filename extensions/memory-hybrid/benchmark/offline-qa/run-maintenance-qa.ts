@@ -185,7 +185,7 @@ function writeReport(state: QaState): void {
   writeFileSync(REPORT_PATH, lines.join("\n"));
 }
 
-async function runTaskSubprocess(
+export async function runTaskSubprocess(
   taskArgs: string[],
   env: NodeJS.ProcessEnv,
   wallTimeoutMs: number,
@@ -205,12 +205,30 @@ async function runTaskSubprocess(
       stderr += d.toString();
     });
     let timedOut = false;
+    let settled = false;
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill("SIGTERM");
       setTimeout(() => child.kill("SIGKILL"), 5000);
     }, wallTimeoutMs);
+    // Without an 'error' listener, a spawn failure (missing binary, EACCES, etc.) either throws
+    // an uncaught exception (Node's EventEmitter special-cases unhandled 'error') or leaves this
+    // promise unresolved forever if 'close' never follows -- record it as a normal task failure
+    // instead, matching how this function already reports any other subprocess failure.
+    child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({
+        exitCode: 1,
+        stdout,
+        stderr: `${stderr}\n[QA] Failed to spawn subprocess: ${err.message}\n`,
+        timedOut,
+      });
+    });
     child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       resolve({ exitCode: code ?? 1, stdout, stderr, timedOut });
     });
@@ -355,7 +373,9 @@ async function main(): Promise<void> {
   process.exit(failed.length > 0 ? 1 : 0);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

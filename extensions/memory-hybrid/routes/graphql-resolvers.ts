@@ -209,6 +209,21 @@ function getAllLinks(factsDb: FactsDB): GraphQLLink[] {
   return rows.map(normalizeLink);
 }
 
+/**
+ * SECURITY: a link is only visible to a caller if BOTH endpoints are facts they can read.
+ * memory_links carries no scope column of its own — it connects two potentially
+ * differently-scoped facts — so scoping must be derived from the endpoints, not skipped.
+ */
+export function isLinkVisible(
+  factsDb: FactsDB,
+  link: { sourceId: string; targetId: string },
+  scopeFilter: ScopeFilter,
+): boolean {
+  return (
+    factsDb.getById(link.sourceId, { scopeFilter }) != null && factsDb.getById(link.targetId, { scopeFilter }) != null
+  );
+}
+
 function isMemoryLinkType(value: string): value is MemoryLinkType {
   return ["SUPERSEDES", "CAUSED_BY", "PART_OF", "RELATED_TO", "DEPENDS_ON", "CONTRADICTS", "INSTANCE_OF"].includes(
     value,
@@ -297,7 +312,8 @@ export const resolvers: GraphQLResolvers = {
     link: (_parent, args, context) => {
       const id = asString(asRecord(args).id);
       if (!id) return null;
-      return getAllLinks(context.factsDb).find((link) => link.id === id) ?? null;
+      const link = getAllLinks(context.factsDb).find((link) => link.id === id) ?? null;
+      return link && isLinkVisible(context.factsDb, link, context.scopeFilter) ? link : null;
     },
     links: (_parent, args, context) => {
       const input = asRecord(args);
@@ -310,7 +326,8 @@ export const resolvers: GraphQLResolvers = {
           (link) =>
             (!sourceId || link.sourceId === sourceId) &&
             (!targetId || link.targetId === targetId) &&
-            (!linkType || link.linkType === linkType),
+            (!linkType || link.linkType === linkType) &&
+            isLinkVisible(context.factsDb, link, context.scopeFilter),
         )
         .slice(0, limit);
     },
@@ -318,26 +335,49 @@ export const resolvers: GraphQLResolvers = {
       const input = asRecord(args);
       const factId = asString(input.factId);
       if (!factId) return [];
+      // Same visibility gate as link()/links() (isLinkVisible): without it, a caller could
+      // supply another tenant's factId and use the link-graph traversal below as an oracle to
+      // confirm the id exists and see its neighbors, even though the root itself is never
+      // returned to them.
+      if (context.factsDb.getById(factId, { scopeFilter: context.scopeFilter }) == null) return [];
       const maxDepth = Math.max(1, Math.min(5, asNumber(input.maxDepth) ?? 1));
       const linkTypes = asStringArray(input.linkTypes);
       const nowSec = Math.floor(Date.now() / 1000);
       let neighborIds: string[];
       if (linkTypes?.length) {
-        neighborIds = [
-          ...new Set(
-            getAllLinks(context.factsDb)
-              .filter(
-                (link) =>
-                  linkTypes.includes(link.linkType) &&
-                  (link.sourceId === factId || link.targetId === factId),
-              )
-              .flatMap((link) => [link.sourceId, link.targetId]),
-          ),
-        ].filter((id) => id !== factId);
+        // Multi-hop BFS restricted to the requested link types, so maxDepth behaves the same
+        // way here as it does in the untyped branch below (previously this only ever looked at
+        // factId's direct/1-hop links, silently ignoring maxDepth > 1).
+        const linkTypeSet = new Set(linkTypes);
+        // SECURITY: scope the BFS at the link layer, not just at the final getById post-filter.
+        // Without this, a visible fact A linked to hidden B linked to visible C would add B and C
+        // to `visited` at depth >= 2; the later `getById(...scopeFilter)` strips B but C still
+        // returns, surfacing a path that has no fully visible links and indirectly confirming
+        // that hidden B exists. isLinkVisible requires BOTH endpoints to resolve under the
+        // caller's scopeFilter, matching link()/links() above and the relatedFacts root oracle
+        // check.
+        const relevantLinks = getAllLinks(context.factsDb).filter(
+          (link) => linkTypeSet.has(link.linkType) && isLinkVisible(context.factsDb, link, context.scopeFilter),
+        );
+        const visited = new Set<string>([factId]);
+        let frontier = new Set<string>([factId]);
+        for (let depth = 0; depth < maxDepth && frontier.size > 0; depth++) {
+          const next = new Set<string>();
+          for (const link of relevantLinks) {
+            if (frontier.has(link.sourceId) && !visited.has(link.targetId)) {
+              visited.add(link.targetId);
+              next.add(link.targetId);
+            }
+            if (frontier.has(link.targetId) && !visited.has(link.sourceId)) {
+              visited.add(link.sourceId);
+              next.add(link.sourceId);
+            }
+          }
+          frontier = next;
+        }
+        neighborIds = [...visited].filter((id) => id !== factId);
       } else {
-        neighborIds = context.factsDb
-          .getConnectedFactIds([factId], maxDepth)
-          .filter((id) => id !== factId);
+        neighborIds = context.factsDb.getConnectedFactIds([factId], maxDepth).filter((id) => id !== factId);
       }
       return neighborIds
         .map((id) => context.factsDb.getById(id, { scopeFilter: context.scopeFilter }))
@@ -425,7 +465,9 @@ export const resolvers: GraphQLResolvers = {
         factsByCategory: [...byCategory].map(([category, count]) => ({ category, count })),
         factsByDecayClass: [...byDecay].map(([decayClass, count]) => ({ decayClass, count })),
         totalEpisodes: 0,
-        totalLinks: getAllLinks(context.factsDb).length,
+        totalLinks: getAllLinks(context.factsDb).filter((link) =>
+          isLinkVisible(context.factsDb, link, context.scopeFilter),
+        ).length,
         databaseSizeBytes:
           typeof context.factsDb.estimateStorageBytes === "function"
             ? context.factsDb.estimateStorageBytes().sqliteBytes
@@ -514,7 +556,7 @@ export const resolvers: GraphQLResolvers = {
         });
       }
       if (deleted) {
-        notifyGraphqlFactDeleted(id, existing?.category);
+        notifyGraphqlFactDeleted(id, existing?.category, existing?.scope, existing?.scopeTarget);
       }
       return deleted;
     },
@@ -550,6 +592,12 @@ export const resolvers: GraphQLResolvers = {
       const weight = asNumber(input.weight) ?? 1;
       if (!sourceId || !targetId) throw new Error("Missing link endpoint");
       if (!isMemoryLinkType(linkType)) throw new Error(`Unsupported link type: ${linkType}`);
+      // SECURITY: both endpoints must be in-scope before linking — otherwise a caller could
+      // tie an out-of-scope (another tenant's) fact into their own graph, or discover its id
+      // exists, just by guessing/enumerating ids.
+      if (!isLinkVisible(context.factsDb, { sourceId, targetId }, context.scopeFilter)) {
+        throw new Error(`Fact not found: ${sourceId}`);
+      }
       const id = context.factsDb.createLink(sourceId, targetId, linkType, weight);
       const link = getAllLinks(context.factsDb).find((entry) => entry.id === id);
       if (link) notifyGraphqlLinkCreated(link);
@@ -558,6 +606,10 @@ export const resolvers: GraphQLResolvers = {
     deleteLink: (_parent, args, context) => {
       const id = asString(asRecord(args).id);
       if (!id) return false;
+      // SECURITY: scope-check before deleting — mirrors deleteFact's guard so a caller can't
+      // remove a link between two other tenants' facts just by knowing/guessing its id.
+      const existing = getAllLinks(context.factsDb).find((link) => link.id === id);
+      if (!existing || !isLinkVisible(context.factsDb, existing, context.scopeFilter)) return false;
       const result = context.factsDb.getRawDb().prepare("DELETE FROM memory_links WHERE id = ?").run(id);
       return result.changes > 0;
     },
@@ -600,7 +652,7 @@ export const resolvers: GraphQLResolvers = {
       for (const fact of toDelete) {
         if (context.factsDb.delete(fact.id)) {
           deleted++;
-          notifyGraphqlFactDeleted(fact.id, fact.category);
+          notifyGraphqlFactDeleted(fact.id, fact.category, fact.scope, fact.scopeTarget);
           if (context.vectorDb) {
             await deleteVectorForFactId({
               vectorDb: context.vectorDb,
@@ -625,19 +677,31 @@ export const resolvers: GraphQLResolvers = {
   Fact: {
     links: (parent, _args, context) => {
       const fact = asRecord(parent) as Partial<MemoryEntry>;
-      return fact.id ? getAllLinks(context.factsDb).filter((link) => link.sourceId === fact.id) : [];
+      return fact.id
+        ? getAllLinks(context.factsDb).filter(
+            (link) => link.sourceId === fact.id && isLinkVisible(context.factsDb, link, context.scopeFilter),
+          )
+        : [];
     },
     linkedFrom: (parent, _args, context) => {
       const fact = asRecord(parent) as Partial<MemoryEntry>;
-      return fact.id ? getAllLinks(context.factsDb).filter((link) => link.targetId === fact.id) : [];
+      return fact.id
+        ? getAllLinks(context.factsDb).filter(
+            (link) => link.targetId === fact.id && isLinkVisible(context.factsDb, link, context.scopeFilter),
+          )
+        : [];
     },
     supersedes: (parent, _args, context) => {
       const fact = asRecord(parent) as Partial<MemoryEntry>;
-      return fact.supersedesId ? context.factsDb.getById(fact.supersedesId, { scopeFilter: context.scopeFilter }) : null;
+      return fact.supersedesId
+        ? context.factsDb.getById(fact.supersedesId, { scopeFilter: context.scopeFilter })
+        : null;
     },
     supersededByFact: (parent, _args, context) => {
       const fact = asRecord(parent) as Partial<MemoryEntry>;
-      return fact.supersededBy ? context.factsDb.getById(fact.supersededBy, { scopeFilter: context.scopeFilter }) : null;
+      return fact.supersededBy
+        ? context.factsDb.getById(fact.supersededBy, { scopeFilter: context.scopeFilter })
+        : null;
     },
   },
 

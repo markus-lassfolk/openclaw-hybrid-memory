@@ -6,15 +6,15 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import { stringEnum } from "../../utils/typebox.js";
+import { detectEpisodeFailureContradictions } from "../../backends/facts-db/contradictions.js";
 
 import { buildEpisodeCausalChain } from "../../services/episode-causal-inference.js";
-import { detectEpisodeFailureContradictions } from "../../backends/facts-db/contradictions.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { emitFeatureTelemetry } from "../../services/feature-telemetry.js";
 import type { EpisodeOutcome } from "../../types/memory.js";
 import { formatTimestampUtc } from "../../utils/dates.js";
-import { globalOnlyScopeFilter } from "../../utils/scope-filter.js";
+import { GLOBAL_ONLY_SCOPE_SENTINEL, globalOnlyScopeFilter } from "../../utils/scope-filter.js";
+import { stringEnum } from "../../utils/typebox.js";
 
 import type { MemoryToolRuntime } from "./runtime.js";
 
@@ -63,6 +63,31 @@ export function registerEpisodeTools(runtime: MemoryToolRuntime): void {
       try {
         const episodeStarted = Date.now();
         const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg) ?? globalOnlyScopeFilter();
+        const scope = (params.scope as "global" | "user" | "agent" | "session" | undefined) ?? "global";
+        const explicitAgentId = params.agentId as string | undefined;
+        const explicitUserId = params.userId as string | undefined;
+        const explicitSessionId = params.sessionId as string | undefined;
+        const resolvedAgentId =
+          explicitAgentId ??
+          (scopeFilter?.agentId && scopeFilter.agentId !== GLOBAL_ONLY_SCOPE_SENTINEL
+            ? scopeFilter.agentId
+            : undefined);
+        const resolvedUserId = explicitUserId ?? scopeFilter?.userId ?? undefined;
+        const resolvedSessionId = explicitSessionId ?? scopeFilter?.sessionId ?? undefined;
+        // scopeTarget must match the DECLARED `scope`, not an unconditional session > user > agent
+        // priority independent of it — otherwise an episode declared scope:"session"/"user" gets a
+        // scopeTarget from a completely different field (or the public-API "unscoped" sentinel),
+        // and becomes permanently unfindable by memory_search_episodes, whose own scopeFilter-based
+        // WHERE clause only matches scope='session' rows against a real sessionId, and never
+        // treats the sentinel as a real agent scope target (mirrors scopeFieldsFromFilter).
+        const scopeTarget =
+          scope === "session"
+            ? (resolvedSessionId ?? null)
+            : scope === "user"
+              ? (resolvedUserId ?? null)
+              : scope === "agent"
+                ? (resolvedAgentId ?? null)
+                : null;
         const recorded = factsDb.recordEpisodeWithCausalLinks({
           event: params.event as string,
           outcome: params.outcome as EpisodeOutcome,
@@ -74,11 +99,11 @@ export function registerEpisodeTools(runtime: MemoryToolRuntime): void {
           importance: params.importance as number | undefined,
           tags: params.tags as string[] | undefined,
           decayClass: "normal",
-          scope: params.scope as "global" | "user" | "agent" | "session" | undefined,
-          scopeTarget: scopeFilter?.sessionId ?? scopeFilter?.userId ?? scopeFilter?.agentId ?? null,
-          agentId: (params.agentId as string | undefined) ?? scopeFilter?.agentId ?? undefined,
-          userId: (params.userId as string | undefined) ?? scopeFilter?.userId ?? undefined,
-          sessionId: (params.sessionId as string | undefined) ?? scopeFilter?.sessionId ?? undefined,
+          scope,
+          scopeTarget,
+          agentId: resolvedAgentId,
+          userId: resolvedUserId,
+          sessionId: resolvedSessionId,
         });
         const episode = recorded.episode;
 

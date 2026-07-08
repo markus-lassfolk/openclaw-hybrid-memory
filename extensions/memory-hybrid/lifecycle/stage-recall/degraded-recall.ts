@@ -3,14 +3,14 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
-import { resolveInteractiveRecallPolicy } from "../../services/retrieval-mode-policy.js";
 import { trimBlockToBudget } from "../../services/context-block-trim.js";
+import { capturePluginError } from "../../services/error-reporter.js";
+import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
 import { consumePrependBudget, initPrependBudgetWithInjectorReserve } from "../../services/prepend-budget.js";
 import { assembleRecallPrependContext, edictMaxTokensForBudget } from "../../services/recalled-context-assembler.js";
+import { resolveInteractiveRecallPolicy } from "../../services/retrieval-mode-policy.js";
 import { sanitizePromptInjection } from "../../services/skill-prompt-injection.js";
-import type { ScopeFilter } from "../../types/memory.js";
-import type { SearchResult } from "../../types/memory.js";
+import type { ScopeFilter, SearchResult } from "../../types/memory.js";
 import { estimateTokens, sanitizeRecallFactText } from "../../utils/text.js";
 import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
 import type { LifecycleContext, RecallStageResult, SessionState } from "../types.js";
@@ -129,19 +129,28 @@ function buildHotPart(
   budgetState: BudgetState,
 ): string {
   if (!ctx.cfg.memoryTiering.enabled || ctx.cfg.memoryTiering.hotMaxTokens <= 0) return "";
-  const hotResults = ctx.factsDb.getHotFacts(ctx.cfg.memoryTiering.hotMaxTokens, scopeFilter);
-  if (hotResults.length === 0) return "";
-  const hotLines = hotResults
-    .map((r) => {
-      const text = sanitizePromptInjection(sanitizeRecallFactText(r.entry.summary || r.entry.text));
-      if (!text) return "";
-      const clipped = `${text.slice(0, 200)}${text.length > 200 ? "…" : ""}`;
-      return `- [hot/${r.entry.category}] ${clipped}`;
-    })
-    .filter(Boolean);
-  if (hotLines.length === 0) return "";
-  const hotBlock = `Hot memories:\n${hotLines.join("\n")}\n\n`;
-  return capAndTrackBlock("hot", hotBlock, hotCapTokens, budgetState);
+  try {
+    const hotResults = ctx.factsDb.getHotFacts(ctx.cfg.memoryTiering.hotMaxTokens, scopeFilter);
+    if (hotResults.length === 0) return "";
+    const hotLines = hotResults
+      .map((r) => {
+        const text = sanitizePromptInjection(sanitizeRecallFactText(r.entry.summary || r.entry.text));
+        if (!text) return "";
+        const clipped = `${text.slice(0, 200)}${text.length > 200 ? "…" : ""}`;
+        return `- [hot/${r.entry.category}] ${clipped}`;
+      })
+      .filter(Boolean);
+    if (hotLines.length === 0) return "";
+    const hotBlock = `Hot memories:\n${hotLines.join("\n")}\n\n`;
+    return capAndTrackBlock("hot", hotBlock, hotCapTokens, budgetState);
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: "degraded-recall-hot-part",
+      severity: "warning",
+      subsystem: "stage-recall",
+    });
+    return "";
+  }
 }
 
 function buildNarrativePart(
@@ -205,20 +214,28 @@ export async function buildDegradedFtsHotRecallStage(
   let recallPart = "";
   const runFts = options?.runFts !== false && prompt.trim().length >= 5;
   if (runFts) {
-    const recallOpts = {
-      tierFilter: ctx.cfg.memoryTiering.enabled ? ("warm" as const) : ("all" as const),
-      scopeFilter,
-      reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
-      diversityWeight: ctx.cfg.reinforcement?.diversityWeight ?? 1.0,
-      interactiveFtsFastPath: true,
-      deferAccessRefresh: true,
-    };
-    const ftsOnly = ctx.factsDb.search(prompt.trim(), ctx.cfg.autoRecall.limit, recallOpts);
-    const memoryLines = formatRecallLines(ftsOnly, ctx.cfg.autoRecall.limit);
-    const recallBlock = memoryLines.length ? `Recalled (FTS-only):\n${memoryLines.join("\n")}` : "";
-    const trimmed = trimBlockToBudget(recallBlock, budgetState.remainingBudget);
-    recallPart = trimmed.text;
-    budgetState.remainingBudget = Math.max(0, budgetState.remainingBudget - trimmed.usedTokens);
+    try {
+      const recallOpts = {
+        tierFilter: ctx.cfg.memoryTiering.enabled ? ("warm" as const) : ("all" as const),
+        scopeFilter,
+        reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
+        diversityWeight: ctx.cfg.reinforcement?.diversityWeight ?? 1.0,
+        interactiveFtsFastPath: true,
+        deferAccessRefresh: true,
+      };
+      const ftsOnly = ctx.factsDb.search(prompt.trim(), ctx.cfg.autoRecall.limit, recallOpts);
+      const memoryLines = formatRecallLines(ftsOnly, ctx.cfg.autoRecall.limit);
+      const recallBlock = memoryLines.length ? `Recalled (FTS-only):\n${memoryLines.join("\n")}` : "";
+      const trimmed = trimBlockToBudget(recallBlock, budgetState.remainingBudget);
+      recallPart = trimmed.text;
+      budgetState.remainingBudget = Math.max(0, budgetState.remainingBudget - trimmed.usedTokens);
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "degraded-recall-fts-part",
+        severity: "warning",
+        subsystem: "stage-recall",
+      });
+    }
   }
 
   const inner = narrativePart + hotPart + recallPart;

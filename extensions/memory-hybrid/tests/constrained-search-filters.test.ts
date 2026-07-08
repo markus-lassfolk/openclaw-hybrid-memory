@@ -109,4 +109,38 @@ describe("getCandidateIdsByStructuredFilters — ISO TEXT enrollment filters", (
 
     expect(ids).toEqual([fact.id]);
   });
+
+  it("restricts candidates to the caller's own scope when scopeFilter is passed (loop iteration 24 regression)", () => {
+    const aliceFact = factsDb.store({
+      text: "Alice's constrained candidate",
+      category: "technical",
+      importance: 0.9,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "user",
+      scopeTarget: "alice",
+    });
+    const bobFact = factsDb.store({
+      text: "Bob's constrained candidate",
+      category: "technical",
+      importance: 0.95,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "user",
+      scopeTarget: "bob",
+    });
+
+    const ids = getCandidateIdsByStructuredFilters(
+      factsDb.getRawDb(),
+      { category: "technical" },
+      { limit: 100, nowSec: NOW_SEC, scopeFilter: { userId: "alice", agentId: null, sessionId: null } },
+    );
+
+    expect(ids).toContain(aliceFact.id);
+    expect(ids).not.toContain(bobFact.id);
+  });
 });

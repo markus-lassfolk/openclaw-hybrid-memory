@@ -600,6 +600,7 @@ export async function runVerifyLlmModelsSection(state: VerifyRunState): Promise<
     });
   }
   if (llmRows.length === 0) {
+    state.llmOk = false;
     tableLog(
       "  No LLM models configured (add llm.nano / llm.maintenance / llm.default / llm.heavy or API keys / OAuth).",
     );
@@ -697,6 +698,23 @@ export async function runVerifyLlmModelsSection(state: VerifyRunState): Promise<
     } else {
       tableLog(
         "  LLMs: no credentials for any provider — set llm.providers.<provider>.apiKey in config or use gateway OAuth. See docs/LLM-AND-PROVIDERS.md.",
+      );
+    }
+    // --test-llm actually exercises the user's *configured* models (inConfig), not the always-shown
+    // reference rows — mirror embeddings' anyEmbOk pattern so a real, live test failure affects
+    // verify's exit code/issues summary instead of only showing up in the table (#config-cron parity).
+    const testedConfiguredRows = llmRows.filter(
+      (r) => r.inConfig && (r.oauthResult !== undefined || r.apiResult !== undefined),
+    );
+    state.llmOk =
+      opts.testLlm && testedConfiguredRows.length > 0
+        ? testedConfiguredRows.some((r) => r.oauthResult === true || r.apiResult === true)
+        : llmOk;
+    if (opts.testLlm && testedConfiguredRows.length > 0 && !state.llmOk) {
+      const failedConfiguredModels = testedConfiguredRows.map((r) => r.model).join(", ");
+      state.issues.push(`All configured LLM models failed --test-llm: ${failedConfiguredModels}`);
+      state.fixes.push(
+        "Check LLM credentials/connectivity for your configured models — see 'Failed test details' above. Configure a working model in llm.nano/maintenance/default/heavy or fix credentials. See docs/LLM-AND-PROVIDERS.md.",
       );
     }
     tableLog("");

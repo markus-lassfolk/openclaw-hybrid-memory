@@ -276,16 +276,17 @@ export function registerHealthCommand(
         });
       }
 
+      // Overall status — computed once so --json reflects the same exit code as human-readable output.
+      const hasErrors = indicators.some((i) => i.status === "error");
+      const hasWarnings = indicators.some((i) => i.status === "warn");
+      const overall = hasErrors ? "unhealthy" : hasWarnings ? "degraded" : "healthy";
+
       // JSON output
       if (opts.json) {
         console.log(
           JSON.stringify(
             {
-              overall: indicators.every((i) => i.status === "good")
-                ? "healthy"
-                : indicators.some((i) => i.status === "error")
-                  ? "unhealthy"
-                  : "degraded",
+              overall,
               indicators,
               timestamp: nowIso(),
             },
@@ -293,6 +294,7 @@ export function registerHealthCommand(
             2,
           ),
         );
+        if (hasErrors) process.exit(1);
         return;
       }
 
@@ -305,10 +307,6 @@ export function registerHealthCommand(
       }
 
       console.log();
-
-      // Overall status
-      const hasErrors = indicators.some((i) => i.status === "error");
-      const hasWarnings = indicators.some((i) => i.status === "warn");
 
       if (hasErrors) {
         console.log("❌ System is unhealthy. Run: openclaw hybrid-mem doctor\n");

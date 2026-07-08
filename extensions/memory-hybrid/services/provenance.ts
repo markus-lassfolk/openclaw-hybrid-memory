@@ -10,6 +10,8 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BaseSqliteStore } from "../backends/base-sqlite-store.js";
+import { scopeFilterClausePositional } from "../backends/facts-db/scope-sql.js";
+import type { ScopeFilter } from "../types/memory.js";
 import { nowIso, cutoffIsoDaysAgo } from "../utils/dates.js";
 import { backfillProvenanceTextTimestamps } from "../utils/timestamp-migration.js";
 
@@ -147,7 +149,12 @@ export class ProvenanceService extends BaseSqliteStore {
   // getProvenance — full provenance chain for a fact
   // -------------------------------------------------------------------------
 
-  getProvenance(factId: string, factsDb?: DatabaseSync): ProvenanceChain {
+  /**
+   * SECURITY: this reads facts.text directly via raw SQL, bypassing FactsDB.getById()'s own
+   * scope enforcement entirely — scopeFilter must be threaded through explicitly here, or a
+   * caller can trace another tenant's fact's full text/provenance chain just by knowing its id.
+   */
+  getProvenance(factId: string, factsDb?: DatabaseSync, scopeFilter?: ScopeFilter | null): ProvenanceChain {
     const edges = this.getEdges(factId);
 
     let factData: { id: string; text: string; confidence: number } = {
@@ -158,14 +165,15 @@ export class ProvenanceService extends BaseSqliteStore {
     let source: ProvenanceChain["source"] = {};
 
     if (factsDb) {
+      const scopeClause = scopeFilterClausePositional(scopeFilter);
       const row = factsDb
         .prepare(
           `SELECT id, text,
             COALESCE(importance, 0.0) as confidence,
             provenance_session, source_turn, extraction_method, extraction_confidence
-           FROM facts WHERE id = ?`,
+           FROM facts WHERE id = ?${scopeClause.clause}`,
         )
-        .get(factId) as FactProvenanceRow | undefined;
+        .get(factId, ...scopeClause.params) as FactProvenanceRow | undefined;
 
       if (row) {
         factData = { id: row.id, text: row.text, confidence: row.confidence ?? 0 };

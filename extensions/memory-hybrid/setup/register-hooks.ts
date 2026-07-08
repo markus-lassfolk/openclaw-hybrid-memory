@@ -424,11 +424,15 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       }
 
       try {
-        const scopeFilter = {
-          sessionId: api.context?.sessionId,
-          agentId: api.context?.agentId,
-          userId: api.context?.userId,
-        };
+        // SECURITY: resolve scope the same way after_compaction does below — via the canonical
+        // lifecycleContext-backed resolver — instead of reading api.context directly. api.context
+        // is the weakest/last-resort identity source (some builds only pass identity on the event
+        // payload, not on api.context); when it's unset/stale, an all-undefined filter object is
+        // NOT the same as "no filter" defensively, but scopeFilterClausePositional() (the actual
+        // SQL-layer enforcement) treats an object with no truthy userId/agentId/sessionId as "no
+        // restriction," so a stale api.context here meant getHotFacts returned facts across every
+        // agent/user/session, injected verbatim into this session's compaction prompt.
+        const scopeFilter = resolveRecallScopeFilter(lifecycleContext);
         const hotFacts = ctx.factsDb.getHotFacts(4000, scopeFilter);
         const pinnedRecallThreshold = ctx.cfg.autoRecall?.progressivePinnedRecallCount ?? 3;
 
@@ -575,7 +579,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
                     .map((r) => r.entry)
                 : ctx.cfg.memoryTiering.enabled
                   ? ctx.factsDb.getHotFacts(8, scopeFilter).map((r) => r.entry)
-                  : ctx.factsDb.list(8);
+                  : ctx.factsDb.list(8, { scopeFilter });
             if (summaryFacts.length > 0) {
               summaryInner.push("Key memories retained across compaction:");
               for (const f of summaryFacts) {

@@ -349,6 +349,7 @@ describe("resolve-contradictions CLI contract mode", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "resolve-contradictions-cli-"));
     const exportPath = join(tmpDir, "review.jsonl");
     const runResolveContradictionsAuto = vi.fn().mockResolvedValue({
+      scanned: 5,
       total: 5,
       deterministic: 4,
       llm: 0,
@@ -396,13 +397,18 @@ describe("resolve-contradictions CLI contract mode", () => {
       from: "user",
     });
 
-    expect(runResolveContradictionsAuto).toHaveBeenCalledWith({
+    expect(runResolveContradictionsAuto).toHaveBeenCalledTimes(1);
+    const autoOpts = runResolveContradictionsAuto.mock.calls[0]?.[0];
+    expect(autoOpts).toMatchObject({
       dryRun: true,
       targetRate: 0.8,
       llm: false,
       model: undefined,
     });
-    expect(lines.some((l) => l.includes("contradiction-auto summary total=5 deterministic=4 llm=0"))).toBe(true);
+    expect(typeof autoOpts.onProgress).toBe("function");
+    expect(lines.some((l) => l.includes("contradiction-auto summary scanned=5 total=5 deterministic=4 llm=0"))).toBe(
+      true,
+    );
     const exported = readFileSync(exportPath, "utf-8").trim().split("\n");
     expect(exported).toHaveLength(1);
     expect(JSON.parse(exported[0])).toMatchObject({ contradictionId: "c-1", suggestedDecision: "manual_review" });
@@ -830,6 +836,7 @@ describe("resolve-contradictions CLI contract mode", () => {
     try {
       process.env.OPENCLAW_HOME = tmpHome;
       const runResolveContradictionsAuto = vi.fn().mockResolvedValue({
+        scanned: 222,
         total: 222,
         deterministic: 0,
         llm: 0,
@@ -999,5 +1006,137 @@ describe("resolve-contradictions CLI contract mode", () => {
       else Reflect.deleteProperty(process.env, "OPENCLAW_HOME");
       rmSync(tmpHome, { recursive: true, force: true });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolve-contradictions --auto progress heartbeat.
+//
+// Audit finding: `resolve-contradictions --auto` had no live output at all — `--verbose` was only
+// used post-hoc (printed the resolved/ambiguous lists after the run finished), never gating any
+// output while the autonomous resolution loop (which can await a per-item `--llm` adjudicate()
+// call) was in flight. An operator tailing the cron log during a long run saw nothing and assumed
+// the process hung. These tests cover the fix: --auto now wraps the run in the house
+// `runMaintenanceHeartbeat` pattern, driven by an `onProgress` callback threaded down to
+// `resolveContradictionsAutonomously`.
+// ---------------------------------------------------------------------------
+describe("resolve-contradictions --auto progress heartbeat", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    process.exitCode = undefined;
+  });
+
+  type AutoProgress = { processed: number; total: number; autoResolved: number; ambiguous: number };
+
+  it('--auto --verbose logs a "resolve-contradictions-auto — start" line and live still-running progress driven by onProgress', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((a) => String(a)).join(" "));
+    });
+    let nowMs = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+
+    const runResolveContradictionsAuto = vi.fn(async (opts: { onProgress?: (p: AutoProgress) => void }) => {
+      // The heartbeat's start line must already be flushed before any work begins — this is what
+      // an operator tailing the cron log would see immediately, instead of silence until the
+      // autonomous resolution loop (with its per-item LLM adjudication calls) finishes.
+      expect(lines.some((l) => l.includes("resolve-contradictions-auto — start"))).toBe(true);
+      expect(typeof opts.onProgress).toBe("function");
+      for (let i = 1; i <= 3; i++) {
+        nowMs += 61_000; // advance past the 60s heartbeat interval on every tick
+        opts.onProgress?.({ processed: i, total: 3, autoResolved: i - 1, ambiguous: 0 });
+      }
+      return {
+        scanned: 3,
+        total: 3,
+        deterministic: 2,
+        llm: 0,
+        merged: 0,
+        manualReview: 1,
+        applied: false,
+        decisionsApplied: 0,
+        targetRate: 0.8,
+        achievedRate: 0.67,
+        targetMet: false,
+        reviewItems: [],
+      };
+    });
+    const mem = makeProgram(makeBindings({ runResolveContradictionsAuto }));
+
+    await mem.parseAsync(["resolve-contradictions", "--auto", "--dry-run", "--verbose"], { from: "user" });
+
+    const stillRunning = lines.filter((l) => l.includes("resolve-contradictions-auto — still running after"));
+    expect(stillRunning.length).toBeGreaterThanOrEqual(2);
+    expect(stillRunning.some((l) => l.includes("processed=1/3") && l.includes("auto_resolved=0"))).toBe(true);
+    expect(stillRunning.some((l) => l.includes("processed=3/3") && l.includes("auto_resolved=2"))).toBe(true);
+    expect(lines.join("\n")).toMatch(/resolve-contradictions-auto — complete in \d+s/);
+  });
+
+  it("--auto without --verbose emits no heartbeat lines", async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((a) => String(a)).join(" "));
+    });
+    const runResolveContradictionsAuto = vi.fn(async (opts: { onProgress?: (p: AutoProgress) => void }) => {
+      opts.onProgress?.({ processed: 1, total: 1, autoResolved: 1, ambiguous: 0 });
+      return {
+        scanned: 1,
+        total: 1,
+        deterministic: 1,
+        llm: 0,
+        merged: 0,
+        manualReview: 0,
+        applied: false,
+        decisionsApplied: 0,
+        targetRate: 0.8,
+        achievedRate: 1,
+        targetMet: true,
+        reviewItems: [],
+      };
+    });
+    const mem = makeProgram(makeBindings({ runResolveContradictionsAuto }));
+
+    await mem.parseAsync(["resolve-contradictions", "--auto", "--dry-run"], { from: "user" });
+
+    const joined = lines.join("\n");
+    expect(joined).not.toContain("resolve-contradictions-auto — start");
+    expect(joined).not.toContain("resolve-contradictions-auto — still running");
+    expect(joined).not.toContain("resolve-contradictions-auto — complete");
+  });
+
+  it("--auto --verbose --json routes heartbeat lines to stderr, not the JSON stdout summary", async () => {
+    const outLines: string[] = [];
+    const errLines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      outLines.push(args.map((a) => String(a)).join(" "));
+    });
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errLines.push(args.map((a) => String(a)).join(" "));
+    });
+    const runResolveContradictionsAuto = vi.fn(async (opts: { onProgress?: (p: AutoProgress) => void }) => {
+      opts.onProgress?.({ processed: 1, total: 1, autoResolved: 0, ambiguous: 1 });
+      return {
+        scanned: 1,
+        total: 1,
+        deterministic: 0,
+        llm: 0,
+        merged: 0,
+        manualReview: 1,
+        applied: false,
+        decisionsApplied: 0,
+        targetRate: 0.8,
+        achievedRate: 0,
+        targetMet: false,
+        reviewItems: [],
+      };
+    });
+    const mem = makeProgram(makeBindings({ runResolveContradictionsAuto }));
+
+    await mem.parseAsync(["resolve-contradictions", "--auto", "--verbose", "--json"], { from: "user" });
+
+    expect(errLines.some((l) => l.includes("resolve-contradictions-auto — start"))).toBe(true);
+    expect(outLines.some((l) => l.includes("resolve-contradictions-auto — start"))).toBe(false);
+    const jsonLine = outLines.find((line) => line.trim().startsWith("{"));
+    expect(jsonLine).toBeTruthy();
   });
 });

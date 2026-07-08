@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -127,6 +127,45 @@ describe("runExtractDirectivesForCli", () => {
     });
     expect(result.cursorAdvanced).toBe(false);
     expect(result.cursorBlockedReason).toBe("retryable_rejections");
+    expect(db.getScanCursor("extract-directives")).toBeNull();
+  });
+
+  it("keeps cursor blocked when a session file fails to read (loop iteration 41 regression)", async () => {
+    dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
+    db = new FactsDB(join(dir, "facts.db"));
+    writeSession(dir, "2026-05-27-directives-good.jsonl", [
+      "From now on, always verify checksums before release.",
+      "Will do.",
+    ]);
+    // A directory named like a session transcript passes the filename-based candidate filter
+    // (isSessionTranscriptCandidate only checks the `.jsonl` extension, not statSync().isFile()),
+    // but readFileSync on it throws EISDIR — reliably reproducing a session read failure without
+    // relying on platform-specific permission tricks.
+    mkdirSync(join(dir, "2026-05-27-directives-unreadable.jsonl"));
+    const logger = { info: vi.fn(), warn: vi.fn() };
+
+    const result = await runExtractDirectivesForCli(
+      {
+        factsDb: db,
+        vectorDb: {
+          delete: vi.fn().mockResolvedValue(false),
+          search: vi.fn().mockResolvedValue([]),
+        },
+        embeddings: { embed: vi.fn().mockResolvedValue([0.1]) },
+        cfg: {
+          procedures: { sessionsDir: dir },
+          store: { fuzzyDedupe: true },
+          extraction: { preFilter: { enabled: false } },
+          llm: { providers: { ollama: {} } },
+        },
+        logger,
+      } as never,
+      { days: 30 },
+    );
+
+    expect(result.failures).toBe(1);
+    expect(result.cursorAdvanced).toBe(false);
+    expect(result.cursorBlockedReason).toBe("session_read_failure");
     expect(db.getScanCursor("extract-directives")).toBeNull();
   });
 

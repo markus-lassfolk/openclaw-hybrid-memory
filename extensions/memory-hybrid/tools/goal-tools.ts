@@ -20,7 +20,7 @@ import type { Goal, GoalHistoryEntry } from "../services/goal-stewardship-types.
 import {
   type GoalUpdatePatch,
   type GoalVerification,
-  createGoal,
+  createGoalWithCapCheck,
   goalStewardshipDefaultsFromConfig,
   isGlobalRateLimited,
   isTerminalStatus,
@@ -41,7 +41,9 @@ import {
 } from "../services/goal-register-validation.js";
 import { guardAgainstWrapperArgsDropped } from "../services/tool-args-guard.js";
 import { formatDateUtc, nowIso, nowSec } from "../utils/dates.js";
+import { globalOnlyScopeFilter, scopeFieldsFromFilter } from "../utils/scope-filter.js";
 import { stringEnum } from "../utils/typebox.js";
+import type { BuildToolScopeFilterFn } from "../api/memory-plugin-api.js";
 
 export interface GoalToolsContext {
   cfg: HybridMemoryConfig;
@@ -54,6 +56,8 @@ export interface GoalToolsContext {
   embeddings: EmbeddingProvider | null;
   eventLog: EventLog | null;
   memoryDir: string;
+  currentAgentIdRef: { value: string | null };
+  buildToolScopeFilter: BuildToolScopeFilterFn;
 }
 
 const PRIORITIES = ["critical", "high", "normal", "low"] as const;
@@ -72,7 +76,8 @@ async function flushGoalOutcomeToMemory(memoryDir: string, title: string, lines:
 }
 
 export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi): void {
-  const { cfg, goalsDir, factsDb, vectorDb, embeddings, eventLog, memoryDir, workspaceRoot } = ctx;
+  const { cfg, goalsDir, factsDb, vectorDb, embeddings, eventLog, memoryDir, workspaceRoot, currentAgentIdRef, buildToolScopeFilter } =
+    ctx;
   const gs = cfg.goalStewardship;
   const defaults = goalStewardshipDefaultsFromConfig(gs);
   const notEnabled = () => ({
@@ -275,7 +280,10 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           if (p.verification_type && p.verification_target) {
             verification = { type: p.verification_type, target: p.verification_target };
           }
-          const goal = await createGoal(
+          // Re-checked atomically under a global lock (see createGoalWithCapCheck) — the
+          // earlier active.length check above is only a fast-path; two concurrent
+          // registrations could otherwise both pass it before either one writes.
+          const goal = await createGoalWithCapCheck(
             goalsDir,
             {
               label: p.label,
@@ -288,8 +296,15 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
               cooldownMinutes: p.cooldown_minutes,
             },
             defaults,
+            gs.globalLimits.maxActiveGoals,
             eventLog,
           );
+          if (!goal) {
+            return {
+              content: [{ type: "text", text: `Max active goals (${gs.globalLimits.maxActiveGoals}) reached.` }],
+              details: { error: "max_active_goals" },
+            };
+          }
 
           let taskLinkMessage = "";
           const taskEntity = p.task_entity?.trim();
@@ -308,6 +323,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
                 cfg,
                 logger: api.logger,
                 workspaceRoot,
+                scopeFilter: buildToolScopeFilter({}, currentAgentIdRef.value, cfg),
               },
               {
                 entity: taskEntity,
@@ -430,12 +446,22 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           type AssessDecision = {
             patch: GoalUpdatePatch;
             historyEntries: GoalHistoryEntry[];
-            outcome: "normal" | "circuit_breaker" | "assessment_budget" | "dispatch_budget";
+            outcome: "normal" | "circuit_breaker" | "assessment_budget" | "dispatch_budget" | "terminal";
             tripReason?: string;
           };
           const decisionRef: { current: AssessDecision | null } = { current: null };
 
           const computeAssessDecision = (fresh: Goal): AssessDecision => {
+            // Re-check terminal status against `fresh` (read inside updateGoal's lock), not the
+            // pre-lock `goal` snapshot above: a concurrent goal_complete/goal_fail/goal_abandon
+            // call could have terminated this goal in the race window between that snapshot and
+            // this lock being acquired. Without this, an assessment could still be recorded onto
+            // an already-terminal goal — and worse, if the assessment/dispatch budget is
+            // exhausted or the circuit breaker trips below, the patch would explicitly set
+            // `status: "blocked"`, silently reopening a goal the system or user already closed.
+            if (isTerminalStatus(fresh.status)) {
+              return { patch: {}, historyEntries: [], outcome: "terminal" };
+            }
             // Re-check both budgets against `fresh` (read inside updateGoal's lock), not the
             // pre-lock `goal` snapshot: this makes the budget check and the increment atomic
             // under a single lock acquisition, closing the race where two overlapping calls both
@@ -537,6 +563,12 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             throw new Error("memory-hybrid: goal_assess decision missing after updateGoal");
           }
 
+          if (decision.outcome === "terminal") {
+            return {
+              content: [{ type: "text", text: `Goal ${updated.label} is already ${updated.status}.` }],
+              details: { error: "terminal" },
+            };
+          }
           if (decision.outcome === "assessment_budget") {
             return { content: [{ type: "text", text: "Assessment budget exhausted." }], details: { error: "budget" } };
           }
@@ -636,6 +668,12 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           };
           const goal = await resolveGoalId(goalsDir, p.goal_id);
           if (!goal) return { content: [{ type: "text", text: "Goal not found." }], details: { error: "not_found" } };
+          if (isTerminalStatus(goal.status)) {
+            return {
+              content: [{ type: "text", text: `Goal ${goal.label} is already ${goal.status}.` }],
+              details: { error: "terminal" },
+            };
+          }
           if (p.acceptance_criteria !== undefined) {
             const clarity = validateGoalRegisterClarity({
               label: goal.label,
@@ -650,16 +688,39 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
               };
             }
           }
-          const patch: Parameters<typeof updateGoal>[2] = {};
-          if (p.description !== undefined) patch.description = p.description;
-          if (p.acceptance_criteria !== undefined) patch.acceptanceCriteria = p.acceptance_criteria;
-          if (p.priority !== undefined) patch.priority = p.priority;
-          const updated = await updateGoal(goalsDir, goal.id, patch, {
-            timestamp: nowIso(),
-            action: "updated",
-            detail: p.note ?? "update",
-            actor: "agent",
-          });
+          const staticPatch: Parameters<typeof updateGoal>[2] = {};
+          if (p.description !== undefined) staticPatch.description = p.description;
+          if (p.acceptance_criteria !== undefined) staticPatch.acceptanceCriteria = p.acceptance_criteria;
+          if (p.priority !== undefined) staticPatch.priority = p.priority;
+          const ts = nowIso();
+          // Unlike goal_assess/goal_complete/goal_abandon, goal_update never re-checked terminal
+          // status against the goal re-read inside updateGoal's lock — only against the pre-lock
+          // snapshot above. A concurrent goal_complete/goal_fail/goal_abandon landing in that race
+          // window would let this call silently rewrite description/acceptanceCriteria/priority
+          // on an already-terminal goal, an audit-integrity gap (the goal's acceptance criteria
+          // would no longer match what it was actually judged against when closed).
+          let applied = true;
+          const updated = await updateGoal(
+            goalsDir,
+            goal.id,
+            (fresh) => {
+              if (isTerminalStatus(fresh.status)) {
+                applied = false;
+                return {};
+              }
+              return staticPatch;
+            },
+            (fresh) =>
+              isTerminalStatus(fresh.status)
+                ? []
+                : { timestamp: ts, action: "updated", detail: p.note ?? "update", actor: "agent" },
+          );
+          if (!applied) {
+            return {
+              content: [{ type: "text", text: `Goal ${updated.label} is already ${updated.status}; not updated.` }],
+              details: { error: "terminal" },
+            };
+          }
           return { content: [{ type: "text", text: `Updated ${updated.label}` }], details: { goal: updated } };
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -729,17 +790,37 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             };
           }
           const completed = await terminateGoal(goalsDir, goal.id, "completed", p.reason, "agent", eventLog);
+          if (completed.status !== "completed") {
+            // A concurrent goal_complete/goal_abandon call already terminated this goal in the
+            // race window between the pre-lock check above and terminateGoal's own lock — it
+            // no-op'd instead of double-terminating. Report the actual outcome, don't claim
+            // success and fire completion side effects for a call that didn't apply.
+            return {
+              content: [{ type: "text", text: `Goal ${completed.label} is already ${completed.status}.` }],
+              details: { error: "terminal" },
+            };
+          }
           if (cfg.activeTask.flushOnComplete !== false) {
             await flushGoalOutcomeToMemory(memoryDir, `Goal completed: ${completed.label}`, [
               `**Outcome:** ${p.reason}`,
             ]);
           }
           try {
+            // SECURITY: unlike memory_record_episode, this has no caller-facing scope param —
+            // always derive scope from the caller's own resolved identity, matching the sibling
+            // tool's fallback-when-unspecified behavior, so this doesn't default to global scope.
+            const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg) ?? globalOnlyScopeFilter();
+            const { scope, scopeTarget } = scopeFieldsFromFilter(scopeFilter);
             factsDb?.recordEpisode?.({
               event: `Goal completed: ${completed.label}`,
               outcome: "success",
               context: p.reason,
               importance: 0.7,
+              scope,
+              scopeTarget,
+              agentId: scopeFilter.agentId ?? undefined,
+              userId: scopeFilter.userId ?? undefined,
+              sessionId: scopeFilter.sessionId ?? undefined,
             });
           } catch {
             /* */
@@ -777,17 +858,31 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             };
           }
           const abandoned = await terminateGoal(goalsDir, goal.id, "abandoned", p.reason, "agent", eventLog);
+          if (abandoned.status !== "abandoned") {
+            // Same race as goal_complete above: a concurrent terminate call already won.
+            return {
+              content: [{ type: "text", text: `Goal ${abandoned.label} is already ${abandoned.status}.` }],
+              details: { error: "terminal" },
+            };
+          }
           if (cfg.activeTask.flushOnComplete !== false) {
             await flushGoalOutcomeToMemory(memoryDir, `Goal abandoned: ${abandoned.label}`, [
               `**Reason:** ${p.reason}`,
             ]);
           }
           try {
+            const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg) ?? globalOnlyScopeFilter();
+            const { scope, scopeTarget } = scopeFieldsFromFilter(scopeFilter);
             factsDb?.recordEpisode?.({
               event: `Goal abandoned: ${abandoned.label}`,
               outcome: "failure",
               context: p.reason,
               importance: 0.5,
+              scope,
+              scopeTarget,
+              agentId: scopeFilter.agentId ?? undefined,
+              userId: scopeFilter.userId ?? undefined,
+              sessionId: scopeFilter.sessionId ?? undefined,
             });
           } catch {
             /* */

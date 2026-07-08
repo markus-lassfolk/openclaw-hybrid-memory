@@ -135,6 +135,65 @@ describe("FactsDB procedures table", () => {
     expect(after?.failureCount).toBe(2);
   });
 
+  describe("scope isolation (loop iteration 90 regression)", () => {
+    it("findProcedureByTaskPattern excludes another tenant's procedure when a scopeFilter is given", () => {
+      db.upsertProcedure({
+        taskPattern: "Bob's deploy workflow health check",
+        recipeJson: "[]",
+        procedureType: "positive",
+        scope: "user",
+        scopeTarget: "bob",
+      });
+
+      const aliceScope = { userId: "alice", agentId: null, sessionId: null };
+      const unscopedMatches = db.findProcedureByTaskPattern("Bob's deploy workflow health check", 5);
+      const aliceMatches = db.findProcedureByTaskPattern("Bob's deploy workflow health check", 5, aliceScope);
+
+      expect(unscopedMatches.length).toBeGreaterThan(0);
+      expect(aliceMatches).toHaveLength(0);
+    });
+
+    it("recordProcedureSuccess/Failure do not mutate another tenant's procedure when scoped", () => {
+      const bobProc = db.upsertProcedure({
+        taskPattern: "Bob's private procedure",
+        recipeJson: "[]",
+        procedureType: "positive",
+        successCount: 2,
+        failureCount: 0,
+        scope: "user",
+        scopeTarget: "bob",
+      });
+
+      const aliceScope = { userId: "alice", agentId: null, sessionId: null };
+      const successOk = db.recordProcedureSuccess(bobProc.id, undefined, undefined, aliceScope);
+      const failureOk = db.recordProcedureFailure(bobProc.id, undefined, undefined, aliceScope);
+
+      expect(successOk).toBe(false);
+      expect(failureOk).toBe(false);
+      const unchanged = db.getProcedureById(bobProc.id, { userId: "bob", agentId: null, sessionId: null });
+      expect(unchanged?.successCount).toBe(2);
+      expect(unchanged?.failureCount).toBe(0);
+    });
+
+    it("recordProcedureSuccess still updates a same-scope procedure", () => {
+      const aliceProc = db.upsertProcedure({
+        taskPattern: "Alice's own procedure",
+        recipeJson: "[]",
+        procedureType: "positive",
+        successCount: 1,
+        scope: "user",
+        scopeTarget: "alice",
+      });
+
+      const aliceScope = { userId: "alice", agentId: null, sessionId: null };
+      const ok = db.recordProcedureSuccess(aliceProc.id, undefined, undefined, aliceScope);
+
+      expect(ok).toBe(true);
+      const after = db.getProcedureById(aliceProc.id, aliceScope);
+      expect(after?.successCount).toBe(2);
+    });
+  });
+
   it("getProceduresReadyForSkill excludes procedures older than skillTTLDays", () => {
     const oldTs = Math.floor(Date.now() / 1000) - 60 * 24 * 60 * 60;
     db.upsertProcedure({

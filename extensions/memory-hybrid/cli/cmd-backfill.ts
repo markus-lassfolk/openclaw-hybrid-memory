@@ -307,6 +307,8 @@ export async function runBackfillForCli(
         sourceDate: sourceDateSec(fact.source_date),
       });
       if (storeResult.skipped) {
+        skipped++;
+        processed++;
         continue;
       }
       if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
@@ -749,6 +751,7 @@ export async function runIngestFilesForCli(
         tags: fact.tags,
       });
       if (storeResult.skipped) {
+        skipped++;
         continue;
       }
       if (storeResult.newlyStored === false && !storeResult.embeddingStale) {

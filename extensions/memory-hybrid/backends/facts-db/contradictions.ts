@@ -3,13 +3,13 @@
  * Project-state latest-wins (LWW) policy added in Issue #1636.
  */
 import { randomUUID } from "node:crypto";
-import type { SQLInputValue } from "node:sqlite";
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 
 import { capturePluginError } from "../../services/error-reporter.js";
 import type { MemoryEntry, ScopeFilter } from "../../types/memory.js";
-import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { nowIso } from "../../utils/dates.js";
+import { createTransaction } from "../../utils/sqlite-transaction.js";
+import { isSystemSenderEmail } from "../../utils/system-sender-email.js";
 import { parseTags, serializeTags } from "../../utils/tags.js";
 import { rowToMemoryEntry } from "./row-mapper.js";
 import { scopeFilterClauseForAlias, scopeFilterClausePositional, stripLeadingSqlAnd } from "./scope-sql.js";
@@ -231,6 +231,12 @@ export function detectContradictions(
   newText?: string | null,
 ): ContradictionDetectionResult[] {
   if (!entity?.trim() || !key?.trim() || !value?.trim()) return [];
+  const keyLower = key.trim().toLowerCase();
+  // #2062: a system/notification sender address (noreply@, robot@, etc.) is never a fact's "true"
+  // value for a key=email fact — e.g. a payment-notification email mentioning a company is not
+  // that company's own email. Scoped to key=email only: an unrelated key (e.g. "notes") whose
+  // text happens to contain a blocklisted substring must still be checked normally.
+  if (keyLower === "email" && isSystemSenderEmail(value)) return [];
 
   // BEGIN IMMEDIATE serializes cross-process writers so post-insert reads see committed peers.
   db.exec("BEGIN IMMEDIATE");
@@ -248,6 +254,7 @@ export function detectContradictions(
 
     for (const old of conflicting) {
       if (old.value?.toLowerCase() === value.trim().toLowerCase()) continue;
+      if (keyLower === "email" && isSystemSenderEmail(old.value)) continue;
       const { score, heuristicSignals } = scoreFactContradiction(
         newText ?? value.trim(),
         value.trim(),
@@ -340,6 +347,9 @@ export function repairUndetectedContradictions(
         const newer = facts[i]!;
         const older = facts[j]!;
         if ((newer.value ?? "").trim().toLowerCase() === (older.value ?? "").trim().toLowerCase()) continue;
+        // #2062: don't repair-in a contradiction where one side is a system-sender address — only
+        // for key=email groups, matching the same scoping on the write-time guard above.
+        if (group.key_l === "email" && (isSystemSenderEmail(newer.value) || isSystemSenderEmail(older.value))) continue;
         if (contradictionPairExists(db, newer.id, older.id)) continue;
         const { score, heuristicSignals } = scoreFactContradiction(
           newer.text ?? newer.value ?? "",
@@ -910,6 +920,13 @@ export interface LlmContradictionDecision {
   mergedFactText?: string | null;
 }
 
+export interface ResolveContradictionsAutoProgress {
+  processed: number;
+  total: number;
+  autoResolved: number;
+  ambiguous: number;
+}
+
 export interface ResolveContradictionsAutoOptions {
   dryRun?: boolean;
   targetRate?: number;
@@ -919,9 +936,18 @@ export interface ResolveContradictionsAutoOptions {
   actor?: string;
   toolVersion?: string;
   model?: string | null;
+  /** Called after each contradiction is processed, so callers can drive a progress heartbeat. */
+  onProgress?: (progress: ResolveContradictionsAutoProgress) => void;
 }
 
 export interface ResolveContradictionsAutoResult {
+  /**
+   * Raw count of unresolved-contradiction rows scanned this run — the SAME denominator the live
+   * `onProgress` heartbeat's `total` field reports. Distinct from `total` below (which excludes
+   * pairs referencing an already-deleted/pruned fact), so callers logging both avoid presenting
+   * a "total" that appears to shrink between the live progress lines and the final summary.
+   */
+  scanned: number;
   total: number;
   deterministic: number;
   llm: number;
@@ -1143,6 +1169,7 @@ export async function resolveContradictionsAutonomously(
     actor = "resolve-contradictions",
     toolVersion,
     model,
+    onProgress,
   } = options;
 
   const unresolved = getContradictions(db);
@@ -1152,109 +1179,124 @@ export async function resolveContradictionsAutonomously(
   let llmResolved = 0;
   const merged = 0;
   let decisionsApplied = 0;
+  let processed = 0;
+  const emitProgress = () => {
+    onProgress?.({
+      processed,
+      total: unresolved.length,
+      autoResolved: deterministic + llmResolved + merged,
+      ambiguous: reviewItems.length,
+    });
+  };
 
   for (const contradiction of unresolved) {
-    const newFact = getById(contradiction.factIdNew);
-    const oldFact = getById(contradiction.factIdOld);
-    if (!newFact || !oldFact) continue;
-    total++;
+    try {
+      processed++;
+      const newFact = getById(contradiction.factIdNew);
+      const oldFact = getById(contradiction.factIdOld);
+      if (!newFact || !oldFact) continue;
+      total++;
 
-    const reviewItem = buildContradictionReviewItem(contradiction, newFact, oldFact);
-    const lww = evaluateLwwEligibility(newFact, oldFact, contradiction.oldFactOriginalConfidence);
+      const reviewItem = buildContradictionReviewItem(contradiction, newFact, oldFact);
+      const lww = evaluateLwwEligibility(newFact, oldFact, contradiction.oldFactOriginalConfidence);
 
-    if (reviewItem.possibleOverloadedEntity) {
-      // Hard-block: never let LLM adjudication override a possible-entity-reuse signal, matching
-      // the deterministic paths (isAutoResolvableContradiction, the project-state LWW write path
-      // in facts-db-layer3.ts) which treat this as unconditionally unsafe to auto-resolve.
-      reviewItem.suggestedReason = "Possible entity reuse detected; leaving for manual review.";
-      reviewItems.push(reviewItem);
-      continue;
-    }
-    if (lww.eligible && lww.qualifies && !isFactVerified(db, contradiction.factIdOld)) {
-      reviewItem.suggestedDecision = "keep_new";
-      reviewItem.suggestedStrategy = "project-state-lww";
-      reviewItem.suggestedConfidence = 1;
-      reviewItem.suggestedReason = "Trusted newer project-state fact supersedes the stale value.";
-      deterministic++;
-      if (!dryRun) {
-        const applied = persistContradictionDecision(db, getById, supersede, {
-          contradictionId: contradiction.id,
-          keptFactId: contradiction.factIdNew,
-          supersededFactId: contradiction.factIdOld,
-          resolution: "superseded",
-          strategy: reviewItem.suggestedStrategy,
-          confidence: reviewItem.suggestedConfidence,
-          reason: reviewItem.suggestedReason,
-          actor,
-          toolVersion,
-          mode: "auto",
-          model: null,
-        });
-        if (applied) decisionsApplied++;
+      if (reviewItem.possibleOverloadedEntity) {
+        // Hard-block: never let LLM adjudication override a possible-entity-reuse signal, matching
+        // the deterministic paths (isAutoResolvableContradiction, the project-state LWW write path
+        // in facts-db-layer3.ts) which treat this as unconditionally unsafe to auto-resolve.
+        reviewItem.suggestedReason = "Possible entity reuse detected; leaving for manual review.";
+        reviewItems.push(reviewItem);
+        continue;
       }
-      continue;
-    }
-    if (isFactVerified(db, contradiction.factIdOld)) {
-      // Hard-block: verified facts must never be superseded by LLM adjudication alone, matching
-      // the write-time LWW guard (facts-db-layer3.ts) and isAutoResolvableContradiction, both of
-      // which hard-block on isFactVerified(old).
-      reviewItem.suggestedReason = "Older fact is verified; leaving for manual review.";
-      reviewItems.push(reviewItem);
-      continue;
-    }
+      if (lww.eligible && lww.qualifies && !isFactVerified(db, contradiction.factIdOld)) {
+        reviewItem.suggestedDecision = "keep_new";
+        reviewItem.suggestedStrategy = "project-state-lww";
+        reviewItem.suggestedConfidence = 1;
+        reviewItem.suggestedReason = "Trusted newer project-state fact supersedes the stale value.";
+        deterministic++;
+        if (!dryRun) {
+          const applied = persistContradictionDecision(db, getById, supersede, {
+            contradictionId: contradiction.id,
+            keptFactId: contradiction.factIdNew,
+            supersededFactId: contradiction.factIdOld,
+            resolution: "superseded",
+            strategy: reviewItem.suggestedStrategy,
+            confidence: reviewItem.suggestedConfidence,
+            reason: reviewItem.suggestedReason,
+            actor,
+            toolVersion,
+            mode: "auto",
+            model: null,
+          });
+          if (applied) decisionsApplied++;
+        }
+        continue;
+      }
+      if (isFactVerified(db, contradiction.factIdOld)) {
+        // Hard-block: verified facts must never be superseded by LLM adjudication alone, matching
+        // the write-time LWW guard (facts-db-layer3.ts) and isAutoResolvableContradiction, both of
+        // which hard-block on isFactVerified(old).
+        reviewItem.suggestedReason = "Older fact is verified; leaving for manual review.";
+        reviewItems.push(reviewItem);
+        continue;
+      }
 
-    if (llm && adjudicate) {
-      try {
-        const llmDecision = await adjudicate(reviewItem);
-        const confidence = clampConfidence(llmDecision.confidence);
-        if (
-          (llmDecision.decision === "keep_new" || llmDecision.decision === "keep_old") &&
-          confidence >= llmConfidenceThreshold
-        ) {
-          reviewItem.suggestedDecision = llmDecision.decision;
-          reviewItem.suggestedStrategy = "llm-adjudication";
-          reviewItem.suggestedConfidence = confidence;
-          reviewItem.suggestedReason = llmDecision.reason?.trim() || "LLM adjudication approved the resolution.";
-          llmResolved++;
-          if (!dryRun) {
-            const keepNew = llmDecision.decision === "keep_new";
-            const applied = persistContradictionDecision(db, getById, supersede, {
-              contradictionId: contradiction.id,
-              keptFactId: keepNew ? contradiction.factIdNew : contradiction.factIdOld,
-              supersededFactId: keepNew ? contradiction.factIdOld : contradiction.factIdNew,
-              resolution: keepNew ? "superseded" : "kept",
-              strategy: reviewItem.suggestedStrategy,
-              confidence,
-              reason: reviewItem.suggestedReason,
-              actor,
-              toolVersion,
-              mode: "auto",
-              model: model ?? null,
-            });
-            if (applied) decisionsApplied++;
+      if (llm && adjudicate) {
+        try {
+          const llmDecision = await adjudicate(reviewItem);
+          const confidence = clampConfidence(llmDecision.confidence);
+          if (
+            (llmDecision.decision === "keep_new" || llmDecision.decision === "keep_old") &&
+            confidence >= llmConfidenceThreshold
+          ) {
+            reviewItem.suggestedDecision = llmDecision.decision;
+            reviewItem.suggestedStrategy = "llm-adjudication";
+            reviewItem.suggestedConfidence = confidence;
+            reviewItem.suggestedReason = llmDecision.reason?.trim() || "LLM adjudication approved the resolution.";
+            llmResolved++;
+            if (!dryRun) {
+              const keepNew = llmDecision.decision === "keep_new";
+              const applied = persistContradictionDecision(db, getById, supersede, {
+                contradictionId: contradiction.id,
+                keptFactId: keepNew ? contradiction.factIdNew : contradiction.factIdOld,
+                supersededFactId: keepNew ? contradiction.factIdOld : contradiction.factIdNew,
+                resolution: keepNew ? "superseded" : "kept",
+                strategy: reviewItem.suggestedStrategy,
+                confidence,
+                reason: reviewItem.suggestedReason,
+                actor,
+                toolVersion,
+                mode: "auto",
+                model: model ?? null,
+              });
+              if (applied) decisionsApplied++;
+            }
+            continue;
           }
-          continue;
-        }
 
-        if (llmDecision.decision === "merge") {
-          reviewItem.suggestedReason =
-            llmDecision.reason?.trim() || "LLM requested merge; keep manual review for safety.";
-        } else if (confidence > 0) {
-          reviewItem.suggestedReason =
-            llmDecision.reason?.trim() || `LLM confidence ${confidence.toFixed(2)} below auto-apply threshold.`;
+          if (llmDecision.decision === "merge") {
+            reviewItem.suggestedReason =
+              llmDecision.reason?.trim() || "LLM requested merge; keep manual review for safety.";
+          } else if (confidence > 0) {
+            reviewItem.suggestedReason =
+              llmDecision.reason?.trim() || `LLM confidence ${confidence.toFixed(2)} below auto-apply threshold.`;
+          }
+        } catch (err) {
+          reviewItem.suggestedReason = `LLM adjudication failed: ${err instanceof Error ? err.message : String(err)}`;
         }
-      } catch (err) {
-        reviewItem.suggestedReason = `LLM adjudication failed: ${err instanceof Error ? err.message : String(err)}`;
       }
-    }
 
-    reviewItems.push(reviewItem);
+      reviewItems.push(reviewItem);
+    } finally {
+      emitProgress();
+    }
   }
 
   reviewItems.sort(compareReviewItems);
   const autoResolved = deterministic + llmResolved + merged;
   const achievedRate = total === 0 ? 1 : autoResolved / total;
   return {
+    scanned: unresolved.length,
     total,
     deterministic,
     llm: llmResolved,

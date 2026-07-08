@@ -2,7 +2,8 @@ import { getPluginConfigFromFile } from "../cmd-install.js";
 import type { VerifyRunState } from "./verify-run-state.js";
 
 export function ensureRawPluginConfigOnState(state: VerifyRunState): void {
-  if (state.rawPluginConfig !== undefined) return;
+  if (state.rawPluginConfigAttempted) return;
+  state.rawPluginConfigAttempted = true;
   const rawPluginConfigResult = getPluginConfigFromFile(state.defaultConfigPath);
   state.rawPluginConfig = "error" in rawPluginConfigResult ? undefined : rawPluginConfigResult.config;
   if (

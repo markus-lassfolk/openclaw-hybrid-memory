@@ -132,6 +132,27 @@ describe("collectMaintenanceInventory", () => {
     expect(vectordb?.collisionGroups).toEqual(["lancedb-writer"]);
   });
 
+  it("flags weekly-crystallization-skills-rescan and weekly-persona-proposals as sharing the crystallization store", () => {
+    // Both jobs write to the same CrystallizationStore sqlite file (crystallization_proposals
+    // table) via CrystallizationProposer — a real concurrent-write collision risk distinct from
+    // the main facts.db, so both must carry a shared collision group for it.
+    const openclawDir = makeOpenclawDir();
+    cleanup.push(openclawDir);
+
+    const crontabText = [
+      "15 4 * * 0 /home/markus/.openclaw/scripts/hybrid-mem-cli-job.sh weekly-crystallization-skills-rescan",
+      "30 4 * * 0 /home/markus/.openclaw/scripts/hybrid-mem-cli-job.sh weekly-persona-proposals",
+      "",
+    ].join("\n");
+
+    const report = collectMaintenanceInventory(openclawDir, { crontabText });
+
+    const rescan = report.jobs.find((job) => job.jobKey === "weekly-crystallization-skills-rescan");
+    const proposals = report.jobs.find((job) => job.jobKey === "weekly-persona-proposals");
+    expect(rescan?.collisionGroups).toContain("crystallization-store-writer");
+    expect(proposals?.collisionGroups).toContain("crystallization-store-writer");
+  });
+
   it("renders markdown output with combined collision groups", () => {
     const openclawDir = makeOpenclawDir();
     cleanup.push(openclawDir);

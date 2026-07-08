@@ -4,6 +4,7 @@
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
+import type { ScopeFilter } from "../types/memory.js";
 import { isTerminalStatus, readGoal } from "./goal-registry.js";
 import { resolveGoalForSpawn } from "./goal-subagent.js";
 import { sessionRefMatches } from "./pre-finalization-guard.js";
@@ -98,6 +99,7 @@ export async function resolveGoalsForSubagentContext(
   goalsDir: string,
   factsDb: FactsDB,
   cfg: HybridMemoryConfig,
+  scopeFilter?: ScopeFilter | null,
 ): Promise<Goal[]> {
   const resolved: Goal[] = [];
   const seen = new Set<string>();
@@ -111,7 +113,10 @@ export async function resolveGoalsForSubagentContext(
   };
 
   if (cfg.activeTask.enabled && cfg.activeTask.ledger === "facts") {
-    const { active } = loadTaskLedgerFromFacts(factsDb);
+    // SECURITY: loadTaskLedgerFromFacts accepts an optional scopeFilter but silently returns
+    // every tenant's task facts when it's omitted — must be threaded through explicitly
+    // (matches active-task-tools-loader.ts's loadActiveTasksForTools).
+    const { active } = loadTaskLedgerFromFacts(factsDb, undefined, scopeFilter);
     for (const task of active) {
       const sessionRef = task.subagent?.trim();
       if (!sessionRef || !sessionRefMatches(sessionRef, sessionKey)) continue;

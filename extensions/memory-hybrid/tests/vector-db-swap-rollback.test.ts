@@ -2,17 +2,25 @@ import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { rename as renameFsPath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { activeReadersByPath } from "../backends/vector-db/runtime-locks.js";
 import { VectorDB } from "../backends/vector-db.js";
 
 describe("VectorDB swap rollback", () => {
   let testDbPath = "";
+
+  beforeEach(() => {
+    // swapShadowTable()'s path-containment guard (loop iteration 17) only allows removing table
+    // directories under ~/.openclaw/memory unless this is set — tests use an arbitrary tmpdir.
+    vi.stubEnv("OPENCLAW_HYBRID_MEM_DANGEROUS_PATHS", "1");
+  });
 
   afterEach(() => {
     if (testDbPath && existsSync(testDbPath)) {
       rmSync(testDbPath, { recursive: true, force: true });
     }
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("rolls main table back when shadow->main rename fails", async () => {
@@ -134,6 +142,62 @@ describe("VectorDB swap rollback", () => {
 
     const files = readdirSync(testDbPath);
     expect(files.some((f) => /^memories_old_\d+\.lance$/.test(f))).toBe(true);
+    await vectorDb.close();
+  });
+
+  it("refuses to swap when dbPath is outside the default memory dir unless dangerous-paths is set (loop iteration 17 regression)", async () => {
+    testDbPath = mkdtempSync(join(tmpdir(), "vectordb-swap-rollback-"));
+    const vectorDb = new VectorDB(testDbPath, 64, false);
+    vectorDb.setLogger({ warn: vi.fn() });
+    await vectorDb.open();
+    await vectorDb.store({
+      text: "main fact",
+      vector: Array(64).fill(0.1),
+      importance: 0.7,
+      category: "test",
+    });
+    const shadowTable = await vectorDb.createShadowTable();
+
+    // Override this describe block's suite-wide dangerous-paths stub for this one test.
+    vi.stubEnv("OPENCLAW_HYBRID_MEM_DANGEROUS_PATHS", "0");
+    await expect(vectorDb.swapShadowTable(shadowTable, 0, 0)).rejects.toThrow(
+      /Refusing to remove LanceDB table directories outside/,
+    );
+    await vectorDb.close();
+  });
+
+  it("swapShadowTable waits for an in-flight reader to release its slot before renaming table directories (loop iteration 17 regression)", async () => {
+    testDbPath = mkdtempSync(join(tmpdir(), "vectordb-swap-rollback-"));
+    const vectorDb = new VectorDB(testDbPath, 64, false);
+    vectorDb.setLogger({ warn: vi.fn() });
+    await vectorDb.open();
+    await vectorDb.store({
+      text: "main fact",
+      vector: Array(64).fill(0.1),
+      importance: 0.7,
+      category: "test",
+    });
+    const shadowTable = await vectorDb.createShadowTable();
+    await vectorDb.storeToTable(shadowTable, {
+      id: "eeeeeeee-0000-4000-8000-000000000001",
+      text: "shadow fact",
+      vector: Array(64).fill(0.2),
+      importance: 0.7,
+      category: "test",
+    });
+
+    const dbPath = (vectorDb as unknown as { dbPath: string }).dbPath;
+    activeReadersByPath.set(dbPath, 1); // simulate a search()/count() call still in flight
+    let readerReleasedBeforeSwapCompleted = false;
+    setTimeout(() => {
+      readerReleasedBeforeSwapCompleted = true;
+      activeReadersByPath.set(dbPath, 0);
+    }, 30);
+
+    await vectorDb.swapShadowTable(shadowTable, 0, 0);
+    // Without the drain wait, swapShadowTable would close/rename the table directories while
+    // the simulated reader slot is still held (count still 1), resolving before the timer fires.
+    expect(readerReleasedBeforeSwapCompleted).toBe(true);
     await vectorDb.close();
   });
 });

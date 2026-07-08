@@ -165,12 +165,28 @@ export function getConnectedFactIds(
   const seen = new Set(factIds);
   let frontier = [...factIds];
 
-  const outStmt = db.prepare(
+  let outStmt = db.prepare(
     `SELECT target_fact_id AS id FROM memory_links WHERE source_fact_id = ? AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM') ORDER BY strength DESC, created_at DESC LIMIT ?`,
   );
-  const inStmt = db.prepare(
+  let inStmt = db.prepare(
     `SELECT source_fact_id AS id FROM memory_links WHERE target_fact_id = ? AND link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM') ORDER BY strength DESC, created_at DESC LIMIT ?`,
   );
+  // Exclude superseded (corrected/replaced) facts from traversal — mirrors
+  // expandGraphWithCTE's `f.superseded_at IS NULL` join, for the same reason: a superseded fact
+  // must not serve as an intermediate hop or be returned as a connected result, or a correction
+  // can be silently undone by having the stale fact resurface via its surviving graph link.
+  // Falls back to the unfiltered statements above when `facts` doesn't exist (e.g. minimal
+  // in-memory tests), matching the `denormDegreeStmt` fallback pattern below.
+  try {
+    outStmt = db.prepare(
+      `SELECT ml.target_fact_id AS id FROM memory_links ml JOIN facts f ON f.id = ml.target_fact_id WHERE ml.source_fact_id = ? AND ml.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM') AND f.superseded_at IS NULL ORDER BY ml.strength DESC, ml.created_at DESC LIMIT ?`,
+    );
+    inStmt = db.prepare(
+      `SELECT ml.source_fact_id AS id FROM memory_links ml JOIN facts f ON f.id = ml.source_fact_id WHERE ml.target_fact_id = ? AND ml.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM') AND f.superseded_at IS NULL ORDER BY ml.strength DESC, ml.created_at DESC LIMIT ?`,
+    );
+  } catch {
+    // facts table absent; keep the unfiltered statements above.
+  }
   // #1192: prefer the denormalized columns when present (refreshed by the dream-cycle).
   // Falls back to the legacy COUNT(*) path when columns are missing or zero (which can
   // happen on a brand-new store before the first dream-cycle has run).

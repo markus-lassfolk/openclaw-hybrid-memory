@@ -351,6 +351,36 @@ describe("sweepGitHub", () => {
       setEnv("PATH", originalPath);
     }
   });
+
+  it("reports only the gh-availability progress label when gh CLI is unavailable (--verbose)", async () => {
+    // Regression test (verbose progress, audit follow-up): a verbose caller should still see
+    // a progress label for the availability check, even though the sweep bails out immediately.
+    const originalPath = getEnv("PATH");
+    setEnv("PATH", "/nonexistent");
+    try {
+      const cfg = { enabled: true, importance: 0.7, includeReviewRequests: false, staleIssueDays: 7 };
+      const progress: string[] = [];
+      const result = await sweepGitHub(bus, cfg, 0, (label) => progress.push(label));
+      expect(result.error).toBe("gh CLI not available");
+      expect(progress).toEqual(["github: checking gh CLI availability"]);
+    } finally {
+      setEnv("PATH", originalPath);
+    }
+  });
+
+  it("does not call onProgress when omitted (default non-verbose behavior unaffected)", async () => {
+    const originalPath = getEnv("PATH");
+    setEnv("PATH", "/nonexistent");
+    try {
+      const cfg = { enabled: true, importance: 0.7, includeReviewRequests: false, staleIssueDays: 7 };
+      // No onProgress argument passed — must not throw and must behave exactly as before.
+      const result = await sweepGitHub(bus, cfg, 0);
+      expect(result.sensor).toBe("github");
+      expect(result.error).toBe("gh CLI not available");
+    } finally {
+      setEnv("PATH", originalPath);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -535,6 +565,72 @@ describe("sweepAll", () => {
     expect(memPatterns?.error).toBeDefined();
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toContain("memory-patterns");
+  });
+
+  it("reports onProgress with one label per Tier 1 sensor, in run order (--verbose plumbing)", async () => {
+    const cfg = parseSensorSweepConfig({
+      sensorSweep: {
+        enabled: true,
+        garmin: { enabled: false }, // no HA config
+        github: { enabled: false }, // avoid depending on a real `gh` CLI in this ordering test
+      },
+    });
+
+    const factsDb = makeFactsDbStub();
+    const progress: string[] = [];
+    await sweepAll(bus, cfg, factsDb, { tier: 1, onProgress: (label) => progress.push(label) });
+
+    expect(progress).toEqual(["session-history", "memory-patterns"]);
+  });
+
+  it("reports onProgress with one label per Tier 2 sensor plus per-call labels within a sensor (--verbose plumbing)", async () => {
+    const cfg = parseSensorSweepConfig({
+      sensorSweep: {
+        enabled: true,
+        systemHealth: { enabled: true },
+        weather: { enabled: true, location: "TestCity" },
+        homeAssistantAnomaly: { enabled: false }, // no HA config
+        yarbo: { enabled: false }, // no HA config
+      },
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            current_condition: [{ temp_C: "20", FeelsLikeC: "19", humidity: "50", weatherDesc: [{ value: "Sunny" }] }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+
+    try {
+      const factsDb = makeFactsDbStub();
+      const progress: string[] = [];
+      const result = await sweepAll(bus, cfg, factsDb, { tier: 2, onProgress: (label) => progress.push(label) });
+
+      expect(result.sensors.find((s) => s.sensor === "weather")?.error).toBeUndefined();
+      expect(progress).toEqual(["system-health", "weather", "weather: fetching"]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("never calls onProgress when omitted, and dry-run never reports sensor progress", async () => {
+    const cfg = parseSensorSweepConfig({
+      sensorSweep: { enabled: true, garmin: { enabled: false }, github: { enabled: false } },
+    });
+    const factsDb = makeFactsDbStub();
+
+    // No onProgress passed — must not throw (default/non-verbose behavior unaffected).
+    await expect(sweepAll(bus, cfg, factsDb, { tier: 1 })).resolves.toBeDefined();
+
+    // Dry-run skips the sensor calls entirely, so no progress should ever be reported.
+    const progress: string[] = [];
+    await sweepAll(bus, cfg, factsDb, { tier: 1, dryRun: true, onProgress: (label) => progress.push(label) });
+    expect(progress).toEqual([]);
   });
 
   it("reports garmin sensor error when Home Assistant states JSON is malformed", async () => {

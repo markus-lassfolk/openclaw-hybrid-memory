@@ -45,6 +45,7 @@ interface CliContextServices {
     dryRun: boolean;
     limit: number;
     model: string;
+    onProgress?: (progress: { clusterIndex: number; totalClusters: number; merged: number }) => void;
   }) => Promise<{ clustersFound: number; merged: number; deleted: number }>;
   runReflection: (opts: { window: number; dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
     factsAnalyzed: number;

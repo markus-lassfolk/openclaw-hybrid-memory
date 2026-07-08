@@ -297,6 +297,75 @@ describe("reconcileCronRunLedger", () => {
     expect(result.corrected).toBe(1);
   });
 
+  it("corrects a false-OK entry with zero HM_EXIT/HM_LOG artifacts anywhere (tooling-blocker: harness never started)", () => {
+    // Reproduces the workshop-approval-reminder tooling-blocker case: the cron scheduler recorded
+    // a "finished"/status:"ok" run, but the bash harness never started (no exec tool available
+    // this run), so no HM_EXIT/HM_LOG files were ever written for this job — not even empty ones.
+    const ledgerPath = join(cronRunsDir, "hybrid-mem:workshop-approval-reminder.jsonl");
+    rmSync(cronRunsDir, { recursive: true, force: true });
+    mkdirSync(cronRunsDir, { recursive: true });
+    rmSync(logDir, { recursive: true, force: true });
+    mkdirSync(logDir, { recursive: true });
+
+    writeCronRunLedger(ledgerPath, [
+      {
+        runAtMs: Date.UTC(2026, 6, 6, 1, 50, 0),
+        jobId: "hybrid-mem:workshop-approval-reminder",
+        status: "ok",
+        summary: "FAILED (tooling blocker — no evidence the step ran)",
+      },
+    ]);
+
+    const result = reconcileCronRunLedger(ledgerPath, logDir, ["digest-pending"], false);
+
+    expect(result.examined).toBe(1);
+    expect(result.falseOk).toBe(1);
+    expect(result.corrected).toBe(1);
+    expect(result.corrections[0].originalStatus).toBe("ok");
+    expect(result.corrections[0].newStatus).toBe("error");
+    expect(result.corrections[0].validationResult.error).toContain("Exit ledger not found");
+    expect(result.corrections[0].validationResult.reportableIssues[0]?.failureClass).toBe("missing_exit_ledger");
+
+    const updated = parseCronRunLedger(ledgerPath);
+    expect(updated[0].status).toBe("error");
+    expect(updated[0].summary).toContain("[RECONCILED]");
+  });
+
+  it("leaves an entry alone when its exit ledger exists but the paired log file is missing (rotated away)", () => {
+    // Distinct from the zero-artifacts tooling-blocker case above: here the HM_EXIT ledger is
+    // real and readable, but its paired .log file is gone (e.g. cleared by log retention) and no
+    // other artifact pair matches — validating with no log content risks a false correction from
+    // incomplete evidence, so this must be skipped rather than guessed at.
+    const ledgerPath = join(cronRunsDir, "test-job.jsonl");
+    rmSync(cronRunsDir, { recursive: true, force: true });
+    mkdirSync(cronRunsDir, { recursive: true });
+    rmSync(logDir, { recursive: true, force: true });
+    mkdirSync(logDir, { recursive: true });
+
+    const exitPath = join(logDir, "test-job-20260509T024520Z-14763.exit.txt");
+    writeCronRunLedger(ledgerPath, [
+      {
+        ts: 1778296560189,
+        jobId: "test-job",
+        action: "finished",
+        status: "ok",
+        summary: `SUCCESS\n\nHM_EXIT: ${exitPath}`,
+      },
+    ]);
+    // Only the exit ledger exists on disk; its .log sibling was never written / was cleaned up.
+    writeFileSync(exitPath, "2026-05-09T02:45:20Z prune exit=0\n2026-05-09T02:45:21Z distill exit=0\n");
+
+    const result = reconcileCronRunLedger(ledgerPath, logDir, ["prune", "distill"], false);
+
+    expect(result.examined).toBe(1);
+    expect(result.falseOk).toBe(0);
+    expect(result.corrected).toBe(0);
+
+    const updated = parseCronRunLedger(ledgerPath);
+    expect(updated[0].status).toBe("ok");
+    expect(updated[0].summary).not.toContain("[RECONCILED]");
+  });
+
   it("should respect dry-run mode", () => {
     const ledgerPath = join(cronRunsDir, "test-job.jsonl");
     rmSync(cronRunsDir, { recursive: true, force: true });

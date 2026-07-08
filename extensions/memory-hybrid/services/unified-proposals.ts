@@ -262,7 +262,15 @@ export function mergeWorkshopListItems(
 }
 
 export function countPendingUnifiedProposals(stores: UnifiedProposalStores): number {
-  return listUnifiedProposals(stores, { status: "pending" }).filter((p) => p.type !== "procedure-skill").length;
+  // listUnifiedProposals() truncates to `limit` (default 100) BEFORE the procedure-skill
+  // exclusion below runs, sorted by createdAt DESC across all types. A burst of recently
+  // validated/updated procedure-skill candidates can fill that window and push genuine
+  // pending persona/tool/crystallization proposals out of it entirely — undercounting them
+  // here and letting enforceMaxPendingCap admit more than configured. Pass an effectively
+  // unlimited limit so every pending proposal is considered before the type filter applies.
+  return listUnifiedProposals(stores, { status: "pending", limit: Number.MAX_SAFE_INTEGER }).filter(
+    (p) => p.type !== "procedure-skill",
+  ).length;
 }
 
 export function enforceMaxPendingCap(

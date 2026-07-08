@@ -11,6 +11,7 @@ import { vacuumAndCheckpoint } from "../backends/facts-db/housekeeping.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import { spawnSync } from "../utils/process-runner.js";
 import { countPersistedSqliteBusySince, type MaintenanceFinding } from "./maintenance-log-analyzer.js";
+import { isPidAlive } from "./task-queue-watchdog.js";
 
 const LOCK_PATH_RE = /(\/[^\s"']+\.lock)/g;
 
@@ -23,13 +24,14 @@ export function clearStaleLock(lockPath: string): { ok: boolean; detail: string 
       unlinkSync(lockPath);
       return { ok: true, detail: "removed malformed lock" };
     }
-    try {
-      process.kill(pid, 0);
+    // isPidAlive distinguishes ESRCH (no such process) from EPERM (process exists but we lack
+    // permission to signal it) — a bare catch-all here would treat a live-but-unsignalable owner
+    // as "gone" and delete its lock out from under it.
+    if (isPidAlive(pid)) {
       return { ok: false, detail: `live pid ${pid}` };
-    } catch {
-      unlinkSync(lockPath);
-      return { ok: true, detail: `removed stale lock (pid ${pid} gone)` };
     }
+    unlinkSync(lockPath);
+    return { ok: true, detail: `removed stale lock (pid ${pid} gone)` };
   } catch (e) {
     return { ok: false, detail: e instanceof Error ? e.message : String(e) };
   }

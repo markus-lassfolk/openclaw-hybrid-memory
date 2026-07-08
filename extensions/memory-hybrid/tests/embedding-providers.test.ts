@@ -27,6 +27,7 @@ import {
 import { AsyncSemaphore, EMBEDDING_CACHE_MAX, makeCacheKey } from "../services/embeddings/shared.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import * as glitchtip from "../services/error-reporter.js";
+import { pluginLogger } from "../utils/logger.js";
 
 vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: vi.fn(),
@@ -1698,6 +1699,51 @@ describe("#385: createEmbeddingProvider uses gemini-embedding-001 as default Goo
     };
     const provider = createEmbeddingProvider(cfg);
     expect(provider).toBeInstanceOf(ChainEmbeddingProvider);
+  });
+});
+
+describe("createEmbeddingProvider — Google chained with a local-only Ollama model (loop iteration 70 regression)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("warns when a local-only Ollama model (fixed native dimension) is chained with Google", () => {
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+    const cfg: EmbeddingConfig = {
+      provider: "ollama",
+      model: "mxbai-embed-large",
+      googleApiKey: "AIzaSyTestKey1234567890",
+      dimensions: 1024,
+      batchSize: 50,
+      preferredProviders: ["ollama", "google"],
+    };
+
+    createEmbeddingProvider(cfg);
+
+    const warned = warnSpy.mock.calls.some(
+      (call) => typeof call[0] === "string" && call[0].includes("local-only model") && call[0].includes("mxbai-embed-large"),
+    );
+    expect(warned).toBe(true);
+  });
+
+  it("does not emit the local-only-model warning for a regular OpenAI+Google chain", () => {
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+    const cfg: EmbeddingConfig = {
+      provider: "openai",
+      model: "text-embedding-3-small",
+      apiKey: "sk-test-1234567890",
+      googleApiKey: "AIzaSyTestKey1234567890",
+      dimensions: 768,
+      batchSize: 50,
+      preferredProviders: ["openai", "google"],
+    };
+
+    createEmbeddingProvider(cfg);
+
+    const warned = warnSpy.mock.calls.some(
+      (call) => typeof call[0] === "string" && call[0].includes("local-only model"),
+    );
+    expect(warned).toBe(false);
   });
 });
 

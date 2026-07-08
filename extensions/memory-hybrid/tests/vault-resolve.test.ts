@@ -8,6 +8,7 @@ import {
   resolveToolVaultWal,
   shouldFanOutVaultRecall,
   listToolVaultHandles,
+  groupByResultVault,
 } from "../tools/memory/vault-resolve.js";
 import type { MemoryToolRuntime } from "../tools/memory/runtime.js";
 
@@ -141,5 +142,57 @@ describe("resolveToolVaultWal (#1917)", () => {
   it("still throws for a genuinely unknown vault name", () => {
     const rt = strictWalMockRuntime();
     expect(() => resolveToolVaultWal(rt, "nonexistent")).toThrow(/Unknown vault/);
+  });
+});
+
+describe("groupByResultVault (loop iteration 83 regression — graph expansion multi-vault fan-out)", () => {
+  const defaultDb = { name: "default-db" };
+  const workDb = { name: "work-db" };
+  const vaultHandles = [
+    { name: "default", factsDb: defaultDb },
+    { name: "work", factsDb: workDb },
+  ];
+
+  it("routes each item to its own vault's factsDb per vaultByFactId", () => {
+    const items = ["fact-a", "fact-b", "fact-c"];
+    const vaultByFactId = new Map([
+      ["fact-a", "default"],
+      ["fact-b", "work"],
+      ["fact-c", "work"],
+    ]);
+
+    const groups = groupByResultVault(items, (id) => id, vaultByFactId, vaultHandles, defaultDb);
+
+    expect(groups.get(defaultDb)).toEqual(["fact-a"]);
+    expect(groups.get(workDb)).toEqual(["fact-b", "fact-c"]);
+    expect(groups.size).toBe(2);
+  });
+
+  it("falls back to defaultFactsDb for an id missing from vaultByFactId (single-vault mode, or entity-lookup merge)", () => {
+    const items = ["fact-a", "fact-b"];
+
+    const groups = groupByResultVault(items, (id) => id, undefined, vaultHandles, defaultDb);
+
+    expect(groups.get(defaultDb)).toEqual(["fact-a", "fact-b"]);
+    expect(groups.size).toBe(1);
+  });
+
+  it("falls back to defaultFactsDb when vaultByFactId names a vault absent from vaultHandles", () => {
+    const items = ["fact-a"];
+    const vaultByFactId = new Map([["fact-a", "some-other-vault-not-in-handles"]]);
+
+    const groups = groupByResultVault(items, (id) => id, vaultByFactId, vaultHandles, defaultDb);
+
+    expect(groups.get(defaultDb)).toEqual(["fact-a"]);
+    expect(groups.size).toBe(1);
+  });
+
+  it("collapses to a single group in single-vault mode (no-op grouping, preserves existing behavior)", () => {
+    const items = [{ factId: "fact-a" }, { factId: "fact-b" }];
+
+    const groups = groupByResultVault(items, (item) => item.factId, undefined, [], defaultDb);
+
+    expect(groups.size).toBe(1);
+    expect(groups.get(defaultDb)).toEqual(items);
   });
 });

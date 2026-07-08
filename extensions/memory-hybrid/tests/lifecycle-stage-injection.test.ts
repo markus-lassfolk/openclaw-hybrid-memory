@@ -162,4 +162,43 @@ describe("runInjectionStage", () => {
       vi.useRealTimers();
     }
   });
+
+  it("resolves instead of hanging/rejecting when the timeout-fallback injection itself throws (loop iteration 92 regression)", async () => {
+    vi.useFakeTimers();
+    try {
+      const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
+      initPrependBudget(ctx.prependBudgetRef!, 500, "test-session");
+      const api = makeMockStageApi();
+      const base = makeMinimalRecallResult().candidates[0];
+      const candidates = Array.from({ length: 5 }, (_, i) => ({
+        ...base,
+        entry: { ...base.entry, id: `fact-${i}`, text: `Stored memory number ${i} with enough detail to matter.` },
+      }));
+      // Primary path hangs forever at the LLM summarize call, forcing the timeout branch.
+      vi.mocked(ctx.openai.chat.completions.create).mockReturnValue(new Promise(() => {}) as never);
+      // The timeout-fallback call (skipLlmSummarize: true) reaches finishPrepend -> applyInjectionSideEffects
+      // -> refreshAccessedFacts without ever touching the LLM path, so this only breaks the fallback call.
+      vi.spyOn(factsDb, "refreshAccessedFacts").mockImplementation(() => {
+        throw new Error("simulated refreshAccessedFacts failure");
+      });
+
+      const recall = makeMinimalRecallResult({
+        candidates,
+        maxTokens: 40,
+        totalBudget: 40,
+        summarizeWhenOverBudget: true,
+      });
+
+      const runPromise = runInjectionStage(recall, api as never, ctx, { prompt: "test" });
+      await vi.advanceTimersByTimeAsync(10_001);
+
+      await expect(runPromise).resolves.toBeUndefined();
+      expect(capturePluginError).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringContaining("simulated refreshAccessedFacts failure") }),
+        expect.objectContaining({ operation: "injection-timeout-fallback" }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

@@ -47,6 +47,8 @@ export type VerifyRunState = {
   WARN_LINE: string;
   noEmoji: boolean;
   rawPluginConfig?: Record<string, unknown>;
+  /** Set once ensureRawPluginConfigOnState has attempted resolution (success or parse failure), so a failed attempt is not retried (and re-warned) on every subsequent call. */
+  rawPluginConfigAttempted?: boolean;
   lanceBindingsFailed: boolean;
   anyEmbOk: boolean;
   issues: string[];
@@ -57,6 +59,8 @@ export type VerifyRunState = {
   lanceOk: boolean;
   embeddingOk: boolean;
   embeddingAlignmentOk: boolean;
+  /** True when at least one credentialed LLM provider is available; with --test-llm, requires an actual configured-model test to succeed. */
+  llmOk: boolean;
   loadBlocking: string[];
   extDir: string;
   defaultConfigPath: string;
@@ -130,6 +134,7 @@ export function createVerifyRunState(ctx: HandlerContext, opts: VerifyRunOpts, s
     lanceOk: false,
     embeddingOk: false,
     embeddingAlignmentOk: true,
+    llmOk: false,
     loadBlocking: [],
     extDir,
     defaultConfigPath,

@@ -224,6 +224,57 @@ describe("runReflection maintenance run deadline (#75)", () => {
 
     expect(embed).not.toHaveBeenCalled();
   });
+
+  it("does not persist reflection_input_hash when the deadline cuts the storage loop short, so unstored patterns are re-extracted next run", async () => {
+    const fact = makeEntry();
+    const setMaintenanceState = vi.fn();
+    const factsDb = {
+      sqlitePath: join(tmpdir(), "reflect-deadline-hash-test.db"),
+      getRecentFacts: () => [fact],
+      getByCategory: () => [],
+      store: async () => ({ id: "pattern-1", text: fact.text, category: "pattern" }) as MemoryEntry,
+      setEmbeddingModel: () => undefined,
+      getMaintenanceState: () => null,
+      setMaintenanceState,
+    };
+    const vectorDb = {
+      store: async () => undefined,
+      getVectorDim: () => 2,
+      getVectorsByFactIds: async () => new Map(),
+    };
+    const embed = vi.fn(async () => [1, 0]);
+    const embeddings = { embed, modelName: "test-model" };
+    const openai = {
+      chat: {
+        completions: {
+          create: async () => {
+            setMaintenanceRunDeadlineMs(Date.now() - 1);
+            return {
+              choices: [
+                {
+                  message: {
+                    content: "PATTERN: User consistently favors functional composition over OOP",
+                  },
+                },
+              ],
+            };
+          },
+        },
+      },
+    };
+
+    await runReflection(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai as never,
+      { defaultWindow: 14, minObservations: 1, enabled: true },
+      { window: 7, dryRun: false, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(setMaintenanceState).not.toHaveBeenCalledWith("reflection_input_hash", expect.anything());
+  });
 });
 
 describe("runReflectionRules cost attribution", () => {

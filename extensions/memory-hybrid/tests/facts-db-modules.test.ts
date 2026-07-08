@@ -192,4 +192,34 @@ describe("facts-db links module", () => {
     const ids = getConnectedFactIds(db, ["s"], 2, { hubDegreeCap: null });
     expect(ids.sort()).toEqual(["hub", "s", ...Array.from({ length: 20 }, (_, i) => `t${i}`)].sort());
   });
+
+  it("excludes a superseded (corrected/replaced) fact from traversal (loop iteration 36 regression)", () => {
+    db = new DatabaseSync(":memory:");
+    db.exec(`
+      CREATE TABLE facts (
+        id TEXT PRIMARY KEY,
+        superseded_at INTEGER
+      );
+      CREATE TABLE memory_links (
+        id TEXT PRIMARY KEY,
+        source_fact_id TEXT NOT NULL,
+        target_fact_id TEXT NOT NULL,
+        link_type TEXT NOT NULL,
+        strength REAL NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+    `);
+    // "corrected" was superseded by "correction"; "seed" links to the now-stale "corrected" fact.
+    db.prepare(
+      `INSERT INTO facts (id, superseded_at) VALUES ('seed', NULL), ('corrected', 1000), ('correction', NULL)`,
+    ).run();
+    createLink(db, "seed", "corrected", "RELATED_TO", 1);
+    createLink(db, "corrected", "correction", "RELATED_TO", 1);
+
+    const ids = getConnectedFactIds(db, ["seed"], 3);
+
+    // The superseded fact must not resurface as a connected result, nor serve as an intermediate
+    // hop letting traversal reach "correction" through it.
+    expect(ids).toEqual(["seed"]);
+  });
 });

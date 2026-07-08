@@ -246,6 +246,24 @@ describe("goal registry", () => {
     expect(t.history.at(-1)?.action).toBe("abandoned");
   });
 
+  it("terminateGoal is a no-op when a concurrent call already terminated the goal (loop iteration 27 regression)", async () => {
+    dir = await makeTempDir();
+    const g = await createGoal(dir, { label: "term_race", description: "d", acceptanceCriteria: ["c"] }, defaults);
+
+    const first = await terminateGoal(dir, g.id, "completed", "shipped it", "agent");
+    expect(first.status).toBe("completed");
+
+    // Simulate a second terminate call racing in — e.g. goal_abandon reading the goal before
+    // goal_complete's write landed, then reaching terminateGoal's own lock after it did.
+    const second = await terminateGoal(dir, g.id, "abandoned", "changed my mind", "agent");
+
+    // Must not flip an already-terminal goal to a different terminal status, and must not
+    // append a second, contradictory history entry.
+    expect(second.status).toBe("completed");
+    expect(second.lastOutcome).toBe("shipped it");
+    expect(second.history.filter((h) => h.action === "completed" || h.action === "abandoned")).toHaveLength(1);
+  });
+
   it("rebuildGoalIndex survives corrupt JSON", async () => {
     dir = await makeTempDir();
     await createGoal(dir, { label: "ok", description: "d", acceptanceCriteria: ["c"] }, defaults);

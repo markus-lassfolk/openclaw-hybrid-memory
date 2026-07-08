@@ -12,9 +12,11 @@ import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { HybridMemoryConfig } from "../config.js";
 import {
   DEFAULT_WORKSHOP_LIST_LIMIT,
+  isAuthorizedChangeFeedSessionKey,
   isWorkshopEnabled,
   resolveWorkshopRevertSessionKey,
 } from "../services/workshop-config.js";
+import { BROADCAST_CHANGE_SESSION_KEY } from "../services/change-feed-emit.js";
 import { buildWorkshopDigestReport } from "../services/unified-proposals.js";
 import type { ChangeFeed } from "../services/change-feed.js";
 import { revertChangeById, revertChangeByOrdinal, buildChangeRevertContext } from "../services/change-feed-revert.js";
@@ -217,6 +219,11 @@ export function registerProposalHttpRoutes(ctx: ProposalRoutesContext): void {
             error: "missing session query param (use __broadcast__ for system-wide changes)",
           });
         }
+        const trustedCallerSessionKey =
+          (ctx.api.context?.sessionKey as string | undefined) ?? (ctx.api.context?.sessionId as string | undefined);
+        if (!isAuthorizedChangeFeedSessionKey(sessionKey, trustedCallerSessionKey)) {
+          return json(403, { error: "session query param does not match the caller's own session" });
+        }
         const sinceRaw = u.searchParams.get("since");
         const since = sinceRaw ? Number(sinceRaw) : undefined;
         const sinceOrdinalRaw = u.searchParams.get("sinceOrdinal");
@@ -250,6 +257,9 @@ export function registerProposalHttpRoutes(ctx: ProposalRoutesContext): void {
               : undefined,
           chatSessionKey,
         );
+        if (!isAuthorizedChangeFeedSessionKey(sessionKey, chatSessionKey)) {
+          return json(403, { error: "session/sessionKey does not match the caller's own session" });
+        }
         const revertCtx = buildChangeRevertContext({
           changeFeed: feed,
           cfg: ctx.cfgFull,
@@ -265,6 +275,18 @@ export function registerProposalHttpRoutes(ctx: ProposalRoutesContext): void {
         }
         const id = String(body.id ?? "");
         if (!id) return json(400, { error: "missing id or ordinal" });
+        // revertChangeById resolves purely by primary key with no session check of its own
+        // (unlike revertChangeByOrdinal, which is scoped via getByOrdinal(sessionKey, ordinal)) —
+        // an authorized sessionKey above doesn't stop `id` from naming a different session's
+        // event, so that ownership must be verified here before reverting.
+        const targetEvent = feed.getById(id);
+        if (
+          targetEvent &&
+          targetEvent.sessionKey !== sessionKey &&
+          targetEvent.sessionKey !== BROADCAST_CHANGE_SESSION_KEY
+        ) {
+          return json(403, { error: "change event does not belong to the caller's own session" });
+        }
         const result = revertChangeById(revertCtx, id);
         return json(result.ok ? 200 : 400, result);
       },

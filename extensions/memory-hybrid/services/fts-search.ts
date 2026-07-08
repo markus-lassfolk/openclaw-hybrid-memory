@@ -9,6 +9,8 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
+import { scopeFilterClausePositional } from "../backends/facts-db/scope-sql.js";
+import type { ScopeFilter } from "../types/memory.js";
 import { pluginLogger } from "../utils/logger.js";
 
 // ---------------------------------------------------------------------------
@@ -158,9 +160,17 @@ export function searchFts(
      * ensuring consistent results for historical queries.
      */
     asOf?: number;
+    /**
+     * Restrict matches to facts visible under this scope. Applied inside the same SQL filter
+     * pass as entity/tag/superseded (before the LIMIT that bounds candidates), so the existing
+     * "expand FTS LIMIT when post-filters reject most candidates" retry loop below correctly
+     * compensates when many raw FTS hits are out-of-scope, instead of a caller silently getting
+     * back fewer than `limit` results because it filtered by scope itself, after the fact.
+     */
+    scopeFilter?: ScopeFilter | null;
   } = {},
 ): FtsSearchResult[] {
-  const { limit = 20, entityFilter, tagFilter, columns, includeSuperseded = false, asOf } = options;
+  const { limit = 20, entityFilter, tagFilter, columns, includeSuperseded = false, asOf, scopeFilter } = options;
 
   const ftsQuery = buildFts5Query(query);
   if (!ftsQuery) return [];
@@ -214,6 +224,7 @@ export function searchFts(
         _rowid: number;
       }> = [];
       const nowSec = asOf ?? Math.floor(Date.now() / 1000);
+      const scopeClause = scopeFilterClausePositional(scopeFilter);
       for (let i = 0; i < candidateRowids.length; i += CHUNK_SIZE) {
         const chunk = candidateRowids.slice(i, i + CHUNK_SIZE);
         const ph = chunk.map(() => "?").join(",");
@@ -238,6 +249,8 @@ export function searchFts(
               .replace(/[%_\\]/g, "\\$&")},%`,
           );
         }
+        filterSql += scopeClause.clause;
+        filterParams.push(...(scopeClause.params as Array<string | number>));
         allFiltered.push(
           ...(db.prepare(filterSql).all(...filterParams) as Array<{
             id: string;
@@ -271,8 +284,17 @@ export function searchFts(
     }> = [];
     for (let i = 0; i < survivingRowids.length; i += SNIPPET_CHUNK_SIZE) {
       const chunk = survivingRowids.slice(i, i + SNIPPET_CHUNK_SIZE);
-      const ph2 = chunk.map(() => "?").join(",");
-      const snippetParams: Array<string | number> = [...chunk, matchExpr, limit];
+      // node:sqlite's FTS5 virtual table integration does not apply a parameterized
+      // `rowid IN (?, ?, ...)` constraint when combined with MATCH -- it silently returns rows
+      // for every MATCH hit regardless of the IN-list, unlike the equivalent literal
+      // `rowid IN (1, 2, ...)`, which filters correctly. `chunk` is always a `number[]` of rowids
+      // this function itself just read back from SQLite (never external/user-controlled text), so
+      // embedding them directly in the SQL string is safe and works around the parameter-binding
+      // quirk. Discovered via the "scope filter" test below: whenever Phase 2's filters (entity,
+      // tag, superseded, or scope) narrow results to a rowid that ISN'T the top bm25-ranked match,
+      // this bug silently dropped that fact from the final results entirely.
+      const rowidList = chunk.join(",");
+      const snippetParams: Array<string | number> = [matchExpr, limit];
       allSnippetRows.push(
         ...(db
           .prepare(
@@ -289,7 +311,7 @@ export function searchFts(
              CASE WHEN bm25(facts_fts, 0, 0, 0, 0, 0, 0, 1) < 0 THEN 'value' ELSE '' END
            ) AS matchInfo
          FROM facts_fts fts
-         WHERE fts.rowid IN (${ph2})
+         WHERE fts.rowid IN (${rowidList})
            AND facts_fts MATCH ?
          ORDER BY fts.rank
          LIMIT ?`,

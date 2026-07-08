@@ -385,7 +385,13 @@ export async function runCapture(
         };
 
         const prepared: CapturePrepared[] = [];
-        for (const candidate of toCapture.slice(0, 3)) {
+        // Walk the full priority-sorted list (not a pre-sliced top 3): every call rescans the
+        // entire session's messages, so slicing before the hasDuplicate check below let a
+        // session's first ~3 capturable statements permanently occupy the window — once stored,
+        // they're skipped as duplicates on every later turn and nothing after them ever gets a
+        // chance to be captured. Stop once 3 genuinely NEW candidates are prepared instead.
+        for (const candidate of toCapture) {
+          if (prepared.length >= 3) break;
           if (abortIfSuperseded("auto-capture-prepare")) {
             clearSessionState(sessionKey);
             return;

@@ -32,6 +32,7 @@ import { addOperationBreadcrumb, capturePluginError } from "../../services/error
 import { guardAgainstWrapperArgsDropped } from "../../services/tool-args-guard.js";
 import { emitFeatureTelemetry } from "../../services/feature-telemetry.js";
 import { extractStructuredFields } from "../../services/fact-extraction.js";
+import { isSystemSenderEmail } from "../../utils/system-sender-email.js";
 import { storeAliases } from "../../services/retrieval-aliases.js";
 import { classifyMemoryOperation } from "../../services/classification.js";
 import { matchesExactScope, validateScopedClassificationTarget } from "../../services/classification-scope.js";
@@ -133,11 +134,15 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
     key?: string | null;
     value?: string | null;
     scope?: string | null;
+    /** Vault-resolved backends — required so a project-task fact stored in a named vault mirrors
+     * to that same vault's ledger, not the plugin's default vault. */
+    factsDb?: typeof factsDb;
+    vectorDb?: typeof vectorDb;
   }): Promise<{ synced: boolean; autoTaskUpdated: boolean }> => {
     try {
       return await mirrorMemoryStoreToActiveTaskLedger({
-        factsDb,
-        vectorDb,
+        factsDb: opts.factsDb ?? factsDb,
+        vectorDb: opts.vectorDb ?? vectorDb,
         embeddings,
         activeTaskEnabled: cfg.activeTask?.enabled === true && cfg.activeTask.ledger === "facts",
         category: opts.category,
@@ -349,8 +354,15 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
           const extracted = extractStructuredFields(textToStore, category as MemoryCategory);
           const entity =
             prepareMemoryMetadataForStorage(paramEntity) ?? prepareMemoryMetadataForStorage(extracted.entity);
-          const key = prepareMemoryMetadataForStorage(paramKey) ?? prepareMemoryMetadataForStorage(extracted.key);
-          const value = prepareMemoryMetadataForStorage(paramValue) ?? prepareMemoryMetadataForStorage(extracted.value);
+          const rawKey = prepareMemoryMetadataForStorage(paramKey) ?? prepareMemoryMetadataForStorage(extracted.key);
+          const rawValue =
+            prepareMemoryMetadataForStorage(paramValue) ?? prepareMemoryMetadataForStorage(extracted.value);
+          // #2062: an LLM-supplied key/value pair bypasses extractStructuredFields' own blocklist
+          // entirely (paramKey/paramValue win via `??` above) — apply the same system-sender guard
+          // here, mirroring cmd-distill.ts's identical guard on the LLM-sourced distill path.
+          const rejectSystemSenderEmail = rawKey?.toLowerCase() === "email" && isSystemSenderEmail(rawValue);
+          const key = rejectSystemSenderEmail ? null : rawKey;
+          const value = rejectSystemSenderEmail ? null : rawValue;
 
           // FR-006: Compute scope early so it's available for classify-before-write UPDATE path; normal path may overwrite with multiAgent logic below
           let scope: "global" | "user" | "agent" | "session" = paramScope ?? "global";
@@ -443,6 +455,8 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             autoEntity?: string | null,
             autoKey?: string | null,
             autoValue?: string | null,
+            entryScope?: "global" | "user" | "agent" | "session" | null,
+            entryScopeTarget?: string | null,
           ) => {
             if (!cfg.verification?.enabled || !verificationStore) return;
             const shouldEnroll =
@@ -460,7 +474,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             if (!shouldEnroll) return;
             try {
               const verifiedBy = explicitVerificationTier === "critical" ? "agent" : "system";
-              verificationStore.verify(factId, factText, verifiedBy);
+              verificationStore.verify(factId, factText, verifiedBy, entryScope, entryScopeTarget);
             } catch (err) {
               api.logger.warn?.(`memory-hybrid: auto-verify failed for ${factId}: ${err}`);
             }
@@ -581,6 +595,8 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     vector,
                     importance,
                     category: "technical",
+                    factsDb: storeFactsDb,
+                    vectorDb: storeVectorDb,
                   });
                   await storeRegistryEmbeddings({
                     factsDb: storeFactsDb,
@@ -878,6 +894,8 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                         vector: mergedVector,
                         importance: Math.max(importance, oldFact.importance),
                         category,
+                        factsDb: storeFactsDb,
+                        vectorDb: storeVectorDb,
                       });
                     } catch (err) {
                       api.logger.warn(`memory-hybrid: UPDATE merge vector refresh failed: ${err}`);
@@ -916,6 +934,8 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                       newEntry.entity,
                       newEntry.key,
                       newEntry.value,
+                      newEntry.scope,
+                      newEntry.scopeTarget,
                     );
 
                     const finalImportance = Math.max(importance, oldFact.importance);
@@ -928,6 +948,8 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                           vector,
                           importance: finalImportance,
                           category,
+                          factsDb: storeFactsDb,
+                          vectorDb: storeVectorDb,
                         });
                       }
                       await storeRegistryEmbeddings({
@@ -956,8 +978,15 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                       key,
                       value,
                       scope: newEntry.scope,
+                      factsDb: storeFactsDb,
+                      vectorDb: storeVectorDb,
                     });
-                    await maybeRefreshProjectActiveTaskProjection(newEntry.category, newEntry.id, newEntry.scope);
+                    await maybeRefreshProjectActiveTaskProjection(
+                      newEntry.category,
+                      newEntry.id,
+                      newEntry.scope,
+                      storeFactsDb,
+                    );
 
                     // Issue #159: enqueue contextual variant generation (non-blocking)
                     if (variantQueue) {
@@ -1115,6 +1144,20 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             });
             if (storeResult.newlyStored) {
               recordActiveStoreProvenance(entry.id, textToStore);
+              // Mirrors the classify-before-write UPDATE branch above — without this, the normal
+              // ADD path (the vast majority of memory_store calls) never enrolls a fact in
+              // verificationStore, so verification_tier:"critical" and cfg.verification.autoClassify
+              // silently no-op for every genuinely new fact.
+              maybeAutoVerify(
+                entry.id,
+                textToStore,
+                entry.tags ?? tags,
+                entry.entity,
+                entry.key,
+                entry.value,
+                entry.scope,
+                entry.scopeTarget,
+              );
             }
             // Only set once the write actually superseded the requested fact. When the write
             // dedupe-merged into a different existing fact (newlyStored === false), the caller's
@@ -1151,14 +1194,28 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
 
             try {
               addOperationBreadcrumb("vector", "store-fact");
-              if (vector) {
+              // When storeWithResult merged this call's text onto an existing fact
+              // (newlyStored: false, embeddingStale: true), entry.text is the ACTUAL persisted
+              // content (existing.text + "\n" + textToStore, truncated) — not textToStore alone.
+              // Re-embed from entry.text so the vector backend encodes the same content as the
+              // fact row, instead of leaving a vector embedded from only the newly-added text
+              // fragment (mirrors the classify-before-write UPDATE merge branch above).
+              const isMerge = storeResult.newlyStored === false && storeResult.embeddingStale === true;
+              const vectorText = isMerge ? entry.text : textToStore;
+              const vectorForStore = isMerge ? await embeddings.embed(entry.text) : vector;
+              if (isMerge) {
+                storeFactsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+              }
+              if (vectorForStore) {
                 await storeActiveCanonicalVector({
                   factId: entry.id,
-                  text: textToStore,
+                  text: vectorText,
                   why: whyStored,
-                  vector,
+                  vector: vectorForStore,
                   importance,
                   category,
+                  factsDb: storeFactsDb,
+                  vectorDb: storeVectorDb,
                 });
               }
               await storeRegistryEmbeddings({
@@ -1166,8 +1223,8 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 embeddingRegistry,
                 embeddings,
                 factId: entry.id,
-                text: textToStore,
-                vector,
+                text: vectorText,
+                vector: vectorForStore,
                 logger: api.logger,
                 operation: "store-fact",
               });
@@ -1210,8 +1267,10 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               key,
               value,
               scope: entry.scope,
+              factsDb: storeFactsDb,
+              vectorDb: storeVectorDb,
             });
-            await maybeRefreshProjectActiveTaskProjection(entry.category, entry.id, entry.scope);
+            await maybeRefreshProjectActiveTaskProjection(entry.category, entry.id, entry.scope, storeFactsDb);
 
             // Issue #150: write event to episodic event log
             if (eventLog) {

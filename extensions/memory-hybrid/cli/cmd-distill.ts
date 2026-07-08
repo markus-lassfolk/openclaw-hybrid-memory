@@ -59,7 +59,7 @@ import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/consta
 import { formatDateUtc, formatTimestampUtcFromMs, nowIso } from "../utils/dates.js";
 import { getEnv } from "../utils/env-manager.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
-import { redactMaintenancePrivateText } from "../utils/maintenance-privacy.js";
+import { maybeRedactMaintenanceFactText } from "../utils/maintenance-privacy.js";
 import {
   capTimeoutByMaintenanceRunDeadline,
   getMaintenanceRunAbortSignal,
@@ -67,6 +67,7 @@ import {
   runUntilMaintenanceDeadline,
 } from "../utils/maintenance-run-deadline.js";
 import { loadPrompt } from "../utils/prompt-loader.js";
+import { isSystemSenderEmail } from "../utils/system-sender-email.js";
 import { extractTags } from "../utils/tags.js";
 import { chunkSessionText, estimateTokens } from "../utils/text.js";
 import { getMaxMtime } from "./cmd-extract.js";
@@ -966,9 +967,18 @@ export async function runDistillForCli(
 
       const category = (isValidCategory(fact.category) ? fact.category : "other") as MemoryCategory;
       const entity = fact.entity ?? null;
-      const key = fact.key ?? null;
-      const redactedText = redactMaintenancePrivateText(fact.text);
-      const redactedValue = fact.value ? redactMaintenancePrivateText(fact.value) : redactedText.slice(0, 200);
+      // #2062: distill accepts entity/key/value directly from the LLM, bypassing the regex
+      // extraction blocklist in fact-extraction.ts — apply the same guard here, since a system-
+      // sender address (e.g. a payment-notification email mentioning a company) must never become
+      // that company's key=email.
+      const rejectSystemSenderEmail = fact.key?.toLowerCase() === "email" && isSystemSenderEmail(fact.value);
+      const key = rejectSystemSenderEmail ? null : (fact.key ?? null);
+      const rawValue = rejectSystemSenderEmail ? null : (fact.value ?? null);
+      const redactionCtx = { category, key };
+      const redactedText = maybeRedactMaintenanceFactText(fact.text, cfg.maintenance?.privacyRedaction, redactionCtx);
+      const redactedValue = rawValue
+        ? maybeRedactMaintenanceFactText(rawValue, cfg.maintenance?.privacyRedaction, redactionCtx)
+        : redactedText.slice(0, 200);
 
       if (
         factsDb.hasDuplicate(redactedText, "distillation", {
@@ -1056,9 +1066,16 @@ export async function runDistillForCli(
           context: "distill",
         });
         try {
+          // When storeWithResult merged this call's text onto an existing fact (newlyStored:
+          // false, embeddingStale: true), entry.text is the ACTUAL persisted content, not
+          // redactedText alone -- re-embed from entry.text so the vector backend encodes the
+          // same content as the fact row (mirrors register-store-tools.ts's ADD-path merge fix).
+          const isMerge = storeResult.newlyStored === false && storeResult.embeddingStale === true;
+          const vectorText = isMerge ? entry.text : redactedText;
+          const vectorForStore = isMerge ? await embeddings.embed(entry.text) : vector;
           await vectorDb.store({
-            text: redactedText,
-            vector,
+            text: vectorText,
+            vector: vectorForStore,
             importance: BATCH_STORE_IMPORTANCE,
             category: fact.category,
             id: entry.id,

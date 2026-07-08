@@ -16,7 +16,6 @@ import { SupersededTextsCache } from "./cache-manager.js";
 import { resolveFactsDbPragmas } from "./resolve-facts-db-pragmas.js";
 import {
   deleteFact,
-  getDuplicateIdByNormalizedHash,
   hasDuplicateText,
   refreshAccessedFacts as refreshAccessedFactsImpl,
   refreshIndexedFacts as refreshIndexedFactsImpl,
@@ -526,14 +525,6 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     );
   }
 
-  /**
-   * Return the ID of an existing fact whose normalised hash matches `text`, or null if none.
-   * O(1) index lookup. Useful for resolving the canonical fact ID when `hasDuplicate()` returns true.
-   */
-  getDuplicateIdByNormalizedHash(text: string): string | null {
-    return getDuplicateIdByNormalizedHash(this.liveDb, text);
-  }
-
   /** Mark a fact as superseded by a new fact. Sets superseded_at, superseded_by, and valid_until (bi-temporal). */
   supersede(oldId: string, newId: string | null): boolean {
     const nowSec = Math.floor(Date.now() / 1000);
@@ -568,13 +559,15 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     return findSimilarForClassificationImpl(this.liveDb, text, entity, key, limit, scope, scopeTarget);
   }
 
-  /** For consolidation (2.4): fetch facts with id, text, category, entity, key. Order by created_at DESC. Excludes superseded. */
+  /** For consolidation (2.4): fetch facts with id, text, category, entity, key, scope, scopeTarget. Order by created_at DESC. Excludes superseded. */
   getFactsForConsolidation(limit: number): Array<{
     id: string;
     text: string;
     category: string;
     entity: string | null;
     key: string | null;
+    scope: string;
+    scopeTarget: string | null;
   }> {
     return getFactsForConsolidationImpl(this.liveDb, limit);
   }

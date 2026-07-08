@@ -261,6 +261,50 @@ describe("VerificationStore.update", () => {
     const vf = store.getVerified("fact-cs");
     expect(vf?.checksum).toBe(sha256("Updated text"));
   });
+
+  it("update carries the original entry's scope/scopeTarget forward onto the new version", async () => {
+    const id = store.verify("fact-scoped-update", "Original", "agent", "agent", "tenantA");
+    store.update(id, "Updated text", "system");
+
+    const vf = store.getVerified("fact-scoped-update");
+    expect(vf?.scope).toBe("agent");
+    expect(vf?.scopeTarget).toBe("tenantA");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4b. listLatestVerified — scope filtering (loop iteration 40 regression:
+// memory_verified_list broadcast every tenant's verified-fact content to every other tenant)
+// ---------------------------------------------------------------------------
+
+describe("VerificationStore.listLatestVerified", () => {
+  it("stores scope='global' by default when no scope is supplied", async () => {
+    store.verify("fact-default-scope", "Unscoped fact", "agent");
+    const [entry] = store.listLatestVerified();
+    expect(entry.scope).toBe("global");
+    expect(entry.scopeTarget).toBeNull();
+  });
+
+  it("with no scopeFilter (admin/dashboard use), returns every tenant's verified facts", async () => {
+    store.verify("fact-tenant-a", "Tenant A's private fact", "agent", "agent", "tenantA");
+    store.verify("fact-tenant-b", "Tenant B's private fact", "agent", "agent", "tenantB");
+    store.verify("fact-global", "Globally visible fact", "agent");
+
+    const all = store.listLatestVerified();
+    expect(all.map((v) => v.factId).sort()).toEqual(["fact-global", "fact-tenant-a", "fact-tenant-b"]);
+  });
+
+  it("with a scopeFilter, only returns the caller's own scope plus global facts — not another tenant's", async () => {
+    store.verify("fact-tenant-a", "Tenant A's private fact", "agent", "agent", "tenantA");
+    store.verify("fact-tenant-b", "Tenant B's private fact", "agent", "agent", "tenantB");
+    store.verify("fact-global", "Globally visible fact", "agent");
+
+    const tenantAView = store.listLatestVerified(undefined, { agentId: "tenantA" });
+    const factIds = tenantAView.map((v) => v.factId).sort();
+    expect(factIds).toEqual(["fact-global", "fact-tenant-a"]);
+    expect(factIds).not.toContain("fact-tenant-b");
+    expect(tenantAView.some((v) => v.canonicalText.includes("Tenant B"))).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

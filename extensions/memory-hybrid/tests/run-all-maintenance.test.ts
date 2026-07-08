@@ -44,6 +44,7 @@ function makeBindings(overrides: Partial<ManageBindings> & { factsDb: ManageBind
     runBuildLanguageKeywords: vi.fn().mockResolvedValue({ ok: true, languagesAdded: 0 }),
     runResolveContradictions: vi.fn().mockResolvedValue({ autoResolved: [], ambiguous: [] }),
     runResolveContradictionsAuto: vi.fn().mockResolvedValue({
+      scanned: 0,
       total: 0,
       deterministic: 0,
       llm: 0,

@@ -810,7 +810,11 @@ export async function runExplicitDeepRetrieval(
   // -------------------------------------------------------------------------
   let candidateIds: Set<string> | null = null;
   if (policy.mode === "constrained-recall" && constrainedFilters) {
-    const ids = getCandidateIdsByStructuredFilters(db, constrainedFilters, { limit: 1000, nowSec });
+    const ids = getCandidateIdsByStructuredFilters(db, constrainedFilters, {
+      limit: 1000,
+      nowSec,
+      scopeFilter: scopeFilter as ScopeFilter | undefined,
+    });
     if (ids.length === 1000) {
       pluginLogger.warn("memory-hybrid: constrained-recall candidate set hit 1000 cap — results may be incomplete");
     }

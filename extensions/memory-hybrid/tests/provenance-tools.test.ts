@@ -67,7 +67,10 @@ describe("memory_provenance tool", () => {
     cfg.provenance!.enabled = true;
     const api = makeMockApi("sess-123");
 
-    registerProvenanceTools({ factsDb, eventLog, provenanceService, cfg }, api as any);
+    registerProvenanceTools(
+      { factsDb, eventLog, provenanceService, cfg, currentAgentIdRef: { value: null }, buildToolScopeFilter },
+      api as any,
+    );
 
     const sourceFact = factsDb.store({
       text: "User likes tea",
@@ -125,6 +128,54 @@ describe("memory_provenance tool", () => {
     expect(chain.consolidationChain[0].fact.id).toBe(sourceFact.id);
   });
 
+  it("does not leak a cross-tenant fact's text via memory_provenance or its consolidation chain (loop iteration 9 regression)", async () => {
+    const cfg = hybridConfigSchema.parse({
+      embedding: { provider: "ollama", model: "nomic-embed-text", dimensions: 768 },
+      provenance: { enabled: true },
+    });
+    cfg.provenance!.enabled = true;
+    const api = makeMockApi("sess-scope");
+
+    registerProvenanceTools(
+      { factsDb, eventLog, provenanceService, cfg, currentAgentIdRef: { value: "tenantA" }, buildToolScopeFilter },
+      api as any,
+    );
+
+    const ownFact = factsDb.store({
+      text: "Tenant A's own fact",
+      category: "fact",
+      importance: 0.6,
+      source: "conversation",
+      scope: "agent",
+      scopeTarget: "tenantA",
+    });
+    const foreignFact = factsDb.store({
+      text: "Tenant B's private fact",
+      category: "fact",
+      importance: 0.8,
+      source: "conversation",
+      scope: "agent",
+      scopeTarget: "tenantB",
+    });
+
+    // memory_provenance directly on another tenant's fact must report not-found, not its chain.
+    const directResult = (await api.callTool("memory_provenance", { factId: foreignFact.id })) as any;
+    expect(directResult.details.error).toBe("not_found");
+
+    // A CONSOLIDATED_FROM edge pointing at another tenant's fact must not surface its text.
+    provenanceService.addEdge(ownFact.id, {
+      edgeType: "CONSOLIDATED_FROM",
+      sourceType: "consolidation",
+      sourceId: foreignFact.id,
+      sourceText: foreignFact.text,
+    });
+
+    const result = (await api.callTool("memory_provenance", { factId: ownFact.id })) as any;
+    const chain = result.details.provenance;
+    expect(chain.fact.text).toBe("Tenant A's own fact");
+    expect(JSON.stringify(chain)).not.toContain("Tenant B's private fact");
+  });
+
   it("recursively follows derived_from and consolidation chains", async () => {
     const cfg = hybridConfigSchema.parse({
       embedding: { provider: "ollama", model: "nomic-embed-text", dimensions: 768 },
@@ -133,7 +184,10 @@ describe("memory_provenance tool", () => {
     cfg.provenance!.enabled = true;
     const api = makeMockApi("sess-abc");
 
-    registerProvenanceTools({ factsDb, eventLog, provenanceService, cfg }, api as any);
+    registerProvenanceTools(
+      { factsDb, eventLog, provenanceService, cfg, currentAgentIdRef: { value: null }, buildToolScopeFilter },
+      api as any,
+    );
 
     const factC = factsDb.store({
       text: "C: User likes coffee",
@@ -201,6 +255,134 @@ describe("memory_provenance tool", () => {
     expect(derived.fact_chain?.consolidationChain).toHaveLength(2);
     const consolidationIds = (derived.fact_chain?.consolidationChain ?? []).map((entry: any) => entry.fact.id).sort();
     expect(consolidationIds).toEqual([factC.id, factD.id].sort());
+  });
+
+  it("does not reveal another tenant's live event_log source text via a global fact's provenance (loop iteration 58)", async () => {
+    const cfg = hybridConfigSchema.parse({
+      embedding: { provider: "ollama", model: "nomic-embed-text", dimensions: 768 },
+      provenance: { enabled: true },
+    });
+    cfg.provenance!.enabled = true;
+    const api = makeMockApi("sess-tenantB");
+
+    registerProvenanceTools(
+      { factsDb, eventLog, provenanceService, cfg, currentAgentIdRef: { value: "tenantB" }, buildToolScopeFilter },
+      api as any,
+    );
+
+    // scope defaults to "global" when unspecified -- visible to every tenant.
+    const globalFact = factsDb.store({
+      text: "Support hours are 9-5",
+      category: "fact",
+      importance: 0.6,
+      source: "conversation",
+      provenanceSession: "sess-tenantA",
+    });
+
+    const eventId = eventLog.append({
+      sessionId: "sess-tenantA",
+      timestamp: "2025-01-01T00:00:00.000Z",
+      eventType: "fact_learned",
+      content: { text: "Support hours are 9-5; tenant A's internal ticket queue is at /internal/queue-7" },
+    });
+
+    provenanceService.addEdge(globalFact.id, {
+      edgeType: "DERIVED_FROM",
+      sourceType: "event_log",
+      sourceId: eventId,
+      sourceText: "Support hours are 9-5",
+    });
+
+    const result = (await api.callTool("memory_provenance", { factId: globalFact.id })) as any;
+    const chain = result.details.provenance;
+
+    expect(chain.derivedFrom).toHaveLength(1);
+    expect(chain.derivedFrom[0].event_text).toBe("Support hours are 9-5");
+    expect(JSON.stringify(chain)).not.toContain("internal/queue-7");
+  });
+
+  it("still reveals live event_log source text when no multi-tenant scope restriction is active", async () => {
+    const cfg = hybridConfigSchema.parse({
+      embedding: { provider: "ollama", model: "nomic-embed-text", dimensions: 768 },
+      provenance: { enabled: true },
+    });
+    cfg.provenance!.enabled = true;
+    const api = makeMockApi("sess-single-tenant");
+
+    registerProvenanceTools(
+      { factsDb, eventLog, provenanceService, cfg, currentAgentIdRef: { value: null }, buildToolScopeFilter },
+      api as any,
+    );
+
+    const globalFact = factsDb.store({
+      text: "Support hours are 9-5",
+      category: "fact",
+      importance: 0.6,
+      source: "conversation",
+      provenanceSession: "sess-single-tenant",
+    });
+
+    const eventId = eventLog.append({
+      sessionId: "sess-single-tenant",
+      timestamp: "2025-01-01T00:00:00.000Z",
+      eventType: "fact_learned",
+      content: { text: "Support hours are 9-5, extended detail only in the live event" },
+    });
+
+    provenanceService.addEdge(globalFact.id, {
+      edgeType: "DERIVED_FROM",
+      sourceType: "event_log",
+      sourceId: eventId,
+      sourceText: "Support hours are 9-5",
+    });
+
+    const result = (await api.callTool("memory_provenance", { factId: globalFact.id })) as any;
+    const chain = result.details.provenance;
+
+    expect(chain.derivedFrom[0].event_text).toBe("Support hours are 9-5, extended detail only in the live event");
+  });
+
+  it("reveals live event_log source text for a tenant viewing their own non-global-scoped fact", async () => {
+    const cfg = hybridConfigSchema.parse({
+      embedding: { provider: "ollama", model: "nomic-embed-text", dimensions: 768 },
+      provenance: { enabled: true },
+    });
+    cfg.provenance!.enabled = true;
+    const api = makeMockApi("sess-tenantB-own");
+
+    registerProvenanceTools(
+      { factsDb, eventLog, provenanceService, cfg, currentAgentIdRef: { value: "tenantB" }, buildToolScopeFilter },
+      api as any,
+    );
+
+    const ownFact = factsDb.store({
+      text: "Tenant B likes tea",
+      category: "fact",
+      importance: 0.6,
+      source: "conversation",
+      scope: "agent",
+      scopeTarget: "tenantB",
+      provenanceSession: "sess-tenantB-own",
+    });
+
+    const eventId = eventLog.append({
+      sessionId: "sess-tenantB-own",
+      timestamp: "2025-01-01T00:00:00.000Z",
+      eventType: "fact_learned",
+      content: { text: "Tenant B likes tea, with extra live detail" },
+    });
+
+    provenanceService.addEdge(ownFact.id, {
+      edgeType: "DERIVED_FROM",
+      sourceType: "event_log",
+      sourceId: eventId,
+      sourceText: "Tenant B likes tea",
+    });
+
+    const result = (await api.callTool("memory_provenance", { factId: ownFact.id })) as any;
+    const chain = result.details.provenance;
+
+    expect(chain.derivedFrom[0].event_text).toBe("Tenant B likes tea, with extra live detail");
   });
 });
 

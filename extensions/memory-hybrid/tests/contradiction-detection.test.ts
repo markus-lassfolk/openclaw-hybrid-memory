@@ -23,6 +23,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { repairUndetectedContradictions, resolveContradictionsAutonomously } from "../backends/facts-db/contradictions.js";
 import { _testing } from "../index.js";
 
 const { FactsDB } = _testing;
@@ -448,5 +449,123 @@ describe("updateConfidence", () => {
     const fact = storeFact("user", "theme", "dark", "User prefers dark mode", 0.9);
     const updated = db.updateConfidence(fact.id, 0.5);
     expect(updated).toBeCloseTo(1.0, 5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 13. System-sender email mis-attribution guard (#2062)
+//
+// A notification/system-sender address (noreply@, robot@, etc.) mentioned in a fact's text is
+// never that fact's "true" value — e.g. a payment-notification email that mentions a company is
+// not that company's own email address. Such a value must not compete in a contradiction against
+// a genuine value. All examples use fabricated placeholder data.
+// ---------------------------------------------------------------------------
+describe("detectContradictions: system-sender email blocklist guard", () => {
+  it("does not record a contradiction when the new fact's value is a system-sender address", () => {
+    storeFact("Acme Consulting AB", "email", "jane.doe@example.com", "Acme Consulting AB primary contact");
+
+    const contradictions = db.detectContradictions(
+      "new-fact-id",
+      "Acme Consulting AB",
+      "email",
+      "noreply@vendor-example.com",
+    );
+
+    expect(contradictions).toHaveLength(0);
+  });
+
+  it("does not record a contradiction when the existing conflicting fact's value is a system-sender address", () => {
+    storeFact("Acme Consulting AB", "email", "robot@notify-example.se", "Payment notification mentioning Acme");
+    const newFact = storeFact("Acme Consulting AB", "email", "jane.doe@example.com", "Roster contact for Acme");
+
+    const contradictions = db.detectContradictions(newFact.id, "Acme Consulting AB", "email", "jane.doe@example.com");
+
+    expect(contradictions).toHaveLength(0);
+  });
+
+  it("still detects a genuine contradiction between two non-blocklisted values", () => {
+    const old = storeFact("Acme Consulting AB", "email", "jane.doe@example.com", "Acme Consulting AB contact");
+    const newFact = storeFact("Acme Consulting AB", "email", "sam.patel@example.com", "Acme Consulting AB new contact");
+
+    const contradictions = db.detectContradictions(newFact.id, "Acme Consulting AB", "email", "sam.patel@example.com");
+
+    expect(contradictions).toHaveLength(1);
+    expect(contradictions[0].oldFactId).toBe(old.id);
+  });
+
+  it("repairUndetectedContradictions does not backfill a pair where one side is a system-sender address", () => {
+    storeFact("Acme Consulting AB", "email", "noreply@vendor-example.com", "Payment notification mentioning Acme");
+    storeFact("Acme Consulting AB", "email", "jane.doe@example.com", "Roster contact for Acme");
+
+    const repair = repairUndetectedContradictions(db.getRawDb(), (a, b, t, s) => db.createLink(a, b, t, s ?? 1.0), 50);
+
+    expect(repair.pairsRepaired).toBe(0);
+    expect(db.queryContradictionSurface({ resolved: false, limit: 10 })).toHaveLength(0);
+  });
+
+  it("still detects a contradiction for a non-email key whose value happens to contain a blocklisted substring", () => {
+    const old = storeFact("Acme Consulting AB", "notes", "escalate to robot@ops-bot.internal", "Support routing note");
+    const newFact = storeFact(
+      "Acme Consulting AB",
+      "notes",
+      "escalate to oncall@ops-bot.internal",
+      "Updated support routing note",
+    );
+
+    const contradictions = db.detectContradictions(
+      newFact.id,
+      "Acme Consulting AB",
+      "notes",
+      "escalate to oncall@ops-bot.internal",
+    );
+
+    expect(contradictions).toHaveLength(1);
+    expect(contradictions[0].oldFactId).toBe(old.id);
+  });
+
+  it("repairUndetectedContradictions still backfills a non-email-key pair with a blocklisted substring", () => {
+    storeFact("Acme Consulting AB", "notes", "escalate to robot@ops-bot.internal", "Support routing note");
+    storeFact("Acme Consulting AB", "notes", "escalate to oncall@ops-bot.internal", "Updated support routing note");
+
+    const repair = repairUndetectedContradictions(db.getRawDb(), (a, b, t, s) => db.createLink(a, b, t, s ?? 1.0), 50);
+
+    expect(repair.pairsRepaired).toBe(1);
+    expect(db.queryContradictionSurface({ resolved: false, limit: 10 })).toHaveLength(1);
+  });
+});
+
+describe("resolveContradictionsAutonomously: scanned vs total reporting", () => {
+  it("reports scanned (raw unresolved-row count) distinctly from total (valid pairs) when a row references a since-deleted fact", async () => {
+    storeFact("Acme Consulting AB", "status", "active", "Acme status active");
+    const acmeNew = storeFact("Acme Consulting AB", "status", "inactive", "Acme status inactive");
+    db.detectContradictions(acmeNew.id, "Acme Consulting AB", "status", "inactive");
+
+    storeFact("Beta Traders", "status", "active", "Beta status active");
+    const betaNew = storeFact("Beta Traders", "status", "inactive", "Beta status inactive");
+    db.detectContradictions(betaNew.id, "Beta Traders", "status", "inactive");
+
+    // Simulate a fact hard-pruned (e.g. by lifecycle cleanup) after its contradiction row was
+    // recorded, leaving an orphaned contradiction row — the ON DELETE CASCADE FK normally prevents
+    // this on a single connection with foreign_keys enforcement on, but disable it transiently here
+    // to reproduce the multi-connection/cross-process edge case the guard in
+    // resolveContradictionsAutonomously (the `!newFact || !oldFact` continue) exists to handle.
+    // supersede() alone wouldn't reproduce this: a superseded row still exists and getById() still
+    // returns it.
+    const rawDb = db.getRawDb();
+    rawDb.exec("PRAGMA foreign_keys = OFF");
+    rawDb.prepare("DELETE FROM facts WHERE id = ?").run(betaNew.id);
+    rawDb.exec("PRAGMA foreign_keys = ON");
+
+    const result = await resolveContradictionsAutonomously(
+      db.getRawDb(),
+      (id) => db.getById(id),
+      (oldId, newId) => db.supersede(oldId, newId),
+    );
+
+    // scanned counts every unresolved row (2); total excludes the one with a missing fact (1) —
+    // these must stay distinct so a caller logging both isn't shown a "total" that appears to
+    // shrink between the live onProgress heartbeat (which uses `scanned`) and the final result.
+    expect(result.scanned).toBe(2);
+    expect(result.total).toBe(1);
   });
 });

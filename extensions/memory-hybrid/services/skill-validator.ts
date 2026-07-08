@@ -445,9 +445,17 @@ export class SkillValidator {
         if (transcriptLike || toolBlobLike || stackTraceLike) transcriptToolOrStackLineCount++;
       }
 
+      // CommonMark also treats a tab/4-space-indented line as a code block, not just fenced
+      // ```/~~~ blocks. Without this, every codeBlockOnly DENY_RULE (exec, spawn, rm-rf,
+      // credential-env-secret, ...) could be bypassed by indenting the dangerous line instead
+      // of fencing it. Gate only the security rules on this — leave fence bookkeeping
+      // (currentFenceLines, codeBlockLineCount) trained on true fences only.
+      const indentedCodeLine = !inCodeBlock && /^(?:\t| {4,})\S/.test(line);
+      const effectiveInCodeBlock = inCodeBlock || indentedCodeLine;
+
       // Apply rules
       for (const rule of DENY_RULES) {
-        if (rule.codeBlockOnly && !inCodeBlock) continue;
+        if (rule.codeBlockOnly && !effectiveInCodeBlock) continue;
         if (rule.pattern.test(line)) {
           violations.push(`Line ${lineNumber}: [${rule.name}] ${rule.description} — "${trimmed.slice(0, 80)}"`);
         }
@@ -455,7 +463,7 @@ export class SkillValidator {
 
       // Additional check: any code block containing shell-like content should
       // not have backtick command substitution
-      if (inCodeBlock && /\$\([^)]+\)/.test(line)) {
+      if (effectiveInCodeBlock && /\$\([^)]+\)/.test(line)) {
         violations.push(
           `Line ${lineNumber}: [shell-subst] Command substitution $(...) in code block — "${trimmed.slice(0, 80)}"`,
         );

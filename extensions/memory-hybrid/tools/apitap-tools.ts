@@ -165,7 +165,7 @@ export function registerApitapTools(ctx: ApitapToolsContext, api: ClawdbotPlugin
           };
         }
 
-        const urlError = validateUrl(url, cfg.apiTap);
+        const urlError = await validateUrl(url, cfg.apiTap);
         if (urlError) {
           return {
             content: [{ type: "text", text: `Cannot capture: ${urlError}` }],
@@ -193,7 +193,14 @@ export function registerApitapTools(ctx: ApitapToolsContext, api: ClawdbotPlugin
         lines.splice(2, 0, `  Duration:         ${Math.round(result.durationMs / 1000)}s`);
 
         if (stored.length > 0) {
-          lines[lines.length - 2] = "Discovered endpoints (pending review):";
+          // Relabel the "Discovered endpoints:" header built by persistAndFormatEndpoints — find
+          // it by content rather than a fixed offset from the end, since the splice() above (and
+          // the optional "Blocked (filtered)" line inside persistAndFormatEndpoints) shift the
+          // header's position depending on whether those lines are present.
+          const headerIndex = lines.indexOf("Discovered endpoints:");
+          if (headerIndex !== -1) {
+            lines[headerIndex] = "Discovered endpoints (pending review):";
+          }
           lines.push("Use apitap_list to see all discovered endpoints.");
         }
 
@@ -254,7 +261,7 @@ export function registerApitapTools(ctx: ApitapToolsContext, api: ClawdbotPlugin
           };
         }
 
-        const urlError = validateUrl(url, cfg.apiTap);
+        const urlError = await validateUrl(url, cfg.apiTap);
         if (urlError) {
           return {
             content: [{ type: "text", text: `Cannot peek: ${urlError}` }],

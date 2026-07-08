@@ -147,6 +147,19 @@ const MAINTENANCE_JOB_CATALOG: MaintenanceJobCatalogEntry[] = [
     mutates: { sqlite: true, lancedb: false, github: false, memoryFacts: true },
   },
   {
+    jobKey: "weekly-crystallization-skills-rescan",
+    name: "weekly-crystallization-skills-rescan",
+    pluginJobId: "hybrid-mem:weekly-crystallization-skills-rescan",
+    aliases: [],
+    // `openclaw hybrid-mem skills rescan` -> CrystallizationProposer.rescanInstalledSkills()
+    // writes to the same CrystallizationStore sqlite file (crystallization_proposals table) that
+    // weekly-persona-proposals' runCrystallizationProposalCycle() also writes to — a real
+    // concurrent-write collision risk distinct from (and narrower than) the main facts.db.
+    lockKey: "crystallization-sqlite",
+    collisionGroups: ["crystallization-store-writer"],
+    mutates: { sqlite: true, lancedb: false, github: false, memoryFacts: false },
+  },
+  {
     jobKey: "weekly-deep-maintenance",
     name: "weekly-deep-maintenance",
     pluginJobId: "hybrid-mem:weekly-deep-maintenance",
@@ -161,7 +174,9 @@ const MAINTENANCE_JOB_CATALOG: MaintenanceJobCatalogEntry[] = [
     pluginJobId: "hybrid-mem:weekly-persona-proposals",
     aliases: [],
     lockKey: "sqlite",
-    collisionGroups: ["sqlite-writer", "memory-facts-writer"],
+    // Also shares the CrystallizationStore sqlite file with weekly-crystallization-skills-rescan
+    // (see that entry's comment) — flagged separately from the main facts.db collision group.
+    collisionGroups: ["sqlite-writer", "memory-facts-writer", "crystallization-store-writer"],
     mutates: { sqlite: true, lancedb: false, github: false, memoryFacts: true },
   },
   {
@@ -190,6 +205,15 @@ const MAINTENANCE_JOB_CATALOG: MaintenanceJobCatalogEntry[] = [
     lockKey: "sqlite+lancedb",
     collisionGroups: ["sqlite-writer", "lancedb-writer", "memory-facts-writer"],
     mutates: { sqlite: true, lancedb: true, github: false, memoryFacts: true },
+  },
+  {
+    jobKey: "daily-lifecycle-sync",
+    name: "daily-lifecycle-sync",
+    pluginJobId: "hybrid-mem:daily-lifecycle-sync",
+    aliases: [],
+    lockKey: "sqlite",
+    collisionGroups: ["sqlite-writer", "memory-facts-writer"],
+    mutates: { sqlite: true, lancedb: false, github: false, memoryFacts: true },
   },
   {
     jobKey: "daily-storage-growth-sample",
@@ -240,6 +264,15 @@ const MAINTENANCE_JOB_CATALOG: MaintenanceJobCatalogEntry[] = [
     jobKey: "weekly-pending-digest-autopilot",
     name: "weekly-pending-digest-autopilot",
     pluginJobId: "hybrid-mem:weekly-pending-digest-autopilot",
+    aliases: [],
+    lockKey: undefined,
+    collisionGroups: [],
+    mutates: { sqlite: false, lancedb: false, github: false, memoryFacts: false },
+  },
+  {
+    jobKey: "workshop-approval-reminder",
+    name: "workshop-approval-reminder",
+    pluginJobId: "hybrid-mem:workshop-approval-reminder",
     aliases: [],
     lockKey: undefined,
     collisionGroups: [],

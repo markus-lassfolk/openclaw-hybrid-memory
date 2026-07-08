@@ -26,7 +26,7 @@ export const TAG_PATTERNS: Array<[string, RegExp]> = [
   ["lancedb", /\blancedb\b/i],
   ["api", /\bapi\s+(key|endpoint|url)\b/i],
   ["docker", /\bdocker\b/i],
-  ["kubernetes", /\bkubernetes|k8s\b/i],
+  ["kubernetes", /\b(?:kubernetes|k8s)\b/i],
   ["ha", /\bha\b/i],
 ];
 

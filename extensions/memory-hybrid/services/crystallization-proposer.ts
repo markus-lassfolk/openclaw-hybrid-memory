@@ -772,7 +772,10 @@ export class CrystallizationProposer {
           renameSync(activeDir, located.skillDir);
         }
       } catch {
-        removeCrystallizedSkillDir(restoreResult.outputPath);
+        // The move-back-to-quarantine attempt failed too. The skill's only surviving copy is
+        // still sitting at `activeDir` (== dirname(restoreResult.outputPath)) — deleting it here
+        // would destroy the only remaining copy of the skill's data. Leave it in place, orphaned
+        // from the DB's "quarantined" status, for manual reconciliation instead of losing it.
       }
       return { success: false, message: "Failed to update proposal status to installed" };
     }

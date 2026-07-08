@@ -133,8 +133,12 @@ export function registerDirectoryTools(runtime: MemoryToolRuntime): void {
             }
             const people = factsDb.listContactsForOrganization(org.id, cap);
             const factIds = factsDb.listFactIdsLinkedToOrg(org.id, cap);
+            // SECURITY: scope-check each fact — org/contact rows aren't scoped themselves, but the
+            // facts linked to them are, and memory_promote/memory_forget in this same file already
+            // scope-check their fact reads the same way.
+            const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
             const factSummaries = factIds.map((id) => {
-              const f = factsDb.getById(id);
+              const f = factsDb.getById(id, { scopeFilter });
               return f
                 ? { id: f.id, text: f.text.slice(0, 240), category: f.category }
                 : { id, text: "(missing)", category: "?" };

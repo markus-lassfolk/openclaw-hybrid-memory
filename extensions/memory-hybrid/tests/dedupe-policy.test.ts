@@ -290,6 +290,56 @@ describe("FactsDB sourceProfiles write path", () => {
     }
   });
 
+  it("evict-lowest-confidence never supersedes another tenant's fact (loop iteration 12 regression)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dedupe-profile-evict-scope-"));
+    const db = new FactsDB(join(dir, "facts.db"), {
+      fuzzyDedupe: true,
+      storeConfig: {
+        fuzzyDedupe: true,
+        sourceProfiles: {
+          "noisy-evict-scoped": { maxPerDay: 1, onDuplicate: "store", onOverflow: "evict-lowest-confidence" },
+        },
+      },
+    });
+    try {
+      const bobsFact = db.store({
+        text: "Bob's low-confidence stale fact",
+        category: "fact",
+        importance: 0.1,
+        entity: null,
+        key: null,
+        value: null,
+        source: "noisy-evict-scoped",
+        confidence: 0.2,
+        scope: "user",
+        scopeTarget: "bob",
+      });
+
+      expect(() =>
+        db.store({
+          text: "Alice's fresh write, no eviction candidate in her own scope",
+          category: "fact",
+          importance: 0.5,
+          entity: null,
+          key: null,
+          value: null,
+          source: "noisy-evict-scoped",
+          confidence: 0.9,
+          scope: "user",
+          scopeTarget: "alice",
+        }),
+      ).toThrow(/daily write quota exceeded/);
+
+      const stillActive = db.getRawDb().prepare("SELECT superseded_at FROM facts WHERE id = ?").get(bobsFact.id) as {
+        superseded_at: number | null;
+      };
+      expect(stillActive.superseded_at).toBeNull();
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("applies onDuplicate=boost when at maxPerDay (duplicate path does not consume quota)", () => {
     const dir = mkdtempSync(join(tmpdir(), "dedupe-profile-quota-boost-"));
     const db = new FactsDB(join(dir, "facts.db"), {

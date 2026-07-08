@@ -88,6 +88,7 @@ export type ManageContext = {
     dryRun: boolean;
     limit: number;
     model: string;
+    onProgress?: (progress: { clusterIndex: number; totalClusters: number; merged: number }) => void;
   }) => Promise<{
     clustersFound: number;
     merged: number;

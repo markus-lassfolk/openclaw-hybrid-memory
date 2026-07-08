@@ -2,7 +2,7 @@
  * Fact lifecycle CRUD: store, access refresh, delete, dedupe (Issue #954).
  */
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 
 import { type DecayClass, type MemoryCategory, type StoreConfig, TTL_DEFAULTS } from "../../config.js";
 import { applyDedupe, hasGlobalDuplicateProbe, resolveDedupeProfile } from "../../services/dedupe-policy.js";
@@ -110,16 +110,6 @@ export function validateStoreEntryInput(
   if (!Number.isFinite(imp) || imp < 0 || imp > 1) {
     throw new Error("memory-hybrid: importance must be a number in [0, 1]");
   }
-}
-
-export function getDuplicateIdByNormalizedHash(db: DatabaseSync, text: string): string | null {
-  const hash = normalizedHash(text);
-  const row = db
-    .prepare(
-      "SELECT id FROM facts WHERE normalized_hash = ? AND superseded_at IS NULL ORDER BY created_at DESC LIMIT 1",
-    )
-    .get(hash) as { id: string } | undefined;
-  return row?.id ?? null;
 }
 
 export type StoreFactContext = {
@@ -477,14 +467,19 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
           // quota from acting as a "freeze the noise" gate when noisy sources accumulate stale
           // low-confidence rows.
           if (profile.onOverflow === "evict-lowest-confidence") {
+            // Restrict the eviction candidate to the same scope bucket as the incoming write —
+            // otherwise a quota trip in one tenant's scope could supersede another tenant's fact
+            // that merely shares the same `source` string.
+            const evictScopeSql = scope === "global" ? " AND scope = 'global'" : " AND scope = ? AND scope_target = ?";
+            const evictScopeParams: SQLInputValue[] = scope === "global" ? [] : [scope, scopeTarget];
             const victim = ctx.db
               .prepare(
                 `SELECT id FROM facts
-                  WHERE source = ? AND superseded_at IS NULL
+                  WHERE source = ? AND superseded_at IS NULL${evictScopeSql}
                   ORDER BY confidence ASC, COALESCE(recall_count, 0) ASC, created_at ASC
                   LIMIT 1`,
               )
-              .get(sourceForPolicy) as { id: string } | undefined;
+              .get(sourceForPolicy, ...evictScopeParams) as { id: string } | undefined;
             if (victim) {
               ctx.db
                 .prepare("UPDATE facts SET superseded_at = ? WHERE id = ? AND superseded_at IS NULL")

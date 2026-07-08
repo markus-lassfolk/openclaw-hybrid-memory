@@ -918,6 +918,15 @@ export class VectorDB {
     const oldTableName = `${LANCE_TABLE}_old_${Date.now()}`;
     const oldTableDir = join(resolvedPath, `${oldTableName}.lance`);
 
+    // Same guard resetTableForReindex() applies before its own destructive rmSync() calls (issue #768).
+    const dangerousPathsEnabled = process.env.OPENCLAW_HYBRID_MEM_DANGEROUS_PATHS === "1";
+    const openclawMemoryDir = join(homedir(), ".openclaw", "memory");
+    if (!dangerousPathsEnabled && !isPathInsideDir(openclawMemoryDir, resolvedPath)) {
+      throw new Error(
+        `Refusing to remove LanceDB table directories outside ${openclawMemoryDir}. Set OPENCLAW_HYBRID_MEM_DANGEROUS_PATHS=1 to override.`,
+      );
+    }
+
     // Verify shadow table exists
     if (!existsSync(shadowTableDir)) {
       throw new Error(`Shadow table directory not found: ${shadowTableName}`);
@@ -955,104 +964,116 @@ export class VectorDB {
     // Perform atomic swap: close connection, rename directories, reconnect
     this.logWarn(`memory-hybrid: swapping shadow table ${shadowTableName} into place...`);
 
+    // Exclude concurrent readers the same way optimize() does (#768): closing the connection
+    // and renaming the on-disk table directories out from under a search()/count()/
+    // getVectorsByFactIds() call that is still reading this.table would fail or silently
+    // degrade mid-read. New readers see isOptimizeLocked() and skip counting themselves —
+    // they'll simply observe whichever table generation is current when they run.
+    setOptimizeLock(this.dbPath, true);
     try {
-      this.db.close();
-    } catch {
-      // ignore close errors
-    }
-    this.shadowTableCache.clear();
-    this.db = null;
-    this.table = null;
-    this.semanticQueryCacheTable = null;
+      await this.waitForReadersToDrain();
 
-    // Rename main → old (if main exists)
-    let movedMainToOld = false;
-    if (existsSync(mainTableDir)) {
       try {
-        rmSync(oldTableDir, { recursive: true, force: true }); // Clean up any stale old table
+        this.db.close();
       } catch {
-        // ignore
+        // ignore close errors
       }
-      await this.renamePath(mainTableDir, oldTableDir);
-      movedMainToOld = true;
-    }
+      this.shadowTableCache.clear();
+      this.db = null;
+      this.table = null;
+      this.semanticQueryCacheTable = null;
 
-    // Rename shadow → main (with explicit rollback on failure).
-    let swapSucceeded = false;
-    let rollbackFailed = false;
-    let reopenHealthy = false;
-    try {
-      await this.renamePath(shadowTableDir, mainTableDir);
-      swapSucceeded = true;
-    } catch (swapErr) {
-      // Attempt rollback: restore main from old backup when available.
-      // Only require that oldTableDir exists — do NOT gate on shadowTableDir
-      // being present, because a partial cross-device copy may have consumed
-      // the shadow before the error was raised.
-      if (movedMainToOld && existsSync(oldTableDir) && !existsSync(mainTableDir)) {
+      // Rename main → old (if main exists)
+      let movedMainToOld = false;
+      if (existsSync(mainTableDir)) {
         try {
-          await this.renamePath(oldTableDir, mainTableDir);
+          rmSync(oldTableDir, { recursive: true, force: true }); // Clean up any stale old table
+        } catch {
+          // ignore
+        }
+        await this.renamePath(mainTableDir, oldTableDir);
+        movedMainToOld = true;
+      }
+
+      // Rename shadow → main (with explicit rollback on failure).
+      let swapSucceeded = false;
+      let rollbackFailed = false;
+      let reopenHealthy = false;
+      try {
+        await this.renamePath(shadowTableDir, mainTableDir);
+        swapSucceeded = true;
+      } catch (swapErr) {
+        // Attempt rollback: restore main from old backup when available.
+        // Only require that oldTableDir exists — do NOT gate on shadowTableDir
+        // being present, because a partial cross-device copy may have consumed
+        // the shadow before the error was raised.
+        if (movedMainToOld && existsSync(oldTableDir) && !existsSync(mainTableDir)) {
+          try {
+            await this.renamePath(oldTableDir, mainTableDir);
+            this.logWarn(
+              `memory-hybrid: shadow swap failed — successfully rolled back main table from backup. Error: ${swapErr}`,
+            );
+          } catch (rollbackErr) {
+            rollbackFailed = true;
+            const rollbackMessage = `memory-hybrid: shadow swap FAILED AND rollback FAILED — database may be in a broken state! Manual recovery: rename '${oldTableDir}' → '${mainTableDir}'. SwapError: ${swapErr}. RollbackError: ${rollbackErr}`;
+            this.logWarn(rollbackMessage);
+            throw new Error(rollbackMessage);
+          }
+        }
+        if (existsSync(shadowTableDir)) {
+          this.logWarn(`memory-hybrid: shadow swap failed; shadow table preserved for inspection: ${shadowTableName}`);
+        }
+        throw swapErr;
+      } finally {
+        // Skip reconnect when rollback itself failed: ensureInitialized() may create a
+        // fresh empty main table, which mutates disk state before operators can recover
+        // from the preserved backup directory.
+        if (rollbackFailed) {
           this.logWarn(
-            `memory-hybrid: shadow swap failed — successfully rolled back main table from backup. Error: ${swapErr}`,
+            `memory-hybrid: skipping post-swap reconnect because rollback failed; preserving backup at ${oldTableDir} for manual recovery`,
           );
-        } catch (rollbackErr) {
-          rollbackFailed = true;
-          const rollbackMessage = `memory-hybrid: shadow swap FAILED AND rollback FAILED — database may be in a broken state! Manual recovery: rename '${oldTableDir}' → '${mainTableDir}'. SwapError: ${swapErr}. RollbackError: ${rollbackErr}`;
-          this.logWarn(rollbackMessage);
-          throw new Error(rollbackMessage);
+        } else {
+          this.lanceInitFailed = false;
+          this.lanceDbAvailable = true;
+          this.closed = false;
+          this.initPromise = null;
+          try {
+            await this.ensureInitialized();
+            reopenHealthy = this.isLanceAvailable();
+            if (!reopenHealthy) {
+              this.logWarn(
+                `memory-hybrid: shadow swap reopen completed in degraded mode; preserving old table backup ${oldTableName} for manual recovery`,
+              );
+            }
+          } catch (initErr) {
+            this.logWarn(`memory-hybrid: shadow swap reconnect failed (DB may be degraded): ${initErr}`);
+          }
         }
       }
-      if (existsSync(shadowTableDir)) {
-        this.logWarn(`memory-hybrid: shadow swap failed; shadow table preserved for inspection: ${shadowTableName}`);
-      }
-      throw swapErr;
-    } finally {
-      // Skip reconnect when rollback itself failed: ensureInitialized() may create a
-      // fresh empty main table, which mutates disk state before operators can recover
-      // from the preserved backup directory.
-      if (rollbackFailed) {
-        this.logWarn(
-          `memory-hybrid: skipping post-swap reconnect because rollback failed; preserving backup at ${oldTableDir} for manual recovery`,
-        );
-      } else {
-        this.lanceInitFailed = false;
-        this.lanceDbAvailable = true;
-        this.closed = false;
-        this.initPromise = null;
-        try {
-          await this.ensureInitialized();
-          reopenHealthy = this.isLanceAvailable();
-          if (!reopenHealthy) {
+
+      // Remove old table directory only after a healthy reopen so manual rollback remains
+      // possible if the swapped-in table cannot be opened.
+      if (swapSucceeded && existsSync(oldTableDir)) {
+        if (!reopenHealthy) {
+          this.logWarn(
+            `memory-hybrid: preserved old table backup ${oldTableName} because reopened table health check failed`,
+          );
+        } else {
+          try {
+            rmSync(oldTableDir, { recursive: true, force: true });
+            this.logWarn(`memory-hybrid: removed old table ${oldTableName} after successful swap`);
+          } catch (rmErr) {
             this.logWarn(
-              `memory-hybrid: shadow swap reopen completed in degraded mode; preserving old table backup ${oldTableName} for manual recovery`,
+              `memory-hybrid: failed to remove old table ${oldTableName} (non-fatal, clean up manually): ${rmErr}`,
             );
           }
-        } catch (initErr) {
-          this.logWarn(`memory-hybrid: shadow swap reconnect failed (DB may be degraded): ${initErr}`);
         }
       }
-    }
 
-    // Remove old table directory only after a healthy reopen so manual rollback remains
-    // possible if the swapped-in table cannot be opened.
-    if (swapSucceeded && existsSync(oldTableDir)) {
-      if (!reopenHealthy) {
-        this.logWarn(
-          `memory-hybrid: preserved old table backup ${oldTableName} because reopened table health check failed`,
-        );
-      } else {
-        try {
-          rmSync(oldTableDir, { recursive: true, force: true });
-          this.logWarn(`memory-hybrid: removed old table ${oldTableName} after successful swap`);
-        } catch (rmErr) {
-          this.logWarn(
-            `memory-hybrid: failed to remove old table ${oldTableName} (non-fatal, clean up manually): ${rmErr}`,
-          );
-        }
-      }
+      this.logWarn("memory-hybrid: shadow table swap completed successfully");
+    } finally {
+      setOptimizeLock(this.dbPath, false);
     }
-
-    this.logWarn("memory-hybrid: shadow table swap completed successfully");
   }
 
   /**
@@ -1813,25 +1834,31 @@ export class VectorDB {
       await this.ensureInitialized();
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) return 0;
       const acquired = this.acquireReader();
+      let timedOut = false;
       try {
         const t = this.getTable();
         const countPromise = t.countRows();
         const count = await withTimeout(VECTORDB_COUNT_TIMEOUT_MS, () => countPromise);
         if (count === null) {
+          timedOut = true;
           this.logWarn(`memory-hybrid: LanceDB count timed out after ${VECTORDB_COUNT_TIMEOUT_MS}ms`);
-          // countRows() is not cancellable; log settlement without holding the reader slot
-          // (a hung promise must not leak _activeReadersByPath and block optimize drain).
-          void countPromise.then(
-            () => {},
-            (countErr) => {
-              this.logWarn(`memory-hybrid: LanceDB count failed after timing out: ${countErr}`);
-            },
-          );
+          // countRows() is not cancellable; keep the reader slot held until it settles instead of
+          // releasing it here — a hung native call must still be counted by optimize()'s read-drain
+          // wait, or a shadow-table swap could rename table files out from under it (mirrors the
+          // same handoff in getVectorsByFactIds()).
+          countPromise
+            .then(
+              () => {},
+              (countErr) => {
+                this.logWarn(`memory-hybrid: LanceDB count failed after timing out: ${countErr}`);
+              },
+            )
+            .finally(() => this.releaseReader(acquired));
           return 0;
         }
         return count;
       } finally {
-        this.releaseReader(acquired);
+        if (!timedOut) this.releaseReader(acquired);
       }
     };
     try {
@@ -1880,22 +1907,28 @@ export class VectorDB {
       const cacheTable = this.getSemanticQueryCacheTable();
       if (!cacheTable) return 0;
       const acquired = this.acquireReader();
+      let timedOut = false;
       try {
         const countPromise = cacheTable.countRows();
         const count = await withTimeout(VECTORDB_COUNT_TIMEOUT_MS, () => countPromise);
         if (count === null) {
+          timedOut = true;
           this.logWarn(`memory-hybrid: semantic query cache count timed out after ${VECTORDB_COUNT_TIMEOUT_MS}ms`);
-          void countPromise.then(
-            () => {},
-            (countErr) => {
-              this.logWarn(`memory-hybrid: semantic query cache count failed after timing out: ${countErr}`);
-            },
-          );
+          // See count()'s matching comment: keep the reader slot held until the native call
+          // settles rather than releasing it here, so optimize()'s read-drain wait can't miss it.
+          countPromise
+            .then(
+              () => {},
+              (countErr) => {
+                this.logWarn(`memory-hybrid: semantic query cache count failed after timing out: ${countErr}`);
+              },
+            )
+            .finally(() => this.releaseReader(acquired));
           return 0;
         }
         return count;
       } finally {
-        this.releaseReader(acquired);
+        if (!timedOut) this.releaseReader(acquired);
       }
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {

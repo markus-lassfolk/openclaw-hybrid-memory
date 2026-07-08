@@ -163,10 +163,18 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
     checkpointState &&
     Number.isFinite(checkpointState.offset) &&
     checkpointState.offset > 0 &&
-    checkpointState.offset < total
+    // `<= total` (not `< total`): a checkpoint saved with offset === total means every fact was
+    // already processed — likely persisted right before an interrupted final cleanup step. Only
+    // rejecting offset < total treated that exactly-completed state as "nothing to resume,"
+    // forcing a full needless re-migration of every already-migrated fact.
+    checkpointState.offset <= total
   ) {
     offset = Math.floor(checkpointState.offset);
-    if (!targetTableName) {
+    if (offset >= total) {
+      log.info(
+        `memory-hybrid: embedding-migration: checkpoint shows all ${total} fact(s) already processed (offset ${offset}/${total}) — resuming to complete any interrupted finalization, no re-migration needed.`,
+      );
+    } else if (!targetTableName) {
       log.warn(
         `memory-hybrid: embedding-migration: ⚠ resuming direct-mode migration from checkpoint offset ${offset}/${total}. Facts before offset ${offset} already have new model vectors; facts from offset ${offset} onward still have old model vectors. The vector table is in a MIXED-MODEL state until migration completes. Semantic search quality is degraded during this window. Re-running with --shadow-table is recommended for large migrations to avoid this split.`,
       );

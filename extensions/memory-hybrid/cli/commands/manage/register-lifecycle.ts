@@ -4,8 +4,10 @@
 
 import type { DecayClass } from "../../../config.js";
 import { syncLifecycleFromGitHub } from "../../../services/lifecycle/github-adapter.js";
+import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
+import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
 
 export function registerEntityLifecycleCommands(entitiesCommand: Chainable, b: ManageBindings): void {
   const { factsDb } = b;
@@ -48,13 +50,38 @@ export function registerLifecycleSyncCommands(mem: Chainable, b: ManageBindings)
     .description("Sync from GitHub: PR/Issue state → fact expires_at/decay_class")
     .option("--dry-run", "Do not apply changes; report counts only")
     .option("--json", "Emit JSON report")
+    .option("-v, --verbose", "Emit periodic progress heartbeat and per-row sync progress")
     .action(
-      withExit(async (opts?: { dryRun?: boolean; json?: boolean }) => {
+      withExit(async (opts?: { dryRun?: boolean; json?: boolean; verbose?: boolean }, cmd?: CommanderOptsParent) => {
+        const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+        // In --json mode, adapter progress must go to stderr, not stdout — stdout is reserved for
+        // the final JSON report so downstream consumers can safely parse it (mirrors the
+        // digest autopilot-cron stream-routing fix in the same change).
+        const logger = {
+          info: (msg: string) => (opts?.json ? console.error(msg) : console.log(msg)),
+          warn: (msg: string) => console.warn(msg),
+        };
         try {
-          const report = await syncLifecycleFromGitHub(factsDb, {
-            config: cfg.lifecycle.adapters.github,
-            apply: opts?.dryRun !== true,
-          });
+          let progress = { scanned: 0, total: 0, matched: 0 };
+          const report = await runMaintenanceHeartbeat(
+            "lifecycle-sync-github",
+            verbose,
+            (heartbeat) =>
+              syncLifecycleFromGitHub(factsDb, {
+                config: cfg.lifecycle.adapters.github,
+                apply: opts?.dryRun !== true,
+                logger,
+                reportEvery: 25,
+                onProgress: (next) => {
+                  progress = next;
+                  heartbeat.heartbeat();
+                },
+              }),
+            {
+              progressSupplier: () => `scanned=${progress.scanned}/${progress.total}; matched=${progress.matched}`,
+              jsonMode: opts?.json === true,
+            },
+          );
           if (opts?.json) {
             console.log(JSON.stringify(report, null, 2));
             return;

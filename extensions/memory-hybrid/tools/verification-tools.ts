@@ -7,22 +7,33 @@
 import { Type } from "@sinclair/typebox";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 
+import type { BuildToolScopeFilterFn } from "../api/memory-plugin-api.js";
 import type { FactsDB } from "../backends/facts-db.js";
+import type { HybridMemoryConfig } from "../config.js";
 import type { VerificationStore } from "../services/verification-store.js";
 import { VerificationError } from "../services/verification-store.js";
 
 interface PluginContext {
   factsDb: FactsDB;
   verificationStore: VerificationStore;
+  cfg: HybridMemoryConfig;
+  currentAgentIdRef: { value: string | null };
+  buildToolScopeFilter: BuildToolScopeFilterFn;
 }
 
 /**
  * Register verification-related tools with the plugin API.
  *
  * This includes: memory_verify, memory_verified_list, memory_verification_status.
+ *
+ * SECURITY (loop iteration 40): verified_facts now carries a scope/scope_target column (migrated
+ * in VerificationStore.initSchema()), populated from the source fact's own scope at verify() time
+ * and carried forward on update(). memory_verified_list filters by the caller's scope via
+ * listLatestVerified(limit, scopeFilter); memory_verify/memory_verification_status continue to
+ * gate on the caller's scope via factsDb.getById(..., {scopeFilter}) as before.
  */
 export function registerVerificationTools(ctx: PluginContext, api: ClawdbotPluginApi): void {
-  const { factsDb, verificationStore } = ctx;
+  const { factsDb, verificationStore, cfg, currentAgentIdRef, buildToolScopeFilter } = ctx;
 
   api.registerTool(
     {
@@ -34,7 +45,8 @@ export function registerVerificationTools(ctx: PluginContext, api: ClawdbotPlugi
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         const { factId } = params as { factId: string };
-        const fact = factsDb.getById(factId);
+        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
+        const fact = factsDb.getById(factId, { scopeFilter });
         if (!fact) {
           return {
             content: [{ type: "text", text: `Fact not found: ${factId}` }],
@@ -56,7 +68,7 @@ export function registerVerificationTools(ctx: PluginContext, api: ClawdbotPlugi
           };
         }
         try {
-          const verifiedId = verificationStore.verify(factId, fact.text, "agent");
+          const verifiedId = verificationStore.verify(factId, fact.text, "agent", fact.scope, fact.scopeTarget);
           return {
             content: [{ type: "text", text: `Verified fact ${factId} (verification id: ${verifiedId}).` }],
             details: { status: "verified", id: factId, verificationId: verifiedId },
@@ -85,7 +97,8 @@ export function registerVerificationTools(ctx: PluginContext, api: ClawdbotPlugi
       description: "List all verified facts with their latest verification metadata.",
       parameters: Type.Object({}),
       async execute() {
-        const verified = verificationStore.listLatestVerified();
+        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
+        const verified = verificationStore.listLatestVerified(undefined, scopeFilter);
         if (verified.length === 0) {
           return {
             content: [{ type: "text", text: "No verified facts found." }],
@@ -115,6 +128,15 @@ export function registerVerificationTools(ctx: PluginContext, api: ClawdbotPlugi
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         const { factId } = params as { factId: string };
+        // Out-of-scope facts report the same "not verified" response as a genuinely unverified
+        // one, rather than a distinct "not found" — don't reveal that a foreign-tenant id exists.
+        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
+        if (!factsDb.getById(factId, { scopeFilter })) {
+          return {
+            content: [{ type: "text", text: `Fact ${factId} is not verified.` }],
+            details: { status: "not_verified", id: factId },
+          };
+        }
         try {
           const verified = verificationStore.getVerified(factId);
           if (!verified) {

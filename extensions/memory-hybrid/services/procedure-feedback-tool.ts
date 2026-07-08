@@ -2,7 +2,8 @@
  * Agent tool helpers for memory_procedure_feedback (#1965–#1967).
  */
 import type { FactsDB } from "../backends/facts-db.js";
-import type { ProcedureEntry, ProcedureStep } from "../types/memory.js";
+import type { ProcedureEntry, ProcedureStep, ScopeFilter } from "../types/memory.js";
+import { scopeFieldsFromFilter } from "../utils/scope-filter.js";
 import { minimalRecipe } from "./procedure-extractor.js";
 
 export type ProcedureFeedbackToolParams = {
@@ -16,6 +17,8 @@ export type ProcedureFeedbackToolParams = {
   taskPattern?: string;
   steps?: ProcedureStep[];
   procedureType?: "positive" | "negative";
+  /** Pre-resolved (already security-gated) scope filter — see buildToolScopeFilter. */
+  scopeFilter?: ScopeFilter;
 };
 
 export type ProcedureFeedbackToolResult = {
@@ -100,7 +103,7 @@ function bootstrapProcedureIfMissing(
   factsDb: FactsDB,
   params: ProcedureFeedbackToolParams,
 ): { ok: true; created: boolean } | { ok: false; result: ProcedureFeedbackToolResult } {
-  if (factsDb.getProcedureById(params.procedureId)) {
+  if (factsDb.getProcedureById(params.procedureId, params.scopeFilter)) {
     return { ok: true, created: false };
   }
   if (!params.registerIfMissing) {
@@ -120,17 +123,31 @@ function bootstrapProcedureIfMissing(
 
   const recipeJson = JSON.stringify(minimalRecipe(steps));
   const procedureType = params.procedureType ?? (params.success ? "positive" : "negative");
-  factsDb.upsertProcedure({
-    id: params.procedureId,
-    taskPattern,
-    recipeJson,
-    procedureType,
-    successCount: 0,
-    failureCount: 0,
-    lastValidated: null,
-    lastFailed: null,
-    confidence: 0.5,
-  });
+  // SECURITY: without scope/scopeTarget, upsertProcedure defaults new rows to scope: "global",
+  // so a tenant-scoped caller's auto-registered procedure would leak visible to every tenant.
+  const { scope, scopeTarget } = params.scopeFilter
+    ? scopeFieldsFromFilter(params.scopeFilter)
+    : { scope: "global" as const, scopeTarget: undefined };
+  // SECURITY: pass scopeFilter through so upsertProcedure's own existence check stays scoped —
+  // otherwise a caller-invented procedureId slug that collides with another tenant's existing
+  // procedure id would hit the UPDATE branch inside upsertProcedure and overwrite that tenant's
+  // row instead of this scoped bootstrap correctly treating it as "not found for me".
+  factsDb.upsertProcedure(
+    {
+      id: params.procedureId,
+      taskPattern,
+      recipeJson,
+      procedureType,
+      successCount: 0,
+      failureCount: 0,
+      lastValidated: null,
+      lastFailed: null,
+      confidence: 0.5,
+      scope,
+      scopeTarget,
+    },
+    params.scopeFilter,
+  );
   return { ok: true, created: true };
 }
 
@@ -149,6 +166,9 @@ export function executeProcedureFeedbackTool(
     failedAtStep: params.failedAtStep,
     duration: params.duration,
     tags: params.tags,
+    userId: params.scopeFilter?.userId ?? undefined,
+    agentId: params.scopeFilter?.agentId ?? undefined,
+    sessionId: params.scopeFilter?.sessionId ?? undefined,
   });
 
   if (!result) {

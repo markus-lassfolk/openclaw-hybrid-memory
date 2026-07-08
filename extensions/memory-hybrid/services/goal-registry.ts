@@ -652,6 +652,30 @@ export async function createGoal(
   return goal;
 }
 
+/** Global lock key serializing the active-goal-count cap check against concurrent registrations. */
+const GOAL_REGISTER_CAP_LOCK_KEY = "_active-goal-count";
+
+/**
+ * Create a goal only if doing so would not exceed `maxActiveGoals`, with the count
+ * check and the write serialized under a global lock — closes the TOCTOU race where
+ * two concurrent `goal_register` calls both read a stale active count that's still
+ * under the cap and both proceed to write, pushing the active count past the cap.
+ * Returns `null` (no goal created) when the cap is hit inside the lock.
+ */
+export async function createGoalWithCapCheck(
+  goalsDir: string,
+  input: CreateGoalInput,
+  defaults: GoalDefaults,
+  maxActiveGoals: number,
+  eventLog?: EventLog | null,
+): Promise<Goal | null> {
+  return withGoalLock(goalsDir, GOAL_REGISTER_CAP_LOCK_KEY, async () => {
+    const active = await listActiveGoals(goalsDir);
+    if (active.length >= maxActiveGoals) return null;
+    return createGoal(goalsDir, input, defaults, eventLog);
+  });
+}
+
 export type GoalUpdatePatch = Partial<
   Pick<
     Goal,
@@ -715,9 +739,19 @@ export async function terminateGoal(
   actor: GoalHistoryActor,
   eventLog?: EventLog | null,
 ): Promise<Goal> {
+  let applied = false;
   const next = await withGoalLock(goalsDir, id, async () => {
     const g = await readGoal(goalsDir, id);
     if (!g) throw new Error(`Goal not found: ${id}`);
+    // Re-check terminal status against `g` as re-read inside the lock, not the caller's pre-lock
+    // snapshot: a concurrent terminateGoal call (e.g. goal_complete racing goal_abandon on the
+    // same goal) could have already terminated it in the window between that snapshot and this
+    // lock being acquired. Without this, the second writer would silently flip an already-
+    // terminal goal to a different terminal status and append a redundant history entry, and
+    // both callers' post-completion side effects (flushGoalOutcomeToMemory, episode recording)
+    // would fire as if each had authoritatively terminated the goal.
+    if (isTerminalStatus(g.status)) return g;
+    applied = true;
     const ts = nowIso();
     const updated: Goal = {
       ...g,
@@ -728,25 +762,27 @@ export async function terminateGoal(
     await writeGoal(goalsDir, updated);
     return updated;
   });
-  const ts = next.history[next.history.length - 1]?.timestamp ?? nowIso();
 
-  const kind = status === "completed" ? "goal.completed" : status === "failed" ? "goal.failed" : "goal.abandoned";
-  try {
-    eventLog?.append({
-      sessionId: "goal-stewardship",
-      timestamp: ts,
-      eventType: "action_taken",
-      content: {
-        kind,
-        goalId: next.id,
-        label: next.label,
-        reason,
-        assessmentCount: next.assessmentCount,
-        dispatchCount: next.dispatchCount,
-      },
-    });
-  } catch {
-    /* non-fatal */
+  if (applied) {
+    const ts = next.history[next.history.length - 1]?.timestamp ?? nowIso();
+    const kind = status === "completed" ? "goal.completed" : status === "failed" ? "goal.failed" : "goal.abandoned";
+    try {
+      eventLog?.append({
+        sessionId: "goal-stewardship",
+        timestamp: ts,
+        eventType: "action_taken",
+        content: {
+          kind,
+          goalId: next.id,
+          label: next.label,
+          reason,
+          assessmentCount: next.assessmentCount,
+          dispatchCount: next.dispatchCount,
+        },
+      });
+    } catch {
+      /* non-fatal */
+    }
   }
 
   return next;

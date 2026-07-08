@@ -30,6 +30,11 @@ type CheckResult = {
   sandboxPresent?: boolean;
 };
 
+/** True when `memDir` exists and contains at least one YYYY-MM-DD.md daily log file. */
+export function sandboxHasDailyLogs(memDir: string): boolean {
+  return existsSync(memDir) && readdirSync(memDir).some((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f));
+}
+
 function existsPath(base: string, rel: string): { ok: boolean; bytes?: number } {
   const p = join(base, rel);
   if (!existsSync(p)) return { ok: false };
@@ -91,9 +96,7 @@ function main(): void {
       results.push({
         spec,
         present,
-        sandboxPresent: checkSandbox
-          ? readdirSync(join(SANDBOX, ".openclaw/memory")).some((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f))
-          : undefined,
+        sandboxPresent: checkSandbox ? sandboxHasDailyLogs(join(SANDBOX, ".openclaw/memory")) : undefined,
       });
       continue;
     }
@@ -156,10 +159,7 @@ function main(): void {
     for (const r of forbiddenPresent) console.log(`  - ${r.spec.rawPath}`);
   }
 
-  const dailyInMemory =
-    checkSandbox &&
-    existsSync(join(SANDBOX, ".openclaw/memory")) &&
-    readdirSync(join(SANDBOX, ".openclaw/memory")).some((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f));
+  const dailyInMemory = checkSandbox && sandboxHasDailyLogs(join(SANDBOX, ".openclaw/memory"));
   if (!dailyInMemory && checkSandbox) {
     console.log(
       "⚠ extract-daily: no YYYY-MM-DD.md in sandbox .openclaw/memory/ (needs setup copy from workspace/memory)",
@@ -182,4 +182,6 @@ function formatBytes(n: number): string {
   return `${n} B`;
 }
 
-main();
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main();
+}

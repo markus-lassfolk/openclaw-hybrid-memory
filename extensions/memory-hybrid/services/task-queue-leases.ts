@@ -238,12 +238,12 @@ async function tryAcquireLock(lockPath: string): Promise<boolean> {
   }
 }
 
-async function isLockStale(lockPath: string, nowMs: number): Promise<boolean> {
+async function getLockMtimeMs(lockPath: string): Promise<number | null> {
   try {
     const lockStat = await stat(lockPath);
-    return nowMs - lockStat.mtimeMs > STALE_LOCK_MS;
+    return lockStat.mtimeMs;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -258,14 +258,17 @@ async function withRegistryLock<T>(stateDir: string, fn: (registryPath: string) 
     if (acquired) break;
 
     const nowMs = Date.now();
-    if (await isLockStale(lockPath, nowMs)) {
+    const staleMtimeMs = await getLockMtimeMs(lockPath);
+    if (staleMtimeMs !== null && nowMs - staleMtimeMs > STALE_LOCK_MS) {
       try {
-        await unlink(lockPath);
-        // Re-check staleness after unlinking to avoid removing a fresh lock
-        // that another process acquired between our stale check and unlink.
-        if (await isLockStale(lockPath, Date.now())) {
-          // Lock is still stale (or gone), safe to retry acquisition.
-          continue;
+        // Re-check the lock's mtime immediately before deleting it: if another process
+        // refreshed or re-acquired the lock between our staleness check above and this
+        // point, its mtime will have changed, and unlinking now would steal a lock that
+        // process legitimately holds. Only unlink when the mtime we judged stale is the
+        // same one still on disk.
+        const currentMtimeMs = await getLockMtimeMs(lockPath);
+        if (currentMtimeMs === staleMtimeMs) {
+          await unlink(lockPath);
         }
       } catch {
         // Another process may have cleaned it; keep retrying.

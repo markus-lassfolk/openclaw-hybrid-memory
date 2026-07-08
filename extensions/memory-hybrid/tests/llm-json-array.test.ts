@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   extractBalancedArraySlice,
   extractFirstJsonArraySubstring,
+  extractItemArray,
   parseStructuredItems,
   parseStructuredItemsAcceptingEmpty,
   stripBracketContextPreamble,
@@ -210,6 +211,28 @@ describe("tryParseFirstJsonObject", () => {
 
   it("returns null when filter rejects parsed object", () => {
     expect(tryParseFirstJsonObject('{"a":1}', () => null)).toBeNull();
+  });
+});
+
+describe("extractItemArray (loop iteration 63 regression)", () => {
+  const isStringItem = (item: unknown): item is string => typeof item === "string";
+
+  it("merges items from every envelope in a multi-element array instead of returning only the first", () => {
+    // A batch response where each element is its own {items:[...]} envelope -- e.g. a model
+    // returning one envelope per input chunk rather than a single flat array/envelope.
+    const raw = [{ items: ["a", "b"] }, { items: ["c", "d"] }];
+    expect(extractItemArray(raw, isStringItem)).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("merges a mix of directly-valid items and envelope-wrapped items in the same array", () => {
+    const isFactItem = (item: unknown): item is { text: string } =>
+      typeof item === "object" && item !== null && typeof (item as { text?: unknown }).text === "string";
+    const raw = [{ text: "solo" }, { items: [{ text: "nested-1" }, { text: "nested-2" }] }];
+    expect(extractItemArray(raw, isFactItem)).toEqual([
+      { text: "solo" },
+      { text: "nested-1" },
+      { text: "nested-2" },
+    ]);
   });
 });
 

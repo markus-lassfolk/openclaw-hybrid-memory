@@ -370,10 +370,15 @@ export function extractItemArray(
       if (merged.length > 0) return merged;
     }
     if (parsed.every(isValidItem)) return parsed;
+    // Merge across every element rather than returning on the first successful extraction --
+    // otherwise a multi-element batch response like [{items:[A,B]}, {items:[C,D]}] would silently
+    // drop C and D (mirrors the jsonWrappedStrings merge above for the same reason).
+    const merged: unknown[] = [];
     for (const item of parsed) {
       const nested = extractItemArray(item, isValidItem, opts);
-      if (nested && nested.length > 0) return nested;
+      if (nested && nested.length > 0) merged.push(...nested);
     }
+    if (merged.length > 0) return merged;
     return null;
   }
 

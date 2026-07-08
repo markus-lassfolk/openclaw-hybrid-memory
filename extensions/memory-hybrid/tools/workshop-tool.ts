@@ -13,7 +13,11 @@ import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { buildWorkshopDigestReport } from "../services/unified-proposals.js";
-import { DEFAULT_WORKSHOP_TOOL_LIST_LIMIT, resolveWorkshopRevertSessionKey } from "../services/workshop-config.js";
+import {
+  DEFAULT_WORKSHOP_TOOL_LIST_LIMIT,
+  isAuthorizedChangeFeedSessionKey,
+  resolveWorkshopRevertSessionKey,
+} from "../services/workshop-config.js";
 import { revertChangeByOrdinal, buildChangeRevertContext } from "../services/change-feed-revert.js";
 import type { ChangeFeed } from "../services/change-feed.js";
 import type { SessionState } from "../lifecycle/types.js";
@@ -206,6 +210,17 @@ export function registerWorkshopTools(ctx: WorkshopToolsContext, api: ClawdbotPl
               params.sessionKey as string | undefined,
               chatSessionKey,
             );
+            // SECURITY: params.sessionKey is caller-supplied and must never be trusted as an
+            // identity claim on its own -- mirrors the same check the change-feed HTTP/RPC revert
+            // routes already apply (proposal-routes.ts, proposal-gateway-methods.ts). Without this,
+            // an agent-tool-call could pass an arbitrary sessionKey and revert another session's
+            // changes.
+            if (!isAuthorizedChangeFeedSessionKey(sessionKey, chatSessionKey)) {
+              return {
+                content: [{ type: "text", text: "sessionKey does not match the caller's own session" }],
+                details: { ok: false },
+              };
+            }
             const result = revertChangeByOrdinal(
               buildChangeRevertContext({
                 changeFeed: ctx.changeFeed,

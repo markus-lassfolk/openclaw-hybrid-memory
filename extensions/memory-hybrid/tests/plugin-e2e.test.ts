@@ -824,6 +824,54 @@ describe("Advanced features e2e", () => {
     expect(graphResult.content?.[0]?.text).toMatch(/RELATED_TO|Fact B/);
   });
 
+  it("memory_recall does not leak a cold-tier fact reached via graph expansion when includeCold is false (loop iteration 10 regression)", async () => {
+    cfg.graph.useInRecall = true;
+    registerTools(buildE2EContext({ tmpDir, factsDb, vectorDb, cfg, api }) as never, api as never);
+    const linkTool = api.getTool("memory_link");
+    const recallTool = api.getTool("memory_recall");
+
+    // The cold fact deliberately does NOT contain the query phrase, so it can only be reached
+    // via graph traversal from the warm seed — not via a direct lexical/semantic match (which
+    // the existing pre-expansion cold-tier filter already correctly excludes).
+    const warm = factsDb.store({
+      text: "Quokka migration telemetry dashboard rollout",
+      category: "fact",
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+      importance: 0.8,
+    });
+    const cold = factsDb.store({
+      text: "Archived follow-up note, unrelated wording",
+      category: "fact",
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+      importance: 0.8,
+      tier: "cold",
+    });
+
+    const linkResult = (await linkTool?.execute("call-link", {
+      sourceFact: warm.id,
+      targetFact: cold.id,
+      linkType: "RELATED_TO",
+      strength: 0.9,
+    })) as { details?: { linkId?: string } };
+    expect(linkResult.details?.linkId).toBeDefined();
+
+    const recallResult = (await recallTool?.execute("call-recall", {
+      query: "Quokka migration telemetry dashboard",
+      limit: 10,
+      includeCold: false,
+    })) as { details?: { memories?: { id: string }[] } };
+
+    const ids = (recallResult.details?.memories ?? []).map((m) => m.id);
+    expect(ids).toContain(warm.id);
+    expect(ids).not.toContain(cold.id);
+  });
+
   it("memory_verify and memory_verified_list: verify fact then list verified", async () => {
     const verificationStore = new VerificationStore(factsDb.getRawDb(), {
       backupPath: join(tmpDir, "verified-backup.json"),
@@ -847,6 +895,29 @@ describe("Advanced features e2e", () => {
     };
     expect(listResult.details?.count).toBe(1);
     expect(listResult.content?.[0]?.text).toContain(factId);
+    verificationStore.close();
+  });
+
+  it("memory_store auto-enrolls a verification_tier:critical fact on the normal ADD path (loop iteration 11 regression)", async () => {
+    const verificationStore = new VerificationStore(factsDb.getRawDb(), {
+      backupPath: join(tmpDir, "verified-backup.json"),
+      reverificationDays: 30,
+    });
+    registerTools(buildE2EContext({ tmpDir, factsDb, vectorDb, cfg, api, verificationStore }) as never, api as never);
+    const storeTool = api.getTool("memory_store");
+    const statusTool = api.getTool("memory_verification_status");
+
+    const storeResult = (await storeTool?.execute("call-1", {
+      text: "Brand new critical fact, never seen before",
+      importance: 0.9,
+      category: "fact",
+      verification_tier: "critical",
+    })) as { details?: { id: string } };
+    const factId = storeResult.details?.id;
+    expect(factId).toBeDefined();
+
+    const statusResult = (await statusTool?.execute("call-2", { factId })) as { details?: { status: string } };
+    expect(statusResult.details?.status).toBe("verified");
     verificationStore.close();
   });
 

@@ -131,13 +131,17 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
             ? (result as MultiVaultRetrievalResult).vaultByFactId
             : new Map<string, string>();
         const vaultHandleByName = new Map(vaultHandles.map((h) => [h.name, h]));
+        // SECURITY: scope-check even though ids reaching getEntry are normally already scope-vetted
+        // by the initial retrieval — a multi-vault fan-out (vault="all") id collision across two
+        // tenants' vaults would otherwise let the unscoped fallback substitute a different-scope
+        // fact's text into the response.
         const getEntry = (id: string) => {
           const vaultName = vaultByFactId.get(id);
           if (vaultName) {
             const handle = vaultHandleByName.get(vaultName);
-            if (handle) return handle.factsDb.getById(id);
+            if (handle) return handle.factsDb.getById(id, { scopeFilter });
           }
-          return activeFactsDb.getById(id);
+          return activeFactsDb.getById(id, { scopeFilter });
         };
 
         const v2 = await applyRetrievalV2({
@@ -160,8 +164,8 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
             ? (vaultHandleByName.get(vaultName)?.factsDb ?? activeFactsDb)
             : activeFactsDb;
           const text = args.full
-            ? resolveRecallInjectionText(r.entry, factsDbForEntry, false)
-            : resolveRecallInjectionText(r.entry, factsDbForEntry, true).slice(0, 200);
+            ? resolveRecallInjectionText(r.entry, factsDbForEntry, false, scopeFilter)
+            : resolveRecallInjectionText(r.entry, factsDbForEntry, true, scopeFilter).slice(0, 200);
           return `- [${r.entry.category}] ${text} (id=${r.entry.id})`;
         });
         const escalate =

@@ -332,20 +332,26 @@ export function registerManageReflectionPipeline(
       .option("--dry-run", "Show what would be consolidated without consolidating")
       .option("--limit <n>", "Max clusters to process (default 10)", "10")
       .option("--model <m>", "LLM model for merging (default: default tier from config)")
+      .option("-v, --verbose", "Emit periodic progress heartbeat and per-cluster progress")
       .action(
         withExit(
-          async (opts?: {
-            threshold?: string;
-            includeStructured?: boolean;
-            dryRun?: boolean;
-            limit?: string;
-            model?: string;
-          }) => {
+          async (
+            opts?: {
+              threshold?: string;
+              includeStructured?: boolean;
+              dryRun?: boolean;
+              limit?: string;
+              model?: string;
+              verbose?: boolean;
+            },
+            cmd?: CommanderOptsParent,
+          ) => {
             const threshold = Number.parseFloat(opts?.threshold ?? "0.85");
             const includeStructured = !!opts?.includeStructured;
             const dryRun = !!opts?.dryRun;
             const limit = Number.parseInt(opts?.limit ?? "10", 10);
             const model = opts?.model ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "maintenance");
+            const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
             let res;
             // Real cross-process mutex, matching the "consolidate" lock name the maintenance
             // orchestrator acquires around its own consolidate step — without this, a manual CLI
@@ -356,8 +362,28 @@ export function registerManageReflectionPipeline(
               console.log("Consolidation skipped — another consolidate run is already in progress.");
               return;
             }
+            let progress = { clusterIndex: 0, totalClusters: 0, merged: 0 };
             try {
-              res = await runConsolidate({ threshold, includeStructured, dryRun, limit, model });
+              res = await runMaintenanceHeartbeat(
+                "consolidate",
+                verbose,
+                (heartbeat) =>
+                  runConsolidate({
+                    threshold,
+                    includeStructured,
+                    dryRun,
+                    limit,
+                    model,
+                    onProgress: (p) => {
+                      progress = p;
+                      heartbeat.heartbeat();
+                    },
+                  }),
+                {
+                  progressSupplier: () =>
+                    `cluster=${progress.clusterIndex}/${progress.totalClusters}; merged=${progress.merged}`,
+                },
+              );
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                 subsystem: "cli",
@@ -429,7 +455,14 @@ export function registerManageReflectionPipeline(
             const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
             let res;
             try {
-              res = await runReflection({ window, dryRun, model, verbose });
+              res = await runMaintenanceHeartbeat(
+                "reflect",
+                verbose,
+                () => runReflection({ window, dryRun, model, verbose }),
+                {
+                  progressSupplier: () => `stage=extract-patterns; window=${window}d; dryRun=${dryRun ? "yes" : "no"}`,
+                },
+              );
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                 subsystem: "cli",
@@ -464,17 +497,18 @@ export function registerManageReflectionPipeline(
           const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
           const thinkingMode =
             opts?.thinking === "adaptive" || opts?.thinking === "disabled" ? opts.thinking : undefined;
+          const model =
+            explicitModel ?? reflectionConfig.model ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "maintenance");
           let res;
           try {
-            res = await runReflectionRules({
-              dryRun,
-              model:
-                explicitModel ??
-                reflectionConfig.model ??
-                getDefaultCronModel(getCronModelConfig(ctx.cfg), "maintenance"),
+            res = await runMaintenanceHeartbeat(
+              "reflect-rules",
               verbose,
-              thinkingMode,
-            });
+              () => runReflectionRules({ dryRun, model, verbose, thinkingMode }),
+              {
+                progressSupplier: () => `stage=extract-rules; dryRun=${dryRun ? "yes" : "no"}`,
+              },
+            );
           } catch (err) {
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {
               subsystem: "cli",
@@ -1284,13 +1318,28 @@ export function registerManageReflectionPipeline(
 
             if (auto) {
               let res;
+              let contradictionAutoProgress = { processed: 0, total: 0, autoResolved: 0, ambiguous: 0 };
               try {
-                res = await ctx.runResolveContradictionsAuto({
-                  dryRun: !apply,
-                  targetRate,
-                  llm,
-                  model,
-                });
+                res = await runMaintenanceHeartbeat(
+                  "resolve-contradictions-auto",
+                  verbose,
+                  (heartbeat) =>
+                    ctx.runResolveContradictionsAuto({
+                      dryRun: !apply,
+                      targetRate,
+                      llm,
+                      model,
+                      onProgress: (p) => {
+                        contradictionAutoProgress = p;
+                        heartbeat.heartbeat();
+                      },
+                    }),
+                  {
+                    progressSupplier: () =>
+                      `processed=${contradictionAutoProgress.processed}/${contradictionAutoProgress.total}; auto_resolved=${contradictionAutoProgress.autoResolved}; ambiguous=${contradictionAutoProgress.ambiguous}`,
+                    jsonMode,
+                  },
+                );
               } catch (err) {
                 capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                   subsystem: "cli",
@@ -1338,8 +1387,11 @@ export function registerManageReflectionPipeline(
                 },
               });
               if (!jsonMode) {
+                // `scanned` matches the live heartbeat's processed=X/Y denominator; `total` is the
+                // narrower "still-resolvable pairs" count achievedRate is computed against — kept
+                // distinct so this line doesn't look like `total` shrank since the last progress tick.
                 console.log(
-                  `contradiction-auto summary total=${res.total} deterministic=${res.deterministic} llm=${res.llm} merged=${res.merged} manual_review=${res.manualReview} applied=${res.applied} target=${res.targetRate.toFixed(2)} achieved=${res.achievedRate.toFixed(3)}`,
+                  `contradiction-auto summary scanned=${res.scanned} total=${res.total} deterministic=${res.deterministic} llm=${res.llm} merged=${res.merged} manual_review=${res.manualReview} applied=${res.applied} target=${res.targetRate.toFixed(2)} achieved=${res.achievedRate.toFixed(3)}`,
                 );
                 if (!res.targetMet) {
                   console.log(

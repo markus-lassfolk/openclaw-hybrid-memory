@@ -6,6 +6,7 @@
  * already used by extractStructuredFields() (services/fact-extraction.ts) with a role/board
  * keyword scan (English + Swedish, since the reporting deployment is multilingual sv/en/no).
  */
+import { isSystemSenderEmail } from "./system-sender-email.js";
 
 const ROLE_KEYWORDS = [
   "chief executive officer",
@@ -62,8 +63,19 @@ export type ContactProfileHints = {
 
 /** Extract email/phone/role/board-status hints from free text. Returns nulls when nothing matches. */
 export function parseContactProfileHints(text: string): ContactProfileHints {
-  const emailMatch = text.match(/([\w.-]+@[\w.-]+\.\w+)/);
-  const email = emailMatch ? emailMatch[1] : null;
+  // #2062: never attribute a system/notification sender address (noreply@, robot@, etc.) to the
+  // person mentioned in this text — it's virtually never actually their contact email. And when
+  // 2+ distinct addresses appear (a mail sender/recipient pair, a multi-person roster), don't
+  // guess which one belongs to the single person this text is about — mirrors the same guard in
+  // services/fact-extraction.ts's extractStructuredFields().
+  const emailMatches = text.match(/[\w.-]+@[\w.-]+\.\w+/g);
+  let email: string | null = null;
+  if (emailMatches && emailMatches.length > 0) {
+    const distinctEmails = new Set(emailMatches.map((e) => e.toLowerCase()));
+    if (distinctEmails.size === 1 && !isSystemSenderEmail(emailMatches[0])) {
+      email = emailMatches[0];
+    }
+  }
 
   const phoneMatch = text.match(/(\+?\d[\d .\-()]{7,}\d)/);
   const phoneDigitCount = phoneMatch ? phoneMatch[1].replace(/\D/g, "").length : 0;

@@ -277,9 +277,9 @@ export function reconcileCronRunLedger(
     let logPath = paths.logPath;
 
     // If paths not found in summary, try to find matching artifacts by job ID and timestamp
+    const jobSlug = jobId.replace(/^hybrid-mem:/, "");
     if (!exitPath || !logPath || !existsSync(exitPath)) {
       // Look for artifacts that match this job and timestamp
-      const jobSlug = jobId.replace(/^hybrid-mem:/, "");
       const artifacts = findMaintenanceArtifacts(logDir, jobSlug);
 
       const entryTimestamp = getEntryTimestamp(entry);
@@ -288,15 +288,27 @@ export function reconcileCronRunLedger(
       if (closestArtifact) {
         exitPath = closestArtifact.exitPath;
         logPath = closestArtifact.logPath;
+      } else if (exitPath && existsSync(exitPath)) {
+        // A resolvable exit ledger exists, but its paired log is missing/rotated away and no
+        // replacement artifact pair was found — validating with no log content risks a false
+        // correction from incomplete evidence, so leave this entry alone rather than guessing.
+        continue;
       }
     }
 
-    // Skip if we can't find artifacts
-    if (!exitPath || !logPath || !existsSync(exitPath)) {
-      continue;
+    // No HM_EXIT/HM_LOG artifacts anywhere near this run's timestamp: the bash harness never
+    // started at all (e.g. the executing agent had no working path to invoke it this run — a
+    // tooling blocker, see cron-job-bash-harness.ts). This is the strongest possible false-OK
+    // signal, not a benign "nothing to reconcile" case, so fall through with a synthetic,
+    // deliberately non-existent exit-ledger path instead of skipping the entry: this lets
+    // validateMaintenanceExecution's existing missing_exit_ledger classification catch it below.
+    // Previously this `continue`d here, leaving status:"ok" ledger rows uncorrected forever
+    // whenever the wrapper never even started.
+    if (!exitPath) {
+      exitPath = join(logDir, `${jobSlug}.exit.txt`);
     }
 
-    const summaryPath = resolveMaintenanceSummaryPath(exitPath);
+    const summaryPath = existsSync(exitPath) ? resolveMaintenanceSummaryPath(exitPath) : null;
     const validation = summaryPath
       ? validateFromSummaryJson(summaryPath, exitPath, logPath, requiredSteps, true)
       : validateMaintenanceExecution(exitPath, logPath, requiredSteps, true);

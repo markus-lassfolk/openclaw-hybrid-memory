@@ -403,3 +403,49 @@ describe("memory_store early validation — invalid decayFreezeUntil", () => {
     expect(walWrite).toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests: system-sender email guard (#2062)
+// ---------------------------------------------------------------------------
+
+describe("memory_store — system-sender email guard (#2062)", () => {
+  it("nulls out an explicit key=email/value pair when value is a system-sender address", async () => {
+    const walWrite = vi.fn().mockResolvedValue("wal-id");
+    const embeddings = makeMockEmbeddings();
+    const { api } = setupTool(walWrite, embeddings);
+
+    const storeTool = api.getTool("memory_store");
+    await storeTool?.execute("call-system-sender-email", {
+      text: "Automated notice regarding a pending signature request.",
+      importance: 0.5,
+      entity: "Example Widgets AB",
+      key: "email",
+      value: "noreply@vendor-example.com",
+    });
+
+    expect(walWrite).toHaveBeenCalled();
+    const storedData = walWrite.mock.calls[0]?.[1] as { key?: string | null; value?: string | null };
+    expect(storedData.key).toBeNull();
+    expect(storedData.value).toBeNull();
+  });
+
+  it("still stores a genuine explicit key=email/value pair unaffected", async () => {
+    const walWrite = vi.fn().mockResolvedValue("wal-id");
+    const embeddings = makeMockEmbeddings();
+    const { api } = setupTool(walWrite, embeddings);
+
+    const storeTool = api.getTool("memory_store");
+    await storeTool?.execute("call-genuine-email", {
+      text: "Jane Roe's contact email for follow-up.",
+      importance: 0.5,
+      entity: "Jane Roe",
+      key: "email",
+      value: "jane.roe@example.com",
+    });
+
+    expect(walWrite).toHaveBeenCalled();
+    const storedData = walWrite.mock.calls[0]?.[1] as { key?: string | null; value?: string | null };
+    expect(storedData.key).toBe("email");
+    expect(storedData.value).toBe("jane.roe@example.com");
+  });
+});

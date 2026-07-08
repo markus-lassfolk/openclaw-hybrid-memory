@@ -48,14 +48,23 @@ type UtilityInstallerContext = {
   walRemove: (id: string) => Promise<void>;
 };
 
-type ProvenanceInstallerContext = Pick<ToolsContext, "factsDb" | "eventLog" | "provenanceService" | "cfg">;
+type ProvenanceInstallerContext = Pick<
+  ToolsContext,
+  "factsDb" | "eventLog" | "provenanceService" | "cfg" | "currentAgentIdRef" | "buildToolScopeFilter"
+>;
 type CredentialInstallerContext = Pick<ToolsContext, "credentialsDb" | "factsDb" | "vectorDb" | "cfg">;
 type DocumentInstallerContext = Pick<
   ToolsContext,
-  "factsDb" | "vectorDb" | "cfg" | "embeddings" | "pythonBridge" | "openai" | "provenanceService"
+  "factsDb" | "vectorDb" | "cfg" | "embeddings" | "pythonBridge" | "openai" | "provenanceService" | "currentAgentIdRef"
 >;
-type VerificationInstallerContext = Pick<ToolsContext, "factsDb" | "verificationStore" | "cfg">;
-type IssueInstallerContext = Pick<ToolsContext, "issueStore" | "factsDb" | "cfg">;
+type VerificationInstallerContext = Pick<
+  ToolsContext,
+  "factsDb" | "verificationStore" | "cfg" | "currentAgentIdRef" | "buildToolScopeFilter"
+>;
+type IssueInstallerContext = Pick<
+  ToolsContext,
+  "issueStore" | "factsDb" | "cfg" | "currentAgentIdRef" | "buildToolScopeFilter"
+>;
 type WorkflowInstallerContext = Pick<ToolsContext, "workflowStore" | "cfg">;
 type CrystallizationInstallerContext = Pick<
   ToolsContext,
@@ -144,20 +153,50 @@ function installMemoryCoreTools(ctx: MemoryToolsContext, api: ClawdbotPluginApi)
   registerMemoryTools(ctx, api);
 }
 
-function selectGraphToolsContext({ factsDb, cfg }: ToolsContext): GraphToolsContext {
-  return { factsDb, cfg };
+function selectGraphToolsContext({
+  factsDb,
+  cfg,
+  currentAgentIdRef,
+  buildToolScopeFilter,
+}: ToolsContext): GraphToolsContext {
+  return { factsDb, cfg, currentAgentIdRef, buildToolScopeFilter };
 }
 
-function installGraphTools({ factsDb, cfg }: GraphToolsContext, api: ClawdbotPluginApi): void {
+function installGraphTools(
+  { factsDb, cfg, currentAgentIdRef, buildToolScopeFilter }: GraphToolsContext,
+  api: ClawdbotPluginApi,
+): void {
   if (cfg.graph.enabled) {
-    registerGraphTools({ factsDb, cfg }, api);
+    registerGraphTools({ factsDb, cfg, currentAgentIdRef, buildToolScopeFilter }, api);
   }
 }
 
 function selectUtilityToolsContext(ctx: ToolsContext, api: ClawdbotPluginApi): UtilityInstallerContext {
-  const { factsDb, vectorDb, embeddings, openai, cfg, wal, resolvedSqlitePath, provenanceService } = ctx;
+  const {
+    factsDb,
+    vectorDb,
+    embeddings,
+    openai,
+    cfg,
+    wal,
+    resolvedSqlitePath,
+    provenanceService,
+    currentAgentIdRef,
+    buildToolScopeFilter,
+  } = ctx;
   return {
-    toolContext: { factsDb, vectorDb, embeddings, openai, cfg, wal, resolvedSqlitePath, provenanceService },
+    toolContext: {
+      factsDb,
+      vectorDb,
+      embeddings,
+      openai,
+      cfg,
+      wal,
+      resolvedSqlitePath,
+      provenanceService,
+      currentAgentIdRef,
+      buildToolScopeFilter,
+    },
     runReflection: ctx.runReflection,
     runReflectionRules: ctx.runReflectionRules,
     runReflectionMeta: ctx.runReflectionMeta,
@@ -183,14 +222,16 @@ function selectProvenanceToolsContext({
   eventLog,
   provenanceService,
   cfg,
+  currentAgentIdRef,
+  buildToolScopeFilter,
 }: ToolsContext): ProvenanceInstallerContext {
-  return { factsDb, eventLog, provenanceService, cfg };
+  return { factsDb, eventLog, provenanceService, cfg, currentAgentIdRef, buildToolScopeFilter };
 }
 
 function installProvenanceTools(ctx: ProvenanceInstallerContext, api: ClawdbotPluginApi): void {
-  const { factsDb, eventLog, provenanceService, cfg } = ctx;
+  const { factsDb, eventLog, provenanceService, cfg, currentAgentIdRef, buildToolScopeFilter } = ctx;
   if (cfg.provenance.enabled && provenanceService) {
-    registerProvenanceTools({ factsDb, eventLog, provenanceService, cfg }, api);
+    registerProvenanceTools({ factsDb, eventLog, provenanceService, cfg, currentAgentIdRef, buildToolScopeFilter }, api);
   }
 }
 
@@ -275,14 +316,18 @@ function selectDocumentToolsContext({
   pythonBridge,
   openai,
   provenanceService,
+  currentAgentIdRef,
 }: ToolsContext): DocumentInstallerContext {
-  return { factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService };
+  return { factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService, currentAgentIdRef };
 }
 
 function installDocumentTools(ctx: DocumentInstallerContext, api: ClawdbotPluginApi): void {
-  const { factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService } = ctx;
+  const { factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService, currentAgentIdRef } = ctx;
   if (cfg.documents.enabled && pythonBridge) {
-    registerDocumentTools({ factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService }, api);
+    registerDocumentTools(
+      { factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService, currentAgentIdRef },
+      api,
+    );
   }
 }
 
@@ -290,24 +335,41 @@ function selectVerificationToolsContext({
   factsDb,
   verificationStore,
   cfg,
+  currentAgentIdRef,
+  buildToolScopeFilter,
 }: ToolsContext): VerificationInstallerContext {
-  return { factsDb, verificationStore, cfg };
+  return { factsDb, verificationStore, cfg, currentAgentIdRef, buildToolScopeFilter };
 }
 
 function installVerificationTools(ctx: VerificationInstallerContext, api: ClawdbotPluginApi): void {
-  const { factsDb, verificationStore, cfg } = ctx;
+  const { factsDb, verificationStore, cfg, currentAgentIdRef, buildToolScopeFilter } = ctx;
   if (cfg.verification.enabled && verificationStore) {
-    registerVerificationTools({ factsDb, verificationStore }, api);
+    registerVerificationTools({ factsDb, verificationStore, cfg, currentAgentIdRef, buildToolScopeFilter }, api);
   }
 }
 
-function selectIssueToolsContext({ issueStore, factsDb, cfg }: ToolsContext): IssueInstallerContext {
-  return { issueStore, factsDb, cfg };
+function selectIssueToolsContext({
+  issueStore,
+  factsDb,
+  cfg,
+  currentAgentIdRef,
+  buildToolScopeFilter,
+}: ToolsContext): IssueInstallerContext {
+  return { issueStore, factsDb, cfg, currentAgentIdRef, buildToolScopeFilter };
 }
 
 function installIssueTools(ctx: IssueInstallerContext, api: ClawdbotPluginApi): void {
   if (ctx.issueStore) {
-    registerIssueTools({ issueStore: ctx.issueStore, factsDb: ctx.factsDb, cfg: ctx.cfg }, api);
+    registerIssueTools(
+      {
+        issueStore: ctx.issueStore,
+        factsDb: ctx.factsDb,
+        cfg: ctx.cfg,
+        currentAgentIdRef: ctx.currentAgentIdRef,
+        buildToolScopeFilter: ctx.buildToolScopeFilter,
+      },
+      api,
+    );
   }
 }
 
@@ -520,6 +582,8 @@ function selectGoalToolsContext(ctx: ToolsContext): GoalToolsContext {
     embeddings: ctx.embeddings,
     eventLog: ctx.eventLog,
     memoryDir: pathJoin(workspaceRoot, "memory"),
+    currentAgentIdRef: ctx.currentAgentIdRef,
+    buildToolScopeFilter: ctx.buildToolScopeFilter,
   };
 }
 
@@ -531,6 +595,8 @@ function installGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi): void {
       resolvedActiveTaskPath: ctx.resolvedActiveTaskPath,
       workspaceRoot: ctx.workspaceRoot,
       factsDb: ctx.factsDb,
+      currentAgentIdRef: ctx.currentAgentIdRef,
+      buildToolScopeFilter: ctx.buildToolScopeFilter,
     },
     api,
   );

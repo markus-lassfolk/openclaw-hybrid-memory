@@ -54,7 +54,7 @@ export type GraphExpansionStats = {
   nodesConsidered: number;
   /** Link endpoints dropped due to per-hop fanout cap (or CTE paths rejected by hub validation). */
   nodesSkipped: number;
-  /** Nodes where a per-hop fanout cap was applied (iterative BFS only; CTE uses degree skip in SQL). */
+  /** Nodes where a per-hop fanout cap was applied (iterative BFS only; CTE tracks rejections via nodesSkipped). */
   hubsSkipped: number;
 };
 
@@ -129,6 +129,11 @@ function filterLinksByEndpointScope(
   };
 }
 
+/**
+ * Re-validates a CTE-returned path against the same per-hop hub guards iterative BFS applies,
+ * and (#1192) accumulates the same score-attenuation multiplier BFS would have applied instead
+ * of hard-skipping, when `filterMode === "penalty"`.
+ */
 function ctePathMatchesHubGuards(
   factsDb: GraphFactLookup,
   path: LinkPathStep[],
@@ -138,7 +143,10 @@ function ctePathMatchesHubGuards(
   >,
   scopeOpts: GetByIdOpts | undefined,
   traversalCap: number | null,
-): boolean {
+  filterMode: "skip" | "penalty",
+  hubScorePenalty: number | null,
+): { ok: boolean; hubAttenuation: number } {
+  let hubAttenuation = 1;
   for (const step of path) {
     const fromId = step.fromFactId;
     const toId = step.toFactId;
@@ -151,16 +159,25 @@ function ctePathMatchesHubGuards(
       linksCache.set(fromId, cached);
     }
 
-    const outOk = filterTraversableLinks(cached.from, traversalCap).some(
+    const outIsHub =
+      traversalCap !== null && cached.from.filter((l) => l.linkType !== "CONTRADICTS").length > traversalCap;
+    const outOk = filterTraversableLinks(cached.from, traversalCap, undefined, { mode: filterMode }).some(
       (l) => l.targetFactId === toId && l.linkType === step.linkType,
     );
-    if (outOk) continue;
-    const inOk = filterTraversableLinks(cached.to, traversalCap).some(
+    if (outOk) {
+      if (hubScorePenalty != null && outIsHub) hubAttenuation *= 1 - hubScorePenalty;
+      continue;
+    }
+
+    const inIsHub =
+      traversalCap !== null && cached.to.filter((l) => l.linkType !== "CONTRADICTS").length > traversalCap;
+    const inOk = filterTraversableLinks(cached.to, traversalCap, undefined, { mode: filterMode }).some(
       (l) => l.sourceFactId === toId && l.linkType === step.linkType,
     );
-    if (!inOk) return false;
+    if (!inOk) return { ok: false, hubAttenuation };
+    if (hubScorePenalty != null && inIsHub) hubAttenuation *= 1 - hubScorePenalty;
   }
-  return true;
+  return { ok: true, hubAttenuation };
 }
 
 /** Options for graph expansion. */
@@ -311,10 +328,16 @@ export function expandGraph(
       : undefined;
 
   if (factsDb.expandGraphWithCTE) {
+    // #1192: in penalty mode the SQL-level degree cap can't distinguish "attenuate" from
+    // "hard-skip" — it's a WHERE-clause exclusion, so a capped candidate is never returned at
+    // all. Disable the SQL-level cap in penalty mode (matching iterative BFS, which never
+    // filters at the query layer either) and let ctePathMatchesHubGuards below apply the same
+    // per-hop attenuation BFS would, using the real traversalCap for its own JS-side checks.
+    const cteHubDegreeCap = filterMode === "penalty" ? null : traversalCap;
     const expansionRows = factsDb.expandGraphWithCTE(seedIds, maxDepth, {
       asOf,
       scopeFilter: cteScopeFilter,
-      hubDegreeCap: traversalCap,
+      hubDegreeCap: cteHubDegreeCap,
     });
 
     const cteCandidates = expansionRows.filter((r) => r.hopCount > 0).length;
@@ -360,7 +383,16 @@ export function expandGraph(
         continue;
       }
 
-      if (!ctePathMatchesHubGuards(factsDb, linkPath, linksCache, getByIdOpts, traversalCap)) {
+      const hubGuard = ctePathMatchesHubGuards(
+        factsDb,
+        linkPath,
+        linksCache,
+        getByIdOpts,
+        traversalCap,
+        filterMode,
+        hubScorePenalty,
+      );
+      if (!hubGuard.ok) {
         cteRejected++;
         continue;
       }
@@ -370,7 +402,7 @@ export function expandGraph(
 
       const seedScore = seedScoreMap.get(row.seedId) ?? maxSeedScore;
       const decay = HOP_SCORE_DECAY[row.hopCount] ?? HOP_SCORE_DECAY[HOP_SCORE_DECAY.length - 1];
-      const score = seedScore * decay;
+      const score = seedScore * decay * hubGuard.hubAttenuation;
 
       expandedResults.push({
         factId: row.factId,

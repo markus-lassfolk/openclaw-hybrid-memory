@@ -9,10 +9,25 @@
 
 import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
+import type { ScopeFilter } from "../types/memory.js";
+import { globalOnlyScopeFilter } from "../utils/scope-filter.js";
 import { chatComplete } from "./chat.js";
 import { CostFeature } from "./cost-feature-labels.js";
 import { capturePluginError } from "./error-reporter.js";
 import type { VerificationStore, VerifiedFact } from "./verification-store.js";
+
+/** Groups due facts sharing the same re-verification context so it's fetched once per group. */
+function scopeGroupKeyForVerifiedFact(fact: VerifiedFact): string {
+  return fact.scope === "global" ? "global" : `${fact.scope}:${fact.scopeTarget ?? ""}`;
+}
+
+/** Inclusive scope filter (global + this fact's own tenant) for building its re-verification context. */
+function scopeFilterForVerifiedFact(fact: VerifiedFact): ScopeFilter {
+  if (fact.scope === "global" || !fact.scopeTarget) return globalOnlyScopeFilter();
+  if (fact.scope === "user") return { userId: fact.scopeTarget };
+  if (fact.scope === "agent") return { agentId: fact.scopeTarget };
+  return { sessionId: fact.scopeTarget };
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -202,19 +217,33 @@ export class ContinuousVerifier {
       return result;
     }
 
-    const recentEntries = this.factsDb.getRecentFacts(RECENT_FACTS_DAYS);
-    const recentByEntity = new Map<string, string[]>();
-    for (const e of recentEntries) {
-      const entity = e.entity?.toLowerCase() ?? "";
-      if (!recentByEntity.has(entity)) recentByEntity.set(entity, []);
-      const arr = recentByEntity.get(entity)!;
-      if (arr.length < MAX_CONTEXT_PER_ENTITY) {
-        arr.push(e.text.slice(0, MAX_CONTEXT_CHARS_PER_FACT));
+    // Build one recent-facts context map per distinct due-fact scope, rather than a single
+    // unscoped pull: a verified fact's re-verification context must only draw on facts visible
+    // to that fact's own scope (global, or global + its own tenant), or a private tenant fact's
+    // content would leak into the LLM prompt used to (in)validate a different tenant's fact.
+    const recentByEntityByScope = new Map<string, Map<string, string[]>>();
+    let totalRecentLoaded = 0;
+    for (const fact of due) {
+      const groupKey = scopeGroupKeyForVerifiedFact(fact);
+      if (recentByEntityByScope.has(groupKey)) continue;
+      const recentEntries = this.factsDb.getRecentFacts(RECENT_FACTS_DAYS, {
+        scopeFilter: scopeFilterForVerifiedFact(fact),
+      });
+      totalRecentLoaded += recentEntries.length;
+      const recentByEntity = new Map<string, string[]>();
+      for (const e of recentEntries) {
+        const entity = e.entity?.toLowerCase() ?? "";
+        if (!recentByEntity.has(entity)) recentByEntity.set(entity, []);
+        const arr = recentByEntity.get(entity)!;
+        if (arr.length < MAX_CONTEXT_PER_ENTITY) {
+          arr.push(e.text.slice(0, MAX_CONTEXT_CHARS_PER_FACT));
+        }
       }
+      recentByEntityByScope.set(groupKey, recentByEntity);
     }
 
     this.onProgress?.(
-      `memory-hybrid: continuous-verification — ${due.length} fact(s) due, ${recentEntries.length} recent facts loaded for context`,
+      `memory-hybrid: continuous-verification — ${due.length} fact(s) due, ${totalRecentLoaded} recent facts loaded for context`,
     );
 
     for (const fact of due) {
@@ -223,7 +252,8 @@ export class ContinuousVerifier {
         const underlying = this.factsDb.getById(fact.factId);
         const entity = underlying?.entity ?? null;
         const entityKey = entity?.toLowerCase() ?? "";
-        const recentFacts = recentByEntity.get(entityKey) ?? [];
+        const recentByEntity = recentByEntityByScope.get(scopeGroupKeyForVerifiedFact(fact));
+        const recentFacts = recentByEntity?.get(entityKey) ?? [];
 
         if (recentFacts.length === 0 && entityKey.length > 0) {
           if (underlying) {

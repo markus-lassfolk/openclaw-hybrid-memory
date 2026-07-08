@@ -289,7 +289,10 @@ export async function runRecallPipelineQuery(
         );
       }
       await yieldEventLoop();
-      if (opts?.stageSignal?.aborted) return sqliteResults;
+      // sqliteResults concatenates entity-lookup rows with FTS rows (each independently capped
+      // to limitNum), so it can hold up to 2x limitNum entries — every other exit path in this
+      // function re-slices after obtaining it; this abort early-return must too.
+      if (opts?.stageSignal?.aborted) return sqliteResults.slice(0, limitNum);
     } else {
       const vectorDegraded = vectorDb.getDegradedState?.()?.active === true;
       if (vectorDegraded) {

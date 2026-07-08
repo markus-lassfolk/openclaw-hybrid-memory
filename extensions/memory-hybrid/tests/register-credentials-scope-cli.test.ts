@@ -106,3 +106,66 @@ describe("scope prune vector cleanup", () => {
     expect(process.exitCode).toBe(2);
   });
 });
+
+describe("scope promote --verbose heartbeat", () => {
+  let db: InstanceType<typeof FactsDB>;
+
+  afterEach(() => {
+    db?.close();
+    vi.restoreAllMocks();
+    process.exitCode = undefined;
+  });
+
+  function storeOldSessionFact(text: string, scopeTarget: string) {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const oldSec = nowSec - 10 * 86400;
+    const fact = db.store({
+      text,
+      category: "fact",
+      importance: 0.85,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "session",
+      scopeTarget,
+    });
+    db.getRawDb().prepare("UPDATE facts SET created_at = ? WHERE id = ?").run(oldSec, fact.id);
+    return fact;
+  }
+
+  it("emits start/complete heartbeat lines when --verbose is passed, and still promotes", async () => {
+    db = new FactsDB(":memory:");
+    const fact = storeOldSessionFact("Session insight to promote (verbose)", "sess-verbose");
+
+    const mem = makeProgram({ factsDb: db, vectorDb: {} });
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    });
+
+    await mem.parseAsync(["scope", "promote", "--verbose"], { from: "user" });
+
+    expect(logs.some((l) => l.includes("scope-promote — start"))).toBe(true);
+    expect(logs.some((l) => l.includes("scope-promote — complete in"))).toBe(true);
+    expect(db.getById(fact.id)?.scope).toBe("global");
+  });
+
+  it("stays silent (no heartbeat lines) without --verbose, and still promotes", async () => {
+    db = new FactsDB(":memory:");
+    const fact = storeOldSessionFact("Session insight to promote (quiet)", "sess-quiet");
+
+    const mem = makeProgram({ factsDb: db, vectorDb: {} });
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    });
+
+    await mem.parseAsync(["scope", "promote"], { from: "user" });
+
+    expect(logs.some((l) => l.includes("scope-promote — start"))).toBe(false);
+    expect(logs.some((l) => l.includes("scope-promote — complete in"))).toBe(false);
+    expect(db.getById(fact.id)?.scope).toBe("global");
+    expect(logs.some((l) => l.includes("scope-promote promoted=1/1"))).toBe(true);
+  });
+});

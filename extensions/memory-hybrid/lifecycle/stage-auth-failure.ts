@@ -18,7 +18,7 @@ import { applyPrependBudget } from "../services/prepend-budget.js";
 import { runOptionalBeforeAgentStartStage } from "../services/before-agent-start-budget.js";
 import { filterByScope, mergeResults } from "../services/merge-results.js";
 import { assembleRecallPrependContext } from "../services/recalled-context-assembler.js";
-import type { ScopeFilter } from "../types/memory.js";
+import { resolveRecallScopeFilter } from "./stage-recall/degraded-recall.js";
 import { isTierAllowedForWarmSearch } from "../utils/tier-filter.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
 import { isRecallContextSuperseded, suppressStaleLifecycleDbError } from "../utils/registration-superseded.js";
@@ -91,15 +91,12 @@ export function registerAuthFailureRecall(
         `memory-hybrid: auth failure detected for ${detection.target} (${detection.hint}), searching for credentials...`,
       );
 
-      const detectedAgentId = currentAgentIdRef.value || ctx.cfg.multiAgent.orchestratorId;
-      const scopeFilter: ScopeFilter | undefined =
-        detectedAgentId && detectedAgentId !== ctx.cfg.multiAgent.orchestratorId
-          ? {
-              userId: ctx.cfg.autoRecall.scopeFilter?.userId ?? null,
-              agentId: detectedAgentId,
-              sessionId: ctx.cfg.autoRecall.scopeFilter?.sessionId ?? null,
-            }
-          : undefined;
+      // Same scope resolution the recall-degraded path uses (setup/register-hooks.ts) — the
+      // orchestrator/single-agent case still applies any operator-configured
+      // cfg.autoRecall.scopeFilter, which a local reimplementation here previously dropped
+      // entirely, letting a scope-isolated deployment inject another user's/session's
+      // credential facts into the current chat on an auth-failure hit.
+      const scopeFilter = resolveRecallScopeFilter(ctx);
 
       const tierFilter: "warm" | "all" = ctx.cfg.memoryTiering.enabled ? "warm" : "all";
       const ftsResults = ctx.factsDb.search(query, 5, {

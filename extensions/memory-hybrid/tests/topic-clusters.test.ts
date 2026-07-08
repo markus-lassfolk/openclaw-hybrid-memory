@@ -339,6 +339,70 @@ describe("detectClusters: cluster properties", () => {
 });
 
 // ---------------------------------------------------------------------------
+// detectClusters — scope isolation (loop iteration 106 regression)
+// ---------------------------------------------------------------------------
+
+/** Build a ClusterFactLookup mock whose getById actually honors options.scopeFilter. */
+function buildScopedMockDb(
+  entries: MemoryEntry[],
+  edges: Array<{ sourceFactId: string; targetFactId: string }>,
+): ClusterFactLookup {
+  const entryMap = new Map(entries.map((e) => [e.id, e]));
+  const linkedIds = new Set<string>();
+  for (const { sourceFactId, targetFactId } of edges) {
+    linkedIds.add(sourceFactId);
+    linkedIds.add(targetFactId);
+  }
+  return {
+    getAllLinkedFactIds: () => [...linkedIds],
+    getAllLinks: () => edges,
+    getById: (id, options) => {
+      const entry = entryMap.get(id) ?? null;
+      if (!entry) return null;
+      const scopeFilter = options?.scopeFilter;
+      if (!scopeFilter || (!scopeFilter.userId && !scopeFilter.agentId && !scopeFilter.sessionId)) return entry;
+      const scope = entry.scope ?? "global";
+      if (scope === "global") return entry;
+      const matches =
+        (scope === "user" && scopeFilter.userId === entry.scopeTarget) ||
+        (scope === "agent" && scopeFilter.agentId === entry.scopeTarget) ||
+        (scope === "session" && scopeFilter.sessionId === entry.scopeTarget);
+      return matches ? entry : null;
+    },
+  };
+}
+
+/**
+ * Regression test (loop iteration 106): detectClusters had no scope awareness at all — it called
+ * getAllLinkedFactIds()/getAllLinks() with no filtering and getById(id) with no scopeFilter, so a
+ * fact belonging to a different tenant could enter another tenant's cluster (fact ID + inferred
+ * label content disclosure) purely by being linked in the shared memory_links graph.
+ */
+describe("detectClusters: scope isolation (loop iteration 106 regression)", () => {
+  it("excludes another tenant's facts from clusters and edges entirely", () => {
+    const db = buildScopedMockDb(
+      [
+        makeEntry("fact-a", { scope: "agent", scopeTarget: "tenant-a" }),
+        makeEntry("fact-b", { scope: "agent", scopeTarget: "tenant-a" }),
+        makeEntry("fact-c", { scope: "agent", scopeTarget: "tenant-b" }),
+      ],
+      [
+        { sourceFactId: "fact-a", targetFactId: "fact-b" },
+        { sourceFactId: "fact-b", targetFactId: "fact-c" },
+        { sourceFactId: "fact-a", targetFactId: "fact-c" },
+      ],
+    );
+
+    const result = detectClusters(db, { minClusterSize: 2, scopeFilter: { agentId: "tenant-a" } });
+
+    expect(result.totalLinkedFacts).toBe(2);
+    expect(result.clusters).toHaveLength(1);
+    expect(result.clusters[0].factIds).toEqual(["fact-a", "fact-b"]);
+    expect(result.clusters[0].factIds).not.toContain("fact-c");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // generateClusterLabel
 // ---------------------------------------------------------------------------
 

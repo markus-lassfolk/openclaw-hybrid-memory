@@ -4,6 +4,7 @@
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
+import type { ScopeFilter } from "../types/memory.js";
 import { detectStaleTasks, readActiveTaskFile, type ActiveTaskEntry } from "./active-task.js";
 import { loadTaskLedgerFromFacts } from "./task-ledger-facts.js";
 import { parseDuration } from "../utils/duration.js";
@@ -18,13 +19,16 @@ export async function loadActiveTasksForTools(
   cfg: HybridMemoryConfig,
   resolvedActiveTaskPath: string,
   factsDb: FactsDB | null,
+  scopeFilter?: ScopeFilter | null,
 ): Promise<LoadedActiveTasks | null> {
   if (!cfg.activeTask.enabled) return null;
   const staleMinutes = parseDuration(cfg.activeTask.staleThreshold);
 
   if (cfg.activeTask.ledger === "facts") {
     if (!factsDb) return null;
-    const { active } = loadTaskLedgerFromFacts(factsDb);
+    // SECURITY: loadTaskLedgerFromFacts accepts an optional scopeFilter but silently returns
+    // every tenant's task facts when it's omitted — must be threaded through explicitly.
+    const { active } = loadTaskLedgerFromFacts(factsDb, undefined, scopeFilter);
     return {
       tasks: detectStaleTasks(active, staleMinutes),
       path: resolvedActiveTaskPath,

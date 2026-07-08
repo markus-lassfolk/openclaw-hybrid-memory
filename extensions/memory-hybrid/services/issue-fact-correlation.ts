@@ -6,6 +6,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { IssueStore } from "../backends/issue-store.js";
 import type { Issue } from "../types/issue-types.js";
 import type { MemoryLinkType } from "../backends/facts-db/types.js";
+import type { ScopeFilter } from "../types/memory.js";
 
 export type IssueCorrelationResult = {
   linkedFactIds: string[];
@@ -92,9 +93,10 @@ export function autoLinkIssueToFacts(
   issue: Issue,
   factsDb: FactsDB,
   issueStore: IssueStore,
-  options?: { maxLinks?: number },
+  options?: { maxLinks?: number; scopeFilter?: ScopeFilter | null },
 ): IssueCorrelationResult {
   const maxLinks = options?.maxLinks ?? 5;
+  const scopeFilter = options?.scopeFilter;
   const searchText = buildIssueSearchText(issue);
   if (!searchText.trim()) {
     return { linkedFactIds: [...issue.relatedFacts], graphLinksCreated: 0 };
@@ -103,6 +105,7 @@ export function autoLinkIssueToFacts(
   const results = factsDb.search(searchText, maxLinks * 3, {
     reinforcementBoost: 0,
     diversityWeight: 0,
+    scopeFilter,
   });
 
   const linked = new Set(issue.relatedFacts);
@@ -111,7 +114,9 @@ export function autoLinkIssueToFacts(
     if (newLinks >= maxLinks) break;
     const factId = r.entry.id;
     if (linked.has(factId)) continue;
-    const live = factsDb.getById(factId);
+    // SECURITY: re-check scope on the hydrated row too, not just the search filter — mirrors the
+    // same belt-and-suspenders pattern used for memory_link/memory_graph in graph-tools.ts.
+    const live = factsDb.getById(factId, { scopeFilter });
     if (!live || live.supersededAt != null) continue;
     issueStore.linkFact(issue.id, factId);
     linked.add(factId);

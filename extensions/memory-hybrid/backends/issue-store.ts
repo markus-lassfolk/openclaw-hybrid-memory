@@ -16,6 +16,7 @@ import type { CreateIssueInput, Issue, IssueSeverity, IssueStatus } from "../typ
 import { ISSUE_TRANSITIONS } from "../types/issue-types.js";
 import { nowIso, cutoffIsoDaysAgo } from "../utils/dates.js";
 import { backfillIssueTextTimestamps } from "../utils/timestamp-migration.js";
+import { createTransaction } from "../utils/sqlite-transaction.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 interface IssueRow {
@@ -103,7 +104,11 @@ export class IssueStore extends BaseSqliteStore {
     return this.rowToIssue(row);
   }
 
-  update(id: string, patch: Partial<Omit<Issue, "id" | "createdAt">>): Issue {
+  update(
+    id: string,
+    patch: Partial<Omit<Issue, "id" | "createdAt">>,
+    opts?: { expectedStatus?: IssueStatus },
+  ): Issue {
     const existing = this.get(id);
     if (!existing) throw new Error(`Issue not found: ${id}`);
 
@@ -161,7 +166,22 @@ export class IssueStore extends BaseSqliteStore {
     }
 
     params.push(id);
-    this.liveDb.prepare(`UPDATE issues SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+    let sql = `UPDATE issues SET ${sets.join(", ")} WHERE id = ?`;
+    // Compare-and-swap: transition() passes the status it read so the write only lands if
+    // nothing else changed the status in between (cross-process race — this class's SQLite
+    // calls are synchronous, so no other in-process caller can interleave). A concurrent writer
+    // that already changed the status makes this UPDATE affect zero rows instead of silently
+    // overwriting the other writer's transition.
+    if (opts?.expectedStatus !== undefined) {
+      sql += " AND status = ?";
+      params.push(opts.expectedStatus);
+    }
+    const result = this.liveDb.prepare(sql).run(...params);
+    if (opts?.expectedStatus !== undefined && result.changes === 0) {
+      throw new Error(
+        `Issue ${id} was modified concurrently (expected status "${opts.expectedStatus}"); refetch and retry.`,
+      );
+    }
 
     return this.get(id) as Issue;
   }
@@ -190,7 +210,7 @@ export class IssueStore extends BaseSqliteStore {
       patch.verifiedAt = now;
     }
 
-    return this.update(id, patch);
+    return this.update(id, patch, { expectedStatus: existing.status });
   }
 
   list(filter?: { status?: IssueStatus[]; severity?: string[]; tags?: string[]; limit?: number }): Issue[] {
@@ -217,7 +237,13 @@ export class IssueStore extends BaseSqliteStore {
       params.push(...lower);
     }
 
-    query += " ORDER BY created_at DESC";
+    // When the caller already narrowed to specific severities, rank the most severe first
+    // before applying LIMIT — otherwise a burst of newer lower-in-range issues (e.g. "high")
+    // can push an older, more severe one (e.g. "critical") out of a capped result entirely.
+    query +=
+      filter?.severity && filter.severity.length > 0
+        ? " ORDER BY CASE severity WHEN 'critical' THEN 3 WHEN 'high' THEN 2 WHEN 'medium' THEN 1 ELSE 0 END DESC, created_at DESC"
+        : " ORDER BY created_at DESC";
     if (filter?.limit && filter.limit > 0) {
       query += " LIMIT ?";
       params.push(filter.limit);
@@ -236,16 +262,27 @@ export class IssueStore extends BaseSqliteStore {
   }
 
   linkFact(issueId: string, factId: string): void {
-    const issue = this.get(issueId);
-    if (!issue) throw new Error(`Issue not found: ${issueId}`);
+    // Read-modify-write the JSON related_facts column inside an IMMEDIATE transaction so two
+    // concurrent linkFact() calls on the same issue can't both read the same array and overwrite
+    // each other's addition (last write wins) — mirrors the same class of fix already applied to
+    // facts-db/crud.ts's storeFact() and edict-store.ts's add().
+    const linkAtomic = createTransaction(
+      this.liveDb,
+      () => {
+        const issue = this.get(issueId);
+        if (!issue) throw new Error(`Issue not found: ${issueId}`);
 
-    const related = issue.relatedFacts;
-    if (!related.includes(factId)) {
-      related.push(factId);
-      this.liveDb
-        .prepare("UPDATE issues SET related_facts = ?, updated_at = ? WHERE id = ?")
-        .run(JSON.stringify(related), nowIso(), issueId);
-    }
+        const related = issue.relatedFacts;
+        if (!related.includes(factId)) {
+          related.push(factId);
+          this.liveDb
+            .prepare("UPDATE issues SET related_facts = ?, updated_at = ? WHERE id = ?")
+            .run(JSON.stringify(related), nowIso(), issueId);
+        }
+      },
+      "IMMEDIATE",
+    );
+    linkAtomic();
   }
 
   archive(olderThanDays: number): number {

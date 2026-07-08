@@ -895,11 +895,27 @@ function applyContactProfileFields(db: DatabaseSync, contactId: string, fields: 
   }
 
   const now = Math.floor(Date.now() / 1000);
+  // Mirror the INSERT path's pairing (source_date is only ever set alongside a source): an update
+  // that carries no `source` must not stamp source_date to now, or it falsely implies the
+  // contact's original source was just reconfirmed.
+  const nextSourceDateStamp = fields.source ? now : null;
   db.prepare(
     `UPDATE contacts SET email = ?, phone = ?, mobile = ?, role = ?, board_status = ?, notes = ?,
-       source = COALESCE(?, source), source_date = ?, updated_by = COALESCE(?, updated_by), updated_at = ?
+       source = COALESCE(?, source), source_date = COALESCE(?, source_date), updated_by = COALESCE(?, updated_by), updated_at = ?
      WHERE id = ?`,
-  ).run(nextEmail, nextPhone, nextMobile, nextRole, nextBoardStatus, nextNotes, fields.source ?? null, now, fields.updatedBy ?? null, now, contactId);
+  ).run(
+    nextEmail,
+    nextPhone,
+    nextMobile,
+    nextRole,
+    nextBoardStatus,
+    nextNotes,
+    fields.source ?? null,
+    nextSourceDateStamp,
+    fields.updatedBy ?? null,
+    now,
+    contactId,
+  );
 }
 
 /** True when one name's tokens are a contiguous prefix or suffix run of the other's (#2014). */
@@ -1094,14 +1110,29 @@ function processEntityMentionsForFact<
   const allAccepted = [...acceptedByKey.values()];
   let substringFilteredCount = 0;
   const filteredAccepted = allAccepted.filter((m) => {
+    // Reuse the write-time containment check (word-boundary aware) so cleanup never removes a
+    // mention that ingestion would have kept — a plain substring test without word boundaries
+    // (e.g. "Ann" inside "Annabelle") disagreed with isContainedByLongerMention and could delete
+    // a legitimately distinct, previously-accepted mention.
     const isSubstring = allAccepted.some(
       (other) =>
         other !== m &&
-        other.label === m.label &&
-        other.normalizedSurface.length > m.normalizedSurface.length &&
-        other.normalizedSurface.includes(m.normalizedSurface) &&
         other.sourceRow.start_offset <= m.sourceRow.start_offset &&
-        other.sourceRow.end_offset >= m.sourceRow.end_offset,
+        other.sourceRow.end_offset >= m.sourceRow.end_offset &&
+        isContainedByLongerMention(
+          {
+            label: m.label,
+            normalizedSurface: m.normalizedSurface,
+            startOffset: m.sourceRow.start_offset,
+            endOffset: m.sourceRow.end_offset,
+          },
+          {
+            label: other.label,
+            normalizedSurface: other.normalizedSurface,
+            startOffset: other.sourceRow.start_offset,
+            endOffset: other.sourceRow.end_offset,
+          },
+        ),
     );
     if (isSubstring) {
       substringFilteredCount++;

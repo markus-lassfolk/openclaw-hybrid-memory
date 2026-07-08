@@ -3,8 +3,8 @@
  */
 
 import type { FactsDB } from "../backends/facts-db.js";
+import type { MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
 import type { VaultHandle } from "./vault-registry.js";
-import type { MemoryEntry, SearchResult } from "../types/memory.js";
 
 export function resolveFactsDbForEntry(entry: MemoryEntry, defaultDb: FactsDB, vaultHandles?: VaultHandle[]): FactsDB {
   if (!vaultHandles || vaultHandles.length <= 1) return defaultDb;
@@ -44,12 +44,20 @@ export function formatFragmentRecallText(entry: MemoryEntry, parent: MemoryEntry
   return `[§ ${parentTitle}]\n${body}`;
 }
 
-export function resolveRecallInjectionText(entry: MemoryEntry, factsDb: FactsDB, useSummary: boolean): string {
+export function resolveRecallInjectionText(
+  entry: MemoryEntry,
+  factsDb: FactsDB,
+  useSummary: boolean,
+  scopeFilter?: ScopeFilter | null,
+): string {
   if (!isFragmentEntry(entry)) {
     return useSummary && entry.summary?.trim() ? entry.summary : entry.text;
   }
   const parentId = resolveFragmentParentId(entry);
-  const parent = parentId ? factsDb.getById(parentId) : null;
+  // SECURITY: getById accepts an optional scopeFilter but returns any tenant's fact when it's
+  // omitted — must be threaded through so a fragment's parent hydration can't leak a different
+  // tenant's fact text into this caller's recall/injection output.
+  const parent = parentId ? factsDb.getById(parentId, { scopeFilter }) : null;
   return formatFragmentRecallText(entry, parent, useSummary);
 }
 

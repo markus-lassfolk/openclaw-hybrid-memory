@@ -230,34 +230,42 @@ function registerManageStorageMaintenanceOnParent(
     .description(
       "Tier compaction: move facts between hot/warm/cold/structural (does NOT shrink LanceDB — see vectordb-optimize)",
     )
-    .option("--dry-run", "Preview tier changes without mutating facts");
+    .option("--dry-run", "Preview tier changes without mutating facts")
+    .option("-v, --verbose", "Emit periodic progress heartbeat for long runs");
   // Legacy `compact` alias only applies to the flat tier-compact command name.
   if (names.compact === "tier-compact") {
     tierCompactCmd.alias?.("compact");
   }
   tierCompactCmd.action(
     withExit(
-      maybeWrap("tier-compact", names.compact, async (opts?: { dryRun?: boolean }) => {
-        let counts;
-        try {
-          counts = await runCompaction({ apply: opts?.dryRun !== true });
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "cli",
-            operation: "compact",
-          });
-          throw err;
-        }
-        // Record timestamp after successful compaction (not for dry-run)
-        if (opts?.dryRun !== true && ctx.resolvedSqlitePath) {
-          recordMaintenanceTimestamp(ctx.resolvedSqlitePath, ".compact_last_run");
-        }
-        const mode = opts?.dryRun ? "dry-run" : "apply";
-        const changed = counts.changed == null ? "" : ` changed=${counts.changed}/${counts.examined ?? "?"}`;
-        console.log(
-          `Tier compaction (${mode}): hot=${counts.hot} warm=${counts.warm} cold=${counts.cold} structural=${counts.structural}${changed}`,
-        );
-      }),
+      maybeWrap(
+        "tier-compact",
+        names.compact,
+        async (opts?: { dryRun?: boolean; verbose?: boolean }, cmd?: CommanderOptsParent) => {
+          const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+          let counts;
+          try {
+            counts = await runMaintenanceHeartbeat("compact", verbose, () =>
+              runCompaction({ apply: opts?.dryRun !== true }),
+            );
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "cli",
+              operation: "compact",
+            });
+            throw err;
+          }
+          // Record timestamp after successful compaction (not for dry-run)
+          if (opts?.dryRun !== true && ctx.resolvedSqlitePath) {
+            recordMaintenanceTimestamp(ctx.resolvedSqlitePath, ".compact_last_run");
+          }
+          const mode = opts?.dryRun ? "dry-run" : "apply";
+          const changed = counts.changed == null ? "" : ` changed=${counts.changed}/${counts.examined ?? "?"}`;
+          console.log(
+            `Tier compaction (${mode}): hot=${counts.hot} warm=${counts.warm} cold=${counts.cold} structural=${counts.structural}${changed}`,
+          );
+        },
+      ),
     ),
   );
 
@@ -285,33 +293,41 @@ function registerManageStorageMaintenanceOnParent(
         "Disk size in `stats` is the whole Lance directory — remove stray `memories_reindex_*` / `memories_old_*` folders after a failed re-index swap if present.",
     )
     .option("--older-than-days <days>", "Remove versions older than this many days (default: 7)", "7")
+    .option("-v, --verbose", "Emit periodic progress heartbeat for long runs")
     .action(
       withExit(
-        maybeWrap("vectordb-optimize", names.optimize, async (opts?: { olderThanDays?: string }) => {
-          const parsedDays = Number.parseInt(opts?.olderThanDays ?? "7", 10);
-          if (!Number.isFinite(parsedDays) || parsedDays < 0) {
-            console.error("error: --older-than-days must be a finite number ≥ 0");
-            process.exitCode = 1;
-            return;
-          }
-          const olderThanMs = parsedDays * 24 * 60 * 60 * 1000;
-          try {
-            const stats = await vectorDb.optimize(olderThanMs);
-            // Record timestamp after successful optimization
-            if (ctx.resolvedSqlitePath) {
-              recordMaintenanceTimestamp(ctx.resolvedSqlitePath, ".vectordb_optimize_last_run");
+        maybeWrap(
+          "vectordb-optimize",
+          names.optimize,
+          async (opts?: { olderThanDays?: string; verbose?: boolean }, cmd?: CommanderOptsParent) => {
+            const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+            const parsedDays = Number.parseInt(opts?.olderThanDays ?? "7", 10);
+            if (!Number.isFinite(parsedDays) || parsedDays < 0) {
+              console.error("error: --older-than-days must be a finite number ≥ 0");
+              process.exitCode = 1;
+              return;
             }
-            console.log(
-              `LanceDB: compacted ${stats.compacted} fragments, pruned ${stats.removedFragments} fragment(s), freed ${stats.freedBytes} bytes`,
-            );
-          } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "cli",
-              operation: "vectordb-optimize",
-            });
-            throw err;
-          }
-        }),
+            const olderThanMs = parsedDays * 24 * 60 * 60 * 1000;
+            try {
+              const stats = await runMaintenanceHeartbeat("vectordb-optimize", verbose, () =>
+                vectorDb.optimize(olderThanMs),
+              );
+              // Record timestamp after successful optimization
+              if (ctx.resolvedSqlitePath) {
+                recordMaintenanceTimestamp(ctx.resolvedSqlitePath, ".vectordb_optimize_last_run");
+              }
+              console.log(
+                `LanceDB: compacted ${stats.compacted} fragments, pruned ${stats.removedFragments} fragment(s), freed ${stats.freedBytes} bytes`,
+              );
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "cli",
+                operation: "vectordb-optimize",
+              });
+              throw err;
+            }
+          },
+        ),
       ),
     );
 
@@ -1317,10 +1333,7 @@ function registerManageStorageMaintenanceOnParent(
                 resumeCommand: "openclaw hybrid-mem storage re-index --resume",
               });
               jobRun.startPhase("embed");
-              const jobRunCheckpoint = createReindexJobRunCheckpointAdapter(
-                jobRun,
-                checkpointPath.length > 0 ? checkpointPath : undefined,
-              );
+              const jobRunCheckpoint = createReindexJobRunCheckpointAdapter(jobRun);
               const finishReindexJobRun = (outcome: "success" | "partial" | "failed", clear: boolean) => {
                 jobRun.endPhase("embed", outcome === "success" ? "completed" : "failed");
                 finishBatchJobRun(jobRun, outcome, { clearCheckpoint: clear });
@@ -1563,6 +1576,11 @@ function registerManageStorageMaintenanceOnParent(
               after,
               ...result,
             };
+            // Set the exit code before the --json early-return so JSON output reports failures
+            // via process exit status too, not just human-readable console.warn output.
+            if (result.errors.length > 0) {
+              process.exitCode = 2;
+            }
             if (opts?.json) {
               console.log(JSON.stringify(report, null, 2));
               return;
@@ -1574,7 +1592,6 @@ function registerManageStorageMaintenanceOnParent(
             if (result.errors.length > 0) {
               console.warn(`Errors: ${result.errors.length}`);
               for (const err of result.errors.slice(0, 10)) console.warn(`  - ${err}`);
-              process.exitCode = 2;
             }
           },
         ),
@@ -1614,6 +1631,11 @@ function registerManageStorageMaintenanceOnParent(
               resolvedSqlitePath: ctx.resolvedSqlitePath,
             });
             const finishedAt = nowIso();
+            // Set the exit code before the --json early-return so JSON output reports failures
+            // via process exit status too, not just human-readable console output.
+            if (report.errors.length > 0) {
+              process.exitCode = 2;
+            }
             if (opts?.json) {
               console.log(JSON.stringify({ ...report, finishedAt }, null, 2));
               return;
@@ -1630,7 +1652,6 @@ function registerManageStorageMaintenanceOnParent(
             if (report.errors.length > 0) {
               console.log(`  errors=${report.errors.length}`);
               for (const err of report.errors.slice(0, 10)) console.log(`    - ${err}`);
-              process.exitCode = 2;
             }
           },
         ),
@@ -1651,6 +1672,12 @@ function registerManageStorageMaintenanceOnParent(
           const apply = opts?.apply === true;
           const supersededIds: string[] = [];
           const verifiedSkippedIds: string[] = [];
+          // In --apply mode, pagination offset intentionally stays at 0 while a batch supersedes
+          // at least one fact (the active set shrinks under it) — see the offset-retention comment
+          // below. A still-active verified fact within that window gets re-fetched and re-processed
+          // on every such iteration; without this guard it would be pushed into verifiedSkippedIds
+          // once per re-fetch instead of once overall.
+          const verifiedSkippedIdSet = new Set<string>();
           const vectorDeleteErrors: string[] = [];
           let vectorDeleteCount = 0;
           const verifiedLookup = (() => {
@@ -1669,7 +1696,10 @@ function registerManageStorageMaintenanceOnParent(
             for (const fact of facts) {
               if (!isPreStoreGuardBlocked({ text: fact.text, category: fact.category, source: fact.source })) continue;
               if (verifiedLookup?.get(fact.id)) {
-                verifiedSkippedIds.push(fact.id);
+                if (!verifiedSkippedIdSet.has(fact.id)) {
+                  verifiedSkippedIdSet.add(fact.id);
+                  verifiedSkippedIds.push(fact.id);
+                }
                 continue;
               }
               if (!apply) {
@@ -1745,6 +1775,11 @@ function registerManageStorageMaintenanceOnParent(
             vectorDeleteErrors,
           };
 
+          // Set the exit code before the --json early-return so JSON output reports failures via
+          // process exit status too, not just the human-readable console.warn output below.
+          if (vectorDeleteErrors.length > 0) {
+            process.exitCode = 2;
+          }
           if (opts?.json) {
             console.log(JSON.stringify(report, null, 2));
             return;
@@ -1774,7 +1809,6 @@ function registerManageStorageMaintenanceOnParent(
             if (vectorDeleteErrors.length > 0) {
               console.warn(`Errors: ${vectorDeleteErrors.length}`);
               for (const e of vectorDeleteErrors.slice(0, 10)) console.warn(`  - ${e}`);
-              process.exitCode = 2;
             }
           }
         }),

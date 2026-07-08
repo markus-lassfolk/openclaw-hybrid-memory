@@ -37,6 +37,7 @@ import { markFactsInjectedForSession } from "../services/session-injection-dedup
 import { setProgressiveIndexIds } from "../utils/progressive-index-session.js";
 import type { LifecycleContext, RecallResult } from "./types.js";
 import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
+import { resolveRecallScopeFilter } from "./stage-recall/degraded-recall.js";
 
 const INJECTION_STAGE_TIMEOUT_MS = 10_000;
 const HEBBIAN_MAX_K = 8;
@@ -127,7 +128,14 @@ export async function runInjectionStage(
       }
       injectionAbort.abort();
       api.logger.warn?.("memory-hybrid: injection stage timed out — returning unsummarized partial injection");
-      void runInjection(recallResult, api, ctx, event, { skipLlmSummarize: true, emitGate }).then(resolve);
+      void runInjection(recallResult, api, ctx, event, { skipLlmSummarize: true, emitGate }).then(resolve, (err) => {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "injection-timeout-fallback",
+          severity: "warning",
+          subsystem: "stage-injection",
+        });
+        resolve(undefined);
+      });
     }, INJECTION_STAGE_TIMEOUT_MS);
   });
 
@@ -226,7 +234,9 @@ async function runInjection(
   };
 
   const recallBodyText = (entry: (typeof candidates)[number]["entry"], useSummary: boolean): string =>
-    sanitizeFactForInjection(resolveRecallInjectionText(entry, resolveFactsDbForCandidate(entry), useSummary));
+    sanitizeFactForInjection(
+      resolveRecallInjectionText(entry, resolveFactsDbForCandidate(entry), useSummary, resolveRecallScopeFilter(ctx)),
+    );
 
   const edictMaxTokens = Math.max(
     0,
@@ -247,7 +257,13 @@ async function runInjection(
     sideEffects?: InjectionSideEffects,
   ): { prependContext: string } | undefined => {
     if (options.emitGate?.emitted) return undefined;
-    const structured = finalizeInjectionMemoryContent(ctx, event, memoryContent, candidates);
+    const structured = finalizeInjectionMemoryContent(
+      ctx,
+      event,
+      memoryContent,
+      candidates,
+      resolveRecallScopeFilter(ctx),
+    );
     const prepend = assembleRecallPrependContext(ctx, markDegradedLatency(structured), {
       prefix,
       edictBlock,

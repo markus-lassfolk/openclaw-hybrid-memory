@@ -90,14 +90,15 @@ async function parseBatchContent(
 ): Promise<ReinforcementRemediationItem[] | null> {
   const parsed = parseStructuredItemsAcceptingEmpty(content, isReinforcementRemediationItem);
   if (parsed !== null) return parsed as ReinforcementRemediationItem[];
-  diagnostics.parseFailures++;
   try {
     const repaired = await deps.attemptAnalysisJsonRepair(content);
     diagnostics.fallbacks += repaired.fallbacks;
     if (repaired.items !== null) return repaired.items;
   } catch {
+    diagnostics.parseFailures++;
     return null;
   }
+  diagnostics.parseFailures++;
   return null;
 }
 

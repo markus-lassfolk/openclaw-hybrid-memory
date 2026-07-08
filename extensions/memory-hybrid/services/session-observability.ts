@@ -218,39 +218,35 @@ export async function buildSessionObservabilityReport(
   // ---------------------------------------------------------------------------
   const eventEntries: SessionTimelineEntry[] = [];
   if (eventLog) {
-    // NOTE: eventLog.getSessionEvents or equivalent — check available methods
-    // We query via factsDb since episodes table is accessible there
-    // Only include events in the session window (24h lookback by default)
-    const _sinceMs = now - 24 * 3600 * 1000;
+    // Episodes live in the facts DB (backends/facts-db/episodes.ts), not the event log; there is
+    // no session-scoped lookup, so pull recent episodes and filter by sessionId client-side.
+    // Only include events in the session window (24h lookback by default). Episode.timestamp is
+    // Unix epoch *seconds*, unlike the rest of this file's millisecond timestamps.
+    const sinceSec = Math.floor((now - 24 * 3600 * 1000) / 1000);
     try {
-      // episodes are stored in facts DB; we use factsDb to retrieve them
-      const episodes =
-        (factsDb as { getEpisodesBySession?(sid: string, lim: number): unknown[] })?.getEpisodesBySession?.(
-          sessionId ?? "recent",
-          limit,
-        ) ?? [];
+      const allEpisodes = factsDb.searchEpisodes({ since: sinceSec, limit });
+      const episodes = sessionId ? allEpisodes.filter((ep) => ep.sessionId === sessionId) : allEpisodes;
 
-      for (const ep of episodes as Array<{
-        id?: string;
-        event?: string;
-        outcome?: string;
-        timestamp?: number | string;
-        context?: string;
-      }>) {
-        const ts = typeof ep.timestamp === "number" ? ep.timestamp : Date.parse(String(ep.timestamp ?? "0"));
+      for (const ep of episodes) {
+        const outcome: SessionTimelineEntry["outcome"] | undefined =
+          ep.outcome === "failure"
+            ? "failed"
+            : ep.outcome === "success" || ep.outcome === "partial"
+              ? ep.outcome
+              : undefined;
         eventEntries.push(
           makeEntry(
-            ts,
+            ep.timestamp * 1000,
             "episode_recorded",
-            ep.event ?? "episode",
-            ep.context ?? ep.event ?? "",
+            ep.event,
+            ep.context ?? ep.event,
             { outcome: ep.outcome },
-            { outcome: ep.outcome as SessionTimelineEntry["outcome"] },
+            { outcome },
           ),
         );
       }
     } catch {
-      // eventLog may not expose session-scoped episode query; fall back silently
+      // facts DB may not support episode search (older schema); fall back silently
     }
   }
 

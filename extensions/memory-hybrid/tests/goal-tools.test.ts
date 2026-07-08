@@ -6,8 +6,9 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hybridConfigSchema } from "../config.js";
+import * as goalRegistry from "../services/goal-registry.js";
 import {
   createGoal,
   listActiveGoals,
@@ -19,6 +20,7 @@ import {
 import { resolveGoalsDir } from "../services/goal-stewardship.js";
 import { registerGoalTools } from "../tools/goal-tools.js";
 import { setEnv } from "../utils/env-manager.js";
+import { buildToolScopeFilter } from "../utils/scope-filter.js";
 
 const defaults = {
   maxDispatches: 5,
@@ -153,6 +155,8 @@ describe("goal tools registry primitives", () => {
         embeddings: null,
         eventLog: null,
         memoryDir: join(workspaceRoot, "memory"),
+        currentAgentIdRef: { value: null },
+        buildToolScopeFilter,
       },
       api as ClawdbotPluginApi,
     );
@@ -193,6 +197,8 @@ describe("goal tools registry primitives", () => {
         embeddings: null,
         eventLog: null,
         memoryDir: join(workspaceRoot, "memory"),
+        currentAgentIdRef: { value: null },
+        buildToolScopeFilter,
       },
       api as ClawdbotPluginApi,
     );
@@ -214,6 +220,70 @@ describe("goal tools registry primitives", () => {
       confirmed: true,
     })) as { details?: { goal?: { label?: string } } };
     expect(ok?.details?.goal?.label).toBe("clear-goal");
+  });
+
+  it("goal_register does not exceed maxActiveGoals when a concurrent registration lands in the check-then-write race window (loop iteration 81 regression)", async () => {
+    const cfg = hybridConfigSchema.parse({
+      embedding: {
+        apiKey: "sk-test-key-that-is-long-enough-to-pass",
+        model: "text-embedding-3-small",
+      },
+      goalStewardship: {
+        enabled: true,
+        goalsDir: "state/goals",
+        globalLimits: { maxActiveGoals: 1, maxDispatchesPerHour: 6 },
+      },
+    });
+    const tools = new Map<string, { execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }>();
+    const api: Pick<ClawdbotPluginApi, "registerTool"> = {
+      registerTool(toolDefinition: { name: string; execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }) {
+        tools.set(toolDefinition.name, { execute: toolDefinition.execute });
+      },
+    };
+    registerGoalTools(
+      {
+        cfg,
+        goalsDir,
+        workspaceRoot,
+        resolvedActiveTaskPath: join(workspaceRoot, "ACTIVE-TASKS.md"),
+        factsDb: null,
+        vectorDb: null,
+        embeddings: null,
+        eventLog: null,
+        memoryDir: join(workspaceRoot, "memory"),
+        currentAgentIdRef: { value: null },
+        buildToolScopeFilter,
+      },
+      api as ClawdbotPluginApi,
+    );
+    const goalRegister = tools.get("goal_register");
+
+    // Simulate a concurrent goal_register landing in the race window between this call's
+    // early fast-path count check and its lock-protected write: the spy returns the STALE
+    // (still-under-cap) snapshot after a genuine concurrent registration has already claimed
+    // the only slot.
+    const listSpy = vi.spyOn(goalRegistry, "listActiveGoals");
+    listSpy.mockImplementationOnce(async (dir) => {
+      const stale = await goalRegistry.listActiveGoals(dir);
+      await goalRegistry.createGoal(dir, { label: "racer", description: "d", acceptanceCriteria: ["a"] }, defaults);
+      return stale;
+    });
+
+    try {
+      const result = (await goalRegister?.execute("tc", {
+        label: "loser",
+        description: "Should be rejected because the racer already filled the only slot.",
+        acceptance_criteria: ["Operator confirms this registration was rejected"],
+        confirmed: true,
+      })) as { details?: { error?: string } };
+      expect(result?.details?.error).toBe("max_active_goals");
+
+      const active = await goalRegistry.listActiveGoals(goalsDir);
+      expect(active.length).toBe(1);
+      expect(active[0]?.label).toBe("racer");
+    } finally {
+      listSpy.mockRestore();
+    }
   });
 
   it("goal_list and goal_get expose registry goals", async () => {
@@ -250,6 +320,8 @@ describe("goal tools registry primitives", () => {
         embeddings: null,
         eventLog: null,
         memoryDir: join(workspaceRoot, "memory"),
+        currentAgentIdRef: { value: null },
+        buildToolScopeFilter,
       },
       api as ClawdbotPluginApi,
     );
@@ -289,6 +361,8 @@ describe("goal tools registry primitives", () => {
         embeddings: null,
         eventLog: null,
         memoryDir: join(workspaceRoot, "memory"),
+        currentAgentIdRef: { value: null },
+        buildToolScopeFilter,
       },
       api as ClawdbotPluginApi,
     );
@@ -309,5 +383,126 @@ describe("goal tools registry primitives", () => {
     })) as { content?: Array<{ text?: string }>; details?: { error?: string } };
     expect(corrupt.details?.error).toBe("corrupt");
     expect(corrupt.content?.[0]?.text).toContain("Goal state could not be loaded");
+  });
+
+  it("goal_assess does not mutate or reopen a goal terminated between the pre-lock read and the lock (TOCTOU, loop iteration 27 regression)", async () => {
+    const g = await createGoal(
+      goalsDir,
+      { label: "assess_race", description: "d", acceptanceCriteria: ["a"] },
+      defaults,
+    );
+
+    const cfg = hybridConfigSchema.parse({
+      embedding: {
+        apiKey: "sk-test-key-that-is-long-enough-to-pass",
+        model: "text-embedding-3-small",
+      },
+      goalStewardship: { enabled: true, goalsDir: "state/goals" },
+    });
+    const tools = new Map<string, { execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }>();
+    const api: Pick<ClawdbotPluginApi, "registerTool"> = {
+      registerTool(toolDefinition: { name: string; execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }) {
+        tools.set(toolDefinition.name, { execute: toolDefinition.execute });
+      },
+    };
+    registerGoalTools(
+      {
+        cfg,
+        goalsDir,
+        workspaceRoot,
+        resolvedActiveTaskPath: join(workspaceRoot, "ACTIVE-TASKS.md"),
+        factsDb: null,
+        vectorDb: null,
+        embeddings: null,
+        eventLog: null,
+        memoryDir: join(workspaceRoot, "memory"),
+        currentAgentIdRef: { value: null },
+        buildToolScopeFilter,
+      },
+      api as ClawdbotPluginApi,
+    );
+    const assess = tools.get("goal_assess");
+    expect(assess).toBeDefined();
+
+    // Simulate a concurrent goal_complete landing in the race window between goal_assess's
+    // pre-lock resolveGoalIdResult() read and updateGoal's own lock being acquired: the spy
+    // returns the STALE (still-active) snapshot, exactly matching the real race window, after a
+    // genuine concurrent termination has already completed the goal.
+    const resolveSpy = vi.spyOn(goalRegistry, "resolveGoalIdResult");
+    resolveSpy.mockImplementationOnce(async (dir, ref) => {
+      const stale = await goalRegistry.resolveGoalIdResult(dir, ref);
+      await goalRegistry.terminateGoal(dir, g.id, "completed", "shipped concurrently", "agent");
+      return stale;
+    });
+
+    try {
+      const result = (await assess?.execute("tc", {
+        goal_id: g.id,
+        assessment: "still working on it",
+        next_action: "keep going",
+      })) as { content?: Array<{ text?: string }>; details?: { error?: string } };
+      expect(result.details?.error).toBe("terminal");
+
+      const after = await readGoal(goalsDir, g.id);
+      expect(after?.status).toBe("completed");
+      expect(after?.assessmentCount).toBe(0);
+      expect(after?.history.some((h) => h.action === "assessed")).toBe(false);
+    } finally {
+      resolveSpy.mockRestore();
+    }
+  });
+
+  it("goal_update does not rewrite an already-terminal goal's description/acceptance criteria (loop iteration 28 regression)", async () => {
+    const g = await createGoal(
+      goalsDir,
+      { label: "update_terminal", description: "original description", acceptanceCriteria: ["a"] },
+      defaults,
+    );
+    await terminateGoal(goalsDir, g.id, "completed", "shipped it", "agent");
+
+    const cfg = hybridConfigSchema.parse({
+      embedding: {
+        apiKey: "sk-test-key-that-is-long-enough-to-pass",
+        model: "text-embedding-3-small",
+      },
+      goalStewardship: { enabled: true, goalsDir: "state/goals" },
+    });
+    const tools = new Map<string, { execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }>();
+    const api: Pick<ClawdbotPluginApi, "registerTool"> = {
+      registerTool(toolDefinition: { name: string; execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }) {
+        tools.set(toolDefinition.name, { execute: toolDefinition.execute });
+      },
+    };
+    registerGoalTools(
+      {
+        cfg,
+        goalsDir,
+        workspaceRoot,
+        resolvedActiveTaskPath: join(workspaceRoot, "ACTIVE-TASKS.md"),
+        factsDb: null,
+        vectorDb: null,
+        embeddings: null,
+        eventLog: null,
+        memoryDir: join(workspaceRoot, "memory"),
+        currentAgentIdRef: { value: null },
+        buildToolScopeFilter,
+      },
+      api as ClawdbotPluginApi,
+    );
+    const update = tools.get("goal_update");
+    expect(update).toBeDefined();
+
+    const result = (await update?.execute("tc", {
+      goal_id: g.id,
+      description: "rewritten after completion",
+      acceptance_criteria: ["rewritten criterion"],
+      confirmed: true,
+    })) as { details?: { error?: string } };
+    expect(result.details?.error).toBe("terminal");
+
+    const after = await readGoal(goalsDir, g.id);
+    expect(after?.description).toBe("original description");
+    expect(after?.acceptanceCriteria).toEqual(["a"]);
+    expect(after?.history.some((h) => h.action === "updated")).toBe(false);
   });
 });

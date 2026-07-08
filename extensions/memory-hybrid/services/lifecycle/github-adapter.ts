@@ -46,6 +46,22 @@ export interface SyncLifecycleFromGitHubOptions {
   apply?: boolean;
   /** Logger override; falls back to console. */
   logger?: { info: (msg: string) => void; warn: (msg: string) => void };
+  /**
+   * Called periodically during the row-scan loop (every `reportEvery` rows, plus once on the
+   * final row) so callers can drive a progress heartbeat for long-running scans. The row loop
+   * is unbounded (one `gh api` round-trip per repo per matched row), so this is the only
+   * mid-run visibility a caller has short of the final `LifecycleSyncReport`.
+   */
+  onProgress?: (progress: LifecycleSyncProgress) => void;
+  /** How many rows between `onProgress` calls (default 25). */
+  reportEvery?: number;
+}
+
+/** Progress snapshot emitted via `onProgress` during the row-scan loop. */
+export interface LifecycleSyncProgress {
+  scanned: number;
+  total: number;
+  matched: number;
 }
 
 export interface LifecycleSyncReport {
@@ -185,41 +201,54 @@ export async function syncLifecycleFromGitHub(
     )
     .all() as Array<{ id: string; entity: string | null }>;
 
+  const total = rows.length;
+  logger.info(`lifecycle.github: scanning ${total} candidate row(s) across ${repos.length} repo(s)`);
+
   let matched = 0;
   let expiredNow = 0;
   let expiredSoon = 0;
   let keptStable = 0;
+  let scanned = 0;
+  const reportEvery = Math.max(1, opts.reportEvery ?? 25);
+  const emitProgress = () => {
+    opts.onProgress?.({ scanned, total, matched });
+  };
   for (const row of rows) {
-    const ref = parseGitHubEntity(row.entity);
-    if (!ref) continue;
-    let resolved: GitHubItem | null = null;
-    for (const repo of repos) {
-      try {
-        const path = ref.kind === "pr" ? `repos/${repo}/pulls/${ref.number}` : `repos/${repo}/issues/${ref.number}`;
-        const data = (await gh(path)) as Record<string, unknown> | null;
-        if (!data || typeof data !== "object") continue;
-        const state = data.state === "closed" ? "closed" : "open";
-        const merged = ref.kind === "pr" ? Boolean(data.merged ?? data.merged_at) : false;
-        resolved = {
-          kind: ref.kind,
-          number: ref.number,
-          state,
-          merged,
-          closedAt: typeof data.closed_at === "string" ? data.closed_at : null,
-          mergedAt: typeof data.merged_at === "string" ? data.merged_at : null,
-        };
-        break;
-      } catch (err) {
-        errors.push({ repo, message: err instanceof Error ? err.message : String(err) });
+    try {
+      const ref = parseGitHubEntity(row.entity);
+      if (!ref) continue;
+      let resolved: GitHubItem | null = null;
+      for (const repo of repos) {
+        try {
+          const path = ref.kind === "pr" ? `repos/${repo}/pulls/${ref.number}` : `repos/${repo}/issues/${ref.number}`;
+          const data = (await gh(path)) as Record<string, unknown> | null;
+          if (!data || typeof data !== "object") continue;
+          const state = data.state === "closed" ? "closed" : "open";
+          const merged = ref.kind === "pr" ? Boolean(data.merged ?? data.merged_at) : false;
+          resolved = {
+            kind: ref.kind,
+            number: ref.number,
+            state,
+            merged,
+            closedAt: typeof data.closed_at === "string" ? data.closed_at : null,
+            mergedAt: typeof data.merged_at === "string" ? data.merged_at : null,
+          };
+          break;
+        } catch (err) {
+          errors.push({ repo, message: err instanceof Error ? err.message : String(err) });
+        }
       }
+      if (!resolved) continue;
+      matched += 1;
+      const action = resolveActionForItem(resolved, cfg);
+      const bucket = applyAction(factsDb, row.id, action, apply);
+      if (bucket === "expiredNow") expiredNow += 1;
+      else if (bucket === "expiredSoon") expiredSoon += 1;
+      else keptStable += 1;
+    } finally {
+      scanned += 1;
+      if (scanned % reportEvery === 0 || scanned === total) emitProgress();
     }
-    if (!resolved) continue;
-    matched += 1;
-    const action = resolveActionForItem(resolved, cfg);
-    const bucket = applyAction(factsDb, row.id, action, apply);
-    if (bucket === "expiredNow") expiredNow += 1;
-    else if (bucket === "expiredSoon") expiredSoon += 1;
-    else keptStable += 1;
   }
 
   if (errors.length > 0) {

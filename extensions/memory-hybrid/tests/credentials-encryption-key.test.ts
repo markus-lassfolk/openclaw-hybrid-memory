@@ -164,6 +164,38 @@ describe.skipIf(!hasNodeSqlite)("credentials vault key probe", () => {
     db!.close();
   });
 
+  it("warns for a legacy vault opened via literal file: ref when the key file is missing entirely (loop iteration 71 regression)", async () => {
+    // The most common trigger case for this warning: no key file was ever configured, so the
+    // vault was legacy-encrypted using the literal `file:/path` ref string itself as the
+    // passphrase. resolveCredentialsEncryptionKeyCandidates() returns no file-derived candidate
+    // here, so the literal ref ends up as candidates[0] — an index-based ("i > 0") warning check
+    // would never fire for this case, even though it's exactly what the warning exists to catch.
+    const { resolveCredentialsVaultKeyMaterial } = await import("../services/credentials-encryption-key.js");
+    const { createCredentialsDbForConfig } = await import("../services/credentials-bootstrap.js");
+
+    const missingKeyFile = join(tmpDir, "never-created.key");
+    const ref = `file:${missingKeyFile}`;
+    expect(existsSync(missingKeyFile)).toBe(false);
+
+    const legacyDb = createLegacyVaultEncryptedWithKey(dbPath, ref);
+    legacyDb.close();
+
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+    const material = resolveCredentialsVaultKeyMaterial(ref, dbPath);
+    expect(material).toBe(ref);
+
+    const cfg = hybridConfigSchema.parse({
+      embedding: { provider: "openai", apiKey: "sk-test-key-that-is-long-enough", model: "text-embedding-3-small" },
+      credentials: { enabled: true, encryptionKey: ref },
+    });
+
+    const db = createCredentialsDbForConfig(cfg, join(tmpDir, "facts.db"));
+    expect(db).not.toBeNull();
+    expect(db!.get("legacy-service", "password")?.value).toBe("legacy-secret");
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("legacy literal file: SecretRef"));
+    db!.close();
+  });
+
   it("opens vault encrypted with file contents when file: ref is configured", async () => {
     const { probeCredentialsVaultKey, resolveCredentialsVaultKeyMaterial } = await import(
       "../services/credentials-encryption-key.js"

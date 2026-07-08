@@ -5,9 +5,15 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import { capturePluginError } from "../../../services/error-reporter.js";
-import { GENERATED_SKILL_LIFECYCLE_STATES, type ProcedureEntry } from "../../../types/memory.js";
+import {
+  GENERATED_SKILL_LIFECYCLE_STATES,
+  type MemoryScope,
+  type ProcedureEntry,
+  type ScopeFilter,
+} from "../../../types/memory.js";
 import { recordEpisode } from "../episodes.js";
 import { sanitizeFts5QueryForFacts } from "../fts-text.js";
+import { scopedRowMatchesFilter, scopeFilterClausePositional } from "../scope-sql.js";
 
 // ---------- Procedural memory: procedures table CRUD ----------
 
@@ -282,7 +288,13 @@ export function procedureFeedback(
   },
 ): ProcedureEntry | null {
   const nowSec = Math.floor(Date.now() / 1000);
-  const proc = getProcedureById(db, input.procedureId);
+  // Only enforce scope when the caller actually identified one — omitting it entirely
+  // preserves unrestricted (e.g. CLI/admin) access, matching getById's scopeFilter contract.
+  const feedbackScopeFilter: ScopeFilter | undefined =
+    input.userId || input.agentId || input.sessionId
+      ? { userId: input.userId ?? null, agentId: input.agentId ?? null, sessionId: input.sessionId ?? null }
+      : undefined;
+  const proc = getProcedureById(db, input.procedureId, feedbackScopeFilter);
   if (!proc) return null;
 
   if (input.success) {
@@ -419,7 +431,7 @@ export function procedureFeedback(
     }
   }
 
-  return getProcedureById(db, input.procedureId);
+  return getProcedureById(db, input.procedureId, feedbackScopeFilter);
 }
 
 /**
@@ -509,10 +521,20 @@ export function upsertProcedure(
     /** Scope target (userId, agentId, or sessionId). Required when scope is user/agent/session. */
     scopeTarget?: string | null;
   },
+  /**
+   * SECURITY: when the caller identifies a scope, the existence check below must respect it —
+   * otherwise a caller-invented id (e.g. memory_procedure_feedback's registerIfMissing path,
+   * where an agent picks a human-readable slug like "fix-flaky-test") that happens to collide
+   * with another tenant's existing procedure id would take the UPDATE branch below and silently
+   * overwrite that tenant's row (including reassigning its scope/scope_target), instead of the
+   * caller's own scoped existence check (done by the caller before calling this) staying
+   * authoritative for whether "this id" exists from the caller's point of view.
+   */
+  scopeFilter?: ScopeFilter | null,
 ): ProcedureEntry {
   const id = proc.id ?? randomUUID();
   const now = Math.floor(Date.now() / 1000);
-  const existing = getProcedureById(db, id);
+  const existing = getProcedureById(db, id, scopeFilter);
   if (existing) {
     const successCount = proc.successCount ?? existing.successCount;
     const failureCount = proc.failureCount ?? existing.failureCount;
@@ -537,6 +559,13 @@ export function upsertProcedure(
       id,
     );
     return getProcedureById(db, id)!;
+  }
+  // Not found within the caller's scope — if a scope was given but the id already exists
+  // under a DIFFERENT scope, this is an id collision with another tenant's row, not a genuine
+  // "create new" case. Reject explicitly instead of either inserting (which would hit a raw
+  // PRIMARY KEY constraint error) or falling through to overwrite the foreign-scope row.
+  if (scopeFilter && getProcedureById(db, id)) {
+    throw new Error(`Procedure id "${id}" already exists outside the caller's scope`);
   }
   const scope = proc.scope ?? "global";
   const scopeTarget = proc.scopeTarget ?? null;
@@ -602,14 +631,26 @@ export function listProceduresUpdatedInLastNDays(db: DatabaseSync, days: number,
   }
 }
 
-export function getProcedureById(db: DatabaseSync, id: string): ProcedureEntry | null {
+export function getProcedureById(
+  db: DatabaseSync,
+  id: string,
+  scopeFilter?: ScopeFilter | null,
+): ProcedureEntry | null {
   const row = db.prepare("SELECT * FROM procedures WHERE id = ?").get(id) as Record<string, unknown> | undefined;
   if (!row) return null;
-  return procedureRowToEntry(db, row);
+  const entry = procedureRowToEntry(db, row);
+  if (scopeFilter && !scopedRowMatchesFilter(entry.scope as MemoryScope | undefined, entry.scopeTarget, scopeFilter))
+    return null;
+  return entry;
 }
 
 /** Find procedure by task_pattern hash or normalized match (for dedupe). */
-export function findProcedureByTaskPattern(db: DatabaseSync, taskPattern: string, limit = 5): ProcedureEntry[] {
+export function findProcedureByTaskPattern(
+  db: DatabaseSync,
+  taskPattern: string,
+  limit = 5,
+  scopeFilter?: ScopeFilter | null,
+): ProcedureEntry[] {
   const sanitized = sanitizeFts5QueryForFacts(taskPattern);
   const safeQuery = sanitized
     .split(/\s+/)
@@ -619,11 +660,16 @@ export function findProcedureByTaskPattern(db: DatabaseSync, taskPattern: string
     .join(" OR ");
   if (!safeQuery) return [];
   try {
+    // SECURITY: mirror searchProcedures/searchProceduresRanked's scope clause — this is the
+    // merge-candidate lookup used by services/procedure-extractor.ts to decide whether an
+    // extracted task pattern should update an existing procedure; without a scope filter it
+    // could match (and its caller then mutate) another tenant's procedure.
+    const { clause: scopeClause, params: scopeParams } = scopeFilterClausePositional(scopeFilter);
     const rows = db
       .prepare(
-        "SELECT p.* FROM procedures p JOIN procedures_fts fts ON p.rowid = fts.rowid WHERE procedures_fts MATCH ? ORDER BY rank LIMIT ?",
+        `SELECT p.* FROM procedures p JOIN procedures_fts fts ON p.rowid = fts.rowid WHERE procedures_fts MATCH ?${scopeClause} ORDER BY rank LIMIT ?`,
       )
-      .all(safeQuery, limit) as Array<Record<string, unknown>>;
+      .all(safeQuery, ...scopeParams, limit) as Array<Record<string, unknown>>;
     return rows.map((r) => procedureRowToEntry(db, r));
   } catch (err) {
     capturePluginError(err as Error, {

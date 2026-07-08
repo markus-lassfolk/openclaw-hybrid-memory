@@ -1,4 +1,5 @@
 import { resolveHybridMemVerbose } from "./global-verbose.js";
+import { runMaintenanceHeartbeat } from "./commands/manage/maintenance-heartbeat.js";
 import { getEnv } from "../utils/env-manager.js";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -282,22 +283,30 @@ export async function runGenerateProposalsForCli(
     const tryModel = allModels[modelIdx];
     let rawResponse: string;
     try {
-      const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
-        model: tryModel,
-        modelSource: modelIdx === 0 ? "maintenance" : "fallback",
-        content: prompt,
-        temperature: 0.3,
-        maxTokens: 4000,
-        openai,
-        fallbackModels: [],
-        label: "memory-hybrid: generate-proposals",
-        feature: CostFeature.generateProposals,
-        thinkingMode: "disabled",
-        logger: {
-          info: (msg) => ctx.logger.info?.(msg),
-          warn: (msg) => ctx.logger.warn?.(msg),
+      const detail = await runMaintenanceHeartbeat(
+        "generate-proposals",
+        verbose,
+        () =>
+          chatCompleteWithAdaptiveMaintenanceRetry({
+            model: tryModel,
+            modelSource: modelIdx === 0 ? "maintenance" : "fallback",
+            content: prompt,
+            temperature: 0.3,
+            maxTokens: 4000,
+            openai,
+            fallbackModels: [],
+            label: "memory-hybrid: generate-proposals",
+            feature: CostFeature.generateProposals,
+            thinkingMode: "disabled",
+            logger: {
+              info: (msg) => ctx.logger.info?.(msg),
+              warn: (msg) => ctx.logger.warn?.(msg),
+            },
+          }),
+        {
+          progressSupplier: () => `model=${tryModel}; attempt=${modelIdx + 1}/${allModels.length}`,
         },
-      });
+      );
       rawResponse = detail.content;
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);

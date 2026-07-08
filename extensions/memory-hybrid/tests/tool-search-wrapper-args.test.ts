@@ -125,6 +125,25 @@ describe("tool-search-wrapper-args (#1973)", () => {
     }
   });
 
+  it("does not misflag a genuine memory_workshop approve/reject/quarantine/revise/undo/inspect call as wrapper-dropped (loop iteration 38 regression)", async () => {
+    expect(MEMORY_TOOL_EXPECTED_ARG_KEYS.memory_workshop).toEqual(["id", "ordinal"]);
+
+    const execute = vi.fn(async (_toolCallId: string, _params: unknown) => ({
+      content: [{ type: "text", text: "ok" }],
+      details: { ok: true },
+    }));
+    const wrapped = wrapMemoryToolExecuteForWrapperArgs("memory_workshop", execute);
+    // Before memory_workshop was added to MEMORY_TOOL_EXPECTED_ARG_KEYS, it fell back to
+    // "sentinel_only" mode, which flags ANY call containing an "id" key regardless of value —
+    // silently intercepting every approve/reject/quarantine/revise/undo/inspect call before
+    // execute() ever ran.
+    const result = (await wrapped("tc", { action: "approve", id: "crystallize:abc123" })) as {
+      details: { ok: boolean };
+    };
+    expect(execute).toHaveBeenCalled();
+    expect(result.details.ok).toBe(true);
+  });
+
   it("wrapMemoryToolExecuteForWrapperArgs applies sentinel-only mode to unmapped memory_* tools", async () => {
     const execute = vi.fn(async (_toolCallId: string, _params: unknown) => ({
       content: [{ type: "text", text: "ok" }],

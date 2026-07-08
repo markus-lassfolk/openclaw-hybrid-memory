@@ -1068,6 +1068,53 @@ describe("FactsDB entity layer persistence", () => {
     expect(cleanupDryRun.duplicates).toBe(1);
     expect(audit.accepted).toBe(cleanupDryRun.accepted);
     expect(audit.rejected).toBe(cleanupDryRun.rejected);
+    // "Hub" is a character-level substring of "github" but has no word boundary before it (it's
+    // embedded inside the word, not a separate mention) — the substring filter now requires a
+    // word boundary here too, matching write-time isContainedByLongerMention, so it's kept rather
+    // than dropped. See the dedicated word-boundary substring-filtering test below for a case that
+    // IS still correctly rejected.
+    expect(audit.rejectReasons.substring).toBeUndefined();
+  });
+
+  it("still rejects a substring mention that IS word-boundary contained within a longer one", () => {
+    const fact = db.store({
+      text: "Northwind Trading Company handles logistics.",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.5,
+      source: "test",
+    });
+    const now = Math.floor(Date.now() / 1000);
+    const ins = db.getRawDb().prepare(
+      `INSERT INTO fact_entity_mentions (
+        id, fact_id, label, surface_text, normalized_surface, start_offset, end_offset, confidence, detected_lang, source, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    // "Trading Company" (offset [10,26)) sits word-boundary-contained within "Northwind Trading
+    // Company" (offset [0,26)) — a space precedes it and it runs to the end of the parent span —
+    // so it must still be filtered as a substring duplicate.
+    ins.run(
+      "p",
+      fact.id,
+      "ORG",
+      "Northwind Trading Company",
+      "northwind trading company",
+      0,
+      26,
+      0.95,
+      "eng",
+      "llm",
+      now,
+    );
+    ins.run("q", fact.id, "ORG", "Trading Company", "trading company", 10, 26, 0.9, "eng", "llm", now + 1);
+
+    const audit = db.auditEntityMentions(50);
+    const cleanupDryRun = db.cleanupEntityMentions({ limit: 50, apply: false });
+
+    expect(audit.accepted).toBe(cleanupDryRun.accepted);
+    expect(audit.rejected).toBe(cleanupDryRun.rejected);
     expect(audit.rejectReasons.substring).toBe(1);
   });
 

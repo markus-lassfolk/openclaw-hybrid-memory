@@ -1165,4 +1165,34 @@ describe("runRecallPipelineQuery — stage abort signal", () => {
     expect(deps.vectorDb.search).not.toHaveBeenCalled();
     expect(statusRef.semanticDegraded).toBe(true);
   });
+
+  it("slices the FTS-only abort early-return to limitNum, even when entity-lookup + FTS rows together exceed it (loop iteration 56 regression)", async () => {
+    const limitNum = 3;
+    const entityResults = Array.from({ length: limitNum }, (_, i) => makeSearchResult(`entity-${i}`, 0.9));
+    const ftsResults = Array.from({ length: limitNum }, (_, i) => makeSearchResult(`fts-${i}`, 0.8));
+    const deps = makeDeps();
+    (deps.factsDb.lookup as ReturnType<typeof vi.fn>).mockReturnValue(entityResults);
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue(ftsResults);
+
+    const controller = new AbortController();
+    // Registered before the pipeline call, so this fires before the pipeline's own
+    // yieldEventLoop() setImmediate — guaranteeing the abort is observed at the FTS-only
+    // early-return check.
+    setImmediate(() => controller.abort());
+
+    const result = await runRecallPipelineQuery(
+      "something about user",
+      limitNum,
+      deps,
+      { value: false },
+      {
+        entity: "user",
+        stageSignal: controller.signal,
+      },
+    );
+
+    // entity-lookup (3) + FTS (3) = 6 raw rows, concatenated before this abort check —
+    // must be capped to limitNum like every other exit path in the function.
+    expect(result.length).toBeLessThanOrEqual(limitNum);
+  });
 });

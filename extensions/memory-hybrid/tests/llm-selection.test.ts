@@ -179,6 +179,22 @@ describe("llm-selection", () => {
       expect(result.sources[0]).toBe("built-in");
     });
 
+    it("labels a configured llm.fallbackModel as llm.fallbackModel, not built-in (loop iteration 82 regression)", () => {
+      const config: HybridMemoryConfig = {
+        llm: {
+          default: ["explicit-default-model"],
+          fallbackToDefault: true,
+          fallbackModel: "my-fallback-model",
+        },
+      } as HybridMemoryConfig;
+
+      const result = resolveTierPreferenceWithSources(config, "default");
+
+      expect(result.models).toEqual(["explicit-default-model", "my-fallback-model"]);
+      expect(result.sources[0]).toBe("llm.default[0]");
+      expect(result.sources[1]).toBe("llm.fallbackModel");
+    });
+
     it("should handle non-array tier value", () => {
       const config: HybridMemoryConfig = {
         llm: {

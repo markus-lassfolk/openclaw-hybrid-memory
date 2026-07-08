@@ -8,13 +8,13 @@ import { join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import {
   type ActiveTaskEntry,
-  type PendingTaskSignal,
+  clearActiveTaskHandoff,
   completeTask,
   deleteSignal,
   flushCompletedTaskToMemory,
-  clearActiveTaskHandoff,
   isSubagentSession,
   isTerminalActiveTaskStatus,
+  type PendingTaskSignal,
   readActiveTaskFile,
   readActiveTaskFileWithMtime,
   readPendingSignals,
@@ -22,23 +22,24 @@ import {
   writeActiveTaskFileOptimistic,
 } from "../services/active-task.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { sweepStaleIntentSessionCaches, disposeIntentClassifier } from "../services/intent-classifier.js";
-import { sweepStaleNudgeSessionState, disposeMemoryNudge } from "../services/memory-nudge.js";
-import { disposeToolEffectivenessStore } from "./stage-frustration.js";
+import { disposeIntentClassifier, sweepStaleIntentSessionCaches } from "../services/intent-classifier.js";
+import { disposeMemoryNudge, sweepStaleNudgeSessionState } from "../services/memory-nudge.js";
 import {
   consumePendingTaskSignalsFacts,
   loadTaskLedgerFromFacts,
   syncActiveTaskEntryToFacts,
 } from "../services/task-ledger-facts.js";
-import { parseDuration } from "../utils/duration.js";
 import { nowIso } from "../utils/dates.js";
+import { parseDuration } from "../utils/duration.js";
+import { buildToolScopeFilter } from "../utils/scope-filter.js";
 import {
-  type SubagentEndedEvent,
   findActiveTaskForSubagentEnd,
+  type SubagentEndedEvent,
   subagentEndedIsSuccess,
   taskLabelsMatch,
 } from "../utils/subagent-ended-utils.js";
 import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
+import { disposeToolEffectivenessStore } from "./stage-frustration.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
 const STALE_SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
@@ -406,7 +407,11 @@ export function registerCleanupHandlers(
       }
 
       if (ctx.cfg.activeTask.ledger === "facts") {
-        const { active: existingActive } = loadTaskLedgerFromFacts(ctx.factsDb);
+        // SECURITY: loadTaskLedgerFromFacts accepts an optional scopeFilter but silently returns
+        // every tenant's task facts when it's omitted — must be threaded through explicitly
+        // (matches active-task-tools-loader.ts's loadActiveTasksForTools).
+        const scopeFilter = buildToolScopeFilter({}, ctx.currentAgentIdRef.value, ctx.cfg);
+        const { active: existingActive } = loadTaskLedgerFromFacts(ctx.factsDb, undefined, scopeFilter);
         const existing = existingActive.find((t) => taskLabelsMatch(t.label, label));
         if (existing?.status === "Done") {
           api.logger.debug?.(
@@ -530,7 +535,9 @@ export function registerCleanupHandlers(
 
       let taskFile: { active: ActiveTaskEntry[]; completed: ActiveTaskEntry[] } | null = null;
       if (ctx.cfg.activeTask.ledger === "facts") {
-        const { active, completed } = loadTaskLedgerFromFacts(ctx.factsDb);
+        // SECURITY: see the scope-filter comment on the subagent_spawned handler above.
+        const scopeFilter = buildToolScopeFilter({}, ctx.currentAgentIdRef.value, ctx.cfg);
+        const { active, completed } = loadTaskLedgerFromFacts(ctx.factsDb, undefined, scopeFilter);
         taskFile = { active, completed };
       } else {
         taskFile = await readActiveTaskFile(resolvedActiveTaskPath, staleMinutes);
@@ -586,7 +593,9 @@ export function registerCleanupHandlers(
 
       let knownMtime = 0;
       if (ctx.cfg.activeTask.ledger === "facts") {
-        const reloaded = loadTaskLedgerFromFacts(ctx.factsDb);
+        // SECURITY: see the scope-filter comment on the subagent_spawned handler above.
+        const reloadScopeFilter = buildToolScopeFilter({}, ctx.currentAgentIdRef.value, ctx.cfg);
+        const reloaded = loadTaskLedgerFromFacts(ctx.factsDb, undefined, reloadScopeFilter);
         taskFile = { active: reloaded.active, completed: reloaded.completed };
       } else {
         const withMtime = await readActiveTaskFileWithMtime(resolvedActiveTaskPath, staleMinutes);

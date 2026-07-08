@@ -21,6 +21,7 @@ import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { formatTimestampUtc, formatTimestampUtcFromMs, nowIso, parseTimestamp } from "../utils/dates.js";
 import { getEnv } from "../utils/env-manager.js";
+import { scopeFieldsFromFilter } from "../utils/scope-filter.js";
 import { escapeRegExp } from "../utils/text.js";
 import { execFile } from "../utils/process-runner.js";
 import {
@@ -1158,12 +1159,22 @@ export function taskEntityKey(entity: string, key: string): string {
   return `${canonicalLabel(entity)}\u0000${key.trim()}`;
 }
 
-/** Latest non-superseded active-task fact for entity+key (projection-aligned). */
+/**
+ * Latest non-superseded active-task fact for entity+key (projection-aligned).
+ *
+ * `scopeFilter` restricts the candidate pool to the caller's own scope (agent/user/session);
+ * omitting it preserves the historical unscoped behavior for callers that don't yet thread scope
+ * (e.g. Workboard sync). Uses `getProjectFacts` (category='project', source='active-task', not
+ * superseded/expired, scope-filtered at the SQL level) instead of the unscoped
+ * `listFactsByCategory`, matching the scoping already applied to the sibling
+ * `loadTaskLedgerFromFactsWithMetrics` query a few lines above.
+ */
 export function findLatestActiveTaskKeyFact(
   factsDb: FactsDB,
   entity: string,
   key: string,
   latestByEntityKey?: Map<string, MemoryEntry>,
+  scopeFilter?: ScopeFilter | null,
 ): MemoryEntry | undefined {
   const normalizedEntity = entity.trim().toLowerCase();
   const cacheKey = taskEntityKey(normalizedEntity, key);
@@ -1171,37 +1182,28 @@ export function findLatestActiveTaskKeyFact(
   if (cached?.source === "active-task") return cached;
 
   const canonical = canonicalLabel(normalizedEntity);
-  const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
-  const nowSec = Math.floor(Date.now() / 1000);
-  const same = facts.filter(
-    (f) =>
-      f.source === "active-task" &&
-      canonicalLabel(f.entity ?? "") === canonical &&
-      (f.key ?? "") === key &&
-      !(typeof f.supersededAt === "number" && Number.isFinite(f.supersededAt)) &&
-      !(typeof f.expiresAt === "number" && Number.isFinite(f.expiresAt) && f.expiresAt <= nowSec),
-  );
+  const facts = factsDb.getProjectFacts(8000, scopeFilter);
+  const same = facts.filter((f) => canonicalLabel(f.entity ?? "") === canonical && (f.key ?? "") === key);
   same.sort((a, b) => b.createdAt - a.createdAt);
   return same[0];
 }
 
-/** Retire all active-task facts for entity+key (explicit handoff wipe without empty tombstones). */
-export function retireProjectTaskKeyFacts(factsDb: FactsDB, entity: string, key: string): number {
+/**
+ * Retire all active-task facts for entity+key (explicit handoff wipe without empty tombstones).
+ * See {@link findLatestActiveTaskKeyFact} for the `scopeFilter` contract.
+ */
+export function retireProjectTaskKeyFacts(
+  factsDb: FactsDB,
+  entity: string,
+  key: string,
+  scopeFilter?: ScopeFilter | null,
+): number {
   const normalizedEntity = entity.trim().toLowerCase();
   const canonical = canonicalLabel(normalizedEntity);
-  const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
-  const nowSec = Math.floor(Date.now() / 1000);
+  const facts = factsDb.getProjectFacts(8000, scopeFilter);
   let retired = 0;
   for (const f of facts) {
-    if (
-      f.source !== "active-task" ||
-      canonicalLabel(f.entity ?? "") !== canonical ||
-      (f.key ?? "") !== key ||
-      (typeof f.supersededAt === "number" && Number.isFinite(f.supersededAt)) ||
-      (typeof f.expiresAt === "number" && Number.isFinite(f.expiresAt) && f.expiresAt <= nowSec)
-    ) {
-      continue;
-    }
+    if (canonicalLabel(f.entity ?? "") !== canonical || (f.key ?? "") !== key) continue;
     if (factsDb.supersede(f.id, null)) retired += 1;
   }
   return retired;
@@ -1215,7 +1217,7 @@ export async function upsertProjectTaskKey(
   key: string,
   value: string,
   log?: { warn?: (m: string) => void },
-  opts?: { latestByEntityKey?: Map<string, MemoryEntry> },
+  opts?: { latestByEntityKey?: Map<string, MemoryEntry>; scopeFilter?: ScopeFilter | null },
 ): Promise<{ entry: MemoryEntry; previous?: MemoryEntry; changed: boolean }> {
   // Normalise entity labels on write (trim + lowercase) to prevent case-variant
   // collisions (e.g. "Humanizer" and "humanizer" stored as separate entities).
@@ -1232,7 +1234,7 @@ export async function upsertProjectTaskKey(
     // Query database if: (a) no cache was provided, or (b) cache had a non-active-task
     // entry (which we must not supersede, but an active-task row may still exist), or
     // (c) this is a status write and cache missed (status must not become append-only).
-    previous = findLatestActiveTaskKeyFact(factsDb, entity, key);
+    previous = findLatestActiveTaskKeyFact(factsDb, entity, key, opts?.latestByEntityKey, opts?.scopeFilter);
   }
   if (
     key === "status" &&
@@ -1246,6 +1248,12 @@ export async function upsertProjectTaskKey(
     return { entry: previous, changed: false };
   }
   const text = `Task [${normalizedEntity}] ${key}: ${value}`;
+  // Stamp the write with the caller's own scope (agent/user/session) so a concurrent checkpoint
+  // from a different tenant can neither read this entry as its own "existing" default nor
+  // supersede it — see task-ledger-facts.ts's findLatestActiveTaskKeyFact for the read-side half
+  // of this fix. Omitting scopeFilter preserves the historical global-scope write for callers
+  // that don't yet thread scope (e.g. Workboard sync).
+  const scopeFields = opts?.scopeFilter ? scopeFieldsFromFilter(opts.scopeFilter) : undefined;
   const storeResult = factsDb.storeWithResult({
     text,
     category: TASK_LEDGER_CATEGORY,
@@ -1256,6 +1264,7 @@ export async function upsertProjectTaskKey(
     source: "active-task",
     decayClass: "permanent",
     provenanceJson: activeTaskProvenance(canonical),
+    ...scopeFields,
   });
   if (storeResult.skipped) {
     throw new Error(`memory-hybrid: active-task ledger upsert blocked by pre-store guard (${normalizedEntity}/${key})`);
@@ -1343,10 +1352,19 @@ export async function syncActiveTaskEntryToFacts(
   opts?: {
     statusOverride?: string;
     latestByEntityKey?: Map<string, MemoryEntry>;
+    /**
+     * Optional scope to stamp on every upserted fact (and to use when finding/retiring the
+     * previous fact for a key). When omitted, writes fall through to the historical
+     * global-scope behavior — Workboard sync and other cross-tenant admin callers rely on
+     * that. Lifecycle callers (e.g. stage-active-task's long-running auto-registration)
+     * must thread the caller's resolved scopeFilter so the auto-created task does not bleed
+     * into another tenant's active-task ledger.
+     */
+    scopeFilter?: ScopeFilter | null;
   },
 ): Promise<void> {
   const entity = entry.label;
-  const upsertOpts = { latestByEntityKey: opts?.latestByEntityKey };
+  const upsertOpts = { latestByEntityKey: opts?.latestByEntityKey, scopeFilter: opts?.scopeFilter };
   const pendingMutations: ActiveTaskFactsSyncMutation[] = [];
   const upsertKey = async (key: string, value: string): Promise<void> => {
     const result = await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, key, value, log, upsertOpts);
@@ -1355,8 +1373,14 @@ export async function syncActiveTaskEntryToFacts(
     }
   };
   const retireKey = (key: string): void => {
-    const previous = findLatestActiveTaskKeyFact(factsDb, entity, key, upsertOpts.latestByEntityKey);
-    const retired = retireProjectTaskKeyFacts(factsDb, entity, key);
+    const previous = findLatestActiveTaskKeyFact(
+      factsDb,
+      entity,
+      key,
+      upsertOpts.latestByEntityKey,
+      upsertOpts.scopeFilter,
+    );
+    const retired = retireProjectTaskKeyFacts(factsDb, entity, key, upsertOpts.scopeFilter);
     if (retired > 0 && previous) {
       pendingMutations.push({ kind: "retire", key, previous });
     }

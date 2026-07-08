@@ -22,15 +22,16 @@ import {
   type HybridMemoryConfig,
   type MemoryCategory,
 } from "../config.js";
+import { resolveMaintenanceChatTimeoutMs } from "../services/chat.js";
+import { resolveDefaultStoreScope } from "../services/default-store-scope.js";
 import { chunkMarkdown } from "../services/document-chunker.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { resolveMaintenanceChatTimeoutMs } from "../services/chat.js";
 import { chatCompletionTokenParams } from "../services/model-capabilities.js";
 import type { ProvenanceService } from "../services/provenance.js";
 import type { PythonBridge } from "../services/python-bridge.js";
 import { cleanupEvictedVector, storeCanonicalVectorForFact } from "../services/vector-maintenance.js";
-import type { MemoryEntry } from "../types/memory.js";
+import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { extractAssistantMessageText } from "../utils/llm-message.js";
 import { extractTags } from "../utils/tags.js";
 import { stringEnum } from "../utils/typebox.js";
@@ -43,6 +44,7 @@ interface DocumentToolsContext {
   openai: OpenAI;
   pythonBridge: PythonBridge;
   provenanceService?: ProvenanceService | null;
+  currentAgentIdRef: { value: string | null };
   onProgress?: (progress: { stage: string; pct: number; message: string }) => void;
 }
 
@@ -280,7 +282,8 @@ async function describeImageWithVision(opts: {
  * Only called when cfg.documents.enabled is true.
  */
 export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPluginApi): void {
-  const { factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService, onProgress } = ctx;
+  const { factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService, onProgress, currentAgentIdRef } =
+    ctx;
   const docCfg = cfg.documents;
 
   const tagSafe = (s: string): string =>
@@ -429,7 +432,19 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
     const fileContent = readFileSync(realPath);
     const fingerprint = createHash("sha256").update(fileContent).digest("hex");
 
-    const existingCount = factsDb.countBySource(`document:${fingerprint}`);
+    // SECURITY: resolve this ingestion's own scope up front (rather than at the per-chunk store
+    // call below) so the duplicate-ingestion check can be scoped to it too — without this, one
+    // tenant ingesting a document made every OTHER tenant's ingestion of the same byte-identical
+    // file silently rejected as "already ingested", and disclosed the other tenant's chunk count
+    // as a side channel (same fix pattern as Issue #1574 / FR-006).
+    const { scope: docScope, scopeTarget: docScopeTarget } = resolveDefaultStoreScope(
+      cfg,
+      currentAgentIdRef.value,
+      (message) => api.logger.warn?.(message),
+    );
+    const dedupeScopeFilter: ScopeFilter | undefined = docScope === "global" ? undefined : { agentId: docScopeTarget };
+
+    const existingCount = factsDb.countBySource(`document:${fingerprint}`, dedupeScopeFilter);
     if (existingCount > 0 && !opts.dryRun) {
       const response = makeErrorResponse(
         `Document already ingested (${existingCount} chunks stored). Delete existing facts first if you want to re-ingest.`,
@@ -574,6 +589,8 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
     const extraTags = normalizeExtraTags(opts.tags);
     const baseTags: string[] = [...(docCfg.autoTag ? [headingTagSafe(fileName)] : []), "document", ...extraTags];
 
+    // docScope/docScopeTarget resolved earlier (used for the duplicate-ingestion scope check too).
+
     let storedCount = 0;
     let errorCount = 0;
 
@@ -597,6 +614,8 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
           source: sourceName,
           tags: chunkTags,
           decayClass: "stable",
+          scope: docScope,
+          scopeTarget: docScopeTarget,
         });
         if (storeResult.skipped) {
           continue;

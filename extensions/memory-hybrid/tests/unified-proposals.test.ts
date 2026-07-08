@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  countPendingUnifiedProposals,
   DEFAULT_WORKSHOP_MAX_PENDING,
   enforceMaxPendingCap,
   inspectUnifiedProposal,
@@ -251,5 +252,43 @@ describe("unified-proposals", () => {
     const blocked = enforceMaxPendingCap(stores, 1);
     expect(blocked.ok).toBe(false);
     if (!blocked.ok) expect(blocked.pending).toBe(1);
+  });
+
+  it("countPendingUnifiedProposals still counts an older pending persona proposal when a burst of newer procedure-skill candidates exceeds the default list window", () => {
+    const stores = {
+      proposalsDb: {
+        list: (filters?: { status?: string }) =>
+          filters?.status === "pending"
+            ? [
+                {
+                  id: "old-persona",
+                  title: "old real pending proposal",
+                  status: "pending",
+                  confidence: 0.5,
+                  createdAt: 1,
+                  targetFile: "SOUL.md",
+                  observation: "",
+                  suggestedChange: "",
+                },
+              ]
+            : [],
+      },
+      crystallizationStore: null,
+      toolProposalStore: null,
+      factsDb: {
+        // 100 recently-validated procedure candidates — enough alone to fill
+        // listUnifiedProposals()'s default limit (100) ahead of the older persona proposal.
+        getProceduresReadyForSkill: () =>
+          Array.from({ length: 100 }, (_, i) => ({
+            id: `proc-${i}`,
+            taskPattern: `pattern ${i}`,
+            successCount: 5,
+            lastValidated: 1_000_000 + i,
+          })),
+      },
+      cfg: { personaProposals: { enabled: true }, procedures: { enabled: true, validationThreshold: 3 } },
+    } as never;
+
+    expect(countPendingUnifiedProposals(stores)).toBe(1);
   });
 });

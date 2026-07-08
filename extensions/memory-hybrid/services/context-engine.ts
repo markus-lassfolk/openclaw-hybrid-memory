@@ -22,7 +22,6 @@ import type { WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig } from "../config.js";
 import type { MemoryEntry } from "../types/memory.js";
 import type { EmbeddingProvider } from "./embeddings.js";
-import { trimBlockToBudget } from "./context-block-trim.js";
 import { capturePluginError } from "./error-reporter.js";
 import { runPreConsolidationFlush, WAL_FLUSH_ABORT_MESSAGE } from "./pre-consolidation-flush.js";
 import { estimateTokenCount, serializeFactForContext } from "./retrieval-orchestrator.js";
@@ -366,6 +365,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
       if (query && query.length >= 5) {
         const tierFilter = cfg.memoryTiering?.enabled ? ("warm" as const) : ("all" as const);
         const results = factsDb.search(query, Math.min(limit, 15), {
+          scopeFilter: cfg.autoRecall?.scopeFilter,
           tierFilter,
           interactiveFtsFastPath: true,
           deferAccessRefresh: true,
@@ -373,7 +373,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
         facts = results.map((r) => r.entry);
       }
       if (facts.length === 0) {
-        facts = factsDb.list(Math.min(limit, 15));
+        facts = factsDb.list(Math.min(limit, 15), { scopeFilter: cfg.autoRecall?.scopeFilter });
       }
 
       if (facts.length === 0) {
@@ -478,7 +478,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
         sessionFacts = factsDb.getCount();
         // after_compaction hook owns post-compaction injection when auto-recall is on (#957).
         if (!this.opts.cfg.autoRecall?.enabled) {
-          topFacts = factsDb.list(8);
+          topFacts = factsDb.list(8, { scopeFilter: this.opts.cfg.autoRecall?.scopeFilter });
           const block = buildContextBlock(
             topFacts,
             "post-compaction memory summary",
@@ -541,7 +541,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
 
       // Fetch top-N recent/important facts to seed the sub-agent's context
       const limit = cfg.autoRecall?.limit ?? 10;
-      let topFacts = factsDb.list(Math.min(limit, 15));
+      let topFacts = factsDb.list(Math.min(limit, 15), { scopeFilter: cfg.autoRecall?.scopeFilter });
       topFacts = filterFactsNotYetInjected(this.opts.injectedFactIdsBySession, params.childSessionKey, topFacts);
 
       if (topFacts.length === 0) {
@@ -552,19 +552,25 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
       // contextAddition is a non-standard field on the return type — populated so that
       // SDK versions that support it can inject the block; older versions ignore it.
       // Uses serializeFactForContext for consistent formatting with the retrieval pipeline.
+      //
+      // The token budget MUST be passed into buildContextBlock itself (not applied via a
+      // separate trimBlockToBudget pass afterward) so that injectedIdsOut only contains the
+      // ids of facts that actually survive the budget. Marking facts as injected before
+      // trimming would permanently hide facts from this child session that were never
+      // actually shown to it (loop iteration 65 regression).
+      const tokenBudget = Math.min(cfg.autoRecall?.maxTokens ?? 800, cfg.retrieval.ambientBudgetTokens);
       const injectedIds: string[] = [];
       const rawBlock = buildContextBlock(
         topFacts,
         `parent context injected for subagent ${params.childSessionKey}`,
         `Relevant memories from parent session (${params.parentSessionKey}):`,
-        undefined,
+        tokenBudget,
         injectedIds,
       );
       if (rawBlock && injectedIds.length > 0) {
         markFactsInjectedForSession(this.opts.injectedFactIdsBySession, params.childSessionKey, injectedIds);
       }
-      const tokenBudget = Math.min(cfg.autoRecall?.maxTokens ?? 800, cfg.retrieval.ambientBudgetTokens);
-      const contextAddition = rawBlock ? trimBlockToBudget(rawBlock, tokenBudget).text || null : null;
+      const contextAddition = rawBlock || null;
 
       if (!contextAddition) {
         logger.debug?.(

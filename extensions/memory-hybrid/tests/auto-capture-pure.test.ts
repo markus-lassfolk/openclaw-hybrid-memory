@@ -22,6 +22,8 @@ const GHP_TOKEN = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
 const GHO_TOKEN = "gho_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
 const SK_KEY = "sk-" + "abcdefghij1234567890ABCDE";
 const SK_PROJ = "sk-proj-" + "abcdefghij1234567890ABCD";
+const AWS_KEY = "AKIA" + "1234567890ABCDEF";
+const BARE_JWT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9" + "." + "eyJzdWIiOiIxIn0" + "." + "abc123signaturefixture";
 
 // ---------------------------------------------------------------------------
 // SENSITIVE_PATTERNS & VAULT_POINTER_PREFIX constants
@@ -172,6 +174,40 @@ describe("extractCredentialMatch", () => {
     // SSH pattern can match short strings; "ssh a b" = 7 chars, should be rejected by length guard
     const result = extractCredentialMatch("ssh a b");
     expect(result).toBeNull();
+  });
+
+  it("extracts an AWS-style access key", () => {
+    const result = extractCredentialMatch(`export AWS_ACCESS_KEY_ID=${AWS_KEY}`);
+    expect(result).not.toBeNull();
+    expect(result?.type).toBe("api_key");
+    expect(result?.secretValue).toBe(AWS_KEY);
+  });
+
+  it("recognizes a private-key header as credential-like (blocks plaintext storage)", () => {
+    const result = extractCredentialMatch("-----BEGIN RSA PRIVATE KEY-----\nMIIEow...\n-----END RSA PRIVATE KEY-----");
+    expect(result).not.toBeNull();
+    expect(result?.type).toBe("other");
+  });
+
+  it("extracts a bare JWT (no Bearer prefix)", () => {
+    const result = extractCredentialMatch(`token: ${BARE_JWT}`);
+    expect(result).not.toBeNull();
+    expect(result?.type).toBe("bearer");
+    expect(result?.secretValue).toBe(BARE_JWT);
+  });
+
+  it("extracts only the password from a connection string, not the username/host", () => {
+    const result = extractCredentialMatch("mongodb://svc-user:s3cr3t-pw-example@db.internal:27017/app");
+    expect(result).not.toBeNull();
+    expect(result?.type).toBe("password");
+    expect(result?.secretValue).toBe("s3cr3t-pw-example");
+  });
+
+  it("extracts only the isolated secret from a host/email credential line, not the whole span (#2062-class fix)", () => {
+    const result = extractCredentialMatch("Contact jane.doe@example.com regarding access, token: a1b2c3d4e5f6");
+    expect(result).not.toBeNull();
+    expect(result?.secretValue).toBe("a1b2c3d4e5f6");
+    expect(result?.secretValue).not.toContain("jane.doe@example.com");
   });
 });
 

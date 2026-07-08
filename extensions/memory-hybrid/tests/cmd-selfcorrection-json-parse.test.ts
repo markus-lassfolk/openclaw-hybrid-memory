@@ -942,3 +942,53 @@ describe("self-correction-run — partial batch failure and AGENTS_RULE mapping"
     expect(prop?.evidenceSessions).toEqual([incident.sessionFile]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Heartbeat liveness: a slow single-batch run must not go silent (audit finding)
+// ---------------------------------------------------------------------------
+
+describe("self-correction-run — heartbeat liveness signal", () => {
+  it("emits a heartbeat start/complete line via console.log when --verbose is set, even for a single-batch run", async () => {
+    const logs: string[] = [];
+    const logSpy = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    });
+
+    const ctx = makeCtx(makeOpenAIMock(JSON.stringify([SAMPLE_REMEDIATION])));
+
+    // Single incident → single batch, exactly the scenario the audit flagged: the run previously
+    // produced no output at all between "batch 1/1 start" and completion.
+    const res = await runSelfCorrectionRunForCli(ctx, {
+      incidents: [SAMPLE_INCIDENT],
+      workspace: tmpDir,
+      dryRun: true,
+      verbose: true,
+    });
+
+    logSpy.mockRestore();
+
+    expect(res.status).toBe("success_analyzed");
+    expect(logs.some((line) => line.includes("self-correction-run — start"))).toBe(true);
+    expect(logs.some((line) => line.includes("self-correction-run — complete in"))).toBe(true);
+  });
+
+  it("does not emit heartbeat start/complete lines when --verbose is not set", async () => {
+    const logs: string[] = [];
+    const logSpy = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    });
+
+    const ctx = makeCtx(makeOpenAIMock(JSON.stringify([SAMPLE_REMEDIATION])));
+
+    const res = await runSelfCorrectionRunForCli(ctx, {
+      incidents: [SAMPLE_INCIDENT],
+      workspace: tmpDir,
+      dryRun: true,
+    });
+
+    logSpy.mockRestore();
+
+    expect(res.status).toBe("success_analyzed");
+    expect(logs.some((line) => line.includes("self-correction-run — start"))).toBe(false);
+  });
+});

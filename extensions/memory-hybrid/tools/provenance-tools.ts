@@ -7,11 +7,13 @@
 import { Type } from "@sinclair/typebox";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 
+import type { BuildToolScopeFilterFn } from "../api/memory-plugin-api.js";
 import type { EventLog } from "../backends/event-log.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { extractEventText } from "../services/dream-cycle.js";
 import type { ProvenanceEdgeType, ProvenanceService, ProvenanceSourceType } from "../services/provenance.js";
+import type { ScopeFilter } from "../types/memory.js";
 import { formatTimestampUtc } from "../utils/dates.js";
 
 interface PluginContext {
@@ -19,6 +21,8 @@ interface PluginContext {
   eventLog: EventLog | null;
   provenanceService: ProvenanceService;
   cfg: HybridMemoryConfig;
+  currentAgentIdRef: { value: string | null };
+  buildToolScopeFilter: BuildToolScopeFilterFn;
 }
 
 type DerivedFromEntry = {
@@ -56,13 +60,26 @@ function buildDerivedFrom(
   visited: Set<string>,
   depth: number,
   maxDepth: number,
+  scopeFilter: ScopeFilter | undefined,
+  factScope: string | undefined,
 ): DerivedFromEntry[] {
+  // event_log has no scope/tenant column at all, so its rows can never be scope-filtered the way
+  // facts.getById() filters fact-to-fact edges below. A "global" fact is visible to every tenant
+  // by design, but that doesn't make the raw conversation event that produced it safe to hand back
+  // to an arbitrary viewer -- unlike a narrowly-scoped fact (whose scope_target already had to
+  // match this caller's own identity to be reachable at all), a global fact's source event may
+  // belong to a completely different tenant's session. Only do the live lookup when either no
+  // multi-tenant scope restriction is active for this call, or the fact this edge is attached to
+  // already resolved via a non-global (caller-identity-matched) scope. Otherwise fall back to the
+  // edge's own stored sourceText snapshot, which is never more revealing than the fact itself.
+  const scopeIsRestrictive = Boolean(scopeFilter && (scopeFilter.userId || scopeFilter.agentId || scopeFilter.sessionId));
+  const canRevealLiveEvent = !scopeIsRestrictive || factScope !== "global";
   return edges
     .filter((e) => e.edgeType === "DERIVED_FROM")
     .map((edge) => {
       let eventText = edge.sourceText ?? "";
       let timestamp = edge.createdAt;
-      if (edge.sourceType === "event_log" && eventLog) {
+      if (edge.sourceType === "event_log" && eventLog && canRevealLiveEvent) {
         const event = eventLog.getById(edge.sourceId);
         if (event) {
           const extracted = extractEventText(event);
@@ -73,7 +90,9 @@ function buildDerivedFrom(
 
       let factChain: ProvenanceChainOutput | null = null;
       if (depth < maxDepth) {
-        const sourceFact = factsDb.getById(edge.sourceId);
+        // SECURITY: gate recursion on the source fact resolving in-scope — otherwise a
+        // DERIVED_FROM edge pointing at another tenant's fact would still be traversed.
+        const sourceFact = factsDb.getById(edge.sourceId, { scopeFilter });
         if (sourceFact) {
           factChain = buildProvenanceChain(
             factsDb,
@@ -84,6 +103,7 @@ function buildDerivedFrom(
             edge.sourceText ?? sourceFact.text,
             depth + 1,
             maxDepth,
+            scopeFilter,
           );
         }
       }
@@ -104,9 +124,10 @@ function buildProvenanceChain(
   provenanceService: ProvenanceService,
   factId: string,
   visited: Set<string>,
-  fallbackText?: string,
-  depth = 0,
-  maxDepth = 10,
+  fallbackText: string | undefined,
+  depth: number,
+  maxDepth: number,
+  scopeFilter: ScopeFilter | undefined,
 ): ProvenanceChainOutput {
   if (depth >= maxDepth) {
     return {
@@ -126,14 +147,19 @@ function buildProvenanceChain(
   }
   visited.add(factId);
 
-  const chain = provenanceService.getProvenance(factId, factsDb.getRawDb());
-  const factEntry = factsDb.getById(factId);
+  // SECURITY: getProvenance() reads facts.text via raw SQL, bypassing FactsDB.getById()'s own
+  // scope check — scopeFilter must be passed through so it never returns another tenant's text.
+  const chain = provenanceService.getProvenance(factId, factsDb.getRawDb(), scopeFilter);
+  const factEntry = factsDb.getById(factId, { scopeFilter });
   const sourceTimestamp = factEntry ? formatTimestampUtc(factEntry.createdAt) : undefined;
 
   const factText = chain.fact.text || fallbackText || "";
 
+  // SECURITY: gate on the source fact resolving in-scope before recursing — otherwise an
+  // out-of-scope CONSOLIDATED_FROM edge's own stored sourceText snapshot (independent of the
+  // scope-checked live lookup above) would still leak into the fallback text below.
   const consolidationChain = chain.edges
-    .filter((e) => e.edgeType === "CONSOLIDATED_FROM")
+    .filter((e) => e.edgeType === "CONSOLIDATED_FROM" && factsDb.getById(e.sourceId, { scopeFilter }) != null)
     .map((edge) =>
       buildProvenanceChain(
         factsDb,
@@ -144,6 +170,7 @@ function buildProvenanceChain(
         edge.sourceText ?? undefined,
         depth + 1,
         maxDepth,
+        scopeFilter,
       ),
     );
 
@@ -160,7 +187,17 @@ function buildProvenanceChain(
       extraction_method: chain.source.extractionMethod,
       extraction_confidence: chain.source.extractionConfidence,
     },
-    derivedFrom: buildDerivedFrom(chain.edges, factsDb, eventLog, provenanceService, visited, depth, maxDepth),
+    derivedFrom: buildDerivedFrom(
+      chain.edges,
+      factsDb,
+      eventLog,
+      provenanceService,
+      visited,
+      depth,
+      maxDepth,
+      scopeFilter,
+      factEntry?.scope,
+    ),
     consolidationChain,
   };
 }
@@ -169,7 +206,7 @@ function buildProvenanceChain(
  * Register provenance-related tools with the plugin API.
  */
 export function registerProvenanceTools(ctx: PluginContext, api: ClawdbotPluginApi): void {
-  const { factsDb, eventLog, provenanceService, cfg } = ctx;
+  const { factsDb, eventLog, provenanceService, cfg, currentAgentIdRef, buildToolScopeFilter } = ctx;
 
   api.registerTool(
     {
@@ -192,7 +229,8 @@ export function registerProvenanceTools(ctx: PluginContext, api: ClawdbotPluginA
           };
         }
         const { factId } = params as { factId: string };
-        const fact = factsDb.getById(factId);
+        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
+        const fact = factsDb.getById(factId, { scopeFilter });
         if (!fact) {
           return {
             content: [{ type: "text", text: `Fact not found: ${factId}` }],
@@ -200,7 +238,17 @@ export function registerProvenanceTools(ctx: PluginContext, api: ClawdbotPluginA
           };
         }
 
-        const chain = buildProvenanceChain(factsDb, eventLog, provenanceService, factId, new Set<string>());
+        const chain = buildProvenanceChain(
+          factsDb,
+          eventLog,
+          provenanceService,
+          factId,
+          new Set<string>(),
+          undefined,
+          0,
+          10,
+          scopeFilter,
+        );
 
         return {
           content: [{ type: "text", text: JSON.stringify(chain, null, 2) }],

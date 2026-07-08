@@ -33,4 +33,18 @@ describe("parseContactProfileHints", () => {
     expect(hints.role).toBe("CEO Example Corp");
     expect(hints.boardStatus).toBe("management");
   });
+
+  it("does not attribute a system-sender address to the mentioned person (#2062)", () => {
+    const hints = parseContactProfileHints(
+      "Jordan Rivers — Notification from noreply@vendor-example.com about a pending signature request.",
+    );
+    expect(hints.email).toBeNull();
+  });
+
+  it("does not attribute either address when 2+ distinct emails appear in the text (#2062)", () => {
+    const hints = parseContactProfileHints(
+      "Jordan Rivers, cc: ops@other-example.com — jordan.rivers@example.com, Sverigechef Avoki",
+    );
+    expect(hints.email).toBeNull();
+  });
 });

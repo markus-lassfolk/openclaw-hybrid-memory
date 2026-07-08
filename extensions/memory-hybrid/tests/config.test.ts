@@ -711,6 +711,15 @@ describe("hybridConfigSchema.parse", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.wal.enabled).toBe(true);
     expect(result.wal.maxAge).toBe(5 * 60 * 1000);
+    expect(result.wal.maxSizeBytes).toBe(16 * 1024 * 1024);
+  });
+
+  it("respects wal.maxSizeBytes when set (loop iteration 22 regression)", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      wal: { maxSizeBytes: 4 * 1024 * 1024 },
+    });
+    expect(result.wal.maxSizeBytes).toBe(4 * 1024 * 1024);
   });
 
   it("credentials vault on by default (local preset enables manager)", () => {
@@ -930,6 +939,55 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.maintenance.failureReporting.enabled).toBe(false);
   });
 
+  it("maintenance.privacyRedaction defaults to disabled with entity/contact exemptions (#2055)", () => {
+    const result = hybridConfigSchema.parse(validBase);
+    expect(result.maintenance.privacyRedaction.enabled).toBe(false);
+    expect(result.maintenance.privacyRedaction.exemptCategories).toEqual(["entity"]);
+    expect(result.maintenance.privacyRedaction.exemptKeys).toEqual(["email", "phone", "mobile"]);
+  });
+
+  it("allows maintenance.privacyRedaction to be enabled with custom exemptions", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      maintenance: {
+        privacyRedaction: {
+          enabled: true,
+          exemptCategories: ["entity", "preference"],
+          exemptKeys: ["email"],
+        },
+      },
+    });
+    expect(result.maintenance.privacyRedaction.enabled).toBe(true);
+    expect(result.maintenance.privacyRedaction.exemptCategories).toEqual(["entity", "preference"]);
+    expect(result.maintenance.privacyRedaction.exemptKeys).toEqual(["email"]);
+  });
+
+  it("respects an explicit empty exemptKeys/exemptCategories array as an opt-out, not the default", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      maintenance: {
+        privacyRedaction: {
+          enabled: true,
+          exemptCategories: [],
+          exemptKeys: [],
+        },
+      },
+    });
+    expect(result.maintenance.privacyRedaction.exemptCategories).toEqual([]);
+    expect(result.maintenance.privacyRedaction.exemptKeys).toEqual([]);
+  });
+
+  it("respects an explicit empty personaProposals.allowedFiles array as a full lock-out, not the default allowlist (loop iteration 54 regression)", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      personaProposals: {
+        enabled: true,
+        allowedFiles: [],
+      },
+    });
+    expect(result.personaProposals.allowedFiles).toEqual([]);
+  });
+
   it("parses custom categories", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
@@ -945,6 +1003,23 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoClassify.enabled).toBe(false);
     expect(result.autoClassify.model).toBeUndefined();
     expect(result.autoClassify.batchSize).toBe(20);
+  });
+
+  it("rejects a non-positive autoClassify.batchSize/minFactsForNewCategory instead of hanging the classify loop (loop iteration 8 regression)", () => {
+    // auto-classifier.ts does `for (i = 0; i < others.length; i += config.batchSize)` — 0 or a
+    // negative value never advances `i`, hanging the loop forever on the CLI classify path
+    // (no maintenance-run deadline to break out of it).
+    const zeroBatch = hybridConfigSchema.parse({ ...validBase, autoClassify: { batchSize: 0 } });
+    expect(zeroBatch.autoClassify.batchSize).toBe(20);
+    const negativeBatch = hybridConfigSchema.parse({ ...validBase, autoClassify: { batchSize: -5 } });
+    expect(negativeBatch.autoClassify.batchSize).toBe(20);
+    const fractionalBatch = hybridConfigSchema.parse({ ...validBase, autoClassify: { batchSize: 4.7 } });
+    expect(fractionalBatch.autoClassify.batchSize).toBe(4);
+
+    const zeroMin = hybridConfigSchema.parse({ ...validBase, autoClassify: { minFactsForNewCategory: 0 } });
+    expect(zeroMin.autoClassify.minFactsForNewCategory).toBe(10);
+    const negativeMin = hybridConfigSchema.parse({ ...validBase, autoClassify: { minFactsForNewCategory: -1 } });
+    expect(negativeMin.autoClassify.minFactsForNewCategory).toBe(10);
   });
 
   it("parses entity lookup config", () => {

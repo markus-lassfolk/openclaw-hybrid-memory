@@ -55,6 +55,7 @@ import { resolveCliWorkspaceRoot } from "../utils/cli-workspace-root.js";
 import { serializeWorkspaceSkillTargetsForPrompt } from "../utils/skill-discovery.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
+import { maybeRedactMaintenanceFactText } from "../utils/maintenance-privacy.js";
 import {
   finishSelfCorrectionJobRun,
   loadSelfCorrectionBatchResume,
@@ -74,6 +75,7 @@ import { estimateTokens } from "../utils/text.js";
 import { gatherSessionFiles } from "./cmd-distill.js";
 import { getMaxMtime } from "./cmd-extract-sessions.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
+import { runMaintenanceHeartbeat } from "./commands/manage/maintenance-heartbeat.js";
 import { inferTargetFile } from "./cmd-store.js";
 import { resolvePipelineProposalTarget } from "./proposals.js";
 import { workshopStoresFromHandlerContext } from "../services/unified-proposals.js";
@@ -332,7 +334,7 @@ async function applySelfCorrectionRemediations(params: {
   scFallbackModels: string[];
 }): Promise<SelfCorrectionApplyResult> {
   const { ctx, analysed, incidents, workspaceRoot, scCfg, opts, model, modelSource, scFallbackModels } = params;
-  const { factsDb, vectorDb, embeddings, openai, proposalsDb, logger } = ctx;
+  const { factsDb, vectorDb, embeddings, openai, proposalsDb, logger, cfg } = ctx;
   const proposals: string[] = [];
   const toolsSuggestions: string[] = [];
   let autoFixed = 0;
@@ -348,9 +350,19 @@ async function applySelfCorrectionRemediations(params: {
     if (a.remediationType === "MEMORY_STORE") {
       const c = a.remediationContent;
       const obj =
-        typeof c === "object" && c && "text" in c ? c : { text: String(c), entity: "Fact", tags: [] as string[] };
-      const text = (obj.text ?? "").trim();
-      if (!text || factsDb.hasDuplicate(text, "self-correction")) continue;
+        typeof c === "object" && c
+          ? "text" in c
+            ? c
+            : { text: "", entity: "Fact", tags: [] as string[] }
+          : { text: String(c), entity: "Fact", tags: [] as string[] };
+      const rawText = (obj.text ?? "").trim();
+      if (!rawText) continue;
+      const remediationKey = typeof obj.key === "string" ? obj.key : null;
+      const text = maybeRedactMaintenanceFactText(rawText, cfg.maintenance?.privacyRedaction, {
+        category: "technical",
+        key: remediationKey,
+      });
+      if (factsDb.hasDuplicate(text, "self-correction")) continue;
       let vector: number[] | null = null;
       if (scCfg.semanticDedup || !opts.dryRun) {
         try {
@@ -370,7 +382,7 @@ async function applySelfCorrectionRemediations(params: {
             category: "technical",
             importance: CLI_STORE_IMPORTANCE,
             entity: obj.entity ?? null,
-            key: typeof obj.key === "string" ? obj.key : null,
+            key: remediationKey,
             value: text.slice(0, 200),
             source: "self-correction",
             tags: Array.isArray(obj.tags) ? obj.tags : [],
@@ -1136,25 +1148,40 @@ export async function runSelfCorrectionRunForCli(
         `memory-hybrid: self-correction-run batch mode: size=${batchSize} delayMs=${batchDelayMs} thinking=${thinkingMode} maxTokens=${maxTokens}`,
       );
 
-      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-        if (maintenanceRunDeadlineReached()) {
-          logger.warn?.(
-            `memory-hybrid: ${SCAN_TYPE} stopped — maintenance run deadline reached`,
-          );
-          break;
-        }
-        if (completedBatchIndexes.has(batchIndex)) continue;
-        const batch = batches[batchIndex];
-        const globalIncidentOffset = globalIncidentOffsetForBatch(batches, batchIndex);
-        batchesStarted++;
-        logger.info?.(
-          `memory-hybrid: ${SCAN_TYPE} batch ${batchIndex + 1}/${batches.length} start incidents=${batch.length}`,
-        );
-        await processBatchResult(batchIndex, batch, globalIncidentOffset);
-        if (batchDelayMs > 0 && batchIndex < batches.length - 1 && !maintenanceRunDeadlineReached()) {
-          await sleepSelfCorrectionBackoff(batchDelayMs);
-        }
-      }
+      // Heartbeat spans the whole multi-batch loop (not just one batch) so a slow single-batch
+      // run — the case with the least "batch start" chatter — still emits a liveness signal at
+      // least every ~60s instead of going silent from "batch N/M start" until the LLM call returns.
+      let heartbeatBatchLabel: string | undefined;
+      await runMaintenanceHeartbeat(
+        SCAN_TYPE,
+        !!opts.verbose,
+        async () => {
+          for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+            if (maintenanceRunDeadlineReached()) {
+              logger.warn?.(
+                `memory-hybrid: ${SCAN_TYPE} stopped — maintenance run deadline reached`,
+              );
+              break;
+            }
+            if (completedBatchIndexes.has(batchIndex)) continue;
+            const batch = batches[batchIndex];
+            const globalIncidentOffset = globalIncidentOffsetForBatch(batches, batchIndex);
+            batchesStarted++;
+            heartbeatBatchLabel = `batch ${batchIndex + 1}/${batches.length}`;
+            logger.info?.(
+              `memory-hybrid: ${SCAN_TYPE} ${heartbeatBatchLabel} start incidents=${batch.length}`,
+            );
+            await processBatchResult(batchIndex, batch, globalIncidentOffset);
+            if (batchDelayMs > 0 && batchIndex < batches.length - 1 && !maintenanceRunDeadlineReached()) {
+              await sleepSelfCorrectionBackoff(batchDelayMs);
+            }
+          }
+        },
+        {
+          progressSupplier: () =>
+            heartbeatBatchLabel ? `${heartbeatBatchLabel}; incidents_analysed=${analysed.length}` : undefined,
+        },
+      );
 
       if (
         maintenanceRunDeadlineReached() &&

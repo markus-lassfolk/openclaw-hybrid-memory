@@ -574,7 +574,11 @@ export async function runEntityEnrichmentForCli(
         }),
       );
       for (const result of results) {
-        if (result === undefined) continue;
+        // A fact dequeued but never actually sent to the LLM (processFact's own deadline check
+        // fired after nextIdx++ incremented) stores `null`, same as an untouched slot's implicit
+        // `undefined` — both must be excluded here or `index += attemptedThisBatch` below skips
+        // the fact permanently for this run instead of leaving it pending for the next one.
+        if (result == null) continue;
         attemptedThisBatch++;
       }
       if (isPastProviderBudgetInBatch()) stopReason = "provider_budget";

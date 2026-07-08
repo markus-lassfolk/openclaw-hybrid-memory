@@ -9,7 +9,7 @@ import { Type } from "@sinclair/typebox";
 import type { RetrievalConfig } from "../../config.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { guardAgainstWrapperArgsDropped } from "../../services/tool-args-guard.js";
-import { expandGraph, formatLinkPath } from "../../services/graph-retrieval.js";
+import { expandGraph, formatLinkPath, type GraphExpandedResult } from "../../services/graph-retrieval.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
 import { QueryExpander } from "../../services/query-expander.js";
 import { resolveRecallRrfStrategies } from "../../services/recall-rrf-strategies.js";
@@ -52,7 +52,7 @@ import { getProgressiveIndexIds, resolveProgressiveIndexSessionKey } from "../..
 import { parseSourceDate } from "../../utils/dates.js";
 import { embedCallWithTimeoutAndRetry } from "../../utils/embed-call.js";
 import type { MemoryToolRuntime } from "./runtime.js";
-import { resolveToolVaultBackends, listToolVaultHandles } from "./vault-resolve.js";
+import { resolveToolVaultBackends, listToolVaultHandles, groupByResultVault } from "./vault-resolve.js";
 
 export function registerRecallTools(runtime: MemoryToolRuntime): void {
   const {
@@ -515,6 +515,11 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
             tagFilter: opts.tag,
             includeSuperseded: opts.includeSuperseded,
             asOf: opts.asOfSec,
+            // Filter by scope inside searchFts's own SQL (before its internal row limit), not
+            // just here afterward -- otherwise scoped-out hits would still consume slots in the
+            // capped FTS candidate window, silently under-returning results in multi-tenant
+            // deployments even though more in-scope matches exist beyond that window.
+            scopeFilter: opts.scopeFilter,
           })
         : [];
     const out: SearchResult[] = [];
@@ -1120,23 +1125,42 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
     if (useExpandGraph) {
       const rawDepth = typeof expandDepthParam === "number" ? expandDepthParam : cfg.retrieval.graphWalkDepth;
       const depth = Math.min(Math.max(0, rawDepth), cfg.graphRetrieval.maxExpandDepth);
-      const seedInputs = results.map((r) => ({ factId: r.entry.id, score: r.score, entry: r.entry }));
       const originalBackendMap = new Map<string, "sqlite" | "lancedb">();
       for (const r of results) {
         originalBackendMap.set(r.entry.id, r.backend);
       }
-      const { results: expanded } = expandGraph(recallFactsDb, seedInputs, {
-        maxDepth: depth,
-        maxExpandedResults: cfg.graphRetrieval.maxExpandedResults,
-        scopeFilter: scopeFilter ?? undefined,
-        asOf: asOfSec ?? undefined,
-        hubDegreeCap: cfg.graph.hubDegreeCap,
-        hubScorePenalty: cfg.graph.hubScorePenalty,
-      });
+
+      // Multi-vault fan-out: group seeds by their OWN vault and expand each group against that
+      // vault's factsDb, then merge — expandGraph traverses a single factsDb's memory_links
+      // table, so a shared recallFactsDb call would silently drop expansion for every
+      // non-default-vault seed. In single-vault mode every seed maps to the same recallFactsDb,
+      // so this is a no-op grouping (one group, unchanged behavior).
+      const seedGroups = groupByResultVault(
+        results.map((r) => ({ factId: r.entry.id, score: r.score, entry: r.entry })),
+        (s) => s.factId,
+        vaultByFactId,
+        vaultHandles,
+        recallFactsDb,
+      );
+      const expanded: GraphExpandedResult[] = [];
+      for (const [vaultFactsDb, seeds] of seedGroups) {
+        const { results: vaultExpanded } = expandGraph(vaultFactsDb, seeds, {
+          maxDepth: depth,
+          maxExpandedResults: cfg.graphRetrieval.maxExpandedResults,
+          scopeFilter: scopeFilter ?? undefined,
+          asOf: asOfSec ?? undefined,
+          hubDegreeCap: cfg.graph.hubDegreeCap,
+          hubScorePenalty: cfg.graph.hubScorePenalty,
+        });
+        expanded.push(...vaultExpanded);
+      }
 
       // Re-build results from expanded output (preserves scores and dedup).
       const newResults: SearchResult[] = [];
+      const seenExpandedIds = new Set<string>();
       for (const e of expanded) {
+        if (seenExpandedIds.has(e.factId)) continue;
+        seenExpandedIds.add(e.factId);
         const backend = e.expansionSource === "direct" ? (originalBackendMap.get(e.factId) ?? "sqlite") : "sqlite";
         newResults.push({ entry: e.entry, score: e.score, backend });
         expansionMeta.set(e.factId, {
@@ -1149,20 +1173,33 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       results = newResults.slice(0, limit);
     } else if (cfg.graph.enabled && cfg.graph.useInRecall && results.length > 0) {
       // Legacy flat-score graph traversal (backward compatible, no path annotation).
+      // Same per-vault grouping as the expandGraph branch above — getConnectedFactIds/getById
+      // must be called against each seed's own vault, not unconditionally recallFactsDb.
       const initialIds = new Set(results.map((r) => r.entry.id));
-      const connectedIds = recallFactsDb.getConnectedFactIds([...initialIds], cfg.graph.maxTraversalDepth, {
-        hubDegreeCap: cfg.graph.hubDegreeCap,
-      });
-      const extraIds = connectedIds.filter((id) => !initialIds.has(id));
       const getByIdOpts = asOfSec != null || scopeFilter ? { asOf: asOfSec, scopeFilter } : undefined;
-      for (const id of extraIds) {
-        const entry = recallFactsDb.getById(id, getByIdOpts as { asOf?: number; scopeFilter?: ScopeFilter });
-        if (entry) {
-          results.push({ entry, score: 0.45, backend: "sqlite" });
+      const idGroups = groupByResultVault(initialIds, (id) => id, vaultByFactId, vaultHandles, recallFactsDb);
+      for (const [vaultFactsDb, ids] of idGroups) {
+        const connectedIds = vaultFactsDb.getConnectedFactIds(ids, cfg.graph.maxTraversalDepth, {
+          hubDegreeCap: cfg.graph.hubDegreeCap,
+        });
+        for (const cid of connectedIds) {
+          if (initialIds.has(cid)) continue;
+          const entry = vaultFactsDb.getById(cid, getByIdOpts as { asOf?: number; scopeFilter?: ScopeFilter });
+          if (entry) {
+            results.push({ entry, score: 0.45, backend: "sqlite" });
+            initialIds.add(cid);
+          }
         }
       }
       results.sort((a, b) => b.score - a.score);
       results = results.slice(0, limit);
+    }
+
+    // The includeCold=false filter above runs BEFORE graph expansion — re-apply it, since
+    // neither expandGraph() nor the legacy getConnectedFactIds()/getById() traversal above
+    // checks tier, and both can append cold-tier facts reached via a warm/hot seed's links.
+    if (!includeCold && results.length > 0) {
+      results = results.filter((r) => r.entry.tier !== "cold").slice(0, limit);
     }
 
     const retrievalExplanation = (() => {
@@ -1663,6 +1700,27 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
               description: "Procedure type when registerIfMissing creates a new row (default: derived from success).",
             }),
           ),
+          agentId: Type.Optional(
+            Type.String({
+              description: "⚠️ SECURITY: Caller-controlled parameter. Restrict feedback to a specific agent's scope.",
+            }),
+          ),
+          userId: Type.Optional(
+            Type.String({
+              description: "⚠️ SECURITY: Caller-controlled parameter. Restrict feedback to a specific user's scope.",
+            }),
+          ),
+          sessionId: Type.Optional(
+            Type.String({
+              description: "⚠️ SECURITY: Caller-controlled parameter. Restrict feedback to a specific session's scope.",
+            }),
+          ),
+          confirmCrossTenantScope: Type.Optional(
+            Type.Boolean({
+              description:
+                "When multiAgent.trustToolScopeParams is true, set true to confirm intentional cross-tenant scope use of userId/agentId/sessionId (#874).",
+            }),
+          ),
         }),
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           try {
@@ -1677,6 +1735,10 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
               taskPattern,
               steps,
               procedureType,
+              agentId,
+              userId,
+              sessionId,
+              confirmCrossTenantScope,
             } = params as {
               procedureId: string;
               success: boolean;
@@ -1688,7 +1750,24 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
               taskPattern?: string;
               steps?: Array<{ tool: string; summary?: string; args?: Record<string, unknown> }>;
               procedureType?: "positive" | "negative";
+              agentId?: string;
+              userId?: string;
+              sessionId?: string;
+              confirmCrossTenantScope?: boolean;
             };
+
+            // Same scope resolution as memory_recall_procedures — restricts feedback (and the
+            // getProcedureById lookup behind it) to the caller's own scope bucket (#154 follow-up).
+            const scopeFilter = buildToolScopeFilter(
+              {
+                userId: sanitizeScopeParam("userId", userId),
+                agentId: sanitizeScopeParam("agentId", agentId),
+                sessionId: sanitizeScopeParam("sessionId", sessionId),
+                confirmCrossTenantScope,
+              },
+              currentAgentIdRef.value,
+              cfg,
+            );
 
             return executeProcedureFeedbackTool(factsDb, {
               procedureId,
@@ -1701,6 +1780,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
               taskPattern,
               steps,
               procedureType,
+              scopeFilter,
             });
           } catch (err) {
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {

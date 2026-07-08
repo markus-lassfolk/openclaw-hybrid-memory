@@ -7,9 +7,11 @@ import { capturePluginError } from "../../../services/error-reporter.js";
 import { deleteVectorsForFactIds } from "../../../services/vector-maintenance.js";
 import type { ScopeFilter } from "../../../types/memory.js";
 import { withMachineOutputStdoutSuppressed } from "../../../utils/hybrid-mem-json-cli.js";
+import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { MigrateToVaultResult } from "../../types.js";
 import type { ManageBindings } from "./bindings.js";
+import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
 
 export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindings): void {
   const {
@@ -448,50 +450,69 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
     .option("--dry-run", "Preview without making changes")
     .option("--threshold-days <n>", "Minimum age in days for a session fact to be promoted (default: 7)", "7")
     .option("--min-importance <n>", "Minimum importance score to promote (default: 0.7)", "0.7")
+    .option("-v, --verbose", "Emit periodic progress heartbeat for long runs")
     .action(
-      withExit(async (opts: { dryRun?: boolean; thresholdDays: string; minImportance: string }) => {
-        const thresholdDays = Number.parseFloat(opts.thresholdDays);
-        const minImportance = Number.parseFloat(opts.minImportance);
+      withExit(
+        async (
+          opts: { dryRun?: boolean; thresholdDays: string; minImportance: string; verbose?: boolean },
+          cmd?: CommanderOptsParent,
+        ) => {
+          const verbose = !!opts.verbose || readHybridMemVerbose(cmd);
+          const thresholdDays = Number.parseFloat(opts.thresholdDays);
+          const minImportance = Number.parseFloat(opts.minImportance);
 
-        if (Number.isNaN(thresholdDays) || thresholdDays < 0) {
-          console.error("--threshold-days must be a non-negative number");
-          process.exit(1);
-        }
-        if (Number.isNaN(minImportance) || minImportance < 0 || minImportance > 1) {
-          console.error("--min-importance must be a number between 0 and 1");
-          process.exit(1);
-        }
-
-        const candidates = factsDb.findSessionFactsForPromotion(thresholdDays, minImportance);
-        if (candidates.length === 0) {
-          console.log("No session facts eligible for promotion.");
-          return;
-        }
-
-        if (opts.dryRun) {
-          console.log(`Would promote ${candidates.length} facts from session to global scope (dry-run):`);
-          for (const f of candidates) {
-            console.log(
-              `  [${f.id}] importance=${f.importance.toFixed(2)} scope_target=${f.scopeTarget ?? "null"} text="${f.text.slice(0, 80)}"`,
-            );
+          if (Number.isNaN(thresholdDays) || thresholdDays < 0) {
+            console.error("--threshold-days must be a non-negative number");
+            process.exit(1);
           }
-          return;
-        }
+          if (Number.isNaN(minImportance) || minImportance < 0 || minImportance > 1) {
+            console.error("--min-importance must be a number between 0 and 1");
+            process.exit(1);
+          }
 
-        let promoted = 0;
-        let skipped = 0;
-        let failed = 0;
-        for (const f of candidates) {
-          const outcome = factsDb.promoteScopeToGlobalWithOutcome(f.id);
-          if (outcome === "promoted") promoted++;
-          else if (outcome === "skipped") skipped++;
-          else failed++;
-        }
-        const summary = `scope-promote promoted=${promoted}/${candidates.length} skipped=${skipped} failed=${failed} semantic=${failed > 0 ? "partial" : "success"}`;
-        console.log(summary);
-        if (failed > 0) {
-          process.exitCode = 2;
-        }
-      }),
+          const candidates = factsDb.findSessionFactsForPromotion(thresholdDays, minImportance);
+          if (candidates.length === 0) {
+            console.log("No session facts eligible for promotion.");
+            return;
+          }
+
+          if (opts.dryRun) {
+            console.log(`Would promote ${candidates.length} facts from session to global scope (dry-run):`);
+            for (const f of candidates) {
+              console.log(
+                `  [${f.id}] importance=${f.importance.toFixed(2)} scope_target=${f.scopeTarget ?? "null"} text="${f.text.slice(0, 80)}"`,
+              );
+            }
+            return;
+          }
+
+          let promoted = 0;
+          let skipped = 0;
+          let failed = 0;
+          const reportEvery = 100;
+          await runMaintenanceHeartbeat(
+            "scope-promote",
+            verbose,
+            (heartbeat) => {
+              for (let i = 0; i < candidates.length; i++) {
+                const outcome = factsDb.promoteScopeToGlobalWithOutcome(candidates[i].id);
+                if (outcome === "promoted") promoted++;
+                else if (outcome === "skipped") skipped++;
+                else failed++;
+                if ((i + 1) % reportEvery === 0 || i === candidates.length - 1) heartbeat.heartbeat();
+              }
+            },
+            {
+              progressSupplier: () =>
+                `stage=promote-scope; scanned=${promoted + skipped + failed}/${candidates.length}; promoted=${promoted}; skipped=${skipped}; failed=${failed}`,
+            },
+          );
+          const summary = `scope-promote promoted=${promoted}/${candidates.length} skipped=${skipped} failed=${failed} semantic=${failed > 0 ? "partial" : "success"}`;
+          console.log(summary);
+          if (failed > 0) {
+            process.exitCode = 2;
+          }
+        },
+      ),
     );
 }

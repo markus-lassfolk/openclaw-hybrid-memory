@@ -378,6 +378,36 @@ describe("FactsDB.list / listForDashboard filter allowlist", () => {
     expect(db.list(10, { tier: "invalid-tier" })).toEqual([]);
   });
 
+  it("list with scopeFilter returns global + matching scope, excludes other scopes (loop iteration 12 regression)", () => {
+    db.store({
+      text: "Alice's scoped list fact",
+      category: "preference",
+      importance: 0.8,
+      entity: "user",
+      key: "theme",
+      value: "dark",
+      source: "conversation",
+      scope: "user",
+      scopeTarget: "alice",
+    });
+    db.store({
+      text: "Bob's scoped list fact",
+      category: "preference",
+      importance: 0.8,
+      entity: "user",
+      key: "theme",
+      value: "light",
+      source: "conversation",
+      scope: "user",
+      scopeTarget: "bob",
+    });
+
+    const results = db.list(10, { scopeFilter: { userId: "alice", agentId: null, sessionId: null } });
+    const texts = results.map((r) => r.text);
+    expect(texts).toContain("Alice's scoped list fact");
+    expect(texts).not.toContain("Bob's scoped list fact");
+  });
+
   it("listForDashboard returns empty facts and total 0 when decayClass is not allowlisted", () => {
     const r = db.listForDashboard({ limit: 10, offset: 0, decayClass: "not-a-decay" });
     expect(r.facts).toEqual([]);

@@ -82,6 +82,14 @@ export interface RunPendingDigestAutopilotCronOptions {
   now?: Date;
   openclawHome?: string;
   runId?: string;
+  /**
+   * Optional progress sink. Every line normally written only to the private `hmLog`
+   * artifact file (including step-transition lines from `markStep`) is also passed
+   * here. Wire this to `console.log`/`process.stdout.write` (e.g. behind a CLI
+   * `--verbose` flag) so an operator watching the cron's tee'd stdout sees internal
+   * progress live instead of only the final summary line once the whole run resolves.
+   */
+  onProgress?: (line: string) => void;
 }
 
 type StepRow = {
@@ -124,10 +132,16 @@ export async function runPendingDigestAutopilotCron(
   let notificationSent = false;
   let latestDigest: PendingDigestAutopilotCronSummary["latestDigest"] = { found: false };
 
+  const emitProgress = (line: string): void => {
+    logLine(hmLog, line);
+    opts.onProgress?.(line);
+  };
+
   const markStep = (name: CronStepName, row: Omit<StepRow, "name">): void => {
     const entry = { name, ...row };
     stepRows.set(name, entry);
     appendStepLine(hmExit, entry);
+    emitProgress(`step=${name} status=${row.status} reason=${row.reason} exit=${row.exit} duration_ms=${row.durationMs}`);
   };
 
   const skipRemaining = (reason: string): void => {
@@ -145,10 +159,10 @@ export async function runPendingDigestAutopilotCron(
     }
   };
 
-  logLine(hmLog, `run.start run_id=${runId} job=${PENDING_DIGEST_AUTOPILOT_CRON_JOB}`);
-  logLine(hmLog, `run.guard_path ${guardPath}`);
-  logLine(hmLog, `run.lock_path ${lockPath}`);
-  logLine(hmLog, `run.config ${canonicalJson(redactAutopilotValue(autopilotCfg))}`);
+  emitProgress(`run.start run_id=${runId} job=${PENDING_DIGEST_AUTOPILOT_CRON_JOB}`);
+  emitProgress(`run.guard_path ${guardPath}`);
+  emitProgress(`run.lock_path ${lockPath}`);
+  emitProgress(`run.config ${canonicalJson(redactAutopilotValue(autopilotCfg))}`);
 
   const guardStartedAt = Date.now();
   try {
@@ -174,7 +188,7 @@ export async function runPendingDigestAutopilotCron(
       reason: "guard_check_failed",
       durationMs: Date.now() - guardStartedAt,
     });
-    logLine(hmLog, `error.guard-check ${stringifyError(err)}`);
+    emitProgress(`error.guard-check ${stringifyError(err)}`);
   }
 
   if (status !== "failed" && status !== "skipped") {
@@ -196,8 +210,7 @@ export async function runPendingDigestAutopilotCron(
   if (status !== "failed" && status !== "skipped") {
     const latestStartedAt = Date.now();
     latestDigest = findLatestWeeklyPendingDigestArtifact(cronLogRoot);
-    logLine(
-      hmLog,
+    emitProgress(
       `run.latest_digest found=${String(latestDigest.found)} status=${latestDigest.status ?? "unknown"} path=${latestDigest.path ?? "none"}`,
     );
     if (!latestDigest.found) {
@@ -222,7 +235,7 @@ export async function runPendingDigestAutopilotCron(
   if (status !== "failed" && status !== "skipped" && autopilotCfg.mode === "apply") {
     const lockStartedAt = Date.now();
     const lock = tryAcquireAutopilotLock(lockPath, runId, autopilotCfg.lockTtlMinutes, now.getTime());
-    logLine(hmLog, `run.lock status=${lock.reason}`);
+    emitProgress(`run.lock status=${lock.reason}`);
     if (!lock.acquired) {
       status = "skipped";
       skipReason = lock.reason;
@@ -232,7 +245,7 @@ export async function runPendingDigestAutopilotCron(
         reason: lock.reason,
         durationMs: Date.now() - lockStartedAt,
       });
-      logLine(hmLog, `run.lock_skip ${lock.reason}`);
+      emitProgress(`run.lock_skip ${lock.reason}`);
     } else {
       acquiredLock = true;
     }
@@ -245,8 +258,7 @@ export async function runPendingDigestAutopilotCron(
     if (status !== "failed" && status !== "skipped" && !stepRows.has("digest-autopilot")) {
       const startedAt = Date.now();
       try {
-        logLine(
-          hmLog,
+        emitProgress(
           `run.command openclaw hybrid-mem digest autopilot --${autopilotCfg.mode} --max-persona ${autopilotCfg.maxPersona} --max-procedures ${autopilotCfg.maxProcedures} --max-verified ${autopilotCfg.maxVerified} --max-tools ${autopilotCfg.maxTools} --max-crystallization ${autopilotCfg.maxCrystallization}`,
         );
         autopilotResult = await runPendingDigestAutopilot({
@@ -281,7 +293,7 @@ export async function runPendingDigestAutopilotCron(
           reason: "inner_command_failed",
           durationMs: Date.now() - startedAt,
         });
-        logLine(hmLog, `error.digest-autopilot ${stringifyError(err)}`);
+        emitProgress(`error.digest-autopilot ${stringifyError(err)}`);
       }
     }
 
@@ -345,7 +357,7 @@ export async function runPendingDigestAutopilotCron(
         reason: "validate_cron_exit_failed",
         durationMs: Date.now() - validateStartedAt,
       });
-      logLine(hmLog, `error.validate-cron-exit ${validation.error ?? "validation_failed"}`);
+      emitProgress(`error.validate-cron-exit ${validation.error ?? "validation_failed"}`);
     } else {
       markStep("validate-cron-exit", {
         exit: 0,
@@ -378,7 +390,7 @@ export async function runPendingDigestAutopilotCron(
           reason: "notification_sent",
           durationMs: Date.now() - notifyStartedAt,
         });
-        logLine(hmLog, `run.notification payload=${payloadPath}`);
+        emitProgress(`run.notification payload=${payloadPath}`);
       } else {
         markStep("notification-policy", {
           exit: 0,
@@ -396,7 +408,7 @@ export async function runPendingDigestAutopilotCron(
         reason: "notification_failed",
         durationMs: Date.now() - notifyStartedAt,
       });
-      logLine(hmLog, `error.notification-policy ${stringifyError(err)}`);
+      emitProgress(`error.notification-policy ${stringifyError(err)}`);
     }
 
     summary.status = status;
@@ -418,17 +430,38 @@ export async function runPendingDigestAutopilotCron(
         reason: "artifact_write_failed",
         durationMs: Date.now() - summaryStartedAt,
       });
-      logLine(hmLog, `error.summary-write ${stringifyError(err)}`);
+      emitProgress(`error.summary-write ${stringifyError(err)}`);
     }
   } finally {
+    // Write the guard timestamp BEFORE releasing the lock: the guard window is meant to stop a
+    // second cron invocation from running a duplicate apply pass, but that only works if the
+    // updated timestamp is visible before the lock frees up. Writing it after release left a
+    // window where a concurrent invocation could read the stale (pre-run) guard timestamp, pass
+    // its own guard-check, then acquire the just-released lock and run a full duplicate pass.
+    // SECURITY: wrap the guard write in its own try/catch so an unwritable guard path
+    // (permissions, read-only home, disk-full, ENOSPC) cannot throw out of `finally` and skip
+    // the lock release below. A throw from this block would leave the cron lock held until its
+    // TTL and cause every subsequent autopilot-cron run to skip as locked, even after the run
+    // that "succeeded" finishes. Mark the run `failed` instead so the operator notices and the
+    // next guarded run still re-acquires the lock cleanly.
+    if (status === "ok" && !skipReason) {
+      try {
+        mkdirSync(dirname(guardPath), { recursive: true });
+        writeFileSync(guardPath, `${Date.now()}`, "utf-8");
+      } catch (err) {
+        // Use emitProgress (not markStep) so the failure surfaces in the per-run log but is
+        // not added to REQUIRED_STEPS — adding it would conflate this post-flight guard write
+        // with the pre-flight step validator.
+        status = "failed";
+        summary.status = "failed";
+        summary.skipReason = undefined;
+        emitProgress(`error.guard-write ${stringifyError(err)}`);
+      }
+    }
     if (acquiredLock) releaseAutopilotLock(lockPath, runId);
   }
 
-  logLine(hmLog, `run.finish status=${summary.status} skip_reason=${summary.skipReason ?? "none"}`);
-  if (status === "ok" && !skipReason) {
-    mkdirSync(dirname(guardPath), { recursive: true });
-    writeFileSync(guardPath, `${Date.now()}`, "utf-8");
-  }
+  emitProgress(`run.finish status=${summary.status} skip_reason=${summary.skipReason ?? "none"}`);
   if (status === "skipped") skipRemaining(skipReason ?? "skipped");
 
   return { summary, humanSummary, autopilotResult };

@@ -143,17 +143,20 @@ export const esphomeYamlConverter: Converter = {
       sections.push(`## WiFi\n\n- SSID: ${ssid}\n- Password: [REDACTED]${staticIp}${ap}\n`);
     }
 
-    // API
+    // API — a bare `api:` key with no sub-options YAML-parses to `null`, and in ESPHome that
+    // means the component IS enabled (with default settings); only an explicit `api: false`
+    // means disabled. Treating `null` the same as `false` inverted the common case, where most
+    // configs simply write `api:` alone to turn the component on.
     const api = doc.api;
     if (api !== undefined) {
-      const apiEnabled = api !== false && api !== null;
+      const apiEnabled = api !== false;
       sections.push(`## API\n\n- Enabled: ${apiEnabled}\n- Password: [REDACTED]\n`);
     }
 
-    // OTA
+    // OTA — same bare-key-means-enabled semantics as API above.
     const ota = doc.ota;
     if (ota !== undefined) {
-      const otaEnabled = ota !== false && ota !== null;
+      const otaEnabled = ota !== false;
       sections.push(`## OTA\n\n- Enabled: ${otaEnabled}\n- Password: [REDACTED]\n`);
     }
 

@@ -288,6 +288,26 @@ describe("fact-mutation-gateway", () => {
       expect(factsDb.store).not.toHaveBeenCalled();
     });
 
+    it("clamps out-of-range importance to [0,1] like confidence (loop iteration 80 regression)", async () => {
+      const stored = makeFact({ id: "aabb0011-0000-0000-0000-000000000006" });
+      const { handlers, factsDb } = captureHandlers();
+      factsDb.store.mockReturnValue(stored);
+
+      const respond = vi.fn();
+      await handlers.get("hybrid-mem.facts.create")!({
+        params: { text: "Overconfident fact", importance: 1.5, confidence: -3 },
+        respond,
+      });
+
+      expect(factsDb.store).toHaveBeenCalledWith(
+        expect.objectContaining({
+          importance: 1,
+          confidence: 0,
+        }),
+      );
+      expect(respond).toHaveBeenCalledWith(true, expect.objectContaining({ fact: expect.anything() }));
+    });
+
     it("uses defaults for optional parameters", async () => {
       const stored = makeFact({ id: "aabb0011-0000-0000-0000-000000000005" });
       const { handlers, factsDb } = captureHandlers();

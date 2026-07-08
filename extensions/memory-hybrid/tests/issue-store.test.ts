@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { DatabaseSync } from "node:sqlite";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
 
 const { IssueStore } = _testing;
@@ -268,6 +269,27 @@ describe("IssueStore.transition — invalid transitions", () => {
   it("throws transition on nonexistent id", () => {
     expect(() => store.transition("fake-id", "diagnosed")).toThrow("Issue not found");
   });
+
+  it("throws instead of silently overwriting a concurrent status change (compare-and-swap, loop iteration 84 regression)", () => {
+    const issue = store.create({ title: "CAS race", symptoms: ["s"] });
+    const getSpy = vi.spyOn(store, "get");
+    // Simulate a concurrent process (or, cross-process in reality) transitioning the issue to
+    // "wont-fix" between this transition() call's read and its underlying UPDATE — the read
+    // returns the STALE ("open") snapshot, matching the exact race window transition()/update()
+    // are exposed to since neither locks the row between the read and the write.
+    getSpy.mockImplementationOnce((id) => {
+      const stale = store.get(id);
+      store.transition(issue.id, "wont-fix");
+      return stale;
+    });
+
+    expect(() => store.transition(issue.id, "diagnosed")).toThrow(/modified concurrently/);
+
+    // The racer's transition must be the one that stuck — our stale-read transition must not
+    // have silently overwritten it.
+    const after = store.get(issue.id);
+    expect(after?.status).toBe("wont-fix");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -330,6 +352,28 @@ describe("IssueStore.list", () => {
     store.create({ title: "Open issue", symptoms: ["s"] });
     const result = store.list({ status: ["verified"] });
     expect(result).toHaveLength(0);
+  });
+
+  it("ranks a severity-filtered list by severity before recency, so an older critical issue survives a capped limit against newer high-severity ones", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-06-01T00:00:00.000Z"));
+      const oldCritical = store.create({ title: "Old critical outage", symptoms: ["s"], severity: "critical" });
+
+      // Three newer "high" issues, created after the critical one — without severity-aware
+      // ordering, a plain `created_at DESC LIMIT 3` would push the older critical issue out.
+      for (let i = 0; i < 3; i++) {
+        vi.setSystemTime(new Date(`2026-06-01T00:0${i + 1}:00.000Z`));
+        store.create({ title: `Newer high issue ${i}`, symptoms: ["s"], severity: "high" });
+      }
+
+      const capped = store.list({ severity: ["critical", "high"], limit: 3 });
+      expect(capped).toHaveLength(3);
+      expect(capped.map((i) => i.id)).toContain(oldCritical.id);
+      expect(capped[0].id).toBe(oldCritical.id);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -398,6 +442,18 @@ describe("IssueStore.linkFact", () => {
 
   it("throws when linking to nonexistent issue", () => {
     expect(() => store.linkFact("nonexistent", "fact-001")).toThrow("Issue not found");
+  });
+
+  it("wraps the read-modify-write in an IMMEDIATE transaction so concurrent linkFact calls can't overwrite each other (loop iteration 16 regression)", () => {
+    const issue = store.create({ title: "Race test", symptoms: ["s"] });
+    const rawDb = (store as unknown as { db: DatabaseSync }).db;
+    const execSpy = vi.spyOn(rawDb, "exec");
+
+    store.linkFact(issue.id, "fact-001");
+
+    const execCalls = execSpy.mock.calls.map((args) => String(args[0]));
+    expect(execCalls).toContain("BEGIN IMMEDIATE");
+    expect(execCalls).toContain("COMMIT");
   });
 });
 

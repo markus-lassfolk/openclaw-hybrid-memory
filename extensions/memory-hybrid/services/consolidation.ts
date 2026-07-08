@@ -36,6 +36,8 @@ interface ConsolidateOptions {
   limit: number;
   model: string;
   thinkingMode?: import("./chat.js").MiniMaxThinkingMode;
+  /** Invoked once per cluster processed by the merge loop (success, skip, or failure). */
+  onProgress?: (progress: { clusterIndex: number; totalClusters: number; merged: number }) => void;
 }
 
 interface ConsolidateResult {
@@ -178,6 +180,14 @@ export async function runConsolidate(
     for (let j = i + 1; j < ids.length; j++) {
       const vj = vectors[j];
       if (vj.length === 0) continue;
+      // Never cluster facts from different scopes together: merging a tenant-scoped fact into a
+      // global one (or vice versa) would either leak private content into the shared global
+      // output or silently narrow a previously-global fact's visibility once the merge deletes
+      // the sources. Facts must share the exact same (scope, scopeTarget) to be candidates for
+      // the same merge.
+      const factI = idToFact.get(ids[i]);
+      const factJ = idToFact.get(ids[j]);
+      if (factI?.scope !== factJ?.scope || factI?.scopeTarget !== factJ?.scopeTarget) continue;
       const score = dotProductSimilarity(vi, vj);
       if (score >= opts.threshold) edges.push([ids[i], ids[j]]);
     }
@@ -201,9 +211,14 @@ export async function runConsolidate(
   let vectorFailures = 0;
   let storeDedupeVectorFallbackSuppressed = 0;
   const consolidationRunId = provenanceService ? randomUUID() : null;
+  let clusterIndex = 0;
   for (const clusterIds of clusters) {
+    clusterIndex++;
+    const emitClusterProgress = () =>
+      opts.onProgress?.({ clusterIndex, totalClusters: clusters.length, merged });
     if (maintenanceRunDeadlineReached()) {
       logger.warn("memory-hybrid: consolidate stopped — maintenance run deadline reached");
+      emitClusterProgress();
       break;
     }
     const texts = clusterIds.map((id) => idToFact.get(id)?.text);
@@ -234,10 +249,12 @@ export async function runConsolidate(
         clusterSize: clusterIds.length,
       });
       clustersFailed++;
+      emitClusterProgress();
       continue;
     }
     if (!mergedText) {
       clustersFailed++;
+      emitClusterProgress();
       continue;
     }
 
@@ -256,6 +273,7 @@ export async function runConsolidate(
         `memory-hybrid: consolidate [dry-run] would merge ${clusterIds.length} facts → "${mergedText.slice(0, 80)}..."`,
       );
       merged++;
+      emitClusterProgress();
       continue;
     }
 
@@ -269,6 +287,11 @@ export async function runConsolidate(
         key: mergedKey,
         value: mergedValue,
         source: "consolidation",
+        // Every fact in this cluster shares the same (scope, scopeTarget) — enforced when edges
+        // were built above — so the merged output must carry that same scope forward rather than
+        // defaulting to global, which would leak a tenant-scoped source fact's content globally.
+        scope: (first?.scope as "global" | "user" | "agent" | "session" | undefined) ?? "global",
+        scopeTarget: first?.scopeTarget ?? null,
         decayClass: CONSOLIDATED_FACT_DECAY_CLASS,
         sourceDate: maxSourceDate,
         tags: mergedTags.length > 0 ? mergedTags : undefined,
@@ -296,6 +319,7 @@ export async function runConsolidate(
         `memory-hybrid: consolidate skipped merge store (pre-store guard blocked): "${mergedText.slice(0, 80)}..."`,
       );
       clustersFailed++;
+      emitClusterProgress();
       continue;
     }
     if (storeResult.newlyStored === false) {
@@ -303,6 +327,7 @@ export async function runConsolidate(
         `memory-hybrid: consolidate skipped merge store (dedupe resolved to existing fact ${storeResult.entry.id.slice(0, 8)}): "${mergedText.slice(0, 80)}..."`,
       );
       clustersFailed++;
+      emitClusterProgress();
       continue;
     }
     const entry = storeResult.entry;
@@ -386,6 +411,7 @@ export async function runConsolidate(
         `memory-hybrid: consolidate — merged fact ${entry.id.slice(0, 8)} has no vector (embed failed); keeping ${clusterIds.length} source fact(s) instead of deleting them`,
       );
       clustersFailed++;
+      emitClusterProgress();
       continue;
     }
     // Delete source vectors before removing SQLite rows: if we deleted SQLite first and then
@@ -402,6 +428,7 @@ export async function runConsolidate(
       deleted++;
     }
     merged++;
+    emitClusterProgress();
   }
 
   if (storeDedupeVectorFallbackSuppressed > 0) {

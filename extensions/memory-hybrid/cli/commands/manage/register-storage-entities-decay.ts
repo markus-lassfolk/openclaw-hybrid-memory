@@ -8,13 +8,16 @@ import { runContextAudit } from "../../../services/context-audit.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { runMemoryDiagnostics } from "../../../services/memory-diagnostics.js";
 import { filterByScope } from "../../../services/merge-results.js";
-import type { ScopeFilter } from "../../../types/memory.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
 import { registerEntityLifecycleCommands } from "./register-lifecycle.js";
-import { entryMatchesHybridSearchFilters } from "./storage-stats-helpers.js";
+import {
+  buildHybridSearchScopeFilter,
+  entryMatchesHybridSearchFilters,
+  resolveEntityCleanStopWords,
+} from "./storage-stats-helpers.js";
 
 export function registerManageStorageEntitiesDecay(mem: Chainable, b: ManageBindings): void {
   const {
@@ -53,7 +56,7 @@ export function registerManageStorageEntitiesDecay(mem: Chainable, b: ManageBind
           process.exitCode = 1;
           return;
         }
-        const stopWords = opts?.stopwords === false ? [] : ctx.cfg.entityExtraction.stopWords;
+        const stopWords = resolveEntityCleanStopWords(opts?.stopwords, ctx.cfg.entityExtraction.stopWords);
         const report = factsDb.cleanEntityStopwords({
           apply: opts?.apply === true,
           stopWords,
@@ -363,16 +366,7 @@ export function registerManageStorageEntitiesDecay(mem: Chainable, b: ManageBind
           },
         ) => {
           try {
-            // Build scope filter from CLI options
-            const scopeFilter: ScopeFilter | undefined = opts?.scope
-              ? (() => {
-                  const filter: ScopeFilter = {};
-                  if (opts.scope === "user") filter.userId = opts.scopeTarget || null;
-                  else if (opts.scope === "agent") filter.agentId = opts.scopeTarget || null;
-                  else if (opts.scope === "session") filter.sessionId = opts.scopeTarget || null;
-                  return filter;
-                })()
-              : undefined;
+            const scopeFilter = buildHybridSearchScopeFilter(opts?.scope, opts?.scopeTarget);
 
             const embedding = await embeddings.embed(query);
             const vectorResults = await vectorDb.search(embedding, 50);
