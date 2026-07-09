@@ -21,6 +21,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.197] - 2026-07-09
+
+### Fixed
+
+Loop iteration 131 — second finding from the fresh flat sweep round, completing the user-requested 10-iteration batch (122-131): `hybrid-mem reconcile-cron-ledgers` never signaled the corruption it exists to detect via its exit code.
+
+- **`cli/commands/manage/register-reconcile-cron-ledgers.ts`'s action handler printed `False-OK runs found: N` (the count of cron runs falsely recorded as `status:"ok"`) but never set `process.exitCode` based on it** — only pre-flight path-not-found errors set a nonzero code. This command's entire purpose is catching cron runs that were falsely recorded as healthy; a CI/heartbeat script gating on the exit code (the pattern this plugin uses everywhere else, e.g. `analyze-maintenance-logs --strict`) never noticed the corruption, especially in `--dry-run` mode where `result.corrected` stays `0` by design so there was no other observable signal at all.
+- Fixed by setting `process.exitCode = 1` when `result.falseOk > 0`, after the result is printed (both `--json` and human-readable branches share this one check) — regardless of dry-run/live mode, since the finding itself (not just whether it was auto-corrected) is what monitoring needs to see.
+
+Regression test added (new `tests/register-reconcile-cron-ledgers-exit-code.test.ts`, using the real-`Command`/`parseAsync` harness with `services/cron-maintenance-reconciler.js`'s `reconcileAllCronRunLedgers` mocked to a controlled result — isolating the CLI wiring bug from the reconciliation/validation logic itself): asserts `process.exitCode` is `1` when `falseOk > 0` in `--dry-run --json` mode; a companion test confirms it stays `undefined` when no false-OK runs are found. Verified via `git stash` to fail without the fix — pre-fix, `process.exitCode` stayed `undefined` despite 2 false-OK runs. tsc clean; biome clean (zero findings on either changed file, both before and after — my own new test file's one formatting finding fixed directly via `biome check --write`). Related suites (register-reconcile-cron-ledgers-exit-code, cron-maintenance-reconciler): 25 passed, no regressions.
+
+This completes the user-requested 10-iteration batch (loop iterations 122-131, v2026.7.187 through v2026.7.197). A full-suite `npx vitest run` CI checkpoint follows next, per the same instruction.
+
 ## [2026.7.196] - 2026-07-09
 
 ### Fixed
