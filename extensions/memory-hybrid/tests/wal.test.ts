@@ -606,6 +606,89 @@ describe("WriteAheadLog", () => {
     });
   });
 
+  describe("write()/remove() wait for a live rewrite lock (loop iteration 115 regression)", () => {
+    beforeEach(async () => {
+      wal = new WriteAheadLog(walPath, DEFAULT_MAX_AGE_MS);
+      await wal.init();
+    });
+
+    it("does not append while a concurrent rewrite holds the lock, and proceeds once it clears", async () => {
+      const lockPath = `${walPath}.rewrite.lock`;
+      // Simulate a second process's compactIfOversized/pruneStale already holding the
+      // cross-process rewrite lock for this walPath, mid read-snapshot -> atomic-replace.
+      writeFileSync(lockPath, String(Date.now()), "utf-8");
+
+      const entry = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "New memory", category: "general", importance: 0.8, source: "test" },
+      };
+      const writePromise = wal.write(entry);
+
+      // While the lock is still held, the append must not have landed yet — before the fix,
+      // write() appended immediately regardless of the lock, which is exactly what could get
+      // silently discarded by the rewrite's rename() a moment later.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const midEntries = await wal.readAll();
+      expect(midEntries.find((e) => e.id === entry.id)).toBeUndefined();
+
+      rmSync(lockPath, { force: true });
+      await writePromise;
+
+      const finalEntries = await wal.readAll();
+      expect(finalEntries.find((e) => e.id === entry.id)).toBeDefined();
+    });
+
+    it("proceeds anyway once the bounded wait times out, so the write path never hangs indefinitely", async () => {
+      const lockPath = `${walPath}.rewrite.lock`;
+      writeFileSync(lockPath, String(Date.now()), "utf-8");
+
+      const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+      const entry = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "New memory", category: "general", importance: 0.8, source: "test" },
+      };
+
+      await wal.write(entry);
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("WAL write proceeding while a rewrite lock is still held"),
+      );
+      const entries = await wal.readAll();
+      expect(entries.find((e) => e.id === entry.id)).toBeDefined();
+      warnSpy.mockRestore();
+      rmSync(lockPath, { force: true });
+    }, 3000);
+
+    it("remove() also waits for a live rewrite lock before appending its remove marker", async () => {
+      const existingEntry = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "Existing memory", category: "general", importance: 0.8, source: "test" },
+      };
+      await wal.write(existingEntry);
+
+      const lockPath = `${walPath}.rewrite.lock`;
+      writeFileSync(lockPath, String(Date.now()), "utf-8");
+
+      const removePromise = wal.remove(existingEntry.id);
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const midEntries = await wal.readAll();
+      expect(midEntries.find((e) => e.id === existingEntry.id)).toBeDefined();
+
+      rmSync(lockPath, { force: true });
+      await removePromise;
+
+      const finalEntries = await wal.readAll();
+      expect(finalEntries.find((e) => e.id === existingEntry.id)).toBeUndefined();
+    });
+  });
+
   describe("getValidEntries", () => {
     beforeEach(async () => {
       wal = new WriteAheadLog(walPath, TEST_MAX_AGE_MS);
