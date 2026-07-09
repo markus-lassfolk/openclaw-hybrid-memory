@@ -150,7 +150,8 @@ export type RemoveRedundantNpmProjectTreeResult = {
     | "no-npm-project-tree"
     | "extensions-not-installed"
     | "same-tree"
-    | "npm-project-not-older";
+    | "npm-project-not-older"
+    | "npm-project-version-unreadable";
 };
 
 /**
@@ -202,7 +203,12 @@ export function removeRedundantNpmProjectTreeWhenExtensionsCanonical(opts: {
     return { attempted: false, removed: false, skippedReason: "same-tree" };
   }
   const npmVer = readPluginPackageVersion(npmPluginDir);
-  if (npmVer && compareVersions(npmVer, extVer) > 0) {
+  if (!npmVer) {
+    // Can't confirm the npm-project copy isn't newer — treat unreadable as unsafe to delete
+    // rather than silently falling through to the unconditional, unrecoverable removal below.
+    return { attempted: false, removed: false, skippedReason: "npm-project-version-unreadable" };
+  }
+  if (compareVersions(npmVer, extVer) > 0) {
     // npm-project copy is newer than extensions — refuse to delete a newer install.
     return { attempted: false, removed: false, skippedReason: "npm-project-not-older" };
   }

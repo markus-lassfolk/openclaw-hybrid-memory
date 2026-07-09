@@ -182,6 +182,79 @@ async function performHybridMemCliTeardown(): Promise<void> {
   stopEventLoopLagMonitor();
 }
 
+/**
+ * Close every handle a registration attempt just opened, after `runtimeRef.value` was already
+ * advanced to it but tool/CLI/hook registration then threw (loop iteration 128 fix). Without
+ * this, `registerTools`/`registerHybridMemCliWithApi`/`registerLifecycleHooks` each only logged
+ * and rethrew on failure, leaking every DB/service handle `newRuntime` had just opened -- every
+ * retry (e.g. a host re-attempting `register()` after a transient failure) leaked another set.
+ * Mirrors `performHybridMemCliTeardown`'s non-reuse cleanup shape.
+ */
+function closeFailedRegistrationRuntime(runtime: PluginRuntime): void {
+  clearRuntimeTimers(runtime.timers);
+  try {
+    runtime.lifecycleHooksHandle?.dispose();
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "plugin-register:failed-cleanup:dispose-hooks",
+    });
+  }
+  try {
+    runtime.toolRegistrationHandle?.dispose();
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "plugin-register:failed-cleanup:dispose-tools",
+    });
+  }
+  try {
+    runtime.vaultRegistry?.closeAll();
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "plugin-register:failed-cleanup:close-vaults",
+    });
+  }
+  try {
+    closeOldDatabases({
+      factsDb: runtime.factsDb,
+      edictStore: runtime.edictStore,
+      narrativesDb: runtime.narrativesDb,
+      vectorDb: runtime.vectorDb,
+      credentialsDb: runtime.credentialsDb,
+      proposalsDb: runtime.proposalsDb,
+      identityReflectionStore: runtime.identityReflectionStore,
+      personaStateStore: runtime.personaStateStore,
+      eventLog: runtime.eventLog,
+      aliasDb: runtime.aliasDb,
+      eventBus: runtime.eventBus,
+      issueStore: runtime.issueStore,
+      workflowStore: runtime.workflowStore,
+      crystallizationStore: runtime.crystallizationStore,
+      toolProposalStore: runtime.toolProposalStore,
+      verificationStore: runtime.verificationStore,
+      provenanceService: runtime.provenanceService,
+      learningsDb: runtime.learningsDb,
+      apitapStore: runtime.apitapStore,
+      auditStore: runtime.auditStore,
+      agentHealthStore: runtime.agentHealthStore,
+    });
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "plugin-register:failed-cleanup:close-databases",
+    });
+  }
+  runtime.pythonBridge?.shutdown().catch((err: unknown) => {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "plugin-register:failed-cleanup:python-bridge-shutdown",
+      severity: "warning",
+    });
+  });
+}
+
 export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
   // OpenClaw `loadOpenClawPluginCliRegistry` — metadata only; no DBs or native deps (issue #1111).
   // Check this FIRST, before any logger init or config parsing, so an incomplete config
@@ -717,6 +790,8 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
       subsystem: "registration",
       operation: "plugin-register:tools",
     });
+    closeFailedRegistrationRuntime(runtime);
+    if (runtimeRef.value === runtime) runtimeRef.value = null;
     throw err;
   }
 
@@ -759,6 +834,8 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
       subsystem: "registration",
       operation: "plugin-register:cli",
     });
+    closeFailedRegistrationRuntime(runtime);
+    if (runtimeRef.value === runtime) runtimeRef.value = null;
     throw err;
   }
 
@@ -770,6 +847,8 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
       subsystem: "registration",
       operation: "plugin-register:hooks",
     });
+    closeFailedRegistrationRuntime(runtime);
+    if (runtimeRef.value === runtime) runtimeRef.value = null;
     throw err;
   }
 

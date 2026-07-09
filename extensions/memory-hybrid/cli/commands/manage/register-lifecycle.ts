@@ -2,7 +2,7 @@
  * Entity lifecycle CLIs (Issue #1196 Phase 1 + Phase 2).
  */
 
-import type { DecayClass } from "../../../config.js";
+import { DECAY_CLASSES, type DecayClass } from "../../../config.js";
 import { syncLifecycleFromGitHub } from "../../../services/lifecycle/github-adapter.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
@@ -127,10 +127,16 @@ export function registerExpireBySourceCommands(mem: Chainable, b: ManageBindings
             process.exitCode = 1;
             return;
           }
+          const decayClassRaw = opts.decayClass ?? "short";
+          if (!(DECAY_CLASSES as readonly string[]).includes(decayClassRaw)) {
+            console.error(`error: --decay-class must be one of: ${DECAY_CLASSES.join(", ")}`);
+            process.exitCode = 1;
+            return;
+          }
           const report = factsDb.expireBySourcePattern({
             pattern: opts.pattern,
             ttlDays,
-            decayClass: (opts.decayClass ?? "short") as DecayClass,
+            decayClass: decayClassRaw as DecayClass,
             apply: opts.apply === true,
           });
           if (opts.json) {

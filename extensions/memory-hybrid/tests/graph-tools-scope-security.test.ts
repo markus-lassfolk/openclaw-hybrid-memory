@@ -126,6 +126,20 @@ describe("graph tools scope enforcement", () => {
     expect(factsDb.createLink).not.toHaveBeenCalled();
   });
 
+  it("memory_link refuses a self-referential link instead of corrupting the fact's own confidence (loop iteration 117 regression)", async () => {
+    const { api, factsDb } = setup([ownFact], []);
+    const result = (await api.getTool("memory_link")?.execute("call-1", {
+      sourceFact: "own-1",
+      targetFact: "own-1",
+      linkType: "CONTRADICTS",
+    })) as { details: Record<string, unknown> };
+    expect(result.details.error).toBe("self_link");
+    // Before the fix, this reached recordContradiction("own-1", "own-1"), inserting a
+    // self-referential CONTRADICTS edge and docking the fact's own confidence by 0.2.
+    expect(factsDb.recordContradiction).not.toHaveBeenCalled();
+    expect(factsDb.createLink).not.toHaveBeenCalled();
+  });
+
   it("memory_graph omits an out-of-scope linked fact from direct links and connected count", async () => {
     const { api } = setup([ownFact, foreignFact], [link]);
     const result = (await api.getTool("memory_graph")?.execute("call-1", { factId: "own-1" })) as {

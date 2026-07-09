@@ -87,6 +87,10 @@ export function registerReconcileCronLedgers(hybrid: Chainable): void {
           } else {
             printReconciliationResult(result, !!opts.dryRun);
           }
+          // The whole point of this command is to catch cron runs falsely recorded as "ok" --
+          // a nonzero exit signals that to CI/heartbeat scripts even in --dry-run mode, where
+          // result.corrected stays 0 by design.
+          if (result.falseOk > 0) process.exitCode = 1;
         },
       ),
     );

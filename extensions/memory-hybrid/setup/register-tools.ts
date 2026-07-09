@@ -163,8 +163,19 @@ export function createGenerationGuardedToolsApi(
 export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): ToolRegistrationHandle {
   const { api: guardedApi, handle } = createGenerationGuardedToolsApi(ctx, api);
   const toolsApi = patchMemoryToolRegistrationApi(guardedApi);
-  for (const installer of toolInstallers) {
-    installer.install(installer.selectContext(ctx, toolsApi), toolsApi);
+  try {
+    for (const installer of toolInstallers) {
+      installer.install(installer.selectContext(ctx, toolsApi), toolsApi);
+    }
+  } catch (err) {
+    // An installer partway through the list can throw (e.g. a tool name missing from
+    // openclaw.plugin.json#contracts.tools). Every installer before it already registered its
+    // tools with the host and is tracked in `handle`'s dispose list -- but since this function
+    // is about to throw instead of returning `handle`, the caller can never reach
+    // handle.dispose() to unregister them. Dispose internally before rethrowing so nothing
+    // already-registered stays permanently live in the host's tool registry.
+    handle.dispose();
+    throw err;
   }
   return handle;
 }

@@ -17,6 +17,7 @@ import {
   buildHybridSearchScopeFilter,
   entryMatchesHybridSearchFilters,
   resolveEntityCleanStopWords,
+  validateSearchScopeOption,
 } from "./storage-stats-helpers.js";
 
 export function registerManageStorageEntitiesDecay(mem: Chainable, b: ManageBindings): void {
@@ -366,7 +367,15 @@ export function registerManageStorageEntitiesDecay(mem: Chainable, b: ManageBind
           },
         ) => {
           try {
-            const scopeFilter = buildHybridSearchScopeFilter(opts?.scope, opts?.scopeTarget);
+            const scope = opts?.scope?.trim().toLowerCase();
+            const scopeTarget = opts?.scopeTarget?.trim();
+            const scopeValidation = validateSearchScopeOption(scope, scopeTarget);
+            if (!scopeValidation.ok) {
+              console.error(`error: ${scopeValidation.error}`);
+              process.exitCode = 1;
+              return;
+            }
+            const scopeFilter = buildHybridSearchScopeFilter(scope, scopeTarget);
 
             const embedding = await embeddings.embed(query);
             const vectorResults = await vectorDb.search(embedding, 50);

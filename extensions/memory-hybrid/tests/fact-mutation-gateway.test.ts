@@ -116,6 +116,33 @@ describe("fact-mutation-gateway", () => {
 
       expect(factsDb.lookup).toHaveBeenCalledWith("React", undefined, undefined, expect.any(Object));
     });
+
+    it("clamps a negative limit to the [1,100] range instead of removing the pagination cap (loop iteration 117 regression)", async () => {
+      const { handlers, factsDb } = captureHandlers();
+      factsDb.search.mockReturnValue([]);
+
+      // Before the fix, a negative limit reached lookupFacts()/search() as-is: lookupFacts()
+      // treats a non-positive limit as `null` (dropping its SQL LIMIT clause entirely, returning
+      // every matching row) and the no-query/no-entity branch's `getAll().slice(0, -1)` returns
+      // nearly the whole in-scope corpus -- defeating the intended 20-default/100-max cap.
+      const respond = vi.fn();
+      await handlers.get("hybrid-mem.facts.list")!({ params: { query: "React", limit: -1 }, respond });
+
+      expect(factsDb.search).toHaveBeenCalledWith("React", expect.any(Number), expect.any(Object));
+      const usedLimit = factsDb.search.mock.calls[0]?.[1];
+      expect(usedLimit).toBeGreaterThanOrEqual(1);
+      expect(usedLimit).toBeLessThanOrEqual(100);
+    });
+
+    it("clamps an overflow limit to 100 as before", async () => {
+      const { handlers, factsDb } = captureHandlers();
+      factsDb.search.mockReturnValue([]);
+
+      const respond = vi.fn();
+      await handlers.get("hybrid-mem.facts.list")!({ params: { query: "React", limit: 99999 }, respond });
+
+      expect(factsDb.search).toHaveBeenCalledWith("React", 100, expect.any(Object));
+    });
   });
 
   describe("hybrid-mem.facts.get", () => {

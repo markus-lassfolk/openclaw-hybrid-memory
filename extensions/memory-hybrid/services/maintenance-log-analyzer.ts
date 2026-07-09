@@ -999,8 +999,8 @@ function loadPersistedMaintenanceFindingLedger(dbPath: string): Map<string, Pers
         `SELECT fingerprint,
            MIN(occurred_at) AS first_seen_at,
            MAX(occurred_at) AS last_seen_at,
-           MAX(occurrence_count) AS occurrence_count,
-           MAX(CASE WHEN action_taken = 'reported-glitchtip' 
+           COUNT(*) AS occurrence_count,
+           MAX(CASE WHEN action_taken = 'reported-glitchtip'
                       OR (action_taken = 'reported' AND classification IN ('plugin-bug', 'command-crash', 'json-parse-failure', 'orchestration-bug'))
                 THEN 1 ELSE 0 END) AS glitchtip_reported
          FROM maintenance_finding

@@ -147,6 +147,7 @@ export function registerTaskQueueStatusCommands(mem: Chainable): void {
           console.error(
             "✗ current.json is malformed (not valid JSON) — delete manually or check task-queue-status for details",
           );
+          process.exitCode = 1;
           return;
         }
         if (!taskQueueItemHasRecognizedSemantics(raw)) {

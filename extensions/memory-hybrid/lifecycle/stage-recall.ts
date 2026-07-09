@@ -7,6 +7,7 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import { capturePluginError } from "../services/error-reporter.js";
 import { INTERACTIVE_RECALL_STAGE_TIMEOUT_MS } from "../services/retrieval-mode-policy.js";
 import { logSlowBeforeAgentStartIfNeeded, resolveBeforeAgentStartStageTimeoutMs } from "../services/before-agent-start-budget.js";
 import { isRecallContextSuperseded } from "../utils/registration-superseded.js";
@@ -47,9 +48,19 @@ export async function runRecallStage(
             resolve({ kind: "empty", prependContext: undefined });
             return;
           }
-          void buildDegradedFtsHotRecallStage(event, api, ctx, sessionState, "timeout").then((degraded) => {
-            if (!recallSettled) resolve(degraded);
-          });
+          void buildDegradedFtsHotRecallStage(event, api, ctx, sessionState, "timeout").then(
+            (degraded) => {
+              if (!recallSettled) resolve(degraded);
+            },
+            (err) => {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                operation: "recall-timeout-fallback",
+                severity: "warning",
+                subsystem: "stage-recall",
+              });
+              if (!recallSettled) resolve({ kind: "empty", prependContext: undefined });
+            },
+          );
         }, stageTimeoutMs);
       }),
     ]);

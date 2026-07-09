@@ -263,7 +263,7 @@ describe("reregister-policy closed donor handle guard", () => {
       verificationStore: store(true),
       apitapStore: store(true),
       ...overrides,
-    } as PluginRuntime;
+    } as unknown as PluginRuntime;
   }
 
   it("allows reuse when donor config and handles are still open", () => {

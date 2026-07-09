@@ -31,12 +31,15 @@ export function registerSensorSweepCommand(mem: Chainable, b: ManageBindings): v
         if (!eventBusPath) {
           throw new Error("sensor-sweep requires resolvedSqlitePath to locate event-bus.db");
         }
+        const tierRaw = String(opts?.tier ?? "all")
+          .trim()
+          .toLowerCase();
+        if (tierRaw !== "all" && tierRaw !== "1" && tierRaw !== "2") {
+          throw new Error(`sensor-sweep: --tier must be one of: 1, 2, all (got "${tierRaw}")`);
+        }
+        const tier = tierRaw === "all" ? "all" : tierRaw === "2" ? 2 : 1;
         const eventBus = new EventBus(eventBusPath);
         try {
-          const tierRaw = String(opts?.tier ?? "all")
-            .trim()
-            .toLowerCase();
-          const tier = tierRaw === "all" ? "all" : tierRaw === "2" ? 2 : 1;
           let currentLabel: string | undefined;
           const result = await runMaintenanceHeartbeat(
             "sensor-sweep",

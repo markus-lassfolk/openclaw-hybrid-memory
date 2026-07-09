@@ -15,6 +15,15 @@ export const WAL_ENTRY_SCHEMA_VERSION = 1;
 /** Lock files older than this are treated as abandoned by a crashed rewrite, not a live one. */
 const WAL_REWRITE_LOCK_STALE_MS = 5 * 60 * 1000;
 
+/** Poll interval while write()/remove() wait for a live rewrite lock to clear. */
+const WAL_WRITE_REWRITE_LOCK_RETRY_MS = 20;
+/**
+ * Max time write()/remove() wait for compactIfOversized/pruneStale's rewrite lock before
+ * proceeding anyway. Bounded and fail-open on purpose: the hot write path must never hang
+ * indefinitely on a lock file, and a rewrite normally clears its lock in well under this window.
+ */
+const WAL_WRITE_REWRITE_LOCK_MAX_WAIT_MS = 1000;
+
 export type WALEntry = {
   schemaVersion?: number;
   id: string;
@@ -308,6 +317,7 @@ export class WriteAheadLog {
 
     try {
       await prevLock;
+      await this.waitForRewriteLockClear();
       await this.syncActiveIdsFromDisk();
       const line = `${JSON.stringify(entry)}\n`;
       await appendFile(this.walPath, line, "utf-8");
@@ -438,6 +448,7 @@ export class WriteAheadLog {
 
     try {
       await prevLock;
+      await this.waitForRewriteLockClear();
       const line = `${JSON.stringify({ op: "remove", id })}\n`;
       await appendFile(this.walPath, line, "utf-8");
       this.activeIds.delete(id);
@@ -547,6 +558,28 @@ export class WriteAheadLog {
 
   private getRewriteLockPath(): string {
     return `${this.walPath}.rewrite.lock`;
+  }
+
+  /**
+   * Best-effort: wait for a live cross-process rewrite (compactIfOversized/pruneStale) to
+   * release its lock before write()/remove() append. Without this, a plain append landing in
+   * the rewrite's read-snapshot -> atomic-replace window is silently discarded when the
+   * rewrite's rename() overwrites the file with a snapshot that predates the append (#80's
+   * failure mode, just from the append side instead of two rewrites racing each other).
+   * Bounded and fail-open on purpose — see WAL_WRITE_REWRITE_LOCK_MAX_WAIT_MS.
+   */
+  private async waitForRewriteLockClear(): Promise<void> {
+    if (!existsSync(this.getRewriteLockPath())) return;
+    const deadline = Date.now() + WAL_WRITE_REWRITE_LOCK_MAX_WAIT_MS;
+    while (existsSync(this.getRewriteLockPath())) {
+      if (Date.now() >= deadline) {
+        pluginLogger.warn(
+          "memory-hybrid: WAL write proceeding while a rewrite lock is still held (timed out waiting for it to clear)",
+        );
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, WAL_WRITE_REWRITE_LOCK_RETRY_MS));
+    }
   }
 
   /**

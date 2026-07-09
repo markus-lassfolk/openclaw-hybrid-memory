@@ -16,7 +16,11 @@ import { reconcileAllCronRunLedgers } from "../../../services/cron-maintenance-r
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { HYBRID_MEM_CRON_DEFAULT_JOB_STEPS } from "../../../services/hybrid-mem-cron-default-job-steps.js";
 import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
-import { findOrphanVectorIds, reconcileOrphanVectors } from "../../../services/vector-maintenance.js";
+import {
+  findOrphanVectorIds,
+  reconcileOrphanVectors,
+  storeCanonicalVectorForFact,
+} from "../../../services/vector-maintenance.js";
 import { collectStorageSyncSnapshot, formatStorageSyncSummary } from "../../../services/storage-sync-diagnostics.js";
 import { PLUGIN_ID } from "../../../utils/constants.js";
 import { nowIso, formatTimestampUtcFromMs } from "../../../utils/dates.js";
@@ -168,6 +172,7 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
               log(`  - ${id}`);
             });
             if (sqliteOrphans.length > 10) log(`  … and ${sqliteOrphans.length - 10} more`);
+            let sqliteOrphansFullyRebuilt = false;
             if (opts.fix && sqliteOrphanRebuildBudget > 0) {
               let rebuilt = 0;
               let failed = 0;
@@ -179,12 +184,15 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
                     continue;
                   }
                   const vec = await embeddings.embed(fact.text);
-                  await vectorDb.store({
-                    id: fact.id,
+                  await storeCanonicalVectorForFact({
+                    vectorDb,
+                    factsDb,
+                    factId: fact.id,
                     text: fact.text,
                     vector: vec,
                     importance: fact.importance ?? 0.5,
                     category: fact.category,
+                    embeddingModel: embeddings.modelName,
                   });
                   rebuilt++;
                 } catch {
@@ -199,6 +207,7 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
                   `  → Skipped ${sqliteOrphans.length - sqliteOrphanRebuildBudget} SQLite orphan(s) due to --reconcile-max-fixes budget.`,
                 );
               }
+              sqliteOrphansFullyRebuilt = failed === 0 && sqliteOrphans.length <= sqliteOrphanRebuildBudget;
             } else if (opts.fix && sqliteOrphanRebuildBudget === 0) {
               log(
                 `  → Policy=${reconcilePolicy}: SQLite-orphan auto-rebuild disabled; use re-index for full recovery.`,
@@ -206,8 +215,13 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
             } else {
               log("  → Re-run the plugin or use the re-index command to rebuild missing vectors.");
             }
-            state.issues.push(`${sqliteOrphans.length} SQLite fact(s) without corresponding vectors in LanceDB`);
-            state.allOk = false;
+            if (sqliteOrphansFullyRebuilt) {
+              log(`  → Verified rebuild: ${sqliteOrphans.length}/${sqliteOrphans.length} SQLite orphan vector(s) rebuilt.`);
+              fixes.push(`Rebuilt ${sqliteOrphans.length} SQLite orphan vector(s)`);
+            } else {
+              state.issues.push(`${sqliteOrphans.length} SQLite fact(s) without corresponding vectors in LanceDB`);
+              state.allOk = false;
+            }
           }
         }
         if (resolvedSqlitePath) {

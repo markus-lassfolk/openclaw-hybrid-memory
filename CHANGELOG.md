@@ -21,6 +21,360 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.197] - 2026-07-09
+
+### Fixed
+
+Loop iteration 131 — second finding from the fresh flat sweep round, completing the user-requested 10-iteration batch (122-131): `hybrid-mem reconcile-cron-ledgers` never signaled the corruption it exists to detect via its exit code.
+
+- **`cli/commands/manage/register-reconcile-cron-ledgers.ts`'s action handler printed `False-OK runs found: N` (the count of cron runs falsely recorded as `status:"ok"`) but never set `process.exitCode` based on it** — only pre-flight path-not-found errors set a nonzero code. This command's entire purpose is catching cron runs that were falsely recorded as healthy; a CI/heartbeat script gating on the exit code (the pattern this plugin uses everywhere else, e.g. `analyze-maintenance-logs --strict`) never noticed the corruption, especially in `--dry-run` mode where `result.corrected` stays `0` by design so there was no other observable signal at all.
+- Fixed by setting `process.exitCode = 1` when `result.falseOk > 0`, after the result is printed (both `--json` and human-readable branches share this one check) — regardless of dry-run/live mode, since the finding itself (not just whether it was auto-corrected) is what monitoring needs to see.
+
+Regression test added (new `tests/register-reconcile-cron-ledgers-exit-code.test.ts`, using the real-`Command`/`parseAsync` harness with `services/cron-maintenance-reconciler.js`'s `reconcileAllCronRunLedgers` mocked to a controlled result — isolating the CLI wiring bug from the reconciliation/validation logic itself): asserts `process.exitCode` is `1` when `falseOk > 0` in `--dry-run --json` mode; a companion test confirms it stays `undefined` when no false-OK runs are found. Verified via `git stash` to fail without the fix — pre-fix, `process.exitCode` stayed `undefined` despite 2 false-OK runs. tsc clean; biome clean (zero findings on either changed file, both before and after — my own new test file's one formatting finding fixed directly via `biome check --write`). Related suites (register-reconcile-cron-ledgers-exit-code, cron-maintenance-reconciler): 25 passed, no regressions.
+
+This completes the user-requested 10-iteration batch (loop iterations 122-131, v2026.7.187 through v2026.7.197). A full-suite `npx vitest run` CI checkpoint follows next, per the same instruction.
+
+## [2026.7.196] - 2026-07-09
+
+### Fixed
+
+Loop iteration 130 — first finding from a fresh flat sweep round (lifecycle/api, cli/, services/) dispatched after closing out the backends/routes/setup sweep: `hybrid-mem mine --scope` silently orphaned imported data.
+
+- **`cli/cmd-mine.ts`'s `executeMineCommand` typed `opts.scope` as `"global" | "user" | "agent" | "session"` but never validated it at runtime** — Commander passes through whatever string the user types regardless of the TS type. `mineScope = opts.scope ?? "global"` (and the mirrored `--undo` path's `undoScope`) is stored directly into `facts.scope`/matched against it, and every scope-filtered query elsewhere in the codebase (links, scope-sql) matches only the four exact literals. `hybrid-mem mine transcript.json --scope tenant-a --scope-target tenant-a` (a plausible typo for `--scope agent --scope-target tenant-a`) stored facts with `scope='tenant-a'`, which never matches any real scope filter — the imported facts became permanently unreachable via recall/search, silently "lost" (though still soft-deletable via `mine --undo`, since that path independently re-derives the same unchecked scope string). Sibling command `skills.ts` already validates this exact enum before use, confirming the omission here was a gap.
+- Fixed by validating `opts.scope` against the same four literals at the very top of `executeMineCommand` (covering both the mine and `--undo` paths, since both derive their scope from the same option), printing a clear error and calling `process.exit(1)` — matching this file's own existing validation style for its other guard clauses.
+
+Regression test added (`tests/cmd-mine.test.ts`, new `describe` block): asserts an invalid `--scope` (with a `--scope-target` provided, isolating this from the pre-existing "scopeTarget required for non-global scope" guard in `backends/facts-db/crud.ts`) prints the expected error, calls `process.exit(1)`, and stores zero facts; a companion test confirms a valid non-global `--scope` still works. Verified via `git stash` to fail without the fix — pre-fix, the command printed `facts created: 1` and stored the fact under the bogus scope. tsc clean; biome clean (same pre-existing 4 errors/1 warning baseline on both changed files before and after — all pre-existing long-line formatting drift unrelated to this change; my own new test code's one indentation slip was caught and fixed directly). Related suites (cmd-mine): 8 passed, no regressions.
+
+Two more flat sweep rounds (lifecycle/+api/, services/ remaining files) also completed and surfaced 7 additional genuine findings, tracked for upcoming iterations: three session-state-map-cleared-every-turn bugs in `lifecycle/session-state.ts` (change-notify dedup, frustration-trend accumulation, revert-target resolution — all sharing one root cause), and four independent findings in `services/` (`multi-vault-retrieval.ts`'s `Promise.all` aborting all vaults on one failure, `sensor-sweep.ts`'s Home Assistant fan-out with the same fail-fast pattern, `cross-agent-learning.ts`'s always-on wildcard tag defeating agent-scoped lesson filtering, `memory-nudge.ts`'s `evictOldestSession` evicting by insertion order instead of last-touched order).
+
+## [2026.7.195] - 2026-07-09
+
+### Fixed
+
+Loop iteration 129 — second of two related findings from the `setup/`-adjacent portion of the sweep, closing it out: successfully-registered tools were never unregistered when a later installer failed.
+
+- **`setup/register-tools.ts`'s `registerTools` had no per-installer try/catch around its `for (const installer of toolInstallers) { installer.install(...) }` loop.** `createGenerationGuardedToolsApi` already tracks every successfully-registered tool's disposer in a list reachable only via the `handle` object `registerTools` returns at the very end — but if any installer partway through the list threw (e.g. the same manifest/tool-installer drift scenario fixed for the DB layer in iteration 128), `registerTools` itself threw *before* `return handle`. The caller (`register-plugin.ts`) never received a handle in that case, so every tool registered by the installers that ran before the failing one stayed permanently live in the host's tool registry with no way to unregister them — independent of, and complementary to, iteration 128's fix (that fix's cleanup path calls `runtime.toolRegistrationHandle?.dispose()`, but `toolRegistrationHandle` is only ever assigned *after* `registerTools` returns, so it stays `null` precisely when this bug fires).
+- Fixed by wrapping the installer loop in a try/catch that calls `handle.dispose()` (unregistering everything the earlier installers already registered) before rethrowing the original error — so the cleanup happens internally, without depending on the caller ever receiving the handle.
+
+Regression test added (new `tests/register-tools-partial-failure-cleanup.test.ts`, mocking `setup/tool-installers.js`'s exported `toolInstallers` list with two fake installers — one that registers a tool and returns a disposer function, one that throws): asserts the first installer's tool is disposed before the error propagates; a second test confirms a fully-successful run still returns a working handle. Verified via `git stash` to fail without the fix — pre-fix, the disposer for the successfully-registered tool was never called. tsc clean; biome clean (same pre-existing 1 import-order error on `register-tools.ts` before and after; my own new test file's one formatting finding fixed directly via `biome check --write`). Related suites (register-tools-partial-failure-cleanup, tool-registration-generation-guard, plugin-e2e, comprehensive-e2e, goal-episode-scope-security, goal-tools-error-handling, issue-tools-scope-security): 49 passed, no regressions.
+
+This closes out the fresh `backends/`+`routes/`+`setup/`+`config/`+`utils/` sweep dispatched at loop iteration 123 — all 6 genuine findings from that round (credentials-db handle leak, GraphQL stats crash, GraphQL supersede-edge dead code, dashboard workflow success-rate mismatch, and these two registration-failure leaks) are now fixed (iterations 124-129).
+
+## [2026.7.194] - 2026-07-09
+
+### Fixed
+
+Loop iteration 128 — first of two related findings from the `setup/`-adjacent portion of the sweep: a failed plugin registration leaked every database/service handle it had just opened.
+
+- **`setup/register-plugin.ts`'s `runMemoryHybridRegisterImpl` assigns `runtimeRef.value = newRuntime` before running `registerTools` / `registerHybridMemCliWithApi` / `registerLifecycleHooks`.** Each of those three steps was wrapped only in `try { ... } catch (err) { capturePluginError(...); throw err; }` — none of them closed the just-opened SQLite/LanceDB/service handles before rethrowing, even though this same file already has a reusable `closeOldDatabases()` cleanup helper (used for CLI teardown and reregister teardown elsewhere in this file). Per the file's own doc comment, a manifest/tool-installer drift (`openclaw.plugin.json#contracts.tools` out of sync with `setup/tool-installers.ts`) makes `registerTools` throw — every failed registration attempt (and every retry after one, e.g. a host re-invoking `register()`) leaked another full set of native database connections for the life of the process.
+- Fixed by adding `closeFailedRegistrationRuntime(runtime)`, a new helper mirroring `performHybridMemCliTeardown`'s cleanup shape (dispose lifecycle-hooks/tool-registration handles, close the vault registry, `closeOldDatabases()` on the full handle set, fire-and-forget python-bridge shutdown), called from all three catch blocks before rethrowing. Also resets `runtimeRef.value` back to `null` (guarded by an identity check) so a failed registration doesn't leave a half-wired, now-closed runtime installed where callers would hit "database not open" errors instead of a clean failure signal. Restoring `runtimeRef.value` to the prior (`old`) runtime was considered and rejected: when `reuseDatabases` is false, `old`'s teardown may already be scheduled/in-flight by this point, so pointing back at it risks handing out a closing/closed runtime instead of a working one.
+
+Regression test added (new `tests/register-plugin-failed-registration-cleanup.test.ts`, using the existing full-stack e2e harness from `tests/helpers/comprehensive-e2e-harness.ts`): makes the host's `registerTool` throw for a specific tool name (simulating the manifest-drift scenario), captures the in-flight `runtimeRef.value.factsDb` from inside that throwing callback (before the catch block can null the ref), and after the registration attempt throws, asserts `runtimeRef.value` is `null` and that the captured `factsDb` handle now throws "not open" on further use (proof it was actually closed, not just orphaned). Verified via `git stash` to fail without the fix — pre-fix, `runtimeRef.value` was still the half-wired runtime (a large non-null object) and the factsDb handle remained open. tsc clean; biome clean (identical pre-existing 2 errors/1 warning baseline on `register-plugin.ts` before and after; my own new test file's one formatting finding fixed directly via `biome check --write`). Related suites (register-plugin-failed-registration-cleanup, register-plugin-reload-teardown-drain, comprehensive-e2e, plugin-e2e, reregister-policy, plugin-service-startup, hybrid-memory-reload-coordinator, service-marker-cli-registration, memory-journey-e2e, cli-credentials-fast-path, hybrid-mem-version-only-fast-path, cli-help-hang): 117 passed, no regressions.
+
+## [2026.7.193] - 2026-07-09
+
+### Fixed
+
+Loop iteration 127 — fourth finding from the fresh `backends/`+`routes/` sweep: the Mission Control dashboard's Workflows view misreported success rates for most traces.
+
+- **`routes/dashboard/collectors.ts`'s `collectMemoryViewerWorkflows` looked up each trace's success rate via `patterns.find((p) => JSON.stringify(p.toolSequence) === JSON.stringify(t.toolSequence))`.** `WorkflowStore.getPatterns()` clusters traces by *similarity* (Levenshtein-based `sequenceSimilarity`, default threshold 0.8) and each returned `WorkflowPattern.toolSequence` is only the representative (first-seen) member's exact sequence, not every member's. Two traces that differ by one tool call still land in the same cluster with a real aggregate success rate, but the exact-equality lookup only matched the one trace that happened to equal the representative — every other member of the cluster silently fell back to `successRate: 0`, understating workflow health on the dashboard for the common case (most traces in a cluster are *not* the representative).
+- Fixed by matching with the same similarity predicate `getPatterns` itself uses to decide cluster membership (`sequenceSimilarity(p.toolSequence, t.toolSequence) >= threshold`, reusing the already-exported `sequenceSimilarity` helper) instead of exact `JSON.stringify` equality — no new DB queries or clustering logic, just the correct predicate applied to data already fetched.
+
+Regression test added (new `tests/dashboard-workflow-collector-success-rate.test.ts`, using a real `WorkflowStore` against a temp SQLite file): records one representative trace (failure) and two near-identical variant traces (success, one substitution out of 10 tool calls — similarity 0.9, above the 0.8 clustering threshold), asserts all three traces report the correct cluster-aggregate rate (2/3); a second test confirms a singleton cluster still reports its own real rate. Verified via `git stash` to fail without the fix — the two variant traces reported `0` instead of `0.667`. tsc clean; biome clean (same 2 pre-existing formatting/import errors on `collectors.ts` before and after; my own new test file's one import-order finding fixed directly via `biome check --write`). Related suites (dashboard-workflow-collector-success-rate, workflow-store, workflow-tracker, dashboard-server): 182 passed, no regressions.
+
+## [2026.7.192] - 2026-07-09
+
+### Fixed
+
+Loop iteration 126 — third finding from the fresh `backends/`+`routes/` sweep: the GraphQL `graph` query's `superseded_by` edges could never appear.
+
+- **`routes/graphql-resolvers.ts`'s `Query.graph` computed `supersedeEdges` from `facts`, which was already filtered through `isActiveFact()`** — a predicate that requires `fact.supersededBy == null`. Since the `supersedeEdges` computation only ever saw facts that necessarily have `supersededBy == null`, `supersedeEdges` was unconditionally `[]`: the `superseded_by` edge type could never appear in a graph response, even though the code was clearly written to produce it (the equivalent REST `/api/graph` route has no code for this at all, so the feature has silently never worked anywhere).
+- Fixed by computing the filtered-but-not-yet-active-narrowed fact set (`allMatching`, via `allFacts(context, true)` so superseded rows are included) once, deriving the rendered active node set (`facts`) from it as before, then separately finding superseded predecessor facts whose replacement (`fact.supersededBy`) is already a rendered node — and adding those predecessors as extra graph nodes so the `superseded_by` edge has a real node to point from (an edge whose source isn't a node would be a dangling edge the graph viewer can't render). Category/decay-class/importance/scope filters still apply uniformly, since both `facts` and the predecessor lookup derive from the same filtered `allMatching` set.
+
+Regression test added (new `tests/graphql-graph-resolver-supersede-edges.test.ts`): asserts a superseded predecessor fact is added as an extra node with a `superseded_by` edge to its still-active replacement; asserts both the edge and the extra node are omitted when the replacement fact itself is filtered out of the graph (no dangling edges); asserts no supersede edges appear when nothing is superseded. Verified via `git stash` to fail without the fix (the first test's node/edge assertions both fail — `fact-b` never appears, `supersedeEdges` is always `[]`). tsc clean; biome clean (same pre-existing import-order error on `graphql-resolvers.ts` before/after; my own new test file's one formatting finding fixed directly via `biome check --write`). Related suites (graphql-graph-resolver-supersede-edges, graphql-stats-resolver, graphql-link-scope-security, graphql-related-facts-link-visibility): 18 passed, no regressions.
+
+## [2026.7.191] - 2026-07-09
+
+### Fixed
+
+Loop iteration 125 — second finding from the fresh `backends/`+`routes/` sweep: the GraphQL `stats` query could crash on a large fact store.
+
+- **`routes/graphql-resolvers.ts`'s `Query.stats` computed `oldestFactDate`/`newestFactDate` via `Math.min(...facts.map(...))`/`Math.max(...facts.map(...))`, where `facts = allFacts(context, true)` has no LIMIT clause** (unlike every other resolver in this file — `search`, `graph` — which explicitly cap `limit`/`maxNodes`). Spreading an array into a function call is bounded by V8's argument-count limit (~65k-125k elements); a long-lived agent memory store that has accumulated more facts than that throws `RangeError: Maximum call stack size exceeded` on every `stats` query, permanently breaking that query for large stores.
+- Fixed by replacing the two spreads with a single forward pass tracking running min/max, avoiding any array-length-bounded call.
+
+Regression test added (new `tests/graphql-stats-resolver.test.ts`): constructs a 150,000-fact mock store (above the spread limit) and asserts `Query.stats` resolves without throwing and computes the correct oldest/newest dates, plus small-store correctness checks (empty store → `null`/`null`; mixed-order store → correct min/max). Verified via `git stash` to fail without the fix — reproduces the exact `RangeError: Maximum call stack size exceeded`. tsc clean; biome clean (same 1 pre-existing import-order error on `graphql-resolvers.ts` before and after, zero new findings — my own new test file's non-null-assertion warnings match the established pattern used elsewhere in this suite). Related suites (graphql-stats-resolver, graphql-link-scope-security, graphql-related-facts-link-visibility): 15 passed, no regressions.
+
+## [2026.7.190] - 2026-07-09
+
+### Fixed
+
+Loop iteration 124 — first finding from the fresh `backends/`+`routes/` sweep dispatched at iteration 123: `CredentialsDB`'s constructor leaked the native SQLite handle on every rejected vault open.
+
+- **`backends/credentials-db.ts`'s constructor opened the native `DatabaseSync` handle (`const db = new DatabaseSync(dbPath); super(db);`) before running any vault-metadata validation, and its two validation-failure paths (`"Credentials vault was created with encryption..."` and `"Credentials vault contains data but no encryption metadata..."`) threw without ever closing that handle.** Since the constructor throws, the caller never receives a reference to call `.close()` on — the partially-constructed instance is simply discarded, along with the open connection. A caller that retries with a corrected key (a CLI re-prompting for the right `credentials.encryptionKey`, or a service falling back through key sources) leaks another native SQLite connection per attempt for the life of the process.
+- Fixed by calling `db.close()` (the local, always-in-scope constructor variable) immediately before each of the two validation throws — mirroring the direct `this.db.close()` calls `BaseSqliteStore` itself already uses in its own close/reopen paths, so no other cleanup mechanism was needed.
+
+Regression test added (`tests/credentials-db.test.ts`, new `describe` block): spies on `DatabaseSync.prototype.close` around each of the two existing throw scenarios (opening an encrypted vault with an empty key; opening a legacy vault with data but no `vault_meta` using the wrong key) and asserts the handle is closed exactly once. Verified via `git stash` to fail without the fix (both assert 0 close calls pre-fix vs. 1 post-fix). tsc clean; biome clean (identical 2 pre-existing errors/2 warnings baseline on both changed files, before and after — zero new findings). Related suites (credentials-db plus 8 sibling credentials-* suites): 153 passed, no regressions.
+
+## [2026.7.189] - 2026-07-09
+
+### Fixed
+
+Loop iteration 123 — fixes the fourth and final `cli/` fresh-sweep finding: `expire-by-source --decay-class` accepted any free-form string with no validation.
+
+- **`register-lifecycle.ts`'s `expire-by-source` command cast `opts.decayClass` directly to `DecayClass` (`(opts.decayClass ?? "short") as DecayClass`) with no runtime check against the `DECAY_CLASSES` enum.** `factsDb.expireBySourcePattern` writes this value straight into the `decay_class` column, a plain `TEXT NOT NULL` column with no CHECK constraint — `expire-by-source --pattern 'temp/*' --days 7 --apply --decay-class bogus` silently persisted `decay_class='bogus'` on every matched fact, an out-of-enum value that every downstream decay/TTL computation (`utils/decay.ts`'s `TTL_DEFAULTS[decayClass]`, decay-class stats breakdowns, `decay reclassify`) doesn't recognize. Every sibling CLI option in this codebase (`--policy`, `--scope`, `--format`) validates against an explicit allow-list before use; this was the one outlier.
+- Fixed by validating `decayClassRaw` against `DECAY_CLASSES` (already exported from `config.js`, the same enum `routes/graphql-resolvers.ts` validates against) before calling `expireBySourcePattern`, printing a clear error and setting `process.exitCode = 1` on an invalid value — matching the file's own existing `--days` validation pattern two lines above.
+
+Regression test added (new `tests/register-lifecycle-expire-by-source.test.ts`, using the real-`Command`/`parseAsync` harness already established in the sibling `tests/register-lifecycle-github-cli.test.ts`): asserts an invalid `--decay-class` prints the expected error, sets `process.exitCode = 1`, and never calls `factsDb.expireBySourcePattern`; companion tests confirm a valid `--decay-class` and the omitted-defaults-to-`"short"` case both still work. Verified via `git stash` to fail without the fix — the pre-fix code called `expireBySourcePattern` with the invalid value unguarded (surfacing as a `TypeError` on the undefined-mock-return in the test, since there was no validation to short-circuit it). tsc clean; biome clean (zero findings on either changed file, both before and after the fix). Related suites (register-lifecycle-expire-by-source, register-lifecycle-github-cli, facts-db): 209 passed, no regressions.
+
+This closes out the fresh flat sweep of `services/`, `tools/`, and `cli/` dispatched at loop iteration 117 — all 8 genuine findings from that sweep are now fixed (iterations 117-123).
+
+---
+
+## [2026.7.188] - 2026-07-09
+
+### Fixed
+
+Loop iteration 122 — fixes the third `cli/` fresh-sweep finding: `verified triage` never converted a reported partial failure into a nonzero exit code.
+
+- **`cli/verified.ts`'s `verified triage` action prints `"...failed ${result.counts.failed}"` in its summary line, but never set `process.exitCode` based on it.** `result.counts.failed` counts items that landed in the `"failed-review"` bucket (e.g. a verified-fact row whose underlying fact was deleted/orphaned) — a genuine partial failure. Every sibling command in this codebase that reports a `failed`/`.failed > 0` count (`cli/goals.ts`, `cli/active-tasks.ts`, `cli/cmd-doctor.ts`, `register-credentials-scope.ts`) sets `process.exitCode = 1` when it's nonzero; `verified triage` was the one outlier that reported the failure count in its own printed summary but never propagated it to the exit code, so cron/CI automation checking the exit code would treat a partial failure as success.
+- Fixed by adding `if (result.counts.failed > 0) process.exitCode = 1;` after the result is printed (for both the JSON and human-readable output branches), matching the established convention.
+
+Regression test added (new `tests/verified-cli.test.ts`, using the same lightweight fake `Chainable` action-capture harness as `tests/task-queue-status.test.ts`): seeds a verified, due-for-reverification fact whose underlying `facts` row is then deleted (the same fixture `tests/verified-fact-triage.test.ts` already uses to force a `"failed-review"` classification), runs `triage`, and asserts `process.exitCode` becomes `1`; a companion test confirms it stays `undefined` when nothing fails. Verified via `git stash` to fail without the fix — the pre-fix code printed "failed 1" but left `process.exitCode` as `undefined`. tsc clean; biome clean (zero new findings on `cli/verified.ts`, verified against its pre-existing baseline; the new test file's own findings — a long-line format issue and the same `noNonNullAssertion` pattern used throughout this test-file family — were fixed/are consistent with established convention). Related suites (verified-cli, verified-fact-triage): 29 passed, no regressions.
+
+1 more `cli/` sweep finding remains queued: `register-lifecycle.ts`'s `expire-by-source --decay-class` accepts any free-form string with no validation against the `DECAY_CLASSES` enum.
+
+---
+
+## [2026.7.187] - 2026-07-09
+
+### Fixed
+
+Loop iteration 121 — fixes the second `cli/` fresh-sweep finding: `sensor-sweep --tier` silently accepted any invalid value as tier 1.
+
+- **`register-sensor-sweep.ts` parsed `--tier` with `tierRaw === "all" ? "all" : tierRaw === "2" ? 2 : 1`, with no validation.** The option's own description reads "Tier to run: 1, 2, or all," but any other value (`--tier 3`, `--tier bogus`, a typo) silently fell through to tier 1 instead of erroring — `sensor-sweep --tier bogus` ran (and reported success for) tier-1 sensors with no indication the operator's `--tier` value was invalid.
+- Fixed by validating `tierRaw` against the exact allow-list (`"all" | "1" | "2"`) before dispatch and throwing a descriptive error otherwise — `withExit` (already wrapping this action) converts the thrown error into `process.exitCode = 1` plus a logged error message, matching this codebase's established validation-failure pattern for `withExit`-wrapped commands.
+
+Regression test added (`tests/register-sensor-sweep-verbose.test.ts`, reusing its existing real-`Command`/`parseAsync` harness): runs `sensor-sweep --tier bogus` and asserts `process.exit` was called with `1` and the error output contains "--tier must be one of." Verified via `git stash` to fail without the fix — the pre-fix code ran to completion and reported `sensor-sweep tier=1: ... semantic=success`, calling `process.exit(0)`. tsc clean; biome clean (zero new findings on either changed file, verified against each file's pre-existing baseline — the one flagged import-order finding predates this change). Related suites (register-sensor-sweep-verbose, sensor-sweep, sensor-sweep-github-progress): 44 passed, no regressions.
+
+2 more `cli/` sweep findings remain queued: `verified.ts triage`'s missing exit code on partial failures, and `register-lifecycle.ts`'s unvalidated `--decay-class`.
+
+**Full-suite checkpoint (every 10 iterations, per agreement):** the complete `npx vitest run` suite kicked off at iteration 119 has now completed — 642 passed, 3 failed, 4 skipped (649 files) / 9014 passed, 3 failed, 23 skipped (9040 tests). All 3 failures are the same known pre-existing, unrelated failures already documented in earlier iterations (`crystallization-proposer.test.ts`, `implicit-feedback-routing.test.ts`, `memory-recall-timeline.test.ts`) — confirmed by exact test-name match, none touch any file changed in iterations 111-121. Next full-suite checkpoint due at iteration 129.
+
+---
+
+## [2026.7.186] - 2026-07-09
+
+### Fixed
+
+Loop iteration 120 — fixes the first of 4 `cli/` fresh-sweep findings: `task-queue-touch --repair` reported a clear failure to stderr but always exited 0.
+
+- **`cli/task-queue-status.ts`'s `task-queue-touch --repair` action printed `"✗ current.json is malformed..."` to stderr and returned when `current.json` failed to parse as JSON, but never set `process.exitCode`.** The action isn't wrapped in any exit-code-propagating helper, and Node defaults to exit code 0, so `openclaw hybrid-mem task-queue-touch --repair` run against a corrupted `current.json` from cron/automation reports success (exit 0) despite the visible failure message — inconsistent with every other reachable-failure path in this codebase's CLI commands, which set `process.exitCode = 1` before returning.
+- Fixed by adding `process.exitCode = 1;` before the early return.
+
+Regression test added (new `tests/task-queue-status.test.ts`, using a lightweight fake `Chainable` command-registration harness to capture the `task-queue-touch` action callback without needing a real Commander program): asserts `process.exitCode` becomes `1` when `current.json` is malformed, and stays `undefined` for the valid-JSON path. Verified via `git stash` to fail without the fix — the pre-fix code left `process.exitCode` as `undefined`. tsc clean; biome clean (zero new findings on `cli/task-queue-status.ts`, verified against its pre-existing baseline; the new test file's own import-order finding was fixed directly since it's new code, leaving only the same `noNonNullAssertion` warning pattern already used throughout `tests/fact-mutation-gateway.test.ts`). Related suites (task-queue-status, task-queue-watchdog): 42 passed, no regressions.
+
+3 more `cli/` sweep findings remain queued: `register-sensor-sweep.ts`'s unvalidated `--tier`, `verified.ts triage`'s missing exit code on partial failures, and `register-lifecycle.ts`'s unvalidated `--decay-class`.
+
+**Full-suite checkpoint**: the background `npx vitest run` kicked off at iteration 119 is still running as of this entry; results will be reported once it completes.
+
+---
+
+## [2026.7.185] - 2026-07-09
+
+### Fixed
+
+Loop iteration 119 — fixes the remaining `services/` fresh-sweep finding: `maintenance-log-analyzer.ts`'s persisted occurrence count always reported 1 regardless of true history.
+
+- **`loadPersistedMaintenanceFindingLedger`'s SQL aggregated `MAX(occurrence_count) AS occurrence_count` per fingerprint, but every row `persistMaintenanceFindings` ever writes stores `occurrence_count = f.occurrenceCount ?? 1`.** The only caller (`register-analyze-maintenance-logs.ts`) always persists the *raw*, never-summarized findings array — the correctly-aggregated `summarized.findings` (which does compute a real running `occurrenceCount`) is only used for the report/digest, never passed to `persistMaintenanceFindings`. So every persisted row's `occurrence_count` column is always `1`, and `MAX()` over an all-1s column always yields `1` — a recurring failure with the same fingerprint occurring daily for 30 days produces 30 distinct rows, but the digest reports "Seen 2 times" (1 from the always-1 `MAX` plus 1 from that day's new occurrence) instead of "Seen 31 times," severely understating the chronicity of a long-running recurring failure.
+- Fixed by aggregating `COUNT(*) AS occurrence_count` instead — the number of persisted rows for a fingerprint, matching how `MIN`/`MAX(occurred_at)` already correctly aggregate over the same row-set in the same query. The per-row `occurrence_count` column and its `?? 1` write-side default are untouched (a correctly-accurate per-row value); the bug was purely in the read-side aggregation choice.
+
+Regression test added (`tests/maintenance-log-analyzer.test.ts`): persists 3 separate rows for the same fingerprint (simulating 3 daily cron runs), then summarizes 1 new occurrence, and asserts the resulting `occurrenceCount` is `4` (3 historical + 1 new). The existing sibling test ("collapses repeated fingerprints...", asserting `occurrenceCount === 3` with only 1 historical row) continues to pass unchanged — `MAX()` and `COUNT(*)` are indistinguishable in the single-row case, which is exactly why that test didn't catch this bug. Verified via `git stash` to fail without the fix — the pre-fix code returned `2` instead of `4`. tsc clean; biome clean (zero new findings on either changed file, verified against each file's pre-existing baseline). Related suites (maintenance-log-analyzer, maintenance-log-parse): 55 passed, no regressions.
+
+This closes out both `services/` fresh-sweep findings from loop iteration 117 (the other was iteration 118's `task-queue-leases.ts` fix). 4 findings from the `cli/` sweep remain queued: missing exit codes on `task-queue-touch --repair`/`verified triage`, and unvalidated `--tier`/`--decay-class` CLI options.
+
+**Full-suite checkpoint (every 10 iterations, per agreement):** ran the complete `npx vitest run` suite at this iteration to catch anything the targeted per-iteration runs might have missed across 8 iterations of changes (111-119) — see commit for the result.
+
+---
+
+## [2026.7.184] - 2026-07-09
+
+### Fixed
+
+Loop iteration 118 — fixes a permanently-stuck-lease bug from the `services/` fresh-sweep findings: `task-queue-leases.ts`'s `transitionDispatchLease` cleared a running lease's TTL instead of refreshing it.
+
+- **`transitionDispatchLease(..., toState: "running")` set `lease.expiresAt = undefined`, with a comment reading "Refresh expiry while work is active" — but clearing it does the opposite of refreshing it.** `expireActiveLeases()` (the sweep that reclaims stuck leases) skips any active-state lease whose `expiresAt` doesn't parse to a finite number, and `blocksAcquire()` unconditionally blocks re-acquisition for any active state with no other time-based fallback. A worker that transitions a lease to `"running"` and then crashes or is killed before reaching a terminal state (`completed`/`failed`/`lease-expired`) leaves that issue permanently un-dispatchable — the lease can never be TTL-reclaimed, requiring manual intervention.
+- Fixed by setting `expiresAt` to `now + DEFAULT_LEASE_TTL_MS` (the same 30-minute default used for the initial `leased` state) instead of `undefined`, matching the code's own stated intent and restoring `expireActiveLeases()`'s ability to reclaim a stuck `running` lease.
+
+Regression test added (`tests/task-queue-leases.test.ts`): acquires a lease with a short (1s) TTL, transitions it to `running`, confirms it survives an expiry sweep run well past that original short TTL (proving the running-state refresh actually took effect), then confirms a sweep run past the refreshed 30-minute window does reclaim it (proving it isn't simply stuck forever). Verified via `git stash` to fail without the fix — the pre-fix code left the lease in `running` state indefinitely; the final assertion (`expiredCount === 1`) received `0` even 31 minutes after the running transition. tsc clean; biome clean (zero new findings on either changed file, verified against each file's pre-existing baseline — the one flagged import-order finding predates this change). Related suites (task-queue-leases, task-queue-watchdog, task-queue-leases-stale-lock-race): 48 passed, no regressions.
+
+Found via a fresh flat (non-recursive) sweep of `services/` (loop iteration 117); one more genuine finding from that sweep (`maintenance-log-analyzer.ts`'s `occurrence_count` aggregation always returning 1 instead of the true historical count) and 4 findings from the `cli/` sweep (missing exit codes, unvalidated CLI options) remain queued for upcoming iterations.
+
+---
+
+## [2026.7.183] - 2026-07-09
+
+### Fixed
+
+Loop iteration 117 — with the loop-iteration-103 backlog closed, dispatched a fresh flat (non-recursive) multi-agent sweep across `services/`, `tools/`, and `cli/`. The `tools/` sweep surfaced two genuine, verified bugs; fixed both this iteration.
+
+- **`tools/fact-mutation-gateway.ts`'s `hybrid-mem.facts.list` RPC method only clamped `limit` on the upper end (`Math.min(params.limit, 100)`), never the lower.** A caller passing a negative `limit` (e.g. `-1`) bypassed the intended 20-default/100-max pagination cap two different ways: `factsDb.lookup`'s underlying `lookupFacts` treats any non-positive limit as `null`, dropping its SQL `LIMIT` clause entirely (unbounded — every matching row for that entity); the no-query/no-entity branch's `getAll().slice(0, limit)` with a negative `limit` returns "all rows except the last N," i.e. nearly the caller's entire in-scope fact corpus in one response. Exposed to any Gateway RPC client (memory-wiki, Workboard, CLI, WebUI) — a resource-exhaustion/oversized-payload bug, not a scope leak (the scope filter itself is unaffected).
+- **`tools/graph-tools.ts`'s `memory_link` tool never checked `sourceFact !== targetFact`.** Both endpoints are independently validated to exist and be in-scope, but a call linking a fact to itself (e.g. `{ sourceFact: "f1", targetFact: "f1", linkType: "CONTRADICTS" }`) passed both checks and reached `factsDb.recordContradiction("f1", "f1")`, which inserts a self-referential `CONTRADICTS` edge into `memory_links` (no DB constraint prevents it) and docks the fact's own confidence by 0.2 for "contradicting itself" — a one-shot but real data-corruption bug (confidence decay plus a spurious self-loop edge visible in `memory_graph`/graph exports). The tool's own success message was also visibly nonsensical (`from "X" to "X"`).
+- Fixed by clamping `limit` to `[1, 100]` (`Math.min(Math.max(Math.floor(rawLimit), 1), 100)`, defaulting to 20 for non-finite/non-number input) and by adding an explicit `sourceFact === targetFact` rejection (`error: "self_link"`) before dispatching to either the `CONTRADICTS` or generic-link path.
+
+Regression tests added: `tests/fact-mutation-gateway.test.ts` asserts a negative `limit` is clamped into `[1, 100]` before reaching `factsDb.search`/`lookup`/`getAll` (plus a companion test confirming the existing overflow-clamp-to-100 behavior is unchanged); `tests/graph-tools-scope-security.test.ts` asserts `memory_link` with identical `sourceFact`/`targetFact` returns `error: "self_link"` and never calls `recordContradiction`/`createLink`. Verified via `git stash` to fail without the fix — the negative limit reached `factsDb.search` as `-1` verbatim, and the self-link call reached neither guard (`result.details.error` was `undefined`, meaning it fell through to `recordContradiction`). tsc clean; biome clean (zero new *categories* of findings on any of the 4 changed files, verified against each file's pre-existing baseline — the 2 additional warnings on the test file are more instances of the same `handlers.get(...)!` non-null-assertion pattern already used by every other test in that file, not a new issue). Related suites (fact-mutation-gateway, graph-tools-scope-security, edge-types, issue-tools-scope-security, plugin-e2e, project-state-lww): 106 passed, no regressions.
+
+The `cli/` sweep found 4 more candidates (missing exit codes on `task-queue-touch --repair`/`verified triage`, unvalidated `--tier`/`--decay-class` CLI options) — queued for the next iterations. The `services/` sweep is still running as of this entry.
+
+---
+
+## [2026.7.182] - 2026-07-09
+
+### Fixed
+
+Loop iteration 116 — fixes `backends/credentials-db.ts`'s lazy vault-migration race, the last item from the "Deferred (fresh sweep, loop iteration 103)" backlog.
+
+- **`CredentialsDB.store()`/`.storeIfNew()` always encrypted with `this.key` — the in-memory key derived when *this instance* was constructed — with no check for whether another process had since migrated the on-disk vault from v1 (legacy SHA-256) to v2 (scrypt).** `migrateLegacyVault()` (triggered lazily by any `get()`) generates a fresh salt, re-derives a v2 key, re-encrypts every row, and rewrites `vault_meta` — all in the process that called `get()`. A second process (e.g. the gateway and a concurrent CLI invocation, or two CLI commands racing) that opened the same vault before the migration keeps its stale v1 key in memory; its next `store()` encrypts with that stale key while `vault_meta.kdf_version` on disk already says v2. Every future read (by any process, including its own) derives the v2 key from the new salt and fails to decrypt that credential — permanent, silent data loss for that one row (AES-GCM's auth-tag check throws rather than returning garbage, so the failure is a hard "Unsupported state or unable to authenticate data" error, not a wrong value).
+- Fixed by adding `maybeAdoptExternalVaultMigration()`, called at the top of `store()`/`storeIfNew()`: when this instance's in-memory state is still v1 but the *on-disk* `vault_meta.kdf_version` already reads v2, re-derive the v2 key from the disk salt (using the retained raw password, exactly as `migrateLegacyVault()` itself does) and adopt it before encrypting — instead of blindly trusting stale in-memory state.
+
+Regression test added (`tests/credentials-db.test.ts`): hand-crafts a legacy v1 vault on disk (one credential encrypted with the v1 key derivation, no `vault_meta` rows), opens two independent `CredentialsDB` instances against it (simulating two processes), triggers the lazy migration via the first instance's `get()`, then calls `store()` on the *second* (still-v1-in-memory) instance and confirms a fresh third instance can still decrypt the newly-stored credential. Verified via `git stash` to fail without the fix — the pre-fix code threw `Unsupported state or unable to authenticate data` when the fresh instance tried to decrypt the row written with the stale key. tsc clean; biome clean (zero new findings on either changed file, verified against each file's pre-existing baseline). Related suites (credentials-db, credential-migration, credential-type-migration, credential-validation, credentials-auto-capture, credentials-encryption-key, verify-credentials-vault-partial-corruption): 161 passed, no regressions.
+
+This closes out the entire "Deferred (fresh sweep, loop iteration 103)" backlog. What remains open is exclusively design-decision-gated: `backends/facts-db/clusters.ts`/`services/goal-registry.ts`/`services/workboard-facts-sync.ts`/`backends/facts-db/entity-layer.ts` all need a scope/schema decision before any fix, not a surgical patch.
+
+---
+
+## [2026.7.181] - 2026-07-09
+
+### Fixed
+
+Loop iteration 115 — fixes `backends/wal.ts`'s missing rewrite-lock coordination on the write path, from the "Deferred (fresh sweep, loop iteration 103)" backlog.
+
+- **`WriteAheadLog.write()`/`.remove()` appended directly to the WAL file with no awareness of `compactIfOversized()`/`pruneStale()`'s cross-process rewrite lock.** Those two methods already coordinate with *each other* across processes via an exclusive `.rewrite.lock` file around their read-snapshot → atomic-replace window (rename over the WAL path) — but `write()`/`remove()` never checked it. A concurrent plain `write()`/`remove()` call from a different process (or the CLI racing the gateway's own scheduled compact/prune) landing in that window appended to the pre-rename file; the rewrite's subsequent `rename()` then silently discarded that append, the same class of corruption the rewrite lock exists to prevent (#80), just for the two code paths left out of it.
+- Fixed by having `write()`/`remove()` wait (bounded, ~1s max, polling every 20ms) for a live rewrite lock to clear before appending. Deliberately fail-open on timeout — a write must never hang indefinitely on a lock file, and this narrows the race window from "unprotected" to "only if a rewrite outlives ~1s," a large reduction given rewrites are small read-then-rename operations.
+
+Regression tests added (`tests/wal.test.ts`): one test holds a fresh rewrite-lock file, starts a `write()`, confirms the entry is *not* on disk after a short delay while the lock is held, then clears the lock and confirms the write completes; an analogous test for `remove()`; a third confirms the bounded wait times out and proceeds (with a warning) rather than hanging forever. Verified via `git stash` — all three failed against the pre-fix code (the entry/removal always landed immediately regardless of the lock, and the timeout warning was never logged since there was nothing to wait for). tsc clean; biome clean (zero new findings on either changed file, verified against each file's pre-existing baseline). Related suites (wal, wal-helpers, wal-replay, wal-scope-payload, facts-db): 305 passed, no regressions.
+
+This item, along with `backends/facts-db/entity-layer.ts`'s contact same-priority-tier overwrite (investigated this iteration — genuinely needs a `contacts` table scope/tenant column, the same schema-migration class of fix as `clusters.ts`/`goal-registry.ts`, not a safe single-iteration patch: naively tightening the priority comparison would freeze legitimate same-tenant corrections instead of fixing the cross-tenant leak) and `backends/credentials-db.ts`'s vault migration race, was the last of the loop iteration 103 backlog's concurrency/robustness items. Remaining backlog: the 3 scope/schema design-decision items (`clusters.ts`, `goal-registry.ts`, `workboard-facts-sync.ts`) and `entity-layer.ts`'s contact scope column (moved into that same design-decision bucket) and `credentials-db.ts`'s vault migration race.
+
+---
+
+## [2026.7.180] - 2026-07-09
+
+### Fixed
+
+Loop iteration 114 — fixes the last remaining "not yet attempted" item from the "Deferred (fresh sweep, loop iteration 103)" backlog: `install-index-reconcile.ts`'s redundant npm-project tree removal could irreversibly delete the wrong copy when its version couldn't be read.
+
+- **`removeRedundantNpmProjectTreeWhenExtensionsCanonical`'s "never delete a newer install" guard was `if (npmVer && compareVersions(npmVer, extVer) > 0)`.** When `readPluginPackageVersion(npmPluginDir)` returned `undefined` (missing or corrupted `package.json` under the npm-project tree), the falsy `npmVer` short-circuited the `&&` and skipped the comparison entirely, falling through to the unconditional, unrecoverable removal a few lines below (rename-then-`rmSync`, with no real backup — "atomic-then-cleanup" is about not leaving the gateway with a duplicate mid-operation, not about recoverability). An unreadable version is exactly the case the guard's own doc comment says must be treated as unsafe ("never delete a newer install — the host may be mid-upgrade"): we can't prove it's *not* newer, so silently proceeding is wrong.
+- Fixed by returning early with a new `skippedReason: "npm-project-version-unreadable"` when the npm-project version can't be read, instead of falling through to the comparison.
+
+Regression test added (`tests/run-upgrade.test.ts`): sets up a redundant npm-project tree whose plugin dir has no `package.json` at all, and asserts `removeRedundantNpmProjectTreeWhenExtensionsCanonical` returns `attempted: false` / `skippedReason: "npm-project-version-unreadable"` and leaves the tree on disk untouched. Verified via `git stash` to fail without the fix — the pre-fix code returned `attempted: true` and deleted the tree. tsc clean; biome clean (zero new findings on either changed file, verified against each file's pre-existing baseline). Related suites (run-upgrade, install-index-reconcile, install-defaults, run-install-atomic-write, cmd-verify-orphans, cmd-verify-fact-count): 46 passed, no regressions.
+
+This closes out the entire "Deferred (fresh sweep, loop iteration 103)" backlog's surgical-fix items — the 3 remaining entries (`backends/facts-db/clusters.ts` scope-storage migration, `services/goal-registry.ts` scope concept, `services/workboard-facts-sync.ts` design ambiguity) all explicitly need a larger design/schema decision, not a single-iteration patch, and stay deferred. The `backends/facts-db/entity-layer.ts` contact-overwrite item, `backends/credentials-db.ts`'s vault migration race, and `backends/wal.ts`'s missing rewrite lock also remain open.
+
+---
+
+## [2026.7.179] - 2026-07-09
+
+### Fixed
+
+Loop iteration 113 — fixes another item from the "Deferred (fresh sweep, loop iteration 103)" backlog: `hybrid-mem verify --reconcile --fix` unconditionally reported the SQLite-orphan branch as a failure even when every orphan was successfully rebuilt, and the rebuild itself never kept SQLite's canonical embedding bookkeeping in sync with LanceDB.
+
+- **`cli/verify/sections/reconcile.ts`'s SQLite-orphan branch pushed `state.issues.push(...)` and set `state.allOk = false` unconditionally whenever `sqliteOrphans.length > 0`, regardless of whether the preceding `--fix` rebuild loop actually rebuilt every one of them.** Unlike the sibling vector-orphan branch a few lines above (which re-verifies after a delete attempt and only reports failure if orphans are confirmed to remain), the SQLite-orphan branch had no equivalent "did the fix actually work" check — a fully successful `--fix` run (every orphan rebuilt, budget covered them all, zero failures) was still reported as an unresolved issue.
+- **Separately, the rebuild loop called `vectorDb.store(...)` directly and never wrote the corresponding row into SQLite's `fact_embeddings` canonical table (via `factsDb.setEmbeddingModel`/`storeEmbedding`)**, unlike every other vector-write path in this codebase (`tools/memory/helpers.ts`, `utils/fact-embeddings.ts`, `utils/wal-replay.ts`), all of which route through the already-shared `storeCanonicalVectorForFact` helper in `services/vector-maintenance.ts` specifically to keep `fact_embeddings` aligned with LanceDB. This meant that even after fixing the first bug, a "fully rebuilt" run would immediately trip the unrelated Storage-sync section's embedding-drift check (`canonicalEmbeddings` under-counting relative to `lanceRows`) in the same `verify` run — a second, compounding false-failure surfaced only after fixing the first.
+- Fixed both: (1) track whether the rebuild loop fully covered every SQLite orphan with zero failures, and only push the issue / set `allOk = false` when it didn't (otherwise report it as a verified fix, matching the vector-orphan branch's pattern); (2) switched the rebuild loop to call `storeCanonicalVectorForFact` instead of a bare `vectorDb.store`, so a successful rebuild keeps `fact_embeddings` in sync like every other vector-write path already does.
+
+Regression tests added (`tests/cmd-verify-orphans.test.ts`): seeds 3 SQLite-only facts and runs `verify --reconcile --fix`, asserting the log shows "Verified rebuild: 3/3..." and contains neither the old unconditional-failure issue text nor a fresh "Embedding drift:" report; a second test seeds 10 facts with a `--reconcile-max-fixes 3` budget (a genuine partial rebuild) and asserts the "Skipped 7..." line is present with no "Verified rebuild:" success claim. Verified via `git stash` to fail without the fix — the pre-fix code omitted the "Verified rebuild" line and additionally reported "❌ Embedding drift: canonicalEmbeddings=0 vs lanceRows=3" in the same run. tsc clean; biome clean (zero new findings on either changed file, verified against each file's pre-existing baseline — both flagged import-order findings predate this change). Related suites (cmd-verify-orphans, reconcile, storage-sync-diagnostics, register-storage-maintenance-artifacts, vector-maintenance): 40 passed, no regressions.
+
+---
+
+## [2026.7.178] - 2026-07-09
+
+### Fixed
+
+Loop iteration 112 — fixes another item from the "Deferred (fresh sweep, loop iteration 103)" backlog: `cli/cmd-selfcorrection.ts`'s `MEMORY_STORE` remediation path re-used stale pre-merge text/vector when `storeWithResult` merged onto an existing fact.
+
+- **The `MEMORY_STORE` remediation handler embedded its candidate `text` before calling `factsDb.storeWithResult`, then stored that pre-merge `text`/`vector` pair to the vector backend regardless of outcome.** When `storeWithResult` merges the new text onto an existing fact (`newlyStored: false`, `embeddingStale: true`), `entry.text` becomes the full merged content — but the skip check (`if (storeResult.newlyStored === false && !storeResult.embeddingStale) continue;`) only bails on the pure-dedupe case, letting the merge case fall through to `vectorDb.store()` with the stale pre-merge fragment and its already-computed vector. This desynced the vector backend from the fact row's real persisted text — the identical bug class already fixed in the sibling `cli/cmd-distill.ts` and `cli/cmd-extract-reinforcement.ts` (commit `9074af9`, iteration 62) but missed in this third file.
+- Fixed identically: detect the merge case (`storeResult.newlyStored === false && storeResult.embeddingStale === true`) and re-embed from `entry.text` before storing, instead of reusing the pre-merge `text`/`vector`.
+
+Regression test added (new `tests/cmd-selfcorrection-memory-store-merge-reembed.test.ts`, mirroring `tests/cmd-extract-reinforcement-batch.test.ts`'s iteration-62 regression test): seeds a `fuzzyDedupe` + `onDuplicate: "merge"` profile for the `"self-correction"` source, stores one `MEMORY_STORE` remediation, then a case-insensitive duplicate that merges onto it, and asserts the vector backend was called with the merged `entry.text` (not the second call's pre-merge fragment) and that `embeddings.embed` was called with the merged text. Verified via `git stash` to fail without the fix — the pre-fix code stored the pre-merge fragment's text/vector to the vector backend instead of the merged content. tsc clean; biome clean (zero new findings on `cmd-selfcorrection.ts`, verified against its pre-existing baseline; the new test file's only findings are the same `as any` mock-cast style warnings already present in its sibling `cmd-selfcorrection-memory-store-object-remediation.test.ts`). Related suites (cmd-selfcorrection-memory-store-object-remediation, self-correction-m3-hardening-1876, cmd-selfcorrection-json-parse, reinforcement-analysis, cmd-extract-reinforcement-batch, cmd-distill): 131 passed, no regressions (one unrelated pre-existing failure in `implicit-feedback-routing.test.ts`, confirmed unaffected by this change).
+
+---
+
+## [2026.7.177] - 2026-07-09
+
+### Fixed
+
+Loop iteration 111 — fixes another item from the "Deferred (fresh sweep, loop iteration 103)" backlog: `lifecycle/stage-recall.ts`'s FTS/hot degraded-recall timeout fallback had no rejection handler.
+
+- **`stage-recall.ts`'s `runRecallStage` raced the primary recall pipeline against a stage wall-clock timeout; on timeout, it called `buildDegradedFtsHotRecallStage(...).then((degraded) => { if (!recallSettled) resolve(degraded); })` with only a fulfillment handler.** `buildDegradedFtsHotRecallStage` has several unguarded call sites in its own body (`sessionState.resolveSessionKey`, `ctx.auditStore?.append`, `assembleRecallPrependContext`, among others) — if any of them threw, the returned promise rejected, nothing ever called `resolve(...)` or `reject(...)` on the `Promise.race`'s timeout branch, and — since the primary pipeline promise was itself the reason the timeout fired in the first place (i.e. also stuck) — `before_agent_start` could hang indefinitely instead of degrading gracefully. The identical bug shape was already fixed in the sibling `stage-injection.ts` (iteration 92) but missed here.
+- Fixed by adding a rejection handler alongside the existing fulfillment handler: on rejection, reports the error via `capturePluginError` (`operation: "recall-timeout-fallback"`, `subsystem: "stage-recall"`) and resolves with a safe `{ kind: "empty", prependContext: undefined }` fallback instead of leaving the stage hanging — mirroring the established two-argument `.then(onFulfilled, onRejected)` pattern from the iteration 92 fix.
+
+Regression test added (`tests/lifecycle-stage-recall.test.ts`): forces the stage wall-clock timeout to fire (fake timers, primary pipeline hung on the abort signal) with `ctx.auditStore.append` mocked to throw, and asserts `runRecallStage` still resolves with the empty fallback (instead of hanging/rejecting) and that `capturePluginError` was called with the expected `operation` tag. Verified via `git stash` to fail without the fix — the pre-fix code left the returned promise unsettled, surfacing as an unhandled rejection instead of a resolved fallback. tsc clean; biome clean (zero new findings on either changed file, verified against each file's pre-existing baseline — the two pre-existing import-order/line-length findings in `stage-recall.ts` and the test file predate this change). Related suites (lifecycle-stage-recall, lifecycle-stage-injection, and all other `tests/lifecycle-*` files): 51 passed, no regressions.
+
+### Deferred (fresh sweep, loop iteration 103 backlog — CLOSED as of v2026.7.182; all remaining items below are design-decision-gated, not surgical patches)
+
+- `backends/facts-db/clusters.ts`'s `saveClusters`/`getClusters`/`getClusterMembers` operate on the `clusters`/`cluster_members` tables, which have no `scope`/`scope_target` columns at all — the *storage* layer is still fully shared across tenants (any tenant's `memory_clusters` call with the default `save: true` still wipes and rebuilds the whole shared table, just now with only its own scoped facts as candidates). Needs a schema migration to add scope columns and thread scope through the storage functions, not a single-iteration surgical patch.
+- `services/goal-registry.ts` (`readGoal`/`listGoals`/`updateGoal`/`terminateGoal`) has no scope concept at all — the `Goal` type carries no owner/tenant field, so `goal_list`/`goal_get`/`goal_complete`/`goal_abandon` in `tools/goal-tools.ts` operate across every tenant sharing a plugin instance. Larger fix than a single-iteration surgical patch (needs a scope field added to the Goal schema and threaded through every registry function and caller), so still deferred.
+- `services/workboard-facts-sync.ts`'s `applyWorkboardTaskStatusUpdate` and `setup/workboard-integration.ts:143`'s `loadTasks` both call `loadTaskLedgerFromFacts(factsDb)` with no scope filter. **Design ambiguity, not a confirmed bug**: `WorkboardConfig` has no tenant/scope field anywhere (single `gatewayUrl` per plugin instance), suggesting Workboard sync may be an intentionally shared, board-wide visibility feature (like a team kanban board) rather than a per-tenant private surface. Needs a design decision (is Workboard meant to be shared or per-tenant?) before a fix direction can be chosen.
+- `backends/facts-db/entity-layer.ts`'s `applyContactProfileFields` allows same-priority-tier (`>=`) overwrite of a globally-shared contact's email/phone/role with no per-tenant attribution, reachable via any `memory_store` call that mentions an existing contact's name (NER-driven, default-on). **Investigated (iteration 115): needs a `scope`/`scope_target` column on the `contacts` table** (same schema-migration class as `clusters.ts` above) so same-priority overwrites can be scoped to the writer's own tenant instead of either leaking cross-tenant (current `>=`) or freezing legitimate same-tenant corrections after the first write (a naive `>` fix). Not a single-iteration surgical patch.
+
+---
+
+## [2026.7.176] - 2026-07-09
+
+### Fixed
+
+Loop iteration 110 — fixes the top item from the "Deferred (fresh sweep, loop iteration 103)" backlog: `hybrid-mem store`'s duplicate pre-check ran as if every store was global-scoped.
+
+- **`cli/cmd-store.ts`'s `runStoreForCli` called `factsDb.hasDuplicate(text, "cli", {category, entity, key, value})` with no `scope`/`scopeTarget` args, computed several lines *before* `scope`/`scopeTarget` were resolved.** `hasDuplicateText` → `applyDedupe` (`services/dedupe-policy.ts`) treats an omitted scope as `"global"`, so the pre-check always probed as if the store were global-scoped regardless of the caller's actual `--scope`/`--scope-target`. This cuts both ways: (1) a scoped store (`--scope agent --scope-target X`) with the same text as an unrelated *global* fact was wrongly rejected as `{outcome: "duplicate"}`; (2) a scoped store that duplicated an *earlier scoped* store of its own was **not** caught by this fast pre-check at all (since it only ever checked global-scoped rows), silently falling through to `factsDb.storeWithResult`'s own separate, already-scope-aware dedupe safety net later in the same call — wasted embedding/classification work before the duplicate was finally caught by a different code path. The identical bug (case 1) was already fixed in the sibling `tools/memory/register-store-tools.ts` MCP path (commit `a471c545`); `cmd-store.ts` predates that fix and was never updated to match.
+- Fixed by moving the `scope`/`scopeTarget` resolution above the duplicate pre-check and passing both through to `hasDuplicate`, matching the sibling MCP path's fix.
+
+Regression tests added (new `tests/cmd-store-scope-duplicate-check.test.ts`, using the same minimal `HandlerContext` mock pattern as `tests/cli-store-rollback.test.ts`): confirms a scoped store with the same text as an unrelated global fact now succeeds (`stored`, not `duplicate`) and creates a genuinely separate fact tagged with the caller's scope; confirms a true same-scope duplicate is still rejected. Verified via `git stash` to fail without the fix — the first test failed with `duplicate` instead of `stored` (case 1 above), and the second failed with `noop`/`reason: "dedupe"` instead of the expected fast-path `duplicate` (case 2 above, confirming the pre-check missed a genuine same-scope duplicate and it was only caught by the later, separate dedupe path). tsc clean; biome clean (zero new findings on `cmd-store.ts`, verified against its pre-existing baseline; the new test file's only finding is the same `as any` mock-cast style warning already present in its sibling `cli-store-rollback.test.ts`). Related suites (cli-store-rollback, memory-store-merge-dedupe-vector): 16 passed, no regressions.
+
+---
+
+## [2026.7.175] - 2026-07-09
+
+### Fixed
+
+Loop iteration 109 (self-caught regression, not from the deferred backlog): the iteration 106 `detectClusters` scope-isolation fix broke `ClusterCache`'s test mock's assumed contract, caught by a full-suite background baseline run kicked off after starting the fresh QA branch.
+
+- **`services/retrieval-orchestrator.ts`'s `ClusterCache.getClusterMap` calls `detectClusters(factsDb, { minClusterSize })` with `scopeFilter` omitted, and iteration 106 changed `detectClusters` to require `getById(id, { scopeFilter })` to return a real entry before a linked fact can enter any cluster** (previously `getById`'s result was only used for cluster *label* generation, never for membership). `tests/retrieval-orchestrator.test.ts`'s `fakeFactsDb` test helper's `getById` unconditionally returned `null` — a valid simplification under the old contract, since cluster membership never depended on it — but under the new contract this filtered every linked fact out of every cluster, breaking `ClusterCache`'s own regression tests (`does not leak cluster assignments between different FactsDB instances`, `invalidate() clears cached clusters for all instances`). Reproduced deterministically running the file in isolation, not a suite-order flake.
+- No behavior change in production `ClusterCache` — a real `FactsDB.getById(id, { scopeFilter: undefined })` already returns the entry unconditionally when no scope filter is applied (confirmed in `backends/facts-db/fact-read-queries.ts`'s `applyLookupFilters`), so this was a test-fixture-only gap. Fixed `fakeFactsDb` to return a minimal, realistic `MemoryEntry` for known fact IDs (matching how the real `FactsDB.getById` behaves), instead of reverting the iteration 106 fix.
+
+Verified via `git stash` that both `ClusterCache` tests fail against the pre-fix mock exactly as observed in the full-suite run. tsc clean; biome clean (zero new findings, verified against the file's pre-existing baseline). Related suites (topic-clusters, retrieval-modes, constrained-recall, context-engine, multi-model-retrieval): 96 passed, no regressions.
+
+**Process note:** caught by kicking off a full background `vitest run` immediately after establishing the fresh `claude/memory-hybrid-scope-security-qa` branch, rather than waiting for the usual 10-iteration cadence — appropriate here since the branch's own history (and thus the "last known full-suite baseline") had just been reset, and iteration 108's own git-stash operations transiently contaminated part of that run's output (the `storage-stats-helpers-scope-filter.test.ts` failures in that run are a stash-timing artifact, not real; already re-verified clean in isolation in the v2026.7.174 entry above).
+
+---
+
+## [2026.7.174] - 2026-07-09
+
+### Fixed
+
+Loop iteration 108 — fixes the top item from the "Deferred (fresh sweep, loop iteration 103)" backlog: `hybrid-mem search --scope user|agent|session` silently ignored scope when `--scope-target` was omitted.
+
+- **`cli/commands/manage/storage-stats-helpers.ts`'s `buildHybridSearchScopeFilter` built `{ userId: null }`/`{ agentId: null }`/`{ sessionId: null }` when `--scope user|agent|session` was passed without `--scope-target`.** `scopeFilterClausePositional`/`filterByScope` treat a filter with all of `userId`/`agentId`/`sessionId` falsy as "no restriction" (matches every scope) — the same trap `globalOnlyScopeFilter()` was introduced to close for `--scope global` (iteration 95), but never patched for the `user`/`agent`/`session` case. `hybrid-mem search "foo" --scope user` (forgetting `--scope-target`, an easy operator mistake since it's a separate flag) silently returned matches from every user/agent/session instead of erroring or restricting to nothing.
+- Fixed by extracting the validation `register-credentials-scope.ts`'s `prune` command already applies for this exact input shape (reject non-global scope with no scope-target; reject scope-target alongside global) into a new, directly-testable `validateSearchScopeOption()` helper, and wiring `register-storage-entities-decay.ts`'s `search` command to call it before `buildHybridSearchScopeFilter`, exiting with a clear error and non-zero exit code on an invalid combination — matching the sibling command's established pattern instead of leaving `search` as the one outlier with no guard.
+
+Regression tests added (`tests/storage-stats-helpers-scope-filter.test.ts`): unit tests cover every valid/invalid `(scope, scopeTarget)` combination for `validateSearchScopeOption`; an end-to-end test seeds two different users' private facts and demonstrates that `buildHybridSearchScopeFilter("user", undefined)` alone (bypassing the new guard) would return both — proving why the guard has to run first, and asserting it correctly flags this exact input as invalid. Verified via `git stash` to fail without the fix — all 7 new/changed tests failed with `validateSearchScopeOption is not a function` against the pre-fix code. tsc clean; biome clean (zero new findings across all 3 changed files, verified against each file's pre-existing baseline — the 6 pre-existing unused-variable warnings in `register-storage-entities-decay.ts` predate this change). Related suites (storage-stats-helpers-scope-filter): 15 passed, no regressions.
+
+---
+
+## [2026.7.173] - 2026-07-09
+
+### Fixed
+
+Loop iteration 107 (continuing the ongoing QA sweep on a fresh branch, `claude/memory-hybrid-scope-security-qa`, after PR #2054 merged into `main` — see note below) — fixes two pre-existing `tsc --noEmit` failures introduced by unrelated parallel work that landed on `main` after the merge.
+
+- **`tests/task-ledger-scope-sync.test.ts` passed `status: "in_progress"` (snake_case) to `syncActiveTaskEntryToFacts`, but `ActiveTaskEntry.status` only accepts the display-cased `ActiveTaskStatus` union (`"In progress" | "Waiting" | "Stalled" | "Failed" | "Done"`).** The test still passed at runtime by coincidence — `displayStatusToFact`'s `switch` falls through to its `default` case for any unrecognized status string, and that default happens to return the same `"in_progress"` value the correct `"In progress"` input would have produced — but the type error blocked a clean `tsc --noEmit`. Fixed by correcting the three literals to `"In progress"`.
+- **`tests/reregister-policy.test.ts`'s `runtimeWithStores` helper used a direct `as PluginRuntime` cast on a mock object missing 27+ of the interface's fields** (`embeddings`, `openai`, `identityReflectionStore`, etc.), which TypeScript flags as an unsafe assertion between insufficiently-overlapping types. Fixed with the established `as unknown as PluginRuntime` escape hatch already used elsewhere in this codebase for intentionally-partial test mocks.
+
+Verified via `git stash` that both errors reproduce exactly against the pre-fix code (`tsc --noEmit` output byte-for-byte matches what's shown above). tsc clean after the fix; biome clean (zero new findings on either file, verified against each file's pre-existing baseline). Related suites (reregister-policy, task-ledger-scope-sync, heartbeat-facts-ledger, task-ledger-facts, task-ledger-live-state): 80 passed, no regressions.
+
+**Branch note:** PR #2054 (`claude/core-exec-tooling-blocker-z9ikt1`) was merged (squashed) into `main` during this session. Verified byte-for-byte that every file touched by loop iterations 90-106 (all the scope-isolation security fixes: consolidation, continuous-verifier, topic-clusters, active-task-checkpoint, redaction, etc.) is identical between the old branch and the post-merge `main`, so no work was lost. Started a fresh branch (`claude/memory-hybrid-scope-security-qa`) from `origin/main`'s current tip to continue the QA sweep, rather than reusing the now-closed PR's branch. The full "Deferred (fresh sweep, loop iteration 103)" backlog from the v2026.7.170 entry above still applies and is picked up from here.
+
+---
+
 ## [2026.7.172] - 2026-07-09
 
 ### Fixed

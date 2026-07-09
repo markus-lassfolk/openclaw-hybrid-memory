@@ -46,6 +46,10 @@ export async function executeMineCommand(
   },
   embeddings?: { embed: (text: string) => Promise<number[]>; modelName: string },
 ): Promise<void> {
+  if (opts.scope && !["global", "user", "agent", "session"].includes(opts.scope)) {
+    console.error(`error: invalid --scope: ${opts.scope} (must be one of: global, user, agent, session)`);
+    process.exit(1);
+  }
   if (opts.undo) {
     const db = factsDb.getRawDb();
     const now = Math.floor(Date.now() / 1000);

@@ -313,8 +313,30 @@ describe("ClusterCache", () => {
     factIds: string[],
     links: Array<{ sourceFactId: string; targetFactId: string }>,
   ): FactLookup & ClusterFactLookup {
+    const idSet = new Set(factIds);
     return {
-      getById: () => null,
+      // detectClusters (loop iteration 106) now scope-checks every linked fact via getById
+      // before it can enter a cluster, not just for label generation — so this mock must return
+      // a real entry for known ids (matching how the production FactsDB.getById behaves when no
+      // scopeFilter is applied) rather than unconditionally null, or every fact gets filtered out.
+      getById: (id: string) =>
+        idSet.has(id)
+          ? {
+              id,
+              text: `fake fact ${id}`,
+              category: "fact",
+              importance: 0.5,
+              entity: null,
+              key: null,
+              value: null,
+              source: "test",
+              createdAt: 0,
+              decayClass: "stable",
+              expiresAt: null,
+              lastConfirmedAt: 0,
+              confidence: 0.5,
+            }
+          : null,
       getAllLinkedFactIds: () => factIds,
       getAllLinks: () => links,
       linksCount: () => linksCount,

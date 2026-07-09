@@ -183,6 +183,42 @@ describe("task queue dispatch leases", () => {
     expect(second.lease?.attempt).toBe(2);
   });
 
+  it("a running lease is still TTL-expirable rather than permanently stuck (loop iteration 118 regression)", async () => {
+    const now = new Date("2026-03-16T20:50:00.000Z");
+    const acquired = await acquireDispatchLease({ stateDir, issue: 506, leaseTtlMs: 1000, now });
+    expect(acquired.acquired).toBe(true);
+    const token = acquired.lease?.token;
+
+    const runningAt = new Date("2026-03-16T20:50:00.500Z");
+    const running = await transitionDispatchLease({
+      stateDir,
+      issue: 506,
+      token,
+      toState: "running",
+      pid: 4242,
+      now: runningAt,
+    });
+    expect(running).toBe(true);
+
+    // Well past the original short (1s) leased-state TTL, but the worker "crashed" after
+    // reaching "running" without ever transitioning to a terminal state. Before the fix,
+    // transitioning to "running" cleared expiresAt to undefined, which expireActiveLeases()
+    // treats as unparseable and never sweeps -- the lease would be stuck here forever.
+    const stillWithinRefreshedTtl = new Date("2026-03-16T20:50:10.000Z");
+    const notYetExpired = await expireDispatchLeases(stateDir, stillWithinRefreshedTtl);
+    expect(notYetExpired).toBe(0);
+    const stillRunning = await getDispatchLease(stateDir, 506);
+    expect(stillRunning?.state).toBe("running");
+
+    // Advance past the refreshed running-state TTL window (30 minutes from runningAt) to
+    // confirm the lease is genuinely reclaimable, not just "not yet" checked too early.
+    const wellPastRefreshedTtl = new Date(runningAt.getTime() + 31 * 60 * 1000);
+    const expiredCount = await expireDispatchLeases(stateDir, wellPastRefreshedTtl);
+    expect(expiredCount).toBe(1);
+    const expiredLease = await getDispatchLease(stateDir, 506);
+    expect(expiredLease?.state).toBe("lease-expired");
+  });
+
   it("keeps event trail for lease lifecycle", async () => {
     const acquired = await acquireDispatchLease({ stateDir, issue: 505 });
     expect(acquired.acquired).toBe(true);
