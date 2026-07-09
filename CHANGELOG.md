@@ -21,6 +21,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.173] - 2026-07-09
+
+### Fixed
+
+Loop iteration 107 (continuing the ongoing QA sweep on a fresh branch, `claude/memory-hybrid-scope-security-qa`, after PR #2054 merged into `main` — see note below) — fixes two pre-existing `tsc --noEmit` failures introduced by unrelated parallel work that landed on `main` after the merge.
+
+- **`tests/task-ledger-scope-sync.test.ts` passed `status: "in_progress"` (snake_case) to `syncActiveTaskEntryToFacts`, but `ActiveTaskEntry.status` only accepts the display-cased `ActiveTaskStatus` union (`"In progress" | "Waiting" | "Stalled" | "Failed" | "Done"`).** The test still passed at runtime by coincidence — `displayStatusToFact`'s `switch` falls through to its `default` case for any unrecognized status string, and that default happens to return the same `"in_progress"` value the correct `"In progress"` input would have produced — but the type error blocked a clean `tsc --noEmit`. Fixed by correcting the three literals to `"In progress"`.
+- **`tests/reregister-policy.test.ts`'s `runtimeWithStores` helper used a direct `as PluginRuntime` cast on a mock object missing 27+ of the interface's fields** (`embeddings`, `openai`, `identityReflectionStore`, etc.), which TypeScript flags as an unsafe assertion between insufficiently-overlapping types. Fixed with the established `as unknown as PluginRuntime` escape hatch already used elsewhere in this codebase for intentionally-partial test mocks.
+
+Verified via `git stash` that both errors reproduce exactly against the pre-fix code (`tsc --noEmit` output byte-for-byte matches what's shown above). tsc clean after the fix; biome clean (zero new findings on either file, verified against each file's pre-existing baseline). Related suites (reregister-policy, task-ledger-scope-sync, heartbeat-facts-ledger, task-ledger-facts, task-ledger-live-state): 80 passed, no regressions.
+
+**Branch note:** PR #2054 (`claude/core-exec-tooling-blocker-z9ikt1`) was merged (squashed) into `main` during this session. Verified byte-for-byte that every file touched by loop iterations 90-106 (all the scope-isolation security fixes: consolidation, continuous-verifier, topic-clusters, active-task-checkpoint, redaction, etc.) is identical between the old branch and the post-merge `main`, so no work was lost. Started a fresh branch (`claude/memory-hybrid-scope-security-qa`) from `origin/main`'s current tip to continue the QA sweep, rather than reusing the now-closed PR's branch. The full "Deferred (fresh sweep, loop iteration 103)" backlog from the v2026.7.170 entry above still applies and is picked up from here.
+
+---
+
 ## [2026.7.172] - 2026-07-09
 
 ### Fixed

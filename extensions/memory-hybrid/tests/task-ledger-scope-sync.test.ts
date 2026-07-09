@@ -44,7 +44,7 @@ describe("syncActiveTaskEntryToFacts scope preservation", () => {
       {
         label: "scope-threaded-task",
         description: "Threaded task",
-        status: "in_progress",
+        status: "In progress",
         updated: "2026-07-08T12:00:00.000Z",
         started: "2026-07-08T12:00:00.000Z",
       },
@@ -73,7 +73,7 @@ describe("syncActiveTaskEntryToFacts scope preservation", () => {
     await syncActiveTaskEntryToFacts(db, vectorDb, embeddings, {
       label: "global-task",
       description: "Global task",
-      status: "in_progress",
+      status: "In progress",
       updated: "2026-07-08T12:00:00.000Z",
       started: "2026-07-08T12:00:00.000Z",
     });
@@ -103,7 +103,7 @@ describe("syncActiveTaskEntryToFacts scope preservation", () => {
       {
         label: "tenant-isolation-task",
         description: "Should be isolated",
-        status: "in_progress",
+        status: "In progress",
         updated: "2026-07-08T12:00:00.000Z",
         started: "2026-07-08T12:00:00.000Z",
       },
