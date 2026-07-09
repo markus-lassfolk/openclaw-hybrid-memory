@@ -21,6 +21,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.192] - 2026-07-09
+
+### Fixed
+
+Loop iteration 126 — third finding from the fresh `backends/`+`routes/` sweep: the GraphQL `graph` query's `superseded_by` edges could never appear.
+
+- **`routes/graphql-resolvers.ts`'s `Query.graph` computed `supersedeEdges` from `facts`, which was already filtered through `isActiveFact()`** — a predicate that requires `fact.supersededBy == null`. Since the `supersedeEdges` computation only ever saw facts that necessarily have `supersededBy == null`, `supersedeEdges` was unconditionally `[]`: the `superseded_by` edge type could never appear in a graph response, even though the code was clearly written to produce it (the equivalent REST `/api/graph` route has no code for this at all, so the feature has silently never worked anywhere).
+- Fixed by computing the filtered-but-not-yet-active-narrowed fact set (`allMatching`, via `allFacts(context, true)` so superseded rows are included) once, deriving the rendered active node set (`facts`) from it as before, then separately finding superseded predecessor facts whose replacement (`fact.supersededBy`) is already a rendered node — and adding those predecessors as extra graph nodes so the `superseded_by` edge has a real node to point from (an edge whose source isn't a node would be a dangling edge the graph viewer can't render). Category/decay-class/importance/scope filters still apply uniformly, since both `facts` and the predecessor lookup derive from the same filtered `allMatching` set.
+
+Regression test added (new `tests/graphql-graph-resolver-supersede-edges.test.ts`): asserts a superseded predecessor fact is added as an extra node with a `superseded_by` edge to its still-active replacement; asserts both the edge and the extra node are omitted when the replacement fact itself is filtered out of the graph (no dangling edges); asserts no supersede edges appear when nothing is superseded. Verified via `git stash` to fail without the fix (the first test's node/edge assertions both fail — `fact-b` never appears, `supersedeEdges` is always `[]`). tsc clean; biome clean (same pre-existing import-order error on `graphql-resolvers.ts` before/after; my own new test file's one formatting finding fixed directly via `biome check --write`). Related suites (graphql-graph-resolver-supersede-edges, graphql-stats-resolver, graphql-link-scope-security, graphql-related-facts-link-visibility): 18 passed, no regressions.
+
 ## [2026.7.191] - 2026-07-09
 
 ### Fixed

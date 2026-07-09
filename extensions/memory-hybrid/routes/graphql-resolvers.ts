@@ -406,12 +406,15 @@ export const resolvers: GraphQLResolvers = {
       // preventing a single request from forcing an unbounded node/edge payload and O(n^2)-ish
       // edge-filtering work.
       const maxNodes = Math.min(2000, Math.max(20, asNumber(filter.maxNodes) ?? 400));
-      let facts = allFacts(context).filter((fact) => isActiveFact(fact));
-      if (categories?.length) facts = facts.filter((fact) => categories.includes(fact.category));
-      if (decayClasses?.length) facts = facts.filter((fact) => decayClasses.includes(fact.decayClass));
-      if (minImportance !== undefined) facts = facts.filter((fact) => fact.importance >= minImportance);
-      if (scope) facts = facts.filter((fact) => fact.scope === scope);
-      facts = facts.slice(0, maxNodes);
+      const matchesFilters = (fact: MemoryEntry): boolean =>
+        (!categories?.length || categories.includes(fact.category)) &&
+        (!decayClasses?.length || decayClasses.includes(fact.decayClass)) &&
+        (minImportance === undefined || fact.importance >= minImportance) &&
+        (!scope || fact.scope === scope);
+      // includeSuperseded=true so supersede lineage (below) can find predecessor facts; the
+      // active/non-expired node set itself is still derived via isActiveFact immediately after.
+      const allMatching = allFacts(context, true).filter(matchesFilters);
+      const facts = allMatching.filter((fact) => isActiveFact(fact)).slice(0, maxNodes);
       const factIds = new Set(facts.map((fact) => fact.id));
       const linkEdges = getAllLinks(context.factsDb)
         .filter((link) => factIds.has(link.sourceId) && factIds.has(link.targetId))
@@ -421,16 +424,22 @@ export const resolvers: GraphQLResolvers = {
           linkType: link.linkType,
           weight: link.weight,
         }));
-      const supersedeEdges = facts
-        .filter((fact) => fact.supersededBy)
-        .map((fact) => ({
-          source: fact.id,
-          target: fact.supersededBy as string,
-          linkType: "superseded_by",
-          weight: 1,
-        }));
+      // Superseded predecessor facts whose replacement is already a rendered node. A superseded
+      // fact can never itself be in `facts` (isActiveFact requires supersededBy == null), so
+      // computing this from `facts` alone (as before) always yielded []; include these
+      // predecessors as extra nodes so the superseded_by edge has a real source to point from.
+      const supersedeSourceFacts = allMatching.filter(
+        (fact) => fact.supersededBy && factIds.has(fact.supersededBy) && !factIds.has(fact.id),
+      );
+      const supersedeEdges = supersedeSourceFacts.map((fact) => ({
+        source: fact.id,
+        target: fact.supersededBy as string,
+        linkType: "superseded_by",
+        weight: 1,
+      }));
+      const nodeFacts = supersedeSourceFacts.length > 0 ? [...facts, ...supersedeSourceFacts] : facts;
       return {
-        nodes: facts.map((fact) => ({
+        nodes: nodeFacts.map((fact) => ({
           id: fact.id,
           label: fact.text.slice(0, 50) + (fact.text.length > 50 ? "..." : ""),
           category: fact.category,
