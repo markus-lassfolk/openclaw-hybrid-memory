@@ -6,6 +6,7 @@ import { nowIso } from "../utils/dates.js";
 import type OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { clearRuntimeTimers, type PluginRuntime } from "../api/plugin-runtime.js";
+import { isRegistrationSuperseded } from "../utils/registration-superseded.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EdictStore } from "../backends/edict-store.js";
 import type { FactsDB } from "../backends/facts-db.js";
@@ -77,6 +78,13 @@ import { versionInfo } from "../versionInfo.js";
 
 export interface PluginServiceContext {
   PLUGIN_ID: string;
+  /**
+   * Registration generation that produced the runtime driving this service. Captured at
+   * plugin-service.start() time so the startup DB-touching blocks can suppress closed-DB
+   * errors that fire after a re-register supersedes this service instance (rapid hot-reload
+   * guard, supplements #1550 / #2058 / #2059).
+   */
+  bootRegistrationGeneration?: number;
   factsDb: FactsDB;
   edictStore: EdictStore;
   vectorDb: VectorDB;
@@ -158,9 +166,14 @@ function closeStorePermanently(
  * - Post-upgrade pipeline
  * - Cleanup on shutdown
  */
+export function shouldSkipPluginServiceStartForSupersededGeneration(bootRegistrationGeneration: number | undefined): boolean {
+  return bootRegistrationGeneration !== undefined && isRegistrationSuperseded(bootRegistrationGeneration);
+}
+
 export function createPluginService(ctx: PluginServiceContext) {
   const {
     PLUGIN_ID,
+    bootRegistrationGeneration,
     factsDb,
     edictStore,
     vectorDb,
@@ -209,6 +222,16 @@ export function createPluginService(ctx: PluginServiceContext) {
     _getVersionCheckPromise: () => versionCheckPromise,
     start: async () => {
       timers.shuttingDownRef.value = false;
+      // Rapid hot-reload guard: if this service instance is already superseded by a newer
+      // registration, skip the heavy startup work (which touches donor DBs that the newer
+      // re-register is about to close). Without this, `plugin service failed ... The
+      // database connection is not open` fires on every rapid config hot reload.
+      if (shouldSkipPluginServiceStartForSupersededGeneration(bootRegistrationGeneration)) {
+        api.logger.debug?.(
+          `memory-hybrid: plugin-service start skipped (registration generation ${bootRegistrationGeneration} superseded)`,
+        );
+        return;
+      }
       // Issue #422: surface missing Python deps early; deferred from register() for lighter CLI (issue #1111).
       if (pythonBridge) {
         const { ok, missing, spawnError } = pythonBridge.checkDependencies();

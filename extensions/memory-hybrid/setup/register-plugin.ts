@@ -47,10 +47,14 @@ import {
 } from "./hybrid-memory-generation-state.js";
 import {
   blockReloadTeardownBeforeOpen,
+  clearTeardownTrackingForGeneration,
   drainOldBootstrap,
   drainOldRecall,
+  isTeardownDrainedForGeneration,
+  listTeardownPromisesForGeneration,
   resetReloadTeardownChainForTests,
   schedulePluginTeardown,
+  TEARDOWN_SOFT_WAIT_MS,
   TEARDOWN_WAIT_MS,
 } from "./hybrid-memory-reload-coordinator.js";
 import { registerContextEngineBestEffort } from "./register-context-engine.js";
@@ -263,6 +267,10 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
   const registrationGeneration = registrationGenerationRef.value + 1;
   registrationGenerationRef.value = registrationGeneration;
   recordReregisterRegistration();
+  // Generation that produced the donor runtime we're about to supersede. Used by the reload
+  // coordinator to track which scheduled teardowns the new register is actually waiting on
+  // (rapid hot-reload guard, supplements #1550 / #2058 / #2059).
+  const donorGeneration = old?.bootRegistrationGeneration ?? -1;
 
   const reusePolicy = resolveReregisterPolicy();
   const reuseDatabases = canReuseDatabasesOnReregister(old, cfg, logApi);
@@ -271,7 +279,7 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
       "memory-hybrid: re-register falling back to full teardown (reuse policy requested but donor bootstrap not reusable)",
     );
   }
-  const donorRuntime = reuseDatabases && old ? old : null;
+  let donorRuntime = reuseDatabases && old ? old : null;
 
   if (old) {
     // Clear old timer handles to prevent leaks.
@@ -291,18 +299,21 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     const oldVaultRegistry = old.vaultRegistry;
     const oldRecallInFlightRef = old.recallInFlightRef;
     if (oldVaultRegistry) {
-      schedulePluginTeardown(async () => {
-        try {
-          await drainOldRecall(oldRecallInFlightRef);
-          oldVaultRegistry.closeAll();
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "registration",
-            operation: "plugin-reregister:close-vaults",
-            severity: "warning",
-          });
-        }
-      });
+      schedulePluginTeardown(
+        async () => {
+          try {
+            await drainOldRecall(oldRecallInFlightRef);
+            oldVaultRegistry.closeAll();
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "registration",
+              operation: "plugin-reregister:close-vaults",
+              severity: "warning",
+            });
+          }
+        },
+        { donorGeneration },
+      );
     }
     if (reuseDatabases) {
       recordReregisterDatabaseReuse();
@@ -320,43 +331,62 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
         });
       });
       // Let in-flight bootstrap (vault check, embedding verify) finish before permanentClose (#1550 reload race).
-      schedulePluginTeardown(async () => {
-        await drainOldBootstrap(oldRuntime.bootstrapAsyncInit);
-        await drainOldRecall(oldRuntime.recallInFlightRef);
-        closeOldDatabases({
-          factsDb: oldRuntime.factsDb,
-          edictStore: oldRuntime.edictStore,
-          vectorDb: oldRuntime.vectorDb,
-          credentialsDb: oldRuntime.credentialsDb,
-          proposalsDb: oldRuntime.proposalsDb,
-          identityReflectionStore: oldRuntime.identityReflectionStore,
-          personaStateStore: oldRuntime.personaStateStore,
-          eventLog: oldRuntime.eventLog,
-          narrativesDb: oldRuntime.narrativesDb,
-          aliasDb: oldRuntime.aliasDb,
-          eventBus: oldRuntime.eventBus,
-          issueStore: oldRuntime.issueStore,
-          workflowStore: oldRuntime.workflowStore,
-          crystallizationStore: oldRuntime.crystallizationStore,
-          toolProposalStore: oldRuntime.toolProposalStore,
-          verificationStore: oldRuntime.verificationStore,
-          provenanceService: oldRuntime.provenanceService,
-          learningsDb: oldRuntime.learningsDb,
-          apitapStore: oldRuntime.apitapStore,
-          auditStore: oldRuntime.auditStore,
-          agentHealthStore: oldRuntime.agentHealthStore,
-        });
-      });
+      schedulePluginTeardown(
+        async () => {
+          await drainOldBootstrap(oldRuntime.bootstrapAsyncInit);
+          await drainOldRecall(oldRuntime.recallInFlightRef);
+          closeOldDatabases({
+            factsDb: oldRuntime.factsDb,
+            edictStore: oldRuntime.edictStore,
+            vectorDb: oldRuntime.vectorDb,
+            credentialsDb: oldRuntime.credentialsDb,
+            proposalsDb: oldRuntime.proposalsDb,
+            identityReflectionStore: oldRuntime.identityReflectionStore,
+            personaStateStore: oldRuntime.personaStateStore,
+            eventLog: oldRuntime.eventLog,
+            narrativesDb: oldRuntime.narrativesDb,
+            aliasDb: oldRuntime.aliasDb,
+            eventBus: oldRuntime.eventBus,
+            issueStore: oldRuntime.issueStore,
+            workflowStore: oldRuntime.workflowStore,
+            crystallizationStore: oldRuntime.crystallizationStore,
+            toolProposalStore: oldRuntime.toolProposalStore,
+            verificationStore: oldRuntime.verificationStore,
+            provenanceService: oldRuntime.provenanceService,
+            learningsDb: oldRuntime.learningsDb,
+            apitapStore: oldRuntime.apitapStore,
+            auditStore: oldRuntime.auditStore,
+            agentHealthStore: oldRuntime.agentHealthStore,
+          });
+        },
+        { donorGeneration },
+      );
     }
     runtimeRef.value = null;
   }
 
-  if (old && !reuseDatabases) {
-    // Wait for teardown to complete before opening new DB handles (#802).
-    // Bounded wait: drains (3s + 2s) + buffer fit within TEARDOWN_WAIT_MS.
+  if (old) {
+    // Wait for the donor runtime's teardown to complete before opening or handing out new DB
+    // handles (#802, #2058 / #2059). When `reuseDatabases` is true we still need to wait
+    // because the vault-registry teardown is scheduled against the SAME donor runtime we are
+    // about to inherit; if we don't wait, vault closeAll() races the new registration's first
+    // DB access (closed DB / not open). When the soft drain window expires before the donor
+    // teardown settles, fall back to a fresh open instead of inheriting indeterminate handles.
     const drained = blockReloadTeardownBeforeOpen(TEARDOWN_WAIT_MS);
     if (!drained) {
-      throw new Error("memory-hybrid: reload teardown did not drain before opening new databases");
+      const donorDrained = isTeardownDrainedForGeneration(donorGeneration);
+      if (donorRuntime && donorDrained) {
+        // Donor generation's teardown is done even though newer teardowns may still be queued
+        // (overlap-queued re-register). Donor handles are safe to hand to the new runtime.
+      } else if (donorRuntime) {
+        logApi.logger.warn?.(
+          `memory-hybrid: reload teardown soft-timeout exceeded (>=${TEARDOWN_SOFT_WAIT_MS}ms) for donor generation ${donorGeneration}; falling back to fresh open to avoid inheriting closed DB handles`,
+        );
+        donorRuntime = null;
+        recordReregisterFullTeardown();
+      } else {
+        throw new Error("memory-hybrid: reload teardown did not drain before opening new databases");
+      }
     }
   }
 
@@ -582,6 +612,7 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     bootstrapAsyncInit,
     bootstrapSettledRef,
     bootstrapHealth: dbContext.health,
+    bootRegistrationGeneration: registrationGeneration,
     pendingLLMWarnings: createPendingLLMWarnings(),
     currentAgentIdRef: { value: null },
     restartPendingClearedRef: { value: false },
@@ -597,6 +628,13 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
   };
 
   runtimeRef.value = newRuntime;
+
+  // The donor generation's tracking is no longer needed: even if its teardown is still
+  // queued behind a newer one, the new runtime is now in place and the donor's `done`
+  // promises are no longer observed by anyone.
+  if (donorGeneration >= 0) {
+    clearTeardownTrackingForGeneration(donorGeneration);
+  }
 
   const runtime = newRuntime;
 
@@ -743,6 +781,7 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     api.registerService(
       createPluginService({
         PLUGIN_ID,
+        bootRegistrationGeneration: registrationGeneration,
         factsDb: runtime.factsDb,
         edictStore: runtime.edictStore,
         vectorDb: runtime.vectorDb,
