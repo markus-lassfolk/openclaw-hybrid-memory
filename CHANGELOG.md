@@ -21,6 +21,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.191] - 2026-07-09
+
+### Fixed
+
+Loop iteration 125 — second finding from the fresh `backends/`+`routes/` sweep: the GraphQL `stats` query could crash on a large fact store.
+
+- **`routes/graphql-resolvers.ts`'s `Query.stats` computed `oldestFactDate`/`newestFactDate` via `Math.min(...facts.map(...))`/`Math.max(...facts.map(...))`, where `facts = allFacts(context, true)` has no LIMIT clause** (unlike every other resolver in this file — `search`, `graph` — which explicitly cap `limit`/`maxNodes`). Spreading an array into a function call is bounded by V8's argument-count limit (~65k-125k elements); a long-lived agent memory store that has accumulated more facts than that throws `RangeError: Maximum call stack size exceeded` on every `stats` query, permanently breaking that query for large stores.
+- Fixed by replacing the two spreads with a single forward pass tracking running min/max, avoiding any array-length-bounded call.
+
+Regression test added (new `tests/graphql-stats-resolver.test.ts`): constructs a 150,000-fact mock store (above the spread limit) and asserts `Query.stats` resolves without throwing and computes the correct oldest/newest dates, plus small-store correctness checks (empty store → `null`/`null`; mixed-order store → correct min/max). Verified via `git stash` to fail without the fix — reproduces the exact `RangeError: Maximum call stack size exceeded`. tsc clean; biome clean (same 1 pre-existing import-order error on `graphql-resolvers.ts` before and after, zero new findings — my own new test file's non-null-assertion warnings match the established pattern used elsewhere in this suite). Related suites (graphql-stats-resolver, graphql-link-scope-security, graphql-related-facts-link-visibility): 15 passed, no regressions.
+
 ## [2026.7.190] - 2026-07-09
 
 ### Fixed

@@ -457,6 +457,16 @@ export const resolvers: GraphQLResolvers = {
         byCategory.set(fact.category, (byCategory.get(fact.category) ?? 0) + 1);
         byDecay.set(fact.decayClass, (byDecay.get(fact.decayClass) ?? 0) + 1);
       }
+      // Iterate rather than `Math.min(...facts.map(...))`: spreading facts.length (unbounded --
+      // allFacts(context, true) has no LIMIT) into a function call throws
+      // "RangeError: Maximum call stack size exceeded" once the store holds more than V8's
+      // argument-count limit (~65k-125k facts).
+      let oldestFactDate: number | null = null;
+      let newestFactDate: number | null = null;
+      for (const fact of facts) {
+        if (oldestFactDate === null || fact.createdAt < oldestFactDate) oldestFactDate = fact.createdAt;
+        if (newestFactDate === null || fact.createdAt > newestFactDate) newestFactDate = fact.createdAt;
+      }
       return {
         totalFacts: facts.length,
         activeFactsCount: active.length,
@@ -472,8 +482,8 @@ export const resolvers: GraphQLResolvers = {
           typeof context.factsDb.estimateStorageBytes === "function"
             ? context.factsDb.estimateStorageBytes().sqliteBytes
             : 0,
-        oldestFactDate: facts.length ? Math.min(...facts.map((fact) => fact.createdAt)) : null,
-        newestFactDate: facts.length ? Math.max(...facts.map((fact) => fact.createdAt)) : null,
+        oldestFactDate,
+        newestFactDate,
       };
     },
   },
