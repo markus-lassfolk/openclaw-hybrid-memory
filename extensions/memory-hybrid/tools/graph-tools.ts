@@ -74,6 +74,12 @@ export function registerGraphTools(ctx: PluginContext, api: ClawdbotPluginApi): 
               details: { error: "target_not_found", id: targetFact },
             };
           }
+          if (sourceFact === targetFact) {
+            return {
+              content: [{ type: "text", text: `Cannot link a fact to itself: ${sourceFact}` }],
+              details: { error: "self_link", id: sourceFact },
+            };
+          }
           if (linkType === "CONTRADICTS") {
             const contradictionId = factsDb.recordContradiction(sourceFact, targetFact);
             const msg = `Created bidirectional ${linkType} link from "${src.text.slice(0, 50)}${src.text.length > 50 ? "…" : ""}" to "${tgt.text.slice(0, 50)}${tgt.text.length > 50 ? "…" : ""}" and reduced confidence`;

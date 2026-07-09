@@ -39,7 +39,8 @@ export function registerFactMutationGatewayMethods(ctx: FactMutationGatewayConte
     try {
       const filter = scopeFilter();
       const query = typeof params.query === "string" ? params.query : "";
-      const limit = typeof params.limit === "number" ? Math.min(params.limit, 100) : 20;
+      const rawLimit = typeof params.limit === "number" && Number.isFinite(params.limit) ? params.limit : 20;
+      const limit = Math.min(Math.max(Math.floor(rawLimit), 1), 100);
       const entity = typeof params.entity === "string" ? params.entity : undefined;
       const key = typeof params.key === "string" ? params.key : undefined;
 

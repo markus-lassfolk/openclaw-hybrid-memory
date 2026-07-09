@@ -21,6 +21,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.183] - 2026-07-09
+
+### Fixed
+
+Loop iteration 117 — with the loop-iteration-103 backlog closed, dispatched a fresh flat (non-recursive) multi-agent sweep across `services/`, `tools/`, and `cli/`. The `tools/` sweep surfaced two genuine, verified bugs; fixed both this iteration.
+
+- **`tools/fact-mutation-gateway.ts`'s `hybrid-mem.facts.list` RPC method only clamped `limit` on the upper end (`Math.min(params.limit, 100)`), never the lower.** A caller passing a negative `limit` (e.g. `-1`) bypassed the intended 20-default/100-max pagination cap two different ways: `factsDb.lookup`'s underlying `lookupFacts` treats any non-positive limit as `null`, dropping its SQL `LIMIT` clause entirely (unbounded — every matching row for that entity); the no-query/no-entity branch's `getAll().slice(0, limit)` with a negative `limit` returns "all rows except the last N," i.e. nearly the caller's entire in-scope fact corpus in one response. Exposed to any Gateway RPC client (memory-wiki, Workboard, CLI, WebUI) — a resource-exhaustion/oversized-payload bug, not a scope leak (the scope filter itself is unaffected).
+- **`tools/graph-tools.ts`'s `memory_link` tool never checked `sourceFact !== targetFact`.** Both endpoints are independently validated to exist and be in-scope, but a call linking a fact to itself (e.g. `{ sourceFact: "f1", targetFact: "f1", linkType: "CONTRADICTS" }`) passed both checks and reached `factsDb.recordContradiction("f1", "f1")`, which inserts a self-referential `CONTRADICTS` edge into `memory_links` (no DB constraint prevents it) and docks the fact's own confidence by 0.2 for "contradicting itself" — a one-shot but real data-corruption bug (confidence decay plus a spurious self-loop edge visible in `memory_graph`/graph exports). The tool's own success message was also visibly nonsensical (`from "X" to "X"`).
+- Fixed by clamping `limit` to `[1, 100]` (`Math.min(Math.max(Math.floor(rawLimit), 1), 100)`, defaulting to 20 for non-finite/non-number input) and by adding an explicit `sourceFact === targetFact` rejection (`error: "self_link"`) before dispatching to either the `CONTRADICTS` or generic-link path.
+
+Regression tests added: `tests/fact-mutation-gateway.test.ts` asserts a negative `limit` is clamped into `[1, 100]` before reaching `factsDb.search`/`lookup`/`getAll` (plus a companion test confirming the existing overflow-clamp-to-100 behavior is unchanged); `tests/graph-tools-scope-security.test.ts` asserts `memory_link` with identical `sourceFact`/`targetFact` returns `error: "self_link"` and never calls `recordContradiction`/`createLink`. Verified via `git stash` to fail without the fix — the negative limit reached `factsDb.search` as `-1` verbatim, and the self-link call reached neither guard (`result.details.error` was `undefined`, meaning it fell through to `recordContradiction`). tsc clean; biome clean (zero new *categories* of findings on any of the 4 changed files, verified against each file's pre-existing baseline — the 2 additional warnings on the test file are more instances of the same `handlers.get(...)!` non-null-assertion pattern already used by every other test in that file, not a new issue). Related suites (fact-mutation-gateway, graph-tools-scope-security, edge-types, issue-tools-scope-security, plugin-e2e, project-state-lww): 106 passed, no regressions.
+
+The `cli/` sweep found 4 more candidates (missing exit codes on `task-queue-touch --repair`/`verified triage`, unvalidated `--tier`/`--decay-class` CLI options) — queued for the next iterations. The `services/` sweep is still running as of this entry.
+
+---
+
 ## [2026.7.182] - 2026-07-09
 
 ### Fixed
