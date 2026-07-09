@@ -21,6 +21,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.195] - 2026-07-09
+
+### Fixed
+
+Loop iteration 129 — second of two related findings from the `setup/`-adjacent portion of the sweep, closing it out: successfully-registered tools were never unregistered when a later installer failed.
+
+- **`setup/register-tools.ts`'s `registerTools` had no per-installer try/catch around its `for (const installer of toolInstallers) { installer.install(...) }` loop.** `createGenerationGuardedToolsApi` already tracks every successfully-registered tool's disposer in a list reachable only via the `handle` object `registerTools` returns at the very end — but if any installer partway through the list threw (e.g. the same manifest/tool-installer drift scenario fixed for the DB layer in iteration 128), `registerTools` itself threw *before* `return handle`. The caller (`register-plugin.ts`) never received a handle in that case, so every tool registered by the installers that ran before the failing one stayed permanently live in the host's tool registry with no way to unregister them — independent of, and complementary to, iteration 128's fix (that fix's cleanup path calls `runtime.toolRegistrationHandle?.dispose()`, but `toolRegistrationHandle` is only ever assigned *after* `registerTools` returns, so it stays `null` precisely when this bug fires).
+- Fixed by wrapping the installer loop in a try/catch that calls `handle.dispose()` (unregistering everything the earlier installers already registered) before rethrowing the original error — so the cleanup happens internally, without depending on the caller ever receiving the handle.
+
+Regression test added (new `tests/register-tools-partial-failure-cleanup.test.ts`, mocking `setup/tool-installers.js`'s exported `toolInstallers` list with two fake installers — one that registers a tool and returns a disposer function, one that throws): asserts the first installer's tool is disposed before the error propagates; a second test confirms a fully-successful run still returns a working handle. Verified via `git stash` to fail without the fix — pre-fix, the disposer for the successfully-registered tool was never called. tsc clean; biome clean (same pre-existing 1 import-order error on `register-tools.ts` before and after; my own new test file's one formatting finding fixed directly via `biome check --write`). Related suites (register-tools-partial-failure-cleanup, tool-registration-generation-guard, plugin-e2e, comprehensive-e2e, goal-episode-scope-security, goal-tools-error-handling, issue-tools-scope-security): 49 passed, no regressions.
+
+This closes out the fresh `backends/`+`routes/`+`setup/`+`config/`+`utils/` sweep dispatched at loop iteration 123 — all 6 genuine findings from that round (credentials-db handle leak, GraphQL stats crash, GraphQL supersede-edge dead code, dashboard workflow success-rate mismatch, and these two registration-failure leaks) are now fixed (iterations 124-129).
+
 ## [2026.7.194] - 2026-07-09
 
 ### Fixed
