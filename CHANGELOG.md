@@ -21,6 +21,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.175] - 2026-07-09
+
+### Fixed
+
+Loop iteration 109 (self-caught regression, not from the deferred backlog): the iteration 106 `detectClusters` scope-isolation fix broke `ClusterCache`'s test mock's assumed contract, caught by a full-suite background baseline run kicked off after starting the fresh QA branch.
+
+- **`services/retrieval-orchestrator.ts`'s `ClusterCache.getClusterMap` calls `detectClusters(factsDb, { minClusterSize })` with `scopeFilter` omitted, and iteration 106 changed `detectClusters` to require `getById(id, { scopeFilter })` to return a real entry before a linked fact can enter any cluster** (previously `getById`'s result was only used for cluster *label* generation, never for membership). `tests/retrieval-orchestrator.test.ts`'s `fakeFactsDb` test helper's `getById` unconditionally returned `null` — a valid simplification under the old contract, since cluster membership never depended on it — but under the new contract this filtered every linked fact out of every cluster, breaking `ClusterCache`'s own regression tests (`does not leak cluster assignments between different FactsDB instances`, `invalidate() clears cached clusters for all instances`). Reproduced deterministically running the file in isolation, not a suite-order flake.
+- No behavior change in production `ClusterCache` — a real `FactsDB.getById(id, { scopeFilter: undefined })` already returns the entry unconditionally when no scope filter is applied (confirmed in `backends/facts-db/fact-read-queries.ts`'s `applyLookupFilters`), so this was a test-fixture-only gap. Fixed `fakeFactsDb` to return a minimal, realistic `MemoryEntry` for known fact IDs (matching how the real `FactsDB.getById` behaves), instead of reverting the iteration 106 fix.
+
+Verified via `git stash` that both `ClusterCache` tests fail against the pre-fix mock exactly as observed in the full-suite run. tsc clean; biome clean (zero new findings, verified against the file's pre-existing baseline). Related suites (topic-clusters, retrieval-modes, constrained-recall, context-engine, multi-model-retrieval): 96 passed, no regressions.
+
+**Process note:** caught by kicking off a full background `vitest run` immediately after establishing the fresh `claude/memory-hybrid-scope-security-qa` branch, rather than waiting for the usual 10-iteration cadence — appropriate here since the branch's own history (and thus the "last known full-suite baseline") had just been reset, and iteration 108's own git-stash operations transiently contaminated part of that run's output (the `storage-stats-helpers-scope-filter.test.ts` failures in that run are a stash-timing artifact, not real; already re-verified clean in isolation in the v2026.7.174 entry above).
+
+---
+
 ## [2026.7.174] - 2026-07-09
 
 ### Fixed
