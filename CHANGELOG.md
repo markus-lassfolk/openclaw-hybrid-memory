@@ -21,6 +21,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.176] - 2026-07-09
+
+### Fixed
+
+Loop iteration 110 — fixes the top item from the "Deferred (fresh sweep, loop iteration 103)" backlog: `hybrid-mem store`'s duplicate pre-check ran as if every store was global-scoped.
+
+- **`cli/cmd-store.ts`'s `runStoreForCli` called `factsDb.hasDuplicate(text, "cli", {category, entity, key, value})` with no `scope`/`scopeTarget` args, computed several lines *before* `scope`/`scopeTarget` were resolved.** `hasDuplicateText` → `applyDedupe` (`services/dedupe-policy.ts`) treats an omitted scope as `"global"`, so the pre-check always probed as if the store were global-scoped regardless of the caller's actual `--scope`/`--scope-target`. This cuts both ways: (1) a scoped store (`--scope agent --scope-target X`) with the same text as an unrelated *global* fact was wrongly rejected as `{outcome: "duplicate"}`; (2) a scoped store that duplicated an *earlier scoped* store of its own was **not** caught by this fast pre-check at all (since it only ever checked global-scoped rows), silently falling through to `factsDb.storeWithResult`'s own separate, already-scope-aware dedupe safety net later in the same call — wasted embedding/classification work before the duplicate was finally caught by a different code path. The identical bug (case 1) was already fixed in the sibling `tools/memory/register-store-tools.ts` MCP path (commit `a471c545`); `cmd-store.ts` predates that fix and was never updated to match.
+- Fixed by moving the `scope`/`scopeTarget` resolution above the duplicate pre-check and passing both through to `hasDuplicate`, matching the sibling MCP path's fix.
+
+Regression tests added (new `tests/cmd-store-scope-duplicate-check.test.ts`, using the same minimal `HandlerContext` mock pattern as `tests/cli-store-rollback.test.ts`): confirms a scoped store with the same text as an unrelated global fact now succeeds (`stored`, not `duplicate`) and creates a genuinely separate fact tagged with the caller's scope; confirms a true same-scope duplicate is still rejected. Verified via `git stash` to fail without the fix — the first test failed with `duplicate` instead of `stored` (case 1 above), and the second failed with `noop`/`reason: "dedupe"` instead of the expected fast-path `duplicate` (case 2 above, confirming the pre-check missed a genuine same-scope duplicate and it was only caught by the later, separate dedupe path). tsc clean; biome clean (zero new findings on `cmd-store.ts`, verified against its pre-existing baseline; the new test file's only finding is the same `as any` mock-cast style warning already present in its sibling `cli-store-rollback.test.ts`). Related suites (cli-store-rollback, memory-store-merge-dedupe-vector): 16 passed, no regressions.
+
+---
+
 ## [2026.7.175] - 2026-07-09
 
 ### Fixed

@@ -175,24 +175,35 @@ export async function runStoreForCli(
         .filter(Boolean)
     : undefined;
   const category = (opts.category ?? "other") as MemoryCategory;
+
+  // FR-006: Compute scope before the duplicate pre-check below (must run after scope resolution,
+  // not before it): dedupe state must never be shared across scopes, or an agent/user-scoped
+  // store can be wrongly rejected as "duplicate" against an unrelated global fact with the same
+  // text (or vice versa) — the identical bug already fixed in the sibling
+  // tools/memory/register-store-tools.ts MCP path.
+  const scope = opts.scope ?? "global";
+  const scopeTarget = scope === "global" ? null : (opts.scopeTarget?.trim() ?? null);
+
   const dedupeProfile = cfg.store.sourceProfiles?.cli ?? cfg.store.defaultProfile;
   const cliDuplicatesCanMutateExistingFact =
     dedupeProfile?.onDuplicate === "merge" || dedupeProfile?.onDuplicate === "boost";
   if (
     !cliDuplicatesCanMutateExistingFact &&
-    factsDb.hasDuplicate(text, "cli", {
-      category,
-      entity,
-      key,
-      value,
-    })
+    factsDb.hasDuplicate(
+      text,
+      "cli",
+      {
+        category,
+        entity,
+        key,
+        value,
+      },
+      scope,
+      scopeTarget,
+    )
   ) {
     return { outcome: "duplicate" };
   }
-
-  // FR-006: Compute scope early so it's available for classify-before-write UPDATE path
-  const scope = opts.scope ?? "global";
-  const scopeTarget = scope === "global" ? null : (opts.scopeTarget?.trim() ?? null);
 
   if (cfg.store.classifyBeforeWrite) {
     let vector: number[] | undefined;
