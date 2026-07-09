@@ -468,6 +468,44 @@ describe("CredentialsDB legacy vault mode mismatch", () => {
   });
 });
 
+describe("CredentialsDB constructor closes the SQLite handle on validation throw (loop iteration 124 regression)", () => {
+  it("closes the native handle when opening an encrypted vault without a key", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cred-leak-enc-"));
+    const dbPath = join(dir, "creds.db");
+    const encDb = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+    encDb.store({ service: "x", type: "token", value: "secret" });
+    encDb.close();
+
+    const closeSpy = vi.spyOn(DatabaseSync.prototype, "close");
+    try {
+      expect(() => new CredentialsDB(dbPath, "")).toThrow(/vault was created with encryption/);
+      expect(closeSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      closeSpy.mockRestore();
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("closes the native handle when opening a legacy vault with data but no metadata, using the wrong key", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cred-leak-legacy-"));
+    const dbPath = join(dir, "creds.db");
+    const encDb = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+    encDb.store({ service: "legacy", type: "api_key", value: "encrypted-secret" });
+    const rawDb = encDb.db; // Access private db
+    rawDb.prepare("DELETE FROM vault_meta").run();
+    encDb.close();
+
+    const closeSpy = vi.spyOn(DatabaseSync.prototype, "close");
+    try {
+      expect(() => new CredentialsDB(dbPath, "")).toThrow(/vault contains data/);
+      expect(closeSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      closeSpy.mockRestore();
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Warning suppression: once per process per path
 // ---------------------------------------------------------------------------

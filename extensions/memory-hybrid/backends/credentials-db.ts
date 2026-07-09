@@ -151,6 +151,7 @@ export class CredentialsDB extends BaseSqliteStore {
       this.key = Buffer.alloc(0);
       this.password = null;
       if (versionRow && versionRow.value != null && toBuffer(versionRow.value)[0] !== CRED_KDF_PLAINTEXT) {
+        db.close();
         throw new Error(
           "Credentials vault was created with encryption. Set credentials.encryptionKey (or OPENCLAW_CRED_KEY) to open it, or use a new vault path for an unencrypted vault.",
         );
@@ -160,6 +161,7 @@ export class CredentialsDB extends BaseSqliteStore {
         const hasCredentials =
           (this.liveDb.prepare("SELECT COUNT(*) as count FROM credentials").get() as { count: number }).count > 0;
         if (hasCredentials) {
+          db.close();
           throw new Error(
             "Credentials vault contains data but no encryption metadata. This vault may have encrypted credentials. Provide credentials.encryptionKey to open it.",
           );

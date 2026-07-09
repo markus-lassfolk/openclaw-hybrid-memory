@@ -21,6 +21,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.190] - 2026-07-09
+
+### Fixed
+
+Loop iteration 124 — first finding from the fresh `backends/`+`routes/` sweep dispatched at iteration 123: `CredentialsDB`'s constructor leaked the native SQLite handle on every rejected vault open.
+
+- **`backends/credentials-db.ts`'s constructor opened the native `DatabaseSync` handle (`const db = new DatabaseSync(dbPath); super(db);`) before running any vault-metadata validation, and its two validation-failure paths (`"Credentials vault was created with encryption..."` and `"Credentials vault contains data but no encryption metadata..."`) threw without ever closing that handle.** Since the constructor throws, the caller never receives a reference to call `.close()` on — the partially-constructed instance is simply discarded, along with the open connection. A caller that retries with a corrected key (a CLI re-prompting for the right `credentials.encryptionKey`, or a service falling back through key sources) leaks another native SQLite connection per attempt for the life of the process.
+- Fixed by calling `db.close()` (the local, always-in-scope constructor variable) immediately before each of the two validation throws — mirroring the direct `this.db.close()` calls `BaseSqliteStore` itself already uses in its own close/reopen paths, so no other cleanup mechanism was needed.
+
+Regression test added (`tests/credentials-db.test.ts`, new `describe` block): spies on `DatabaseSync.prototype.close` around each of the two existing throw scenarios (opening an encrypted vault with an empty key; opening a legacy vault with data but no `vault_meta` using the wrong key) and asserts the handle is closed exactly once. Verified via `git stash` to fail without the fix (both assert 0 close calls pre-fix vs. 1 post-fix). tsc clean; biome clean (identical 2 pre-existing errors/2 warnings baseline on both changed files, before and after — zero new findings). Related suites (credentials-db plus 8 sibling credentials-* suites): 153 passed, no regressions.
+
 ## [2026.7.189] - 2026-07-09
 
 ### Fixed
