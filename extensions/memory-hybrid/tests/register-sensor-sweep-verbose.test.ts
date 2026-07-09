@@ -99,4 +99,20 @@ describe("sensor-sweep --verbose progress", () => {
     // The final summary line must still be printed regardless of verbosity.
     expect(logs.some((l) => l.includes("sensor-sweep tier=1:"))).toBe(true);
   });
+
+  it("rejects an invalid --tier value instead of silently falling back to tier 1 (loop iteration 121 regression)", async () => {
+    const mem = makeProgram();
+    const errors: unknown[][] = [];
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errors.push(args);
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+
+    await mem.parseAsync(["sensor-sweep", "--tier", "bogus"], { from: "user" });
+
+    // Before the fix, `--tier bogus` silently ran as tier 1 with no indication the value was
+    // invalid, matching the description "Tier to run: 1, 2, or all" but not enforcing it.
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(errors.some((args) => String(args[0]).includes("--tier must be one of"))).toBe(true);
+  });
 });

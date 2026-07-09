@@ -21,6 +21,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.187] - 2026-07-09
+
+### Fixed
+
+Loop iteration 121 — fixes the second `cli/` fresh-sweep finding: `sensor-sweep --tier` silently accepted any invalid value as tier 1.
+
+- **`register-sensor-sweep.ts` parsed `--tier` with `tierRaw === "all" ? "all" : tierRaw === "2" ? 2 : 1`, with no validation.** The option's own description reads "Tier to run: 1, 2, or all," but any other value (`--tier 3`, `--tier bogus`, a typo) silently fell through to tier 1 instead of erroring — `sensor-sweep --tier bogus` ran (and reported success for) tier-1 sensors with no indication the operator's `--tier` value was invalid.
+- Fixed by validating `tierRaw` against the exact allow-list (`"all" | "1" | "2"`) before dispatch and throwing a descriptive error otherwise — `withExit` (already wrapping this action) converts the thrown error into `process.exitCode = 1` plus a logged error message, matching this codebase's established validation-failure pattern for `withExit`-wrapped commands.
+
+Regression test added (`tests/register-sensor-sweep-verbose.test.ts`, reusing its existing real-`Command`/`parseAsync` harness): runs `sensor-sweep --tier bogus` and asserts `process.exit` was called with `1` and the error output contains "--tier must be one of." Verified via `git stash` to fail without the fix — the pre-fix code ran to completion and reported `sensor-sweep tier=1: ... semantic=success`, calling `process.exit(0)`. tsc clean; biome clean (zero new findings on either changed file, verified against each file's pre-existing baseline — the one flagged import-order finding predates this change). Related suites (register-sensor-sweep-verbose, sensor-sweep, sensor-sweep-github-progress): 44 passed, no regressions.
+
+2 more `cli/` sweep findings remain queued: `verified.ts triage`'s missing exit code on partial failures, and `register-lifecycle.ts`'s unvalidated `--decay-class`.
+
+**Full-suite checkpoint (every 10 iterations, per agreement):** the complete `npx vitest run` suite kicked off at iteration 119 has now completed — 642 passed, 3 failed, 4 skipped (649 files) / 9014 passed, 3 failed, 23 skipped (9040 tests). All 3 failures are the same known pre-existing, unrelated failures already documented in earlier iterations (`crystallization-proposer.test.ts`, `implicit-feedback-routing.test.ts`, `memory-recall-timeline.test.ts`) — confirmed by exact test-name match, none touch any file changed in iterations 111-121. Next full-suite checkpoint due at iteration 129.
+
+---
+
 ## [2026.7.186] - 2026-07-09
 
 ### Fixed
