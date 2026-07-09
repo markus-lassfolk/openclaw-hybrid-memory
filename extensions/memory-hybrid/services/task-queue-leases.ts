@@ -435,8 +435,12 @@ export async function transitionDispatchLease(input: TransitionDispatchLeaseInpu
     }
 
     if (input.toState === "running") {
-      // Refresh expiry while work is active.
-      lease.expiresAt = undefined;
+      // Refresh expiry while work is active: give the lease a fresh TTL window from the moment
+      // work starts, rather than clearing expiresAt entirely. A cleared expiresAt is unparseable
+      // (parseIsoMs -> NaN), so expireActiveLeases() can never reclaim this lease again — a
+      // worker that crashes after transitioning to "running" without ever reaching a terminal
+      // state would otherwise leave the issue permanently un-dispatchable.
+      lease.expiresAt = formatTimestampUtcFromMs(now.getTime() + DEFAULT_LEASE_TTL_MS);
     } else if (input.toState === "completed") {
       lease.completedAt = nowIsoStr;
       // NOTE: `expiresAt` is overloaded:

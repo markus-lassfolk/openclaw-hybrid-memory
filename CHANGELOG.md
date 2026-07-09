@@ -21,6 +21,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.184] - 2026-07-09
+
+### Fixed
+
+Loop iteration 118 — fixes a permanently-stuck-lease bug from the `services/` fresh-sweep findings: `task-queue-leases.ts`'s `transitionDispatchLease` cleared a running lease's TTL instead of refreshing it.
+
+- **`transitionDispatchLease(..., toState: "running")` set `lease.expiresAt = undefined`, with a comment reading "Refresh expiry while work is active" — but clearing it does the opposite of refreshing it.** `expireActiveLeases()` (the sweep that reclaims stuck leases) skips any active-state lease whose `expiresAt` doesn't parse to a finite number, and `blocksAcquire()` unconditionally blocks re-acquisition for any active state with no other time-based fallback. A worker that transitions a lease to `"running"` and then crashes or is killed before reaching a terminal state (`completed`/`failed`/`lease-expired`) leaves that issue permanently un-dispatchable — the lease can never be TTL-reclaimed, requiring manual intervention.
+- Fixed by setting `expiresAt` to `now + DEFAULT_LEASE_TTL_MS` (the same 30-minute default used for the initial `leased` state) instead of `undefined`, matching the code's own stated intent and restoring `expireActiveLeases()`'s ability to reclaim a stuck `running` lease.
+
+Regression test added (`tests/task-queue-leases.test.ts`): acquires a lease with a short (1s) TTL, transitions it to `running`, confirms it survives an expiry sweep run well past that original short TTL (proving the running-state refresh actually took effect), then confirms a sweep run past the refreshed 30-minute window does reclaim it (proving it isn't simply stuck forever). Verified via `git stash` to fail without the fix — the pre-fix code left the lease in `running` state indefinitely; the final assertion (`expiredCount === 1`) received `0` even 31 minutes after the running transition. tsc clean; biome clean (zero new findings on either changed file, verified against each file's pre-existing baseline — the one flagged import-order finding predates this change). Related suites (task-queue-leases, task-queue-watchdog, task-queue-leases-stale-lock-race): 48 passed, no regressions.
+
+Found via a fresh flat (non-recursive) sweep of `services/` (loop iteration 117); one more genuine finding from that sweep (`maintenance-log-analyzer.ts`'s `occurrence_count` aggregation always returning 1 instead of the true historical count) and 4 findings from the `cli/` sweep (missing exit codes, unvalidated CLI options) remain queued for upcoming iterations.
+
+---
+
 ## [2026.7.183] - 2026-07-09
 
 ### Fixed
