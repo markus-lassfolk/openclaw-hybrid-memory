@@ -21,6 +21,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.172] - 2026-07-09
+
+### Fixed
+
+- Hardened hybrid-memory reload teardown so database users drain before close/reuse, preventing stale teardown activity from destabilizing hot reloads and voice-call smoke validation paths.
+- Fixed closed database handle reuse during re-registration so repeated plugin reloads can reopen/re-register cleanly after prior teardown.
+
 ### Fixed
 
 - **Cron delivery safety (issue #2056):** plugin-owned `hybrid-mem:*` cron jobs no longer install in the unsafe `sessionTarget=isolated + payload.kind=agentTurn + delivery.mode=announce` shape (with no explicit `delivery.channel` and no `delivery.to`). The OpenClaw cron safety guard refuses delivery in that shape and records the run as `error` even when the body work succeeded (e.g. `digest-pending exit=0` plus `validate-cron-exit exit=0` plus `state.lastStatus=error`).
