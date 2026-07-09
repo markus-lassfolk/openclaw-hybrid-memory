@@ -21,6 +21,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.189] - 2026-07-09
+
+### Fixed
+
+Loop iteration 123 — fixes the fourth and final `cli/` fresh-sweep finding: `expire-by-source --decay-class` accepted any free-form string with no validation.
+
+- **`register-lifecycle.ts`'s `expire-by-source` command cast `opts.decayClass` directly to `DecayClass` (`(opts.decayClass ?? "short") as DecayClass`) with no runtime check against the `DECAY_CLASSES` enum.** `factsDb.expireBySourcePattern` writes this value straight into the `decay_class` column, a plain `TEXT NOT NULL` column with no CHECK constraint — `expire-by-source --pattern 'temp/*' --days 7 --apply --decay-class bogus` silently persisted `decay_class='bogus'` on every matched fact, an out-of-enum value that every downstream decay/TTL computation (`utils/decay.ts`'s `TTL_DEFAULTS[decayClass]`, decay-class stats breakdowns, `decay reclassify`) doesn't recognize. Every sibling CLI option in this codebase (`--policy`, `--scope`, `--format`) validates against an explicit allow-list before use; this was the one outlier.
+- Fixed by validating `decayClassRaw` against `DECAY_CLASSES` (already exported from `config.js`, the same enum `routes/graphql-resolvers.ts` validates against) before calling `expireBySourcePattern`, printing a clear error and setting `process.exitCode = 1` on an invalid value — matching the file's own existing `--days` validation pattern two lines above.
+
+Regression test added (new `tests/register-lifecycle-expire-by-source.test.ts`, using the real-`Command`/`parseAsync` harness already established in the sibling `tests/register-lifecycle-github-cli.test.ts`): asserts an invalid `--decay-class` prints the expected error, sets `process.exitCode = 1`, and never calls `factsDb.expireBySourcePattern`; companion tests confirm a valid `--decay-class` and the omitted-defaults-to-`"short"` case both still work. Verified via `git stash` to fail without the fix — the pre-fix code called `expireBySourcePattern` with the invalid value unguarded (surfacing as a `TypeError` on the undefined-mock-return in the test, since there was no validation to short-circuit it). tsc clean; biome clean (zero findings on either changed file, both before and after the fix). Related suites (register-lifecycle-expire-by-source, register-lifecycle-github-cli, facts-db): 209 passed, no regressions.
+
+This closes out the fresh flat sweep of `services/`, `tools/`, and `cli/` dispatched at loop iteration 117 — all 8 genuine findings from that sweep are now fixed (iterations 117-123).
+
+---
+
 ## [2026.7.188] - 2026-07-09
 
 ### Fixed
