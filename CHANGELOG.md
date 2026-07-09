@@ -21,6 +21,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.194] - 2026-07-09
+
+### Fixed
+
+Loop iteration 128 — first of two related findings from the `setup/`-adjacent portion of the sweep: a failed plugin registration leaked every database/service handle it had just opened.
+
+- **`setup/register-plugin.ts`'s `runMemoryHybridRegisterImpl` assigns `runtimeRef.value = newRuntime` before running `registerTools` / `registerHybridMemCliWithApi` / `registerLifecycleHooks`.** Each of those three steps was wrapped only in `try { ... } catch (err) { capturePluginError(...); throw err; }` — none of them closed the just-opened SQLite/LanceDB/service handles before rethrowing, even though this same file already has a reusable `closeOldDatabases()` cleanup helper (used for CLI teardown and reregister teardown elsewhere in this file). Per the file's own doc comment, a manifest/tool-installer drift (`openclaw.plugin.json#contracts.tools` out of sync with `setup/tool-installers.ts`) makes `registerTools` throw — every failed registration attempt (and every retry after one, e.g. a host re-invoking `register()`) leaked another full set of native database connections for the life of the process.
+- Fixed by adding `closeFailedRegistrationRuntime(runtime)`, a new helper mirroring `performHybridMemCliTeardown`'s cleanup shape (dispose lifecycle-hooks/tool-registration handles, close the vault registry, `closeOldDatabases()` on the full handle set, fire-and-forget python-bridge shutdown), called from all three catch blocks before rethrowing. Also resets `runtimeRef.value` back to `null` (guarded by an identity check) so a failed registration doesn't leave a half-wired, now-closed runtime installed where callers would hit "database not open" errors instead of a clean failure signal. Restoring `runtimeRef.value` to the prior (`old`) runtime was considered and rejected: when `reuseDatabases` is false, `old`'s teardown may already be scheduled/in-flight by this point, so pointing back at it risks handing out a closing/closed runtime instead of a working one.
+
+Regression test added (new `tests/register-plugin-failed-registration-cleanup.test.ts`, using the existing full-stack e2e harness from `tests/helpers/comprehensive-e2e-harness.ts`): makes the host's `registerTool` throw for a specific tool name (simulating the manifest-drift scenario), captures the in-flight `runtimeRef.value.factsDb` from inside that throwing callback (before the catch block can null the ref), and after the registration attempt throws, asserts `runtimeRef.value` is `null` and that the captured `factsDb` handle now throws "not open" on further use (proof it was actually closed, not just orphaned). Verified via `git stash` to fail without the fix — pre-fix, `runtimeRef.value` was still the half-wired runtime (a large non-null object) and the factsDb handle remained open. tsc clean; biome clean (identical pre-existing 2 errors/1 warning baseline on `register-plugin.ts` before and after; my own new test file's one formatting finding fixed directly via `biome check --write`). Related suites (register-plugin-failed-registration-cleanup, register-plugin-reload-teardown-drain, comprehensive-e2e, plugin-e2e, reregister-policy, plugin-service-startup, hybrid-memory-reload-coordinator, service-marker-cli-registration, memory-journey-e2e, cli-credentials-fast-path, hybrid-mem-version-only-fast-path, cli-help-hang): 117 passed, no regressions.
+
 ## [2026.7.193] - 2026-07-09
 
 ### Fixed
