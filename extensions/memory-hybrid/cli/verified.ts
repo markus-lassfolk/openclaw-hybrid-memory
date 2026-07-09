@@ -92,6 +92,7 @@ export function registerVerifiedCommands(mem: Chainable, ctx: VerifiedCliContext
           });
           if (opts?.json) console.log(JSON.stringify(result, null, 2));
           else printHumanTriage(result);
+          if (result.counts.failed > 0) process.exitCode = 1;
         } finally {
           store?.close();
         }

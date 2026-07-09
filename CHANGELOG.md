@@ -21,6 +21,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.188] - 2026-07-09
+
+### Fixed
+
+Loop iteration 122 — fixes the third `cli/` fresh-sweep finding: `verified triage` never converted a reported partial failure into a nonzero exit code.
+
+- **`cli/verified.ts`'s `verified triage` action prints `"...failed ${result.counts.failed}"` in its summary line, but never set `process.exitCode` based on it.** `result.counts.failed` counts items that landed in the `"failed-review"` bucket (e.g. a verified-fact row whose underlying fact was deleted/orphaned) — a genuine partial failure. Every sibling command in this codebase that reports a `failed`/`.failed > 0` count (`cli/goals.ts`, `cli/active-tasks.ts`, `cli/cmd-doctor.ts`, `register-credentials-scope.ts`) sets `process.exitCode = 1` when it's nonzero; `verified triage` was the one outlier that reported the failure count in its own printed summary but never propagated it to the exit code, so cron/CI automation checking the exit code would treat a partial failure as success.
+- Fixed by adding `if (result.counts.failed > 0) process.exitCode = 1;` after the result is printed (for both the JSON and human-readable output branches), matching the established convention.
+
+Regression test added (new `tests/verified-cli.test.ts`, using the same lightweight fake `Chainable` action-capture harness as `tests/task-queue-status.test.ts`): seeds a verified, due-for-reverification fact whose underlying `facts` row is then deleted (the same fixture `tests/verified-fact-triage.test.ts` already uses to force a `"failed-review"` classification), runs `triage`, and asserts `process.exitCode` becomes `1`; a companion test confirms it stays `undefined` when nothing fails. Verified via `git stash` to fail without the fix — the pre-fix code printed "failed 1" but left `process.exitCode` as `undefined`. tsc clean; biome clean (zero new findings on `cli/verified.ts`, verified against its pre-existing baseline; the new test file's own findings — a long-line format issue and the same `noNonNullAssertion` pattern used throughout this test-file family — were fixed/are consistent with established convention). Related suites (verified-cli, verified-fact-triage): 29 passed, no regressions.
+
+1 more `cli/` sweep finding remains queued: `register-lifecycle.ts`'s `expire-by-source --decay-class` accepts any free-form string with no validation against the `DECAY_CLASSES` enum.
+
+---
+
 ## [2026.7.187] - 2026-07-09
 
 ### Fixed
