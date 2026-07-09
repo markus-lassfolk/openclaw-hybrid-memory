@@ -253,4 +253,41 @@ describe("runVerifyForCli --reconcile", () => {
 
     expect(process.exitCode).toBe(1);
   });
+
+  it("does not report an unresolved-orphans issue when --fix fully rebuilds every SQLite orphan (loop iteration 113 regression)", async () => {
+    storeSqliteOnlyFacts(3);
+
+    const { runVerifyForCli } = await import("../cli/handlers.js");
+    const lines: string[] = [];
+    await runVerifyForCli(buildCtx() as never, { fix: true, reconcile: true }, { log: (m) => lines.push(m) });
+    const out = lines.join("\n");
+
+    expect(out).toContain("rebuilt 3/3 SQLite orphan vector(s)");
+    expect(out).toContain("Verified rebuild: 3/3 SQLite orphan vector(s) rebuilt.");
+    // Before the fix, this line was pushed as an unconditional "issue" even when every orphan
+    // was successfully rebuilt above — the false-failure report this regression test targets.
+    expect(out).not.toContain("SQLite fact(s) without corresponding vectors in LanceDB");
+    // Rebuilding via storeCanonicalVectorForFact (instead of a bare vectorDb.store call) also
+    // keeps the SQLite fact_embeddings canonical count in sync with LanceDB, so the unrelated
+    // Storage sync section's embedding-drift check does not immediately re-fail right after.
+    expect(out).not.toContain("Embedding drift:");
+  });
+
+  it("still reports an unresolved-orphans issue when --fix only partially rebuilds SQLite orphans due to --reconcile-max-fixes (loop iteration 113 regression)", async () => {
+    storeSqliteOnlyFacts(10);
+
+    const { runVerifyForCli } = await import("../cli/handlers.js");
+    const lines: string[] = [];
+    await runVerifyForCli(
+      buildCtx() as never,
+      { fix: true, reconcile: true, reconcilePolicy: "aggressive", reconcileMaxFixes: 3 },
+      { log: (m) => lines.push(m) },
+    );
+    const out = lines.join("\n");
+
+    expect(out).toContain("rebuilt 3/3 SQLite orphan vector(s)");
+    expect(out).toContain("Skipped 7 SQLite orphan(s) due to --reconcile-max-fixes budget.");
+    // Partial rebuild must NOT be reported as a verified success.
+    expect(out).not.toContain("Verified rebuild:");
+  });
 });
