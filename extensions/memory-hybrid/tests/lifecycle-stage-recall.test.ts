@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { runRecallStage } from "../lifecycle/stage-recall.js";
 import { runRecall } from "../lifecycle/stage-recall/run-recall.js";
+import { capturePluginError } from "../services/error-reporter.js";
 import { INTERACTIVE_RECALL_STAGE_TIMEOUT_MS } from "../services/retrieval-mode-policy.js";
 import * as recallPipeline from "../services/recall-pipeline.js";
 import { estimateTokens } from "../utils/text.js";
@@ -28,6 +29,11 @@ vi.mock("../services/recall-pipeline.js", async (importOriginal) => {
   };
 });
 
+vi.mock("../services/error-reporter.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/error-reporter.js")>();
+  return { ...actual, capturePluginError: vi.fn() };
+});
+
 describe("runRecallStage", () => {
   let tmpDir: string;
   let factsDb: FactsDB;
@@ -36,6 +42,7 @@ describe("runRecallStage", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "lifecycle-stage-recall-"));
     factsDb = new FactsDB(join(tmpDir, "facts.db"));
     vi.mocked(recallPipeline.runRecallPipelineQuery).mockReset();
+    vi.mocked(capturePluginError).mockClear();
   });
 
   afterEach(() => {
@@ -220,6 +227,46 @@ describe("runRecallStage", () => {
         expect(result.prependContext).toContain("recall degraded: timeout");
       }
       expect(ctx.recallInFlightRef.value).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resolves instead of hanging when the timeout-fallback degraded recall itself throws (loop iteration 111 regression)", async () => {
+    vi.useFakeTimers();
+    try {
+      const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
+      // auditStore.append is called unconditionally inside buildDegradedFtsHotRecallStage's
+      // synchronous (no-await) body, so throwing here reliably faults the timeout-fallback path
+      // without racing the main (hung) recall path, which already passed its own auditStore call
+      // point long before the pipeline mock below ever settles.
+      ctx.auditStore = {
+        append: vi.fn(() => {
+          throw new Error("simulated auditStore.append failure");
+        }),
+      } as unknown as typeof ctx.auditStore;
+      vi.mocked(recallPipeline.runRecallPipelineQuery).mockImplementation((_q, _l, _d, _h, opts) => {
+        return new Promise((resolve) => {
+          const onAbort = () => resolve([]);
+          if (opts?.stageSignal?.aborted) {
+            onAbort();
+            return;
+          }
+          opts?.stageSignal?.addEventListener("abort", onAbort, { once: true });
+        });
+      });
+      const sessionState = makeRecallSessionState();
+      const api = makeMockStageApi();
+
+      const pending = runRecallStage({ prompt: "long running recall query here" }, api as never, ctx, sessionState);
+      await vi.advanceTimersByTimeAsync(INTERACTIVE_RECALL_STAGE_TIMEOUT_MS + 1);
+      const result = await pending;
+
+      expect(result).toEqual({ kind: "empty", prependContext: undefined });
+      expect(capturePluginError).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringContaining("simulated auditStore.append failure") }),
+        expect.objectContaining({ operation: "recall-timeout-fallback", subsystem: "stage-recall" }),
+      );
     } finally {
       vi.useRealTimers();
     }
