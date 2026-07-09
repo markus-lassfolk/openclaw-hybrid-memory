@@ -241,6 +241,56 @@ describe("CredentialsDB cross-instance", () => {
     expect(() => db2.get("test", "api_key")).toThrow();
     db2.close();
   });
+
+  it("store() adopts a concurrent process's v1->v2 migration instead of writing with a stale v1 key (loop iteration 116 regression)", () => {
+    const dbPath = join(tmpDir, "race.db");
+
+    // Hand-craft a legacy v1 vault on disk: one credential encrypted with the v1 key derivation
+    // (salt = empty buffer, matching the constructor's own v1 bootstrap in credentials-db.ts),
+    // and no vault_meta rows at all -- exactly what a real pre-migration vault looks like.
+    const v1Key = deriveKey(TEST_ENCRYPTION_KEY, Buffer.alloc(0), 1);
+    const raw = new DatabaseSync(dbPath);
+    raw.exec("CREATE TABLE IF NOT EXISTS vault_meta (key TEXT PRIMARY KEY, value BLOB NOT NULL)");
+    raw.exec(
+      `CREATE TABLE IF NOT EXISTS credentials (
+         service TEXT NOT NULL, type TEXT NOT NULL DEFAULT 'other', value BLOB NOT NULL,
+         url TEXT, notes TEXT, created INTEGER NOT NULL, updated INTEGER NOT NULL, expires INTEGER,
+         PRIMARY KEY (service, type)
+       )`,
+    );
+    const now = Math.floor(Date.now() / 1000);
+    raw
+      .prepare(
+        "INSERT INTO credentials (service, type, value, url, notes, created, updated, expires) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run("legacy-svc", "api_key", encryptValue("legacy-secret", v1Key), null, null, now, now, null);
+    raw.close();
+
+    // Two independent instances pointed at the same file -- simulates two processes (e.g. the
+    // gateway and a concurrent CLI invocation) that both loaded the vault before either migrated.
+    const dbA = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+    const dbB = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+    expect(dbA.getVaultStatus().kdfVersion).toBe(1);
+    expect(dbB.getVaultStatus().kdfVersion).toBe(1);
+
+    // dbA's get() triggers the lazy v1 -> v2 migration: new salt/key, vault_meta rewritten to v2.
+    expect(dbA.get("legacy-svc", "api_key")?.value).toBe("legacy-secret");
+    expect(dbA.getVaultStatus().kdfVersion).toBe(2);
+
+    // dbB never saw the migration -- its in-memory key/version are still stale v1. Before the
+    // fix, store() encrypted with that stale key while vault_meta on disk already said v2,
+    // permanently breaking decryption for this credential.
+    expect(dbB.getVaultStatus().kdfVersion).toBe(1);
+    dbB.store({ service: "new-svc", type: "api_key", value: "new-secret" });
+
+    dbA.close();
+    dbB.close();
+
+    // Re-open fresh: derives the real (v2) key from the vault_meta salt now on disk.
+    const dbC = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+    expect(dbC.get("new-svc", "api_key")?.value).toBe("new-secret");
+    dbC.close();
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -903,6 +903,30 @@ export class CredentialsDB extends BaseSqliteStore {
   }
 
   /**
+   * If another process's `migrateLegacyVault()` already moved the on-disk vault from v1 to v2
+   * since this instance last checked, adopt its new salt/key before encrypting anything with
+   * our stale in-memory v1 key. Without this, a store() racing a concurrent migration writes a
+   * value encrypted with the old key while `vault_meta.kdf_version` already says v2, permanently
+   * breaking decryption for that credential (every future read derives the v2 key).
+   */
+  private maybeAdoptExternalVaultMigration(): void {
+    if (this.kdfVersion !== 1 || !this.password) return;
+    const versionRow = this.liveDb.prepare("SELECT value FROM vault_meta WHERE key = 'kdf_version'").get() as
+      | { value: Uint8Array | Buffer }
+      | undefined;
+    if (!versionRow || toBuffer(versionRow.value)[0] !== CRED_KDF_VERSION) return;
+    const saltRow = this.liveDb.prepare("SELECT value FROM vault_meta WHERE key = 'salt'").get() as
+      | { value: Uint8Array | Buffer }
+      | undefined;
+    if (!saltRow) return;
+    const newSalt = toBuffer(saltRow.value);
+    this.salt = newSalt;
+    this.key = deriveKeyV2(this.password, newSalt);
+    this.kdfVersion = CRED_KDF_VERSION;
+    this.password = null;
+  }
+
+  /**
    * Insert or update a credential. On conflict (service, type), `updated` and value fields refresh;
    * `created` is preserved from the original row — intentional for "same key, rotated secret" flows (#894).
    */
@@ -915,6 +939,7 @@ export class CredentialsDB extends BaseSqliteStore {
     expires?: number | null;
   }): CredentialEntry {
     assertValidCredentialType(entry.type);
+    this.maybeAdoptExternalVaultMigration();
     const now = Math.floor(Date.now() / 1000);
     const stored = this.storesEncryptedValues ? encryptValue(entry.value, this.key) : Buffer.from(entry.value, "utf8");
     this.liveDb
@@ -1043,6 +1068,7 @@ export class CredentialsDB extends BaseSqliteStore {
     expires?: number | null;
   }): CredentialEntry | null {
     assertValidCredentialType(entry.type);
+    this.maybeAdoptExternalVaultMigration();
     // Check for a legacy cross-variant (underscore ↔ hyphen) before inserting so we
     // don't create a parallel entry alongside an existing differently-named one.
     const legacyVariant = entry.service.includes("_")
