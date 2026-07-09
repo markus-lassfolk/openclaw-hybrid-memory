@@ -21,6 +21,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.196] - 2026-07-09
+
+### Fixed
+
+Loop iteration 130 — first finding from a fresh flat sweep round (lifecycle/api, cli/, services/) dispatched after closing out the backends/routes/setup sweep: `hybrid-mem mine --scope` silently orphaned imported data.
+
+- **`cli/cmd-mine.ts`'s `executeMineCommand` typed `opts.scope` as `"global" | "user" | "agent" | "session"` but never validated it at runtime** — Commander passes through whatever string the user types regardless of the TS type. `mineScope = opts.scope ?? "global"` (and the mirrored `--undo` path's `undoScope`) is stored directly into `facts.scope`/matched against it, and every scope-filtered query elsewhere in the codebase (links, scope-sql) matches only the four exact literals. `hybrid-mem mine transcript.json --scope tenant-a --scope-target tenant-a` (a plausible typo for `--scope agent --scope-target tenant-a`) stored facts with `scope='tenant-a'`, which never matches any real scope filter — the imported facts became permanently unreachable via recall/search, silently "lost" (though still soft-deletable via `mine --undo`, since that path independently re-derives the same unchecked scope string). Sibling command `skills.ts` already validates this exact enum before use, confirming the omission here was a gap.
+- Fixed by validating `opts.scope` against the same four literals at the very top of `executeMineCommand` (covering both the mine and `--undo` paths, since both derive their scope from the same option), printing a clear error and calling `process.exit(1)` — matching this file's own existing validation style for its other guard clauses.
+
+Regression test added (`tests/cmd-mine.test.ts`, new `describe` block): asserts an invalid `--scope` (with a `--scope-target` provided, isolating this from the pre-existing "scopeTarget required for non-global scope" guard in `backends/facts-db/crud.ts`) prints the expected error, calls `process.exit(1)`, and stores zero facts; a companion test confirms a valid non-global `--scope` still works. Verified via `git stash` to fail without the fix — pre-fix, the command printed `facts created: 1` and stored the fact under the bogus scope. tsc clean; biome clean (same pre-existing 4 errors/1 warning baseline on both changed files before and after — all pre-existing long-line formatting drift unrelated to this change; my own new test code's one indentation slip was caught and fixed directly). Related suites (cmd-mine): 8 passed, no regressions.
+
+Two more flat sweep rounds (lifecycle/+api/, services/ remaining files) also completed and surfaced 7 additional genuine findings, tracked for upcoming iterations: three session-state-map-cleared-every-turn bugs in `lifecycle/session-state.ts` (change-notify dedup, frustration-trend accumulation, revert-target resolution — all sharing one root cause), and four independent findings in `services/` (`multi-vault-retrieval.ts`'s `Promise.all` aborting all vaults on one failure, `sensor-sweep.ts`'s Home Assistant fan-out with the same fail-fast pattern, `cross-agent-learning.ts`'s always-on wildcard tag defeating agent-scoped lesson filtering, `memory-nudge.ts`'s `evictOldestSession` evicting by insertion order instead of last-touched order).
+
 ## [2026.7.195] - 2026-07-09
 
 ### Fixed

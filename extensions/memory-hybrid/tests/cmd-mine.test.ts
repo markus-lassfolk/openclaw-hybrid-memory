@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
 import { executeMineCommand } from "../cli/cmd-mine.js";
 
@@ -48,6 +48,44 @@ describe("executeMineCommand scope", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].scope).toBe("user");
     expect(rows[0].scope_target).toBe("user-42");
+  });
+});
+
+describe("executeMineCommand --scope validation (loop iteration 130 regression)", () => {
+  it("rejects an invalid --scope instead of silently storing unreachable facts", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit called");
+    }) as never);
+
+    await expect(
+      executeMineCommand(
+        transcriptPath,
+        { source: "text", scope: "tenant-a" as never, scopeTarget: "tenant-a" },
+        factsDb,
+      ),
+    ).rejects.toThrow("process.exit called");
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(errSpy.mock.calls.some((c) => String(c[0]).includes("invalid --scope"))).toBe(true);
+    const rows = factsDb.getRawDb().prepare("SELECT id FROM facts WHERE source LIKE 'mine:%'").all();
+    expect(rows).toHaveLength(0);
+
+    errSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
+
+  it("still accepts a valid --scope", async () => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit called");
+    }) as never);
+
+    await expect(
+      executeMineCommand(transcriptPath, { source: "text", scope: "agent", scopeTarget: "agent-1" }, factsDb),
+    ).resolves.toBeUndefined();
+
+    expect(exitSpy).not.toHaveBeenCalled();
+    exitSpy.mockRestore();
   });
 });
 
