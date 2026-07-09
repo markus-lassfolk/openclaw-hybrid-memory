@@ -21,6 +21,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.193] - 2026-07-09
+
+### Fixed
+
+Loop iteration 127 — fourth finding from the fresh `backends/`+`routes/` sweep: the Mission Control dashboard's Workflows view misreported success rates for most traces.
+
+- **`routes/dashboard/collectors.ts`'s `collectMemoryViewerWorkflows` looked up each trace's success rate via `patterns.find((p) => JSON.stringify(p.toolSequence) === JSON.stringify(t.toolSequence))`.** `WorkflowStore.getPatterns()` clusters traces by *similarity* (Levenshtein-based `sequenceSimilarity`, default threshold 0.8) and each returned `WorkflowPattern.toolSequence` is only the representative (first-seen) member's exact sequence, not every member's. Two traces that differ by one tool call still land in the same cluster with a real aggregate success rate, but the exact-equality lookup only matched the one trace that happened to equal the representative — every other member of the cluster silently fell back to `successRate: 0`, understating workflow health on the dashboard for the common case (most traces in a cluster are *not* the representative).
+- Fixed by matching with the same similarity predicate `getPatterns` itself uses to decide cluster membership (`sequenceSimilarity(p.toolSequence, t.toolSequence) >= threshold`, reusing the already-exported `sequenceSimilarity` helper) instead of exact `JSON.stringify` equality — no new DB queries or clustering logic, just the correct predicate applied to data already fetched.
+
+Regression test added (new `tests/dashboard-workflow-collector-success-rate.test.ts`, using a real `WorkflowStore` against a temp SQLite file): records one representative trace (failure) and two near-identical variant traces (success, one substitution out of 10 tool calls — similarity 0.9, above the 0.8 clustering threshold), asserts all three traces report the correct cluster-aggregate rate (2/3); a second test confirms a singleton cluster still reports its own real rate. Verified via `git stash` to fail without the fix — the two variant traces reported `0` instead of `0.667`. tsc clean; biome clean (same 2 pre-existing formatting/import errors on `collectors.ts` before and after; my own new test file's one import-order finding fixed directly via `biome check --write`). Related suites (dashboard-workflow-collector-success-rate, workflow-store, workflow-tracker, dashboard-server): 182 passed, no regressions.
+
 ## [2026.7.192] - 2026-07-09
 
 ### Fixed

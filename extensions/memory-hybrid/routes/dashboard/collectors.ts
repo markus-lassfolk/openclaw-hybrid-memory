@@ -25,7 +25,7 @@ import { escapeLikeLiteralForBackslashEscape } from "../../backends/facts-db/ent
 import type { IssueStore } from "../../backends/issue-store.js";
 import type { NarrativesDB } from "../../backends/narratives-db.js";
 import type { VectorDB } from "../../backends/vector-db.js";
-import type { WorkflowStore } from "../../backends/workflow-store.js";
+import { sequenceSimilarity, type WorkflowStore } from "../../backends/workflow-store.js";
 import type { EvolutionStats } from "../../services/evolution-stats.js";
 import { collectEvolutionStats } from "../../services/evolution-stats.js";
 import { readOpenClawCronStore } from "../../services/openclaw-cron-store.js";
@@ -1011,7 +1011,12 @@ export function collectMemoryViewerWorkflows(ctx: DashboardContext, limit = 100)
   try {
     if (!ctx.workflowStore) return [];
     const traces = ctx.workflowStore.list({ limit });
-    const patterns = ctx.workflowStore.getPatterns({ limit: 20 });
+    // getPatterns clusters by similarity (default threshold 0.8), so each pattern's
+    // `toolSequence` is only the representative (first-seen) member's sequence -- exact
+    // JSON.stringify equality against it would miss every other trace in the same cluster.
+    // Match with the same similarity predicate getPatterns itself uses for clustering.
+    const patternSimilarityThreshold = 0.8;
+    const patterns = ctx.workflowStore.getPatterns({ limit: 20, similarityThreshold: patternSimilarityThreshold });
     const result: MemoryViewerWorkflow[] = traces.map((t) => ({
       id: t.id,
       goal: t.goal,
@@ -1020,7 +1025,8 @@ export function collectMemoryViewerWorkflows(ctx: DashboardContext, limit = 100)
       toolCount: t.toolCount,
       durationMs: t.durationMs,
       successRate:
-        patterns.find((p) => JSON.stringify(p.toolSequence) === JSON.stringify(t.toolSequence))?.successRate ?? 0,
+        patterns.find((p) => sequenceSimilarity(p.toolSequence, t.toolSequence) >= patternSimilarityThreshold)
+          ?.successRate ?? 0,
       sessionId: t.sessionId,
       createdAt: t.createdAt,
     }));
