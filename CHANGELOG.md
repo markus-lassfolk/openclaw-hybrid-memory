@@ -21,6 +21,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.185] - 2026-07-09
+
+### Fixed
+
+Loop iteration 119 — fixes the remaining `services/` fresh-sweep finding: `maintenance-log-analyzer.ts`'s persisted occurrence count always reported 1 regardless of true history.
+
+- **`loadPersistedMaintenanceFindingLedger`'s SQL aggregated `MAX(occurrence_count) AS occurrence_count` per fingerprint, but every row `persistMaintenanceFindings` ever writes stores `occurrence_count = f.occurrenceCount ?? 1`.** The only caller (`register-analyze-maintenance-logs.ts`) always persists the *raw*, never-summarized findings array — the correctly-aggregated `summarized.findings` (which does compute a real running `occurrenceCount`) is only used for the report/digest, never passed to `persistMaintenanceFindings`. So every persisted row's `occurrence_count` column is always `1`, and `MAX()` over an all-1s column always yields `1` — a recurring failure with the same fingerprint occurring daily for 30 days produces 30 distinct rows, but the digest reports "Seen 2 times" (1 from the always-1 `MAX` plus 1 from that day's new occurrence) instead of "Seen 31 times," severely understating the chronicity of a long-running recurring failure.
+- Fixed by aggregating `COUNT(*) AS occurrence_count` instead — the number of persisted rows for a fingerprint, matching how `MIN`/`MAX(occurred_at)` already correctly aggregate over the same row-set in the same query. The per-row `occurrence_count` column and its `?? 1` write-side default are untouched (a correctly-accurate per-row value); the bug was purely in the read-side aggregation choice.
+
+Regression test added (`tests/maintenance-log-analyzer.test.ts`): persists 3 separate rows for the same fingerprint (simulating 3 daily cron runs), then summarizes 1 new occurrence, and asserts the resulting `occurrenceCount` is `4` (3 historical + 1 new). The existing sibling test ("collapses repeated fingerprints...", asserting `occurrenceCount === 3` with only 1 historical row) continues to pass unchanged — `MAX()` and `COUNT(*)` are indistinguishable in the single-row case, which is exactly why that test didn't catch this bug. Verified via `git stash` to fail without the fix — the pre-fix code returned `2` instead of `4`. tsc clean; biome clean (zero new findings on either changed file, verified against each file's pre-existing baseline). Related suites (maintenance-log-analyzer, maintenance-log-parse): 55 passed, no regressions.
+
+This closes out both `services/` fresh-sweep findings from loop iteration 117 (the other was iteration 118's `task-queue-leases.ts` fix). 4 findings from the `cli/` sweep remain queued: missing exit codes on `task-queue-touch --repair`/`verified triage`, and unvalidated `--tier`/`--decay-class` CLI options.
+
+**Full-suite checkpoint (every 10 iterations, per agreement):** ran the complete `npx vitest run` suite at this iteration to catch anything the targeted per-iteration runs might have missed across 8 iterations of changes (111-119) — see commit for the result.
+
+---
+
 ## [2026.7.184] - 2026-07-09
 
 ### Fixed

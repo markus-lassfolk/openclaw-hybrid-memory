@@ -1032,6 +1032,65 @@ describe("maintenance log analyzer", () => {
     expect(report.digestMd).toContain("Seen 3 times");
   });
 
+  it("counts every persisted row for a fingerprint, not just the always-1 occurrence_count column (loop iteration 119 regression)", () => {
+    const dbPath = join(tmpRoot(), "maintenance-findings.db");
+    const now = Math.floor(Date.UTC(2026, 5, 1, 6, 0, 0) / 1000);
+
+    // Simulate 3 separate `analyze-maintenance-logs` cron runs recording the same recurring
+    // fingerprint over 3 days -- each call to persistMaintenanceFindings passes RAW (never
+    // summarized) findings whose occurrenceCount is always undefined, so every row's own
+    // occurrence_count column value is 1 regardless of how many rows already exist for that
+    // fingerprint. Before the fix, MAX(occurrence_count) over 3 such rows still yields 1.
+    for (let day = 3; day >= 1; day--) {
+      persistMaintenanceFindings(dbPath, [
+        {
+          id: `daily-${day}`,
+          occurredAt: now - day * 24 * 3600,
+          job: "nightly",
+          step: "distill",
+          exitCode: 1,
+          classification: "plugin-bug",
+          ruleId: "plugin-type-error",
+          fingerprint: "fp-recurring",
+          logExcerpt: "TypeError",
+          logPath: `/tmp/daily-${day}.log`,
+          pluginVersion: null,
+          actionTaken: "reported-glitchtip",
+          suggestedAction: "fix",
+          severity: "high",
+        },
+      ]);
+    }
+
+    const summarized = summarizeMaintenanceFindings(
+      [
+        {
+          id: "today",
+          occurredAt: now,
+          job: "nightly",
+          step: "distill",
+          exitCode: 1,
+          classification: "plugin-bug",
+          ruleId: "plugin-type-error",
+          fingerprint: "fp-recurring",
+          logExcerpt: "TypeError",
+          logPath: "/tmp/today.log",
+          pluginVersion: null,
+          actionTaken: "glitchtip+digest",
+          suggestedAction: "fix",
+          severity: "high",
+        },
+      ],
+      { dbPath, historicalCutoffSec: now - 30 * 24 * 3600 },
+    );
+
+    // 3 historical rows + 1 new occurrence this run = 4. Before the fix this reported 2
+    // (1 from the always-1 MAX(occurrence_count) + 1 from today's single new occurrence),
+    // severely understating how often this fingerprint has actually recurred.
+    const finding = summarized.findings.find((f) => f.fingerprint === "fp-recurring");
+    expect(finding?.occurrenceCount).toBe(4);
+  });
+
   it("persists raw occurrences while reporting summarized current findings", async () => {
     const root = tmpRoot();
     const nowMs = Date.now() - 2 * 60 * 60 * 1000;
