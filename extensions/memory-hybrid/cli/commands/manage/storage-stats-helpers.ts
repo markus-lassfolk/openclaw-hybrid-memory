@@ -361,6 +361,32 @@ export function buildHybridSearchScopeFilter(scope?: string, scopeTarget?: strin
 }
 
 /**
+ * Validate `hybrid-mem search --scope/--scope-target` CLI options before they reach
+ * `buildHybridSearchScopeFilter`.
+ *
+ * SECURITY: `--scope user|agent|session` with no `--scope-target` builds a filter with
+ * userId/agentId/sessionId all falsy, which `scopeFilterClausePositional`/`filterByScope` treat
+ * as "no restriction" — silently searching every tenant's facts instead of erroring. Mirrors the
+ * identical guard already present on `register-credentials-scope.ts`'s `prune` command.
+ */
+export function validateSearchScopeOption(
+  scope: string | undefined,
+  scopeTarget: string | undefined,
+): { ok: true } | { ok: false; error: string } {
+  if (!scope) return { ok: true };
+  if (scope !== "global" && !["user", "agent", "session"].includes(scope)) {
+    return { ok: false, error: "--scope must be one of global/user/agent/session" };
+  }
+  if (scope === "global" && scopeTarget) {
+    return { ok: false, error: "--scope-target is not allowed when --scope=global" };
+  }
+  if (scope !== "global" && !scopeTarget) {
+    return { ok: false, error: `--scope-target is required when --scope=${scope}` };
+  }
+  return { ok: true };
+}
+
+/**
  * Resolve the stop-word list for `hybrid-mem entities clean --stopwords`.
  *
  * `--stopwords` is a plain (non-negated) boolean Commander option, so `stopwordsFlag` is only

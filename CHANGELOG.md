@@ -21,6 +21,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.174] - 2026-07-09
+
+### Fixed
+
+Loop iteration 108 — fixes the top item from the "Deferred (fresh sweep, loop iteration 103)" backlog: `hybrid-mem search --scope user|agent|session` silently ignored scope when `--scope-target` was omitted.
+
+- **`cli/commands/manage/storage-stats-helpers.ts`'s `buildHybridSearchScopeFilter` built `{ userId: null }`/`{ agentId: null }`/`{ sessionId: null }` when `--scope user|agent|session` was passed without `--scope-target`.** `scopeFilterClausePositional`/`filterByScope` treat a filter with all of `userId`/`agentId`/`sessionId` falsy as "no restriction" (matches every scope) — the same trap `globalOnlyScopeFilter()` was introduced to close for `--scope global` (iteration 95), but never patched for the `user`/`agent`/`session` case. `hybrid-mem search "foo" --scope user` (forgetting `--scope-target`, an easy operator mistake since it's a separate flag) silently returned matches from every user/agent/session instead of erroring or restricting to nothing.
+- Fixed by extracting the validation `register-credentials-scope.ts`'s `prune` command already applies for this exact input shape (reject non-global scope with no scope-target; reject scope-target alongside global) into a new, directly-testable `validateSearchScopeOption()` helper, and wiring `register-storage-entities-decay.ts`'s `search` command to call it before `buildHybridSearchScopeFilter`, exiting with a clear error and non-zero exit code on an invalid combination — matching the sibling command's established pattern instead of leaving `search` as the one outlier with no guard.
+
+Regression tests added (`tests/storage-stats-helpers-scope-filter.test.ts`): unit tests cover every valid/invalid `(scope, scopeTarget)` combination for `validateSearchScopeOption`; an end-to-end test seeds two different users' private facts and demonstrates that `buildHybridSearchScopeFilter("user", undefined)` alone (bypassing the new guard) would return both — proving why the guard has to run first, and asserting it correctly flags this exact input as invalid. Verified via `git stash` to fail without the fix — all 7 new/changed tests failed with `validateSearchScopeOption is not a function` against the pre-fix code. tsc clean; biome clean (zero new findings across all 3 changed files, verified against each file's pre-existing baseline — the 6 pre-existing unused-variable warnings in `register-storage-entities-decay.ts` predate this change). Related suites (storage-stats-helpers-scope-filter): 15 passed, no regressions.
+
+---
+
 ## [2026.7.173] - 2026-07-09
 
 ### Fixed
