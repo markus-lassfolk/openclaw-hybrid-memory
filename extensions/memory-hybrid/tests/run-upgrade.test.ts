@@ -169,6 +169,34 @@ describe("runUpgrade helpers", () => {
     expect(existsSync(projectRoot)).toBe(true);
   });
 
+  it("removeRedundantNpmProjectTreeWhenExtensionsCanonical refuses to delete when the npm-project version can't be read (loop iteration 114 regression)", () => {
+    const projectRoot = join(tmp, "npm-projects", "openclaw-hybrid-memory");
+    const npmPluginDir = join(projectRoot, "node_modules", "openclaw-hybrid-memory");
+    const extDir = join(tmp, "extensions", "openclaw-hybrid-memory");
+    for (const dir of [npmPluginDir, extDir]) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "openclaw.plugin.json"), "{}");
+    }
+    writeFileSync(
+      join(projectRoot, "package.json"),
+      JSON.stringify({ dependencies: { "openclaw-hybrid-memory": "2026.6.261" } }),
+    );
+    // No package.json under npmPluginDir at all — readPluginPackageVersion returns undefined.
+    // Before the fix, an unreadable version fell through the `npmVer && ...` guard (a falsy
+    // npmVer short-circuits the comparison instead of blocking it) straight into the
+    // unconditional, unrecoverable removal below.
+    writeFileSync(join(extDir, "package.json"), JSON.stringify({ version: "2026.6.291" }));
+
+    const res = removeRedundantNpmProjectTreeWhenExtensionsCanonical({
+      extensionsPluginDir: extDir,
+      npmProjectPluginDir: npmPluginDir,
+    });
+    expect(res.attempted).toBe(false);
+    expect(res.removed).toBe(false);
+    expect(res.skippedReason).toBe("npm-project-version-unreadable");
+    expect(existsSync(projectRoot)).toBe(true);
+  });
+
   it("removeRedundantNpmProjectTreeWhenExtensionsCanonical skips when the target dir is itself npm-project layout (#2021)", () => {
     const projectRoot = join(tmp, "npm-projects", "openclaw-hybrid-memory");
     const npmPluginDir = join(projectRoot, "node_modules", "openclaw-hybrid-memory");
