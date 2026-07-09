@@ -21,6 +21,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.186] - 2026-07-09
+
+### Fixed
+
+Loop iteration 120 — fixes the first of 4 `cli/` fresh-sweep findings: `task-queue-touch --repair` reported a clear failure to stderr but always exited 0.
+
+- **`cli/task-queue-status.ts`'s `task-queue-touch --repair` action printed `"✗ current.json is malformed..."` to stderr and returned when `current.json` failed to parse as JSON, but never set `process.exitCode`.** The action isn't wrapped in any exit-code-propagating helper, and Node defaults to exit code 0, so `openclaw hybrid-mem task-queue-touch --repair` run against a corrupted `current.json` from cron/automation reports success (exit 0) despite the visible failure message — inconsistent with every other reachable-failure path in this codebase's CLI commands, which set `process.exitCode = 1` before returning.
+- Fixed by adding `process.exitCode = 1;` before the early return.
+
+Regression test added (new `tests/task-queue-status.test.ts`, using a lightweight fake `Chainable` command-registration harness to capture the `task-queue-touch` action callback without needing a real Commander program): asserts `process.exitCode` becomes `1` when `current.json` is malformed, and stays `undefined` for the valid-JSON path. Verified via `git stash` to fail without the fix — the pre-fix code left `process.exitCode` as `undefined`. tsc clean; biome clean (zero new findings on `cli/task-queue-status.ts`, verified against its pre-existing baseline; the new test file's own import-order finding was fixed directly since it's new code, leaving only the same `noNonNullAssertion` warning pattern already used throughout `tests/fact-mutation-gateway.test.ts`). Related suites (task-queue-status, task-queue-watchdog): 42 passed, no regressions.
+
+3 more `cli/` sweep findings remain queued: `register-sensor-sweep.ts`'s unvalidated `--tier`, `verified.ts triage`'s missing exit code on partial failures, and `register-lifecycle.ts`'s unvalidated `--decay-class`.
+
+**Full-suite checkpoint**: the background `npx vitest run` kicked off at iteration 119 is still running as of this entry; results will be reported once it completes.
+
+---
+
 ## [2026.7.185] - 2026-07-09
 
 ### Fixed
