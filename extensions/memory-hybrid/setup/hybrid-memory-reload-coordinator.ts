@@ -18,12 +18,44 @@ export const RECALL_DRAIN_MS = 2_000;
 const TEARDOWN_MIN_WAIT_MS = RECALL_DRAIN_MS + BOOTSTRAP_DRAIN_MS + RECALL_DRAIN_MS + 1_000;
 export const TEARDOWN_WAIT_MS = Math.max(6_000, TEARDOWN_MIN_WAIT_MS);
 
+/**
+ * Soft grace window: if teardown doesn't drain within this budget, callers that are about to
+ * reuse donor handles (reuse-databases policy) should fall back to a fresh open instead of
+ * inheriting indeterminate closed handles (#2058 / #2059 supplement).
+ */
+export const TEARDOWN_SOFT_WAIT_MS = Math.max(3_000, RECALL_DRAIN_MS + BOOTSTRAP_DRAIN_MS + 1_000);
+
+/**
+ * Tracks the registration generation each scheduled teardown belongs to. The new
+ * registration wants to wait for teardowns scheduled by the **prior** generation
+ * (the one it's about to supersede), not for teardowns scheduled by itself or
+ * later generations. This prevents the gate from deadlocking when a re-register
+ * overlap-queues another re-register (e.g. rapid voice-call config hot reloads).
+ */
+type ScheduledTeardown = {
+  /** Registration generation that owns the donor runtime being torn down. */
+  donorGeneration: number;
+  /** Resolved when this individual teardown has finished (success or error). */
+  done: Promise<void>;
+};
+let scheduledTeardowns: ScheduledTeardown[] = [];
+
 /** Serializes plugin teardown (bootstrap settle → close DBs) across hot reloads (#1550 / reload race). */
 let reloadTeardownChain: Promise<void> = Promise.resolve();
 let reloadTeardownQueueDepth = 0;
 
-export function schedulePluginTeardown(teardown: () => Promise<void>): void {
+export function schedulePluginTeardown(
+  teardown: () => Promise<void>,
+  options?: { donorGeneration?: number },
+): void {
   reloadTeardownQueueDepth += 1;
+  const donorGeneration = options?.donorGeneration ?? -1;
+  let resolveDone: () => void = () => {};
+  const done = new Promise<void>((resolve) => {
+    resolveDone = resolve;
+  });
+  const entry: ScheduledTeardown = { donorGeneration, done };
+  scheduledTeardowns.push(entry);
   reloadTeardownChain = reloadTeardownChain
     .catch(() => {
       /* keep chain alive; next teardown still must run */
@@ -39,8 +71,54 @@ export function schedulePluginTeardown(teardown: () => Promise<void>): void {
         });
       } finally {
         reloadTeardownQueueDepth = Math.max(0, reloadTeardownQueueDepth - 1);
+        // Always resolve so awaiters can move on, regardless of teardown outcome.
+        resolveDone();
       }
     });
+  // Defensive: also resolve done when the chain itself settles, even if the
+  // .then() above never runs (shouldn't happen, but belt-and-suspenders for
+  // generation tracking — never leave an entry stuck "pending").
+  void reloadTeardownChain.finally(() => resolveDone());
+  // Auto-remove the entry once it's done so isTeardownDrainedForGeneration flips back to true.
+  void done.then(() => {
+    scheduledTeardowns = scheduledTeardowns.filter((e) => e !== entry);
+  });
+}
+
+/**
+ * Drop tracking entries for the given registration generation. Called by register-plugin
+ * after the new runtime has been installed, so stale entries don't pile up.
+ */
+export function clearTeardownTrackingForGeneration(generation: number): void {
+  if (generation < 0) return;
+  scheduledTeardowns = scheduledTeardowns.filter(
+    (entry) => entry.donorGeneration !== generation,
+  );
+}
+
+/**
+ * Returns true when no scheduled teardown for `donorGeneration` is still pending.
+ * Used by register-plugin to detect the soft-drain timeout case: the chain may have
+ * advanced past this generation's teardown already (good), or it may still be queued
+ * behind a newer teardown (bad — donor handles would still be open during the wait).
+ */
+export function isTeardownDrainedForGeneration(donorGeneration: number): boolean {
+  if (donorGeneration < 0) return reloadTeardownQueueDepth === 0;
+  return !scheduledTeardowns.some((entry) => entry.donorGeneration === donorGeneration);
+}
+
+/**
+ * Snapshot the current set of `done` promises for teardowns belonging to `donorGeneration`.
+ * Used by callers that want to wait only on the teardowns they care about (the donor they're
+ * about to supersede), not on teardowns queued by a later registration generation.
+ */
+export function listTeardownPromisesForGeneration(donorGeneration: number): Promise<void>[] {
+  if (donorGeneration < 0) {
+    return scheduledTeardowns.map((entry) => entry.done);
+  }
+  return scheduledTeardowns
+    .filter((entry) => entry.donorGeneration === donorGeneration)
+    .map((entry) => entry.done);
 }
 
 /** Wait for superseded bootstrap work with a short cap; then close old handles regardless. */
@@ -126,4 +204,5 @@ export function blockReloadTeardownBeforeOpen(timeoutMs = TEARDOWN_WAIT_MS): boo
 export function resetReloadTeardownChainForTests(): void {
   reloadTeardownChain = Promise.resolve();
   reloadTeardownQueueDepth = 0;
+  scheduledTeardowns = [];
 }

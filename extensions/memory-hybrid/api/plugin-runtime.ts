@@ -117,6 +117,13 @@ export interface PluginRuntime {
     credentialsVaultOk: boolean;
     lastCheckTime: number;
   };
+  /**
+   * Registration generation that produced this runtime. The next re-register uses this
+   * value to track which donor-runtime teardowns it is waiting on (reload-coordinator
+   * `donorGeneration`), so the gate does not deadlock when a re-register overlap-queues
+   * another re-register (e.g. rapid voice-call config hot reloads).
+   */
+  bootRegistrationGeneration?: number;
   pendingLLMWarnings: PendingLLMWarnings;
 
   // --- Mutable refs (objects so that closures can share mutations) ---

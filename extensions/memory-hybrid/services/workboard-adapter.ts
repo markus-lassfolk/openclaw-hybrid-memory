@@ -88,6 +88,20 @@ export function createWorkboardAdapter(ctx: WorkboardAdapterContext): WorkboardA
       }
 
       const syncRunId = Date.now().toString(36);
+      // Rapid hot-reload guard: if the plugin-service that scheduled this sync has been
+      // superseded by a newer registration, bail out before touching the donor DBs. Without
+      // this, the recurring workboard-sync timer fires after a re-register and immediately
+      // hits closed-DB errors from the in-flight teardown of the donor runtime.
+      if (ctx.shouldAbort?.()) {
+        traceIntegration(verbose, `workboard sync [${syncRunId}] skipped — supersession in flight`);
+        return {
+          cardsCreated: 0,
+          cardsUpdated: 0,
+          cardsRemoved: 0,
+          pullChanges: 0,
+          errors: [],
+        };
+      }
       syncInFlight = true;
       const result: WorkboardSyncResult = {
         cardsCreated: 0,
