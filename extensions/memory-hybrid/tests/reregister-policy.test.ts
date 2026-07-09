@@ -221,3 +221,76 @@ describe("reregister-policy", () => {
     expect(reregisterMetrics.databaseReuses).toBe(1);
   });
 });
+
+describe("reregister-policy closed donor handle guard", () => {
+  beforeEach(() => {
+    vi.stubEnv("OPENCLAW_HYBRID_MEM_REREGISTER_POLICY", "reuse-databases");
+    resetReregisterPolicyForTests();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    resetReregisterPolicyForTests();
+  });
+
+  function store(open = true) {
+    return { isOpen: () => open };
+  }
+
+  function vector(open = true) {
+    return { isInitialized: () => open, isLanceDbAvailable: () => open };
+  }
+
+  function runtimeWithStores(cfg: HybridMemoryConfig, api: { resolvePath: (p: string) => string }, overrides = {}) {
+    return {
+      cfg,
+      parsedCfgSnapshot: cfg,
+      resolvedSqlitePath: api.resolvePath(cfg.sqlitePath),
+      resolvedLancePath: api.resolvePath(cfg.lanceDbPath),
+      bootstrapSettledRef: { value: true },
+      factsDb: store(true),
+      edictStore: store(true),
+      vectorDb: vector(true),
+      credentialsDb: store(true),
+      wal: store(true),
+      proposalsDb: store(true),
+      narrativesDb: store(true),
+      aliasDb: store(true),
+      issueStore: store(true),
+      workflowStore: store(true),
+      crystallizationStore: store(true),
+      toolProposalStore: store(true),
+      verificationStore: store(true),
+      apitapStore: store(true),
+      ...overrides,
+    } as PluginRuntime;
+  }
+
+  it("allows reuse when donor config and handles are still open", () => {
+    const api = { resolvePath: (p: string) => `/home/markus/.openclaw/${p}` };
+    const cfg = minimalCfg();
+    expect(canReuseDatabasesOnReregister(runtimeWithStores(cfg, api), cfg, api)).toBe(true);
+  });
+
+  it("rejects reuse when the donor facts DB is closed", () => {
+    const api = { resolvePath: (p: string) => `/home/markus/.openclaw/${p}` };
+    const cfg = minimalCfg();
+    expect(canReuseDatabasesOnReregister(runtimeWithStores(cfg, api, { factsDb: store(false) }), cfg, api)).toBe(false);
+  });
+
+  it("rejects reuse when the donor vector DB is closed", () => {
+    const api = { resolvePath: (p: string) => `/home/markus/.openclaw/${p}` };
+    const cfg = minimalCfg();
+    expect(canReuseDatabasesOnReregister(runtimeWithStores(cfg, api, { vectorDb: vector(false) }), cfg, api)).toBe(false);
+  });
+
+  it("rejects reuse when the enabled credentials vault is closed", () => {
+    const api = { resolvePath: (p: string) => `/home/markus/.openclaw/${p}` };
+    const cfg = minimalCfg();
+    (cfg as { credentials?: { enabled: boolean; encryptionKey: string } }).credentials = {
+      enabled: true,
+      encryptionKey: "k",
+    };
+    expect(canReuseDatabasesOnReregister(runtimeWithStores(cfg, api, { credentialsDb: store(false) }), cfg, api)).toBe(false);
+  });
+});
