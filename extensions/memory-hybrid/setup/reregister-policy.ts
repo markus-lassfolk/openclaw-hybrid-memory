@@ -60,6 +60,53 @@ export function recordReregisterDatabaseReuse(): void {
 
 type PathResolvingApi = { resolvePath: (p: string) => string };
 
+function booleanMethod(target: unknown, method: string): boolean | null {
+  if (!target || typeof target !== "object") return null;
+  const fn = (target as Record<string, unknown>)[method];
+  if (typeof fn !== "function") return null;
+  try {
+    const value = fn.call(target);
+    return typeof value === "boolean" ? value : null;
+  } catch {
+    return false;
+  }
+}
+
+function isReusableStoreOpen(target: unknown): boolean {
+  const isOpen = booleanMethod(target, "isOpen");
+  if (isOpen === false) return false;
+  const isInitialized = booleanMethod(target, "isInitialized");
+  if (isInitialized === false) return false;
+  const lanceAvailable = booleanMethod(target, "isLanceDbAvailable");
+  if (lanceAvailable === false) return false;
+  return true;
+}
+
+function runtimeStoresStillReusable(old: PluginRuntime): boolean {
+  const requiredStores: Array<[string, unknown]> = [
+    ["factsDb", old.factsDb],
+    ["edictStore", old.edictStore],
+    ["vectorDb", old.vectorDb],
+    ["proposalsDb", old.proposalsDb],
+    ["narrativesDb", old.narrativesDb],
+    ["aliasDb", old.aliasDb],
+    ["issueStore", old.issueStore],
+    ["workflowStore", old.workflowStore],
+    ["crystallizationStore", old.crystallizationStore],
+    ["toolProposalStore", old.toolProposalStore],
+    ["verificationStore", old.verificationStore],
+    ["apitapStore", old.apitapStore],
+  ];
+  for (const [, store] of requiredStores) {
+    if (store && !isReusableStoreOpen(store)) return false;
+  }
+  if (old.cfg.credentials?.enabled && old.credentialsDb && !isReusableStoreOpen(old.credentialsDb)) {
+    return false;
+  }
+  if (old.wal && !isReusableStoreOpen(old.wal)) return false;
+  return true;
+}
+
 /** True when re-register may keep existing SQLite/Lance handles (paths unchanged). */
 export function canReuseDatabasesOnReregister(
   old: PluginRuntime | null,
@@ -71,6 +118,12 @@ export function canReuseDatabasesOnReregister(
   // Reuse only after donor bootstrap has fully settled. If bootstrap is still in flight when
   // generation bumps, supersession can skip one-shot init work (vault/migration checks).
   if (!old.bootstrapSettledRef || old.bootstrapSettledRef.value !== true) return false;
+  // A settled donor can still be unusable if teardown/shutdown already closed one of its
+  // SQLite/Lance handles. Reusing such a donor poisons the new registration: tools,
+  // Workboard sync, credentials checks, compaction hooks, and lifecycle hooks inherit
+  // stores that immediately throw "The database connection is not open". Treat any
+  // closed/failed donor handle as non-reusable and fall back to a full fresh open.
+  if (!runtimeStoresStillReusable(old)) return false;
   const nextSqlite = api.resolvePath(cfg.sqlitePath);
   const nextLance = api.resolvePath(cfg.lanceDbPath);
   if (old.resolvedSqlitePath !== nextSqlite || old.resolvedLancePath !== nextLance) return false;
