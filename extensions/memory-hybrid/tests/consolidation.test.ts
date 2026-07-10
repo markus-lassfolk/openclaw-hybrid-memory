@@ -396,3 +396,42 @@ describe("runConsolidate scope isolation (loop iteration 104 regression)", () =>
     );
   });
 });
+
+describe("runConsolidate cleanup failure containment (regression)", () => {
+  it("does not abort the whole run when factsDb.delete() throws during cleanup", async () => {
+    const entries = [makeEntry({ id: "a", text: "Fact A" }), makeEntry({ id: "b", text: "Fact B" })];
+    const factsDb = makeFactsDb(entries);
+    factsDb.delete.mockImplementation(() => {
+      throw new Error("SQLITE_BUSY: database is locked");
+    });
+    const vectorDb = { store: vi.fn().mockResolvedValue(undefined), delete: vi.fn().mockResolvedValue(true) };
+    const embeddings = makeEmbeddings({
+      "Fact A": [1, 0],
+      "Fact B": [1, 0],
+      "Merged fact": [1, 0],
+    });
+    const openai = {
+      chat: {
+        completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content: "Merged fact" } }] }) },
+      },
+    } as never;
+
+    const result = await runConsolidate(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai,
+      { threshold: 0.9, includeStructured: true, dryRun: false, limit: 10, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    // The merge itself (storeWithResult) already succeeded before cleanup ran.
+    expect(factsDb.storeWithResult).toHaveBeenCalled();
+    // Cleanup failure must not propagate out of runConsolidate, and must be accounted for
+    // as a failed cluster (matching every other failure path in this function) rather than
+    // silently counted as a clean merge.
+    expect(result.merged).toBe(0);
+    expect(result.clustersFailed).toBe(1);
+    expect(result.semanticOutcome).toBe("partial");
+  });
+});

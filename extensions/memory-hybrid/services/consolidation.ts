@@ -418,14 +418,32 @@ export async function runConsolidate(
     // crashed, the vectors would be permanent orphans (no matching SQL row, unreachable by
     // reconciliation).  Deleting vectors first is safe — if we crash after vector delete but
     // before SQL delete, the next run will find the SQLite rows still present and can retry.
-    await deleteVectorsForFactIds(vectorDb, clusterIds, {
-      operation: "consolidate-cleanup",
-      logger,
-    });
-    for (const id of clusterIds) {
-      factsDb.delete(id);
-      aliasDb?.deleteByFactId(id);
-      deleted++;
+    //
+    // Unlike every other step in this loop, this cleanup previously had no try/catch: a
+    // mid-loop factsDb.delete() failure (e.g. SQLITE_BUSY under concurrent writer contention)
+    // would propagate out of runConsolidate entirely, leaving every later cluster in `clusters`
+    // completely unprocessed for this run instead of degrading one cluster at a time like the
+    // rest of this function does.
+    try {
+      await deleteVectorsForFactIds(vectorDb, clusterIds, {
+        operation: "consolidate-cleanup",
+        logger,
+      });
+      for (const id of clusterIds) {
+        factsDb.delete(id);
+        aliasDb?.deleteByFactId(id);
+        deleted++;
+      }
+    } catch (err) {
+      logger.warn(`memory-hybrid: consolidate cleanup failed for cluster: ${err}`);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "consolidate-cleanup",
+        subsystem: "consolidation",
+        clusterSize: clusterIds.length,
+      });
+      clustersFailed++;
+      emitClusterProgress();
+      continue;
     }
     merged++;
     emitClusterProgress();
