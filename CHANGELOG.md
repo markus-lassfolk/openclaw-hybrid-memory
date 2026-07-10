@@ -21,6 +21,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.200] - 2026-07-10
+
+### Fixed
+
+Follow-up QA batch (4 fixes) on `claude/memory-hybrid-qa-followup`, from a third flat sweep round (`api/`+`utils/`, remaining `services/`, `backends/`):
+
+- **`utils/scope-filter.ts`** (security): `resolveGatewayScopeFilter()` — used by every `hybrid-mem.facts.*` gateway RPC method (memory-wiki, Workboard, WebUI) — routed already-trusted gateway identity through `buildToolScopeFilter()`, a function designed to gate *untrusted* tool-call params. For any non-orchestrator agent, that function's fallback branch discarded the caller's real `userId`/`sessionId` and substituted a static config value, so every session sharing the same non-orchestrator agent collapsed onto one shared scope filter — one session's gateway-created/read facts became visible and mutable from any other session under that agent. Now builds the `ScopeFilter` directly from trusted identity for non-orchestrator agents, preserving the orchestrator's existing static-config/global fallback unchanged.
+- **`backends/credentials-db.ts`**: `get()` and `listAllWithSkipped()` were missing the `maybeAdoptExternalVaultMigration()` call that `store()`/`storeIfNew()` already have, so a stale in-process instance that hadn't observed a concurrent process's v1→v2 KDF migration decrypted directly with its cached v1 key against now-v2 ciphertext. `get()` threw `Unsupported state or unable to authenticate data` for a perfectly valid credential; `listAllWithSkipped()` silently dropped it into `skippedCount` instead — which can also make `rekeyVaultSafe()` abort a rekey of an otherwise healthy vault, or make an admin misdiagnose vault corruption.
+- **`utils/text.ts`**: `chunkSessionText()` had no lower-bound validation on `maxTokens`; a value `<= 0` made `maxChars <= 0`, and with `overlapChars` also `0` the chunking loop's `offset` never advanced, looping forever. The sibling `chunkTextByChars()` already guards this exact case via `Math.max(1, chunkSize - overlap)`; `chunkSessionText()` now clamps `maxChars` to at least 1 and `overlapChars` to strictly less than `maxChars`, matching existing behavior for all positive inputs.
+
+One candidate from the same sweep round was investigated and deferred rather than fixed: `services/memory-compression.ts`'s `MemoryCompressionService.compressMemories()` clusters/summarizes facts by category with no real tenant scoping (its `options.scope` param is a coarse scope-*type* string, not a full `ScopeFilter` with `scopeTarget`, so even when passed it would still merge facts across different users/agents/sessions sharing that scope type) and stamps generated summaries with no scope, making them globally visible. This is a genuine defect, but the service has zero callers anywhere in the codebase (confirmed via repo-wide grep) and the file's own comments note its clustering is an acknowledged fallback pending vector-aware clustering — properly fixing the scope model is a design change, not a bounded bug fix, so it's deferred until the service is actually wired up.
+
+Each fix verified via `git stash` to fail without the fix, tsc clean, biome clean (zero new findings beyond pre-existing baseline on every touched file), and passing related test suites with zero regressions.
+
 ## [2026.7.199] - 2026-07-10
 
 ### Fixed
