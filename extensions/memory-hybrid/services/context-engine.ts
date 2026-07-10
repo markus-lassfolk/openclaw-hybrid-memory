@@ -20,7 +20,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig } from "../config.js";
-import type { MemoryEntry } from "../types/memory.js";
+import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { trimBlockToBudget } from "./context-block-trim.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -309,6 +309,16 @@ export function buildContextBlock(
   return lines.join("\n");
 }
 
+function scopeFilterForSession(sessionId: string | undefined): ScopeFilter | null {
+  const trimmed = sessionId?.trim();
+  return trimmed ? { sessionId: trimmed } : null;
+}
+
+function listScopedFacts(factsDb: FactsDB, limit: number, scopeFilter: ScopeFilter | null): MemoryEntry[] {
+  if (!scopeFilter) return [];
+  return factsDb.getAll({ scopeFilter }).slice(0, limit);
+}
+
 /**
  * Minimal ContextEngine that integrates hybrid-memory into the OpenClaw
  * context lifecycle. Designed for backward compatibility — every method
@@ -365,15 +375,17 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
       let facts: MemoryEntry[] = [];
       if (query && query.length >= 5) {
         const tierFilter = cfg.memoryTiering?.enabled ? ("warm" as const) : ("all" as const);
+        const scopeFilter = scopeFilterForSession(params.sessionId);
         const results = factsDb.search(query, Math.min(limit, 15), {
           tierFilter,
+          scopeFilter,
           interactiveFtsFastPath: true,
           deferAccessRefresh: true,
         });
         facts = results.map((r) => r.entry);
       }
       if (facts.length === 0) {
-        facts = factsDb.list(Math.min(limit, 15));
+        facts = listScopedFacts(factsDb, Math.min(limit, 15), scopeFilterForSession(params.sessionId));
       }
 
       if (facts.length === 0) {
@@ -478,7 +490,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
         sessionFacts = factsDb.getCount();
         // after_compaction hook owns post-compaction injection when auto-recall is on (#957).
         if (!this.opts.cfg.autoRecall?.enabled) {
-          topFacts = factsDb.list(8);
+          topFacts = listScopedFacts(factsDb, 8, scopeFilterForSession(_params.sessionId));
           const block = buildContextBlock(
             topFacts,
             "post-compaction memory summary",
@@ -541,7 +553,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
 
       // Fetch top-N recent/important facts to seed the sub-agent's context
       const limit = cfg.autoRecall?.limit ?? 10;
-      let topFacts = factsDb.list(Math.min(limit, 15));
+      let topFacts = listScopedFacts(factsDb, Math.min(limit, 15), scopeFilterForSession(params.parentSessionKey));
       topFacts = filterFactsNotYetInjected(this.opts.injectedFactIdsBySession, params.childSessionKey, topFacts);
 
       if (topFacts.length === 0) {

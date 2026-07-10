@@ -321,6 +321,52 @@ describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
     expect(extended.contextAddition).toContain("child-session-xyz");
   });
 
+  it("only injects parent-session and global facts for subagents", async () => {
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Parent session scoped memory",
+      category: "fact",
+      importance: 0.85,
+      source: "parent",
+      scope: "session",
+      scopeTarget: "parent-session-abc",
+    });
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Global memory visible to all sessions",
+      category: "fact",
+      importance: 0.8,
+      source: "parent",
+      scope: "global",
+    });
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Victim session secret must not leak",
+      category: "fact",
+      importance: 0.95,
+      source: "victim",
+      scope: "session",
+      scopeTarget: "victim-session",
+    });
+
+    const engine = makeEngine({ cfg: makeSubagentSpawnConfig() });
+    const prep = await engine.prepareSubagentSpawn?.({
+      parentSessionKey: "parent-session-abc",
+      childSessionKey: "child-session-xyz",
+    });
+
+    const extended = prep as { contextAddition?: string };
+    expect(extended.contextAddition).toContain("Parent session scoped memory");
+    expect(extended.contextAddition).toContain("Global memory visible to all sessions");
+    expect(extended.contextAddition).not.toContain("Victim session secret must not leak");
+  });
+
   it("returns rollback-only preparation when no facts in store", async () => {
     const engine = makeEngine({ cfg: makeSubagentSpawnConfig() });
     const prep = await engine.prepareSubagentSpawn?.({
@@ -541,6 +587,61 @@ describe("HybridMemoryContextEngine.assemble()", () => {
     expect(result.systemPromptAddition).toContain("memory-hybrid: session-context");
     expect(result.systemPromptAddition).toContain("User prefers TypeScript over JavaScript");
     expect(result.estimatedTokens).toBeGreaterThan(0);
+  });
+
+  it("only injects same-session and global facts from search and fallback list paths", async () => {
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Shared project codename alpha",
+      category: "fact",
+      importance: 0.7,
+      source: "global",
+      scope: "global",
+    });
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Attacker session codename beta",
+      category: "fact",
+      importance: 0.8,
+      source: "attacker",
+      scope: "session",
+      scopeTarget: "attacker-session",
+    });
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Victim session codename gamma secret",
+      category: "fact",
+      importance: 0.95,
+      source: "victim",
+      scope: "session",
+      scopeTarget: "victim-session",
+    });
+
+    const engine = makeEngine({
+      cfg: { ...makeMinimalConfig(), autoRecall: { ...makeMinimalConfig().autoRecall, enabled: false } } as never,
+    });
+
+    const searchResult = await engine.assemble({
+      sessionId: "attacker-session",
+      messages: [{ role: "user", content: "codename gamma secret" }],
+      tokenBudget: 2000,
+    });
+    expect(searchResult.systemPromptAddition).not.toContain("Victim session codename gamma secret");
+
+    const fallbackResult = await engine.assemble({
+      sessionId: "attacker-session",
+      messages: [],
+      tokenBudget: 2000,
+    });
+    expect(fallbackResult.systemPromptAddition).toContain("Shared project codename alpha");
+    expect(fallbackResult.systemPromptAddition).toContain("Attacker session codename beta");
+    expect(fallbackResult.systemPromptAddition).not.toContain("Victim session codename gamma secret");
   });
 
   it("skips facts already injected this turn for the session", async () => {
