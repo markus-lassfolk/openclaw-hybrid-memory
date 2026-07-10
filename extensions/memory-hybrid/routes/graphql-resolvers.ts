@@ -150,10 +150,12 @@ function searchFacts(
   const limit = Math.max(1, Math.min(100, asNumber(input.limit) ?? 20));
   const offset = Math.max(0, asNumber(input.offset) ?? 0);
   const categories = asStringArray(input.categories);
+  const decayClasses = asStringArray(input.decayClasses);
   const tags = asStringArray(input.tags);
   const minImportance = asNumber(input.minImportance);
   const minConfidence = asNumber(input.minConfidence);
   const scope = asString(input.scope);
+  const scopeTarget = asString(input.scopeTarget);
   const includeSuperseded = input.includeSuperseded === true;
   const includeExpired = input.includeExpired === true;
   const nowSec = Math.floor(Date.now() / 1000);
@@ -161,7 +163,9 @@ function searchFacts(
   let facts = allFacts(context, includeSuperseded);
   if (!includeExpired) facts = facts.filter((fact) => isActiveFact(fact, nowSec));
   if (scope) facts = facts.filter((fact) => fact.scope === scope);
+  if (scopeTarget) facts = facts.filter((fact) => fact.scopeTarget === scopeTarget);
   if (categories?.length) facts = facts.filter((fact) => categories.includes(fact.category));
+  if (decayClasses?.length) facts = facts.filter((fact) => decayClasses.includes(fact.decayClass));
   if (tags?.length) facts = facts.filter((fact) => tags.some((tag) => fact.tags?.includes(tag)));
   if (minImportance !== undefined) facts = facts.filter((fact) => fact.importance >= minImportance);
   if (minConfidence !== undefined) facts = facts.filter((fact) => fact.confidence >= minConfidence);

@@ -198,6 +198,25 @@ describe("memory_search_episodes smoke (OpenClaw gateway context)", () => {
     expect(result.details?.episodes[0]?.event).toContain("Deployed hybrid-memory");
   });
 
+  it("clamps a negative/zero limit to the documented minimum instead of returning every row", async () => {
+    const api = registerAndGetTool();
+    for (let i = 0; i < 5; i++) {
+      factsDb.recordEpisode({
+        event: `Episode number ${i}`,
+        outcome: "success",
+        importance: 0.5,
+        tags: [],
+      });
+    }
+    const tool = api.getTool("memory_search_episodes");
+    // SQLite treats a negative LIMIT as "no limit" — a negative caller-supplied limit must be
+    // clamped to at least 1, not passed straight through to the SQL LIMIT clause.
+    const result = (await tool?.execute("tc", { limit: -1 })) as {
+      details?: { found: number; episodes: unknown[] };
+    };
+    expect(result.details?.found).toBe(1);
+  });
+
   it("does not log credential-like content", async () => {
     const api = registerAndGetTool();
     const tool = api.getTool("memory_search_episodes");

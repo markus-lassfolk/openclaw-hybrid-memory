@@ -484,58 +484,79 @@ const _lanceSizeCache = new Map<string, { size: number; ts: number }>();
 const _lanceInFlight = new Map<string, Promise<number>>();
 const LANCE_CACHE_TTL_MS = 300_000; // 5 minutes
 
+const EMPTY_MEMORY_STATS: MemoryStats = {
+  activeFacts: 0,
+  expiredFacts: 0,
+  vectorCount: 0,
+  sqliteSizeBytes: 0,
+  lanceSizeBytes: 0,
+  totalSizeBytes: 0,
+  evolution: null,
+};
+
 async function collectMemoryStats(ctx: DashboardContext): Promise<MemoryStats> {
-  const activeFacts = ctx.factsDb.count();
-  const expiredFacts = ctx.factsDb.countExpired();
-  let vectorCount = 0;
+  // Wrapped like the other collectStatus() collectors (collectCronJobs/collectTaskQueue/
+  // collectForgeState/collectGitActivity): a throw here (e.g. SQLITE_BUSY from ctx.factsDb.count()
+  // while a maintenance job holds a lock) must not reject the whole Promise.all in collectStatus()
+  // and discard the other collectors' already-succeeded results.
   try {
-    vectorCount = await ctx.vectorDb.count();
-  } catch {
-    /* non-fatal */
-  }
-  const sqliteSize = await getFileSizeAsync(ctx.resolvedSqlitePath);
-  const sqliteWalSize = await getFileSizeAsync(`${ctx.resolvedSqlitePath}-wal`);
-  const sqliteShmSize = await getFileSizeAsync(`${ctx.resolvedSqlitePath}-shm`);
-  const sqliteSizeBytes = sqliteSize + sqliteWalSize + sqliteShmSize;
-
-  // Use cached LanceDB size to avoid blocking on large directory traversals.
-  // TOCTOU guard: write to cache inside .then() — before .finally() clears the
-  // in-flight entry — so any concurrent caller that sees no in-flight promise
-  // will always find the cache already populated.
-  const cachedEntry = _lanceSizeCache.get(ctx.resolvedLancePath);
-  const now = Date.now();
-  if (!cachedEntry || now - cachedEntry.ts > LANCE_CACHE_TTL_MS) {
-    let inFlightPromise = _lanceInFlight.get(ctx.resolvedLancePath);
-    if (!inFlightPromise) {
-      inFlightPromise = getDirSize(ctx.resolvedLancePath)
-        .then((size) => {
-          _lanceSizeCache.set(ctx.resolvedLancePath, { size, ts: Date.now() });
-          return size;
-        })
-        .finally(() => {
-          _lanceInFlight.delete(ctx.resolvedLancePath);
-        });
-      _lanceInFlight.set(ctx.resolvedLancePath, inFlightPromise);
-    }
+    const activeFacts = ctx.factsDb.count();
+    const expiredFacts = ctx.factsDb.countExpired();
+    let vectorCount = 0;
     try {
-      await inFlightPromise;
-    } catch (err) {
-      pluginLogger.error(
-        `[dashboard-server] lance size traversal failed for ${ctx.resolvedLancePath}: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      vectorCount = await ctx.vectorDb.count();
+    } catch {
+      /* non-fatal */
     }
-  }
-  const lanceSizeBytes = _lanceSizeCache.get(ctx.resolvedLancePath)?.size ?? 0;
+    const sqliteSize = await getFileSizeAsync(ctx.resolvedSqlitePath);
+    const sqliteWalSize = await getFileSizeAsync(`${ctx.resolvedSqlitePath}-wal`);
+    const sqliteShmSize = await getFileSizeAsync(`${ctx.resolvedSqlitePath}-shm`);
+    const sqliteSizeBytes = sqliteSize + sqliteWalSize + sqliteShmSize;
 
-  return {
-    activeFacts,
-    expiredFacts,
-    vectorCount,
-    sqliteSizeBytes,
-    lanceSizeBytes,
-    totalSizeBytes: sqliteSizeBytes + lanceSizeBytes,
-    evolution: collectEvolutionStats(ctx.factsDb.getRawDb()),
-  };
+    // Use cached LanceDB size to avoid blocking on large directory traversals.
+    // TOCTOU guard: write to cache inside .then() — before .finally() clears the
+    // in-flight entry — so any concurrent caller that sees no in-flight promise
+    // will always find the cache already populated.
+    const cachedEntry = _lanceSizeCache.get(ctx.resolvedLancePath);
+    const now = Date.now();
+    if (!cachedEntry || now - cachedEntry.ts > LANCE_CACHE_TTL_MS) {
+      let inFlightPromise = _lanceInFlight.get(ctx.resolvedLancePath);
+      if (!inFlightPromise) {
+        inFlightPromise = getDirSize(ctx.resolvedLancePath)
+          .then((size) => {
+            _lanceSizeCache.set(ctx.resolvedLancePath, { size, ts: Date.now() });
+            return size;
+          })
+          .finally(() => {
+            _lanceInFlight.delete(ctx.resolvedLancePath);
+          });
+        _lanceInFlight.set(ctx.resolvedLancePath, inFlightPromise);
+      }
+      try {
+        await inFlightPromise;
+      } catch (err) {
+        pluginLogger.error(
+          `[dashboard-server] lance size traversal failed for ${ctx.resolvedLancePath}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    const lanceSizeBytes = _lanceSizeCache.get(ctx.resolvedLancePath)?.size ?? 0;
+
+    return {
+      activeFacts,
+      expiredFacts,
+      vectorCount,
+      sqliteSizeBytes,
+      lanceSizeBytes,
+      totalSizeBytes: sqliteSizeBytes + lanceSizeBytes,
+      evolution: collectEvolutionStats(ctx.factsDb.getRawDb()),
+    };
+  } catch (err) {
+    pluginLogger.error(
+      `[dashboard-server] collectMemoryStats failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return EMPTY_MEMORY_STATS;
+  }
 }
 
 async function collectCronJobs(): Promise<CronJobStatus[]> {
@@ -1258,7 +1279,11 @@ export async function performFactAction(
 
     if (action === "verify") {
       if (!ctx.verificationStore) return { ok: false, message: "Verification store not available" };
-      const verifiedBy = (body.verifiedBy as "agent" | "user" | "system") ?? "agent";
+      // body.verifiedBy is unvalidated client input (POST /api/viewer/facts/:id/verify) — do not
+      // trust a bare `as` cast into VerificationStore's persisted "agent"|"user"|"system" enum.
+      const rawVerifiedBy = body.verifiedBy;
+      const verifiedBy: "agent" | "user" | "system" =
+        rawVerifiedBy === "agent" || rawVerifiedBy === "user" || rawVerifiedBy === "system" ? rawVerifiedBy : "agent";
       ctx.verificationStore.verify(factId, fact.text, verifiedBy, fact.scope, fact.scopeTarget);
       clearVerifiedFactIdCache(ctx);
       return { ok: true, message: `Fact ${factId} verified as ${verifiedBy}` };

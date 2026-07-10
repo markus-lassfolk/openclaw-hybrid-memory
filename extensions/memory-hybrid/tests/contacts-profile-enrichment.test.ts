@@ -296,4 +296,61 @@ describe("contact profile enrichment and merge (#2014)", () => {
     const candidates = db.findContactMergeCandidates("thunberg");
     expect(candidates.map((c) => c.id)).toContain(target.id);
   });
+
+  it("does not link a contact to an org derived from a scoped fact's co-mention (#2067 follow-up)", () => {
+    // A private/scoped note mentioning both a person and an org must not create a globally-visible
+    // person->org affiliation link, or it re-leaks the scoped fact's content via memory_directory.
+    const text = "Victim Contact, my therapist, works at Private Wellness Clinic";
+    const fact = db.store({
+      text,
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.5,
+      source: "test",
+      scope: "user",
+      scopeTarget: "victim-user",
+    });
+    db.applyEntityEnrichment(
+      fact.id,
+      [
+        {
+          label: "PERSON",
+          surfaceText: "Victim Contact",
+          normalizedSurface: "victim contact",
+          startOffset: 0,
+          endOffset: "Victim Contact".length,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "Private Wellness Clinic",
+          normalizedSurface: "private wellness clinic",
+          startOffset: text.indexOf("Private Wellness Clinic"),
+          endOffset: text.indexOf("Private Wellness Clinic") + "Private Wellness Clinic".length,
+          confidence: 0.9,
+        },
+      ],
+      "eng",
+    );
+
+    const contact = db.listContactsByNamePrefix("Victim", 10)[0];
+    expect(contact.primaryOrgId).toBeNull();
+  });
+
+  it("does not let a lower-priority ner mention clobber a manually-curated display name", () => {
+    const manual = db.upsertContactWithProfile("Daniel Thunberg", null, {
+      updatedBy: "manual",
+      source: "manual",
+    });
+    if (!manual) throw new Error("expected contact");
+
+    // A later NER mention of the same person, using a lowercase/informal surface form, must not
+    // overwrite the manually-curated display name.
+    storeAndTagPerson("daniel thunberg confirmed the deadline.", "daniel thunberg", 0);
+
+    const contact = db.getContactById(manual.id);
+    expect(contact?.displayName).toBe("Daniel Thunberg");
+  });
 });

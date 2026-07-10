@@ -471,22 +471,31 @@ export function upsertContact(
   if (!nk) {
     return null;
   }
-  const existing = db.prepare("SELECT id, primary_org_id FROM contacts WHERE normalized_key = ? LIMIT 1").get(nk) as
-    | { id: string; primary_org_id: string | null }
+  const existing = db
+    .prepare("SELECT id, primary_org_id, display_name, updated_by FROM contacts WHERE normalized_key = ? LIMIT 1")
+    .get(nk) as
+    | { id: string; primary_org_id: string | null; display_name: string; updated_by: string | null }
     | undefined;
   const now = Math.floor(Date.now() / 1000);
   if (existing) {
+    // Mirror applyContactProfileFields' source-priority arbitration (#2014): a lower-priority
+    // NER surface-text variant must not clobber a display_name set by a higher-priority source
+    // (e.g. a manually curated/imported name overwritten by a later lowercase/nickname mention).
+    const nextDisplayName =
+      contactSourcePriority(options.updatedBy) >= contactSourcePriority(existing.updated_by)
+        ? displayName.trim()
+        : existing.display_name;
     if (primaryOrgId && !existing.primary_org_id) {
       db.prepare("UPDATE contacts SET primary_org_id = ?, updated_at = ?, display_name = ? WHERE id = ?").run(
         primaryOrgId,
         now,
-        displayName.trim(),
+        nextDisplayName,
         existing.id,
       );
     } else {
       db.prepare("UPDATE contacts SET updated_at = ?, display_name = ? WHERE id = ?").run(
         now,
-        displayName.trim(),
+        nextDisplayName,
         existing.id,
       );
     }
@@ -663,7 +672,14 @@ export function replaceFactEntityMentions(
     }
 
     // If same fact mentions both a person and an org, set primary_org on contacts (weak v1 heuristic).
-    if (orgIds.length > 0 && personRows.length > 0) {
+    // Gated to global-scope facts only (#2067 follow-up): contacts/orgs are globally-visible tables
+    // with no scope column, so linking a person to an org derived from a private/scoped fact would
+    // leak that scoped affiliation to every caller of the (unscoped) memory_directory tool.
+    const factScope = db.prepare("SELECT scope FROM facts WHERE id = ?").get(factId) as
+      | { scope: string | null }
+      | undefined;
+    const isGlobalScopeFact = (factScope?.scope ?? "global") === "global";
+    if (isGlobalScopeFact && orgIds.length > 0 && personRows.length > 0) {
       const primaryOrg = orgIds[0];
       for (const p of personRows) {
         db.prepare("UPDATE contacts SET primary_org_id = COALESCE(primary_org_id, ?), updated_at = ? WHERE id = ?").run(

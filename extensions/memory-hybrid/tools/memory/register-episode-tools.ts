@@ -191,7 +191,11 @@ export function registerEpisodeTools(runtime: MemoryToolRuntime): void {
           since: params.since as number | undefined,
           until: params.until as number | undefined,
           procedureId: params.procedureId as string | undefined,
-          limit: Math.min((params.limit as number | undefined) ?? 50, 200),
+          limit: (() => {
+            const raw = params.limit;
+            const rawLimit = typeof raw === "number" && Number.isFinite(raw) ? raw : 50;
+            return Math.min(Math.max(Math.floor(rawLimit), 1), 200);
+          })(),
           scopeFilter,
         });
 
