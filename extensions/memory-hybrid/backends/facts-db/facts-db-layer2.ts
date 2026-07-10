@@ -316,16 +316,19 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     return reinforceProcedureHelper(this.liveDb, id, quoteSnippet, promotionThreshold);
   }
 
-  saveCheckpoint(context: {
-    intent: string;
-    state: string;
-    expectedOutcome?: string;
-    workingFiles?: string[];
-  }): string {
-    return saveCheckpointImpl((entry) => this.store(entry), context);
+  saveCheckpoint(
+    context: {
+      intent: string;
+      state: string;
+      expectedOutcome?: string;
+      workingFiles?: string[];
+    },
+    scope?: { scope?: "global" | "user" | "agent" | "session"; scopeTarget?: string | null },
+  ): string {
+    return saveCheckpointImpl((entry) => this.store(entry), context, scope);
   }
 
-  restoreCheckpoint(): {
+  restoreCheckpoint(scopeFilter?: ScopeFilter | null): {
     id: string;
     intent: string;
     state: string;
@@ -333,7 +336,7 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     workingFiles?: string[];
     savedAt: string;
   } | null {
-    return restoreCheckpointImpl(this.liveDb);
+    return restoreCheckpointImpl(this.liveDb, scopeFilter);
   }
 
   statsBreakdown(): Record<string, number> {

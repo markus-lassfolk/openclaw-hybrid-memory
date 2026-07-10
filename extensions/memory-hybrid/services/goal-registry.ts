@@ -187,6 +187,20 @@ function isGoalRegistryJsonFilename(filename: string): boolean {
   return filename.endsWith(".json") && filename !== INDEX_FILENAME && !filename.startsWith(GOAL_HOUSEKEEPING_PREFIX);
 }
 
+/**
+ * SECURITY: `readGoal` joins `id` directly into `${id}.json` for its canonical-path fast path.
+ * Goal ids are normally UUIDs (see createGoal), but legacy label-derived ids (#1999, e.g.
+ * "legacy-label-0001") are still supported and aren't UUID-shaped, so this can't require a UUID
+ * — it only needs to reject the specific characters that would let `id` escape `goalsDir` via
+ * `join()` (path separators, `..` traversal, a null byte, or an empty string) (#2067-followup).
+ */
+function isSafeGoalIdPathSegment(id: string): boolean {
+  if (id.length === 0 || id.includes("\0")) return false;
+  if (id.includes("/") || id.includes("\\")) return false;
+  if (id === "." || id === "..") return false;
+  return true;
+}
+
 /** Goal ids quarantined as corrupt (`.json.corrupt` files under goals dir). */
 export function listQuarantinedGoalIds(goalsDir: string): string[] {
   try {
@@ -505,6 +519,13 @@ export async function auditGoalIndexDrift(goalsDir: string): Promise<GoalIndexDr
 }
 
 export async function readGoal(goalsDir: string, id: string): Promise<Goal | null> {
+  // SECURITY: reject before `id` ever reaches join() -- without this, a caller-supplied id like
+  // "../../../../etc/passwd" escapes goalsDir entirely, giving an arbitrary-file-read primitive
+  // reachable from an ordinary goal_get/goal_update/goal_complete tool call. Legacy non-UUID ids
+  // (#1999) are still allowed through to the findGoalFilenameById fallback below, which is safe
+  // by construction (matches against readdir() results, never joins caller input into a path)
+  // (#2067-followup).
+  if (!isSafeGoalIdPathSegment(id)) return null;
   const canonicalPath = join(goalsDir, `${id}.json`);
   if (existsSync(canonicalPath)) {
     try {

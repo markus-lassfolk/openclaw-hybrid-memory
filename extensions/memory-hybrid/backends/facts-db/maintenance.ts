@@ -6,7 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import type { DecayClass, MemoryCategory } from "../../config.js";
 import { capturePluginError } from "../../services/error-reporter.js";
-import type { MemoryEntry, MemoryTier } from "../../types/memory.js";
+import type { MemoryEntry, MemoryTier, ScopeFilter } from "../../types/memory.js";
 import { calculateExpiry, classifyDecay } from "../../utils/decay.js";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { parseTags } from "../../utils/tags.js";
@@ -14,6 +14,7 @@ import { nowIso } from "../../utils/dates.js";
 import type { StoreFactInput } from "./crud.js";
 import { preserveTagsColumnExcludesFromTrimSql } from "./fact-queries.js";
 import { isLikelyGarbage } from "./fact-read-queries.js";
+import { scopeFilterClausePositional } from "./scope-sql.js";
 
 function extractFactIds(rows: Array<{ id: string }>): string[] {
   return rows.map((row) => row.id);
@@ -832,6 +833,11 @@ export function saveCheckpoint(
     expectedOutcome?: string;
     workingFiles?: string[];
   },
+  // SECURITY: without this, every checkpoint lands in the single implicit "global" scope
+  // regardless of who saved it, so any caller's `restore` returns whichever tenant's
+  // checkpoint was saved most recently -- the sibling active_task_checkpoint feature already
+  // threads scope through for exactly this reason (#2067-followup).
+  scope?: { scope?: "global" | "user" | "agent" | "session"; scopeTarget?: string | null },
 ): string {
   const data = JSON.stringify({
     ...context,
@@ -847,10 +853,14 @@ export function saveCheckpoint(
     value: context.intent.slice(0, 100),
     source: "checkpoint",
     decayClass: "checkpoint",
+    ...scope,
   }).id;
 }
 
-export function restoreCheckpoint(db: DatabaseSync): {
+export function restoreCheckpoint(
+  db: DatabaseSync,
+  scopeFilter?: ScopeFilter | null,
+): {
   id: string;
   intent: string;
   state: string;
@@ -859,14 +869,16 @@ export function restoreCheckpoint(db: DatabaseSync): {
   savedAt: string;
 } | null {
   const nowSec = Math.floor(Date.now() / 1000);
+  const scoped = scopeFilterClausePositional(scopeFilter);
   const row = db
     .prepare(
       `SELECT id, text FROM facts
          WHERE entity = 'system' AND key LIKE 'checkpoint:%'
            AND (expires_at IS NULL OR expires_at > ?)
+           ${scoped.clause}
          ORDER BY created_at DESC LIMIT 1`,
     )
-    .get(nowSec) as { id: string; text: string } | undefined;
+    .get(nowSec, ...scoped.params) as { id: string; text: string } | undefined;
 
   if (!row) return null;
   try {

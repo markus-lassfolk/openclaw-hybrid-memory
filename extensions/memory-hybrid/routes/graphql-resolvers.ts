@@ -203,14 +203,35 @@ function normalizeLink(row: Record<string, unknown>): GraphQLLink {
   };
 }
 
+// Unlike Fact.links/Fact.linkedFrom (bounded per-parent lookups, see getLinksBySource/Target
+// below), the top-level link()/links()/graph()/stats()/relatedFacts() queries need to consider
+// "all" links for a request. With no bound at all, a single request against a large memory_links
+// table forces a full, unindexed table materialization -- and since node:sqlite calls are
+// synchronous, that stalls the whole GraphQL/dashboard HTTP process for every tenant sharing it,
+// not just the caller who issued the expensive query. Capped well beyond any legitimate
+// single-request need (#2067-followup).
+const ALL_LINKS_SCAN_CAP = 20_000;
+
 function getAllLinks(factsDb: FactsDB): GraphQLLink[] {
   const rows = factsDb
     .getRawDb()
     .prepare(
-      "SELECT id, source_fact_id, target_fact_id, link_type, strength, created_at FROM memory_links ORDER BY created_at DESC",
+      "SELECT id, source_fact_id, target_fact_id, link_type, strength, created_at FROM memory_links ORDER BY created_at DESC LIMIT ?",
     )
-    .all() as Array<Record<string, unknown>>;
+    .all(ALL_LINKS_SCAN_CAP) as Array<Record<string, unknown>>;
   return rows.map(normalizeLink);
+}
+
+// Indexed by-id lookup for the single-link call sites (link(), createLink(), deleteLink()) --
+// these don't need to scan/materialize the whole table just to find one row by its primary key.
+function getLinkById(factsDb: FactsDB, id: string): GraphQLLink | null {
+  const row = factsDb
+    .getRawDb()
+    .prepare(
+      "SELECT id, source_fact_id, target_fact_id, link_type, strength, created_at FROM memory_links WHERE id = ? LIMIT 1",
+    )
+    .get(id) as Record<string, unknown> | undefined;
+  return row ? normalizeLink(row) : null;
 }
 
 // Fact.links/Fact.linkedFrom are resolved once per parent fact in a list, so unlike the top-level
@@ -378,7 +399,7 @@ export const resolvers: GraphQLResolvers = {
     link: (_parent, args, context) => {
       const id = asString(asRecord(args).id);
       if (!id) return null;
-      const link = getAllLinks(context.factsDb).find((link) => link.id === id) ?? null;
+      const link = getLinkById(context.factsDb, id);
       return link && isLinkVisible(context.factsDb, link, context.scopeFilter) ? link : null;
     },
     links: (_parent, args, context) => {
@@ -408,6 +429,11 @@ export const resolvers: GraphQLResolvers = {
       if (context.factsDb.getById(factId, { scopeFilter: context.scopeFilter }) == null) return [];
       const maxDepth = Math.max(1, Math.min(5, asNumber(input.maxDepth) ?? 1));
       const linkTypes = asStringArray(input.linkTypes);
+      // Unlike facts()/search()/links()/entityFacts(), this had no limit argument at all, so a
+      // caller could force an unbounded response payload from a single request just by rooting a
+      // wide traversal at a highly-connected fact. Matches links()'s [1, 500] clamp
+      // (#2067-followup).
+      const limit = Math.max(1, Math.min(500, asNumber(input.limit) ?? 500));
       const nowSec = Math.floor(Date.now() / 1000);
       // SECURITY: scopedConnectedFactIds scopes the BFS at the link layer (every traversed edge
       // must be isLinkVisible), not just at the final getById post-filter below. Without that, a
@@ -426,7 +452,8 @@ export const resolvers: GraphQLResolvers = {
       ).filter((id) => id !== factId);
       return neighborIds
         .map((id) => context.factsDb.getById(id, { scopeFilter: context.scopeFilter }))
-        .filter((fact): fact is MemoryEntry => fact != null && isActiveFact(fact, nowSec));
+        .filter((fact): fact is MemoryEntry => fact != null && isActiveFact(fact, nowSec))
+        .slice(0, limit);
     },
 
     entityFacts: (_parent, args, context) => {
@@ -685,7 +712,7 @@ export const resolvers: GraphQLResolvers = {
         throw new Error(`Fact not found: ${sourceId}`);
       }
       const id = context.factsDb.createLink(sourceId, targetId, linkType, weight);
-      const link = getAllLinks(context.factsDb).find((entry) => entry.id === id);
+      const link = getLinkById(context.factsDb, id) ?? undefined;
       if (link) notifyGraphqlLinkCreated(link);
       return link;
     },
@@ -694,7 +721,7 @@ export const resolvers: GraphQLResolvers = {
       if (!id) return false;
       // SECURITY: scope-check before deleting — mirrors deleteFact's guard so a caller can't
       // remove a link between two other tenants' facts just by knowing/guessing its id.
-      const existing = getAllLinks(context.factsDb).find((link) => link.id === id);
+      const existing = getLinkById(context.factsDb, id);
       if (!existing || !isLinkVisible(context.factsDb, existing, context.scopeFilter)) return false;
       const result = context.factsDb.getRawDb().prepare("DELETE FROM memory_links WHERE id = ?").run(id);
       return result.changes > 0;

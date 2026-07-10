@@ -50,6 +50,7 @@ describe("GraphQL link/subscription scope enforcement", () => {
       getRawDb: vi.fn(() => ({
         prepare: vi.fn(() => ({
           all: vi.fn(() => getRawRows),
+          get: vi.fn((id: string) => getRawRows.find((row) => row.id === id)),
           run: vi.fn(() => ({ changes: 1 })),
         })),
       })),

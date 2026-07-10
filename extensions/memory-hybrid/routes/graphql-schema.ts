@@ -203,7 +203,7 @@ export const graphqlSchema = `#graphql
     # Links and relationships
     link(id: ID!): Link
     links(sourceId: ID, targetId: ID, linkType: String, limit: Int): [Link!]!
-    relatedFacts(factId: ID!, maxDepth: Int, linkTypes: [String!]): [Fact!]!
+    relatedFacts(factId: ID!, maxDepth: Int, linkTypes: [String!], limit: Int): [Fact!]!
 
     # Graph visualization
     graph(filter: GraphFilterInput): GraphData!

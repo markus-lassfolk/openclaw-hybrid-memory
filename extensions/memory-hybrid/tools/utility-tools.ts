@@ -15,6 +15,7 @@ import type { ProvenanceService } from "../services/provenance.js";
 import { detectClusters } from "../services/topic-clusters.js";
 import { deleteVectorsForFactIds } from "../services/vector-maintenance.js";
 import type { BuildToolScopeFilterFn } from "../api/memory-plugin-api.js";
+import { globalOnlyScopeFilter, scopeFieldsFromFilter } from "../utils/scope-filter.js";
 
 export interface PluginContext {
   factsDb: FactsDB;
@@ -98,6 +99,11 @@ export function registerUtilityTools(
           expectedOutcome?: string;
           workingFiles?: string[];
         };
+        // SECURITY: without a scope filter, checkpoints landed in a single implicit "global"
+        // slot regardless of who saved them, so any caller's restore returned whichever
+        // tenant's checkpoint was saved most recently — the same class of leak already fixed
+        // for the sibling active_task_checkpoint tool (#2067-followup).
+        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
 
         if (action === "save") {
           if (!intent || !state) {
@@ -111,12 +117,15 @@ export function registerUtilityTools(
               details: { error: "missing_param" },
             };
           }
-          const id = factsDb.saveCheckpoint({
-            intent,
-            state,
-            expectedOutcome,
-            workingFiles,
-          });
+          const id = factsDb.saveCheckpoint(
+            {
+              intent,
+              state,
+              expectedOutcome,
+              workingFiles,
+            },
+            scopeFieldsFromFilter(scopeFilter ?? globalOnlyScopeFilter()),
+          );
           return {
             content: [
               {
@@ -128,7 +137,7 @@ export function registerUtilityTools(
           };
         }
 
-        const checkpoint = factsDb.restoreCheckpoint();
+        const checkpoint = factsDb.restoreCheckpoint(scopeFilter);
         if (!checkpoint) {
           return {
             content: [
