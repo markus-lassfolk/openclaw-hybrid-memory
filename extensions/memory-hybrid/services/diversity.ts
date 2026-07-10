@@ -17,7 +17,13 @@ export function textBigrams(text: string): Set<string> {
 export function jaccardBigramSimilarity(a: string, b: string): number {
   const setA = textBigrams(a);
   const setB = textBigrams(b);
-  if (setA.size === 0 && setB.size === 0) return 1;
+  if (setA.size === 0 && setB.size === 0) {
+    // Texts of length <= 1 (after normalization) have no bigrams at all, so the
+    // set comparison below can't distinguish them. Fall back to direct equality
+    // rather than treating every short text as maximally similar to every other.
+    const normalize = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim();
+    return normalize(a) === normalize(b) ? 1 : 0;
+  }
   if (setA.size === 0 || setB.size === 0) return 0;
   let intersection = 0;
   for (const bg of setA) {
