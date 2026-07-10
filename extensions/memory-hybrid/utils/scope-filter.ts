@@ -53,9 +53,13 @@ function readGatewayIdentity(api: {
 }): { userId: string | null; agentId: string | null; sessionId: string | null } {
   const userId = typeof api.context?.userId === "string" ? api.context.userId.trim() || null : null;
   const agentId = typeof api.context?.agentId === "string" ? api.context.agentId.trim() || null : null;
+  // `|| null` (not just the `??` below) on each branch, matching userId/agentId above: without it,
+  // an empty-string sessionId is falsy-but-not-null, so `??` never falls through to sessionKey --
+  // silently widening a session-scoped RPC/corpus read to the caller's entire user-level history
+  // instead of one session (#2067-followup).
   const sessionId =
-    (typeof api.context?.sessionId === "string" ? api.context.sessionId.trim() : null) ??
-    (typeof api.context?.sessionKey === "string" ? api.context.sessionKey.trim() : null) ??
+    (typeof api.context?.sessionId === "string" ? api.context.sessionId.trim() || null : null) ??
+    (typeof api.context?.sessionKey === "string" ? api.context.sessionKey.trim() || null : null) ??
     null;
   return { userId, agentId, sessionId };
 }

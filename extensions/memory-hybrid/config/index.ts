@@ -56,7 +56,17 @@ const CLAUDE_DEFAULT_MODEL = "anthropic/claude-sonnet-4-6";
 const CLAUDE_HEAVY_MODEL = "anthropic/claude-opus-4-6";
 
 function hasKey(apiKey: string | undefined): boolean {
-  return typeof apiKey === "string" && apiKey.length >= 10;
+  if (typeof apiKey !== "string") return false;
+  const trimmed = apiKey.trim();
+  // The >= 10 floor below is meant to filter out empty/placeholder literal key strings, not a
+  // SecretRef's own reference text -- an `env:`/`file:` value can legitimately be short (e.g.
+  // "env:GK" for a 2-char env var name) while still resolving to a full-length key at runtime.
+  // Applying the raw-literal length floor to the reference itself misclassified short SecretRefs
+  // as "no key configured," silently dropping that provider from getProvidersWithKeys() and the
+  // cron-model tier fallbacks (#2067-followup).
+  if (trimmed.startsWith("env:")) return trimmed.length > "env:".length;
+  if (trimmed.startsWith("file:")) return trimmed.length > "file:".length;
+  return trimmed.length >= 10;
 }
 
 /** True if apiKey is present and, for env:/file: SecretRefs, resolvable at runtime (verify / getProvidersWithKeys). */

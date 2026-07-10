@@ -237,6 +237,24 @@ describe("scope helper utilities", () => {
     });
   });
 
+  it("resolveGatewayScopeFilter falls back to sessionKey when sessionId is an empty string, not just when it's absent (#2067-followup)", () => {
+    // context.sessionId can arrive as "" from an upstream integration that always sets the field
+    // but leaves it blank when unset. An empty string is falsy but not null/undefined, so a naive
+    // `??` chain (missing the `|| null` normalization applied to userId/agentId) would stop right
+    // there instead of falling through to sessionKey -- silently widening this session-scoped read
+    // to the caller's entire user-level history instead of one session.
+    expect(
+      resolveGatewayScopeFilter(
+        { context: { agentId: "worker-1", userId: "user-x", sessionId: "", sessionKey: "session-alpha" } },
+        cfg,
+      ),
+    ).toEqual({
+      userId: "user-x",
+      agentId: "worker-1",
+      sessionId: "session-alpha",
+    });
+  });
+
   it("resolveGatewayScopeFilter preserves trusted sessionId/userId for a non-orchestrator agent (regression)", () => {
     // Two sessions sharing the same worker agent must NOT collapse onto the same scope --
     // each session's own trusted identity must be applied as-is, not replaced by static config.

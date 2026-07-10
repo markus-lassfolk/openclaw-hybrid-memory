@@ -280,6 +280,24 @@ describe("memory_issue_list", () => {
     const result = (await api.callTool("memory_issue_list", { limit: 2 })) as any;
     expect(result.details).toHaveLength(2);
   });
+
+  it("applies the documented default limit (50) when limit is omitted, instead of returning every row unbounded (#2067-followup)", async () => {
+    for (let i = 0; i < 55; i++) {
+      await api.callTool("memory_issue_create", { title: `Issue ${i}`, symptoms: ["s"] });
+    }
+    const result = (await api.callTool("memory_issue_list", {})) as any;
+    expect(result.details).toHaveLength(50);
+  });
+
+  it("falls back to the default limit instead of returning every row unbounded when limit is 0 or negative (#2067-followup)", async () => {
+    for (let i = 0; i < 55; i++) {
+      await api.callTool("memory_issue_create", { title: `Issue ${i}`, symptoms: ["s"] });
+    }
+    const zeroResult = (await api.callTool("memory_issue_list", { limit: 0 })) as any;
+    expect(zeroResult.details).toHaveLength(50);
+    const negativeResult = (await api.callTool("memory_issue_list", { limit: -1 })) as any;
+    expect(negativeResult.details).toHaveLength(50);
+  });
 });
 
 // ---------------------------------------------------------------------------

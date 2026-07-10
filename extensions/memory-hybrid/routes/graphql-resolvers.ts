@@ -213,6 +213,31 @@ function getAllLinks(factsDb: FactsDB): GraphQLLink[] {
   return rows.map(normalizeLink);
 }
 
+// Fact.links/Fact.linkedFrom are resolved once per parent fact in a list, so unlike the top-level
+// link()/links()/graph() queries (each called once per request), these must not re-load the whole
+// memory_links table on every parent — a `facts { links { ... } } ` query over N facts would do an
+// O(N * table-size) scan instead of N bounded, indexed lookups. Capped at 500 like getConnectedFactIds'
+// per-hop degree cap, since a single fact having more direct links than that is already anomalous.
+function getLinksBySource(factsDb: FactsDB, factId: string): GraphQLLink[] {
+  const rows = factsDb
+    .getRawDb()
+    .prepare(
+      "SELECT id, source_fact_id, target_fact_id, link_type, strength, created_at FROM memory_links WHERE source_fact_id = ? ORDER BY created_at DESC LIMIT 500",
+    )
+    .all(factId) as Array<Record<string, unknown>>;
+  return rows.map(normalizeLink);
+}
+
+function getLinksByTarget(factsDb: FactsDB, factId: string): GraphQLLink[] {
+  const rows = factsDb
+    .getRawDb()
+    .prepare(
+      "SELECT id, source_fact_id, target_fact_id, link_type, strength, created_at FROM memory_links WHERE target_fact_id = ? ORDER BY created_at DESC LIMIT 500",
+    )
+    .all(factId) as Array<Record<string, unknown>>;
+  return rows.map(normalizeLink);
+}
+
 /**
  * SECURITY: a link is only visible to a caller if BOTH endpoints are facts they can read.
  * memory_links carries no scope column of its own — it connects two potentially
@@ -226,6 +251,43 @@ export function isLinkVisible(
   return (
     factsDb.getById(link.sourceId, { scopeFilter }) != null && factsDb.getById(link.targetId, { scopeFilter }) != null
   );
+}
+
+/**
+ * Scoped, optionally link-type-restricted multi-hop BFS from `seedIds`. Every traversed edge must
+ * be isLinkVisible to the caller's scopeFilter, so a hidden intermediate fact can never serve as a
+ * stepping-stone to reach a visible fact beyond it — the same per-edge guarantee isLinkVisible
+ * already enforces for a single hop, extended across multiple hops. Used by both
+ * Query.relatedFacts and Query.graph's startNodeIds traversal so the guarantee lives in one place.
+ */
+function scopedConnectedFactIds(
+  factsDb: FactsDB,
+  seedIds: string[],
+  maxDepth: number,
+  scopeFilter: ScopeFilter,
+  linkTypes?: string[],
+): string[] {
+  const linkTypeSet = linkTypes?.length ? new Set(linkTypes) : null;
+  const relevantLinks = getAllLinks(factsDb).filter(
+    (link) => (!linkTypeSet || linkTypeSet.has(link.linkType)) && isLinkVisible(factsDb, link, scopeFilter),
+  );
+  const visited = new Set<string>(seedIds);
+  let frontier = new Set<string>(seedIds);
+  for (let depth = 0; depth < maxDepth && frontier.size > 0; depth++) {
+    const next = new Set<string>();
+    for (const link of relevantLinks) {
+      if (frontier.has(link.sourceId) && !visited.has(link.targetId)) {
+        visited.add(link.targetId);
+        next.add(link.targetId);
+      }
+      if (frontier.has(link.targetId) && !visited.has(link.sourceId)) {
+        visited.add(link.sourceId);
+        next.add(link.sourceId);
+      }
+    }
+    frontier = next;
+  }
+  return [...visited];
 }
 
 function isMemoryLinkType(value: string): value is MemoryLinkType {
@@ -347,42 +409,21 @@ export const resolvers: GraphQLResolvers = {
       const maxDepth = Math.max(1, Math.min(5, asNumber(input.maxDepth) ?? 1));
       const linkTypes = asStringArray(input.linkTypes);
       const nowSec = Math.floor(Date.now() / 1000);
-      let neighborIds: string[];
-      if (linkTypes?.length) {
-        // Multi-hop BFS restricted to the requested link types, so maxDepth behaves the same
-        // way here as it does in the untyped branch below (previously this only ever looked at
-        // factId's direct/1-hop links, silently ignoring maxDepth > 1).
-        const linkTypeSet = new Set(linkTypes);
-        // SECURITY: scope the BFS at the link layer, not just at the final getById post-filter.
-        // Without this, a visible fact A linked to hidden B linked to visible C would add B and C
-        // to `visited` at depth >= 2; the later `getById(...scopeFilter)` strips B but C still
-        // returns, surfacing a path that has no fully visible links and indirectly confirming
-        // that hidden B exists. isLinkVisible requires BOTH endpoints to resolve under the
-        // caller's scopeFilter, matching link()/links() above and the relatedFacts root oracle
-        // check.
-        const relevantLinks = getAllLinks(context.factsDb).filter(
-          (link) => linkTypeSet.has(link.linkType) && isLinkVisible(context.factsDb, link, context.scopeFilter),
-        );
-        const visited = new Set<string>([factId]);
-        let frontier = new Set<string>([factId]);
-        for (let depth = 0; depth < maxDepth && frontier.size > 0; depth++) {
-          const next = new Set<string>();
-          for (const link of relevantLinks) {
-            if (frontier.has(link.sourceId) && !visited.has(link.targetId)) {
-              visited.add(link.targetId);
-              next.add(link.targetId);
-            }
-            if (frontier.has(link.targetId) && !visited.has(link.sourceId)) {
-              visited.add(link.sourceId);
-              next.add(link.sourceId);
-            }
-          }
-          frontier = next;
-        }
-        neighborIds = [...visited].filter((id) => id !== factId);
-      } else {
-        neighborIds = context.factsDb.getConnectedFactIds([factId], maxDepth).filter((id) => id !== factId);
-      }
+      // SECURITY: scopedConnectedFactIds scopes the BFS at the link layer (every traversed edge
+      // must be isLinkVisible), not just at the final getById post-filter below. Without that, a
+      // visible fact A linked to hidden B linked to visible C would traverse through B to reach C
+      // via the raw (unscoped) FactsDB.getConnectedFactIds — the final getById filter strips B but
+      // C still returns, surfacing a path that has no fully visible links and indirectly
+      // confirming that hidden B exists. Previously only the `linkTypes` branch got this
+      // link-layer scoping; the default (no linkTypes) branch called the raw unscoped
+      // getConnectedFactIds directly (#2067-followup).
+      const neighborIds = scopedConnectedFactIds(
+        context.factsDb,
+        [factId],
+        maxDepth,
+        context.scopeFilter,
+        linkTypes,
+      ).filter((id) => id !== factId);
       return neighborIds
         .map((id) => context.factsDb.getById(id, { scopeFilter: context.scopeFilter }))
         .filter((fact): fact is MemoryEntry => fact != null && isActiveFact(fact, nowSec));
@@ -406,6 +447,9 @@ export const resolvers: GraphQLResolvers = {
       const decayClasses = asStringArray(filter.decayClasses);
       const minImportance = asNumber(filter.minImportance);
       const scope = asString(filter.scope);
+      const linkTypes = asStringArray(filter.linkTypes);
+      const startNodeIds = asStringArray(filter.startNodeIds);
+      const maxDepth = Math.max(1, Math.min(5, asNumber(filter.maxDepth) ?? 2));
       // Clamped to [20, 2000], default 400 — matches the REST /api/graph route's maxNodes bound,
       // preventing a single request from forcing an unbounded node/edge payload and O(n^2)-ish
       // edge-filtering work.
@@ -418,10 +462,29 @@ export const resolvers: GraphQLResolvers = {
       // includeSuperseded=true so supersede lineage (below) can find predecessor facts; the
       // active/non-expired node set itself is still derived via isActiveFact immediately after.
       const allMatching = allFacts(context, true).filter(matchesFilters);
-      const facts = allMatching.filter((fact) => isActiveFact(fact)).slice(0, maxNodes);
+      let candidateFacts = allMatching.filter((fact) => isActiveFact(fact));
+      // GraphFilterInput declares linkTypes/maxDepth/startNodeIds, but until now this resolver
+      // silently ignored all three and always returned a flat "top-N by recency" node set instead
+      // of a seed-rooted subgraph (#2067-followup). Reuses scopedConnectedFactIds so a
+      // startNodeIds-rooted traversal gets the same per-edge visibility guarantee as
+      // Query.relatedFacts, rather than a raw unscoped BFS that could reveal a path through a
+      // hidden intermediate fact.
+      if (startNodeIds?.length) {
+        const visibleSeeds = startNodeIds.filter(
+          (id) => context.factsDb.getById(id, { scopeFilter: context.scopeFilter }) != null,
+        );
+        const reachable = new Set(
+          scopedConnectedFactIds(context.factsDb, visibleSeeds, maxDepth, context.scopeFilter, linkTypes),
+        );
+        candidateFacts = candidateFacts.filter((fact) => reachable.has(fact.id));
+      }
+      const facts = candidateFacts.slice(0, maxNodes);
       const factIds = new Set(facts.map((fact) => fact.id));
       const linkEdges = getAllLinks(context.factsDb)
-        .filter((link) => factIds.has(link.sourceId) && factIds.has(link.targetId))
+        .filter(
+          (link) =>
+            factIds.has(link.sourceId) && factIds.has(link.targetId) && (!linkTypes?.length || linkTypes.includes(link.linkType)),
+        )
         .map((link) => ({
           source: link.sourceId,
           target: link.targetId,
@@ -701,16 +764,16 @@ export const resolvers: GraphQLResolvers = {
     links: (parent, _args, context) => {
       const fact = asRecord(parent) as Partial<MemoryEntry>;
       return fact.id
-        ? getAllLinks(context.factsDb).filter(
-            (link) => link.sourceId === fact.id && isLinkVisible(context.factsDb, link, context.scopeFilter),
+        ? getLinksBySource(context.factsDb, fact.id).filter((link) =>
+            isLinkVisible(context.factsDb, link, context.scopeFilter),
           )
         : [];
     },
     linkedFrom: (parent, _args, context) => {
       const fact = asRecord(parent) as Partial<MemoryEntry>;
       return fact.id
-        ? getAllLinks(context.factsDb).filter(
-            (link) => link.targetId === fact.id && isLinkVisible(context.factsDb, link, context.scopeFilter),
+        ? getLinksByTarget(context.factsDb, fact.id).filter((link) =>
+            isLinkVisible(context.factsDb, link, context.scopeFilter),
           )
         : [];
     },

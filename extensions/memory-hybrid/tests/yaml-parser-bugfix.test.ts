@@ -154,4 +154,26 @@ c: TrUe`;
       expect(typeof scene.entities["light.bedroom"].state).toBe("string");
     });
   });
+
+  describe("Bug 6: sequence-item sibling keys must align with the first key's actual column, not a hardcoded +2 (#2067-followup)", () => {
+    it("keeps every key when a sequence item has more than one space after the dash", () => {
+      const yaml = `items:
+  -   name: foo
+      value: bar`;
+
+      const result = parseYaml(yaml) as Record<string, any>;
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0]).toEqual({ name: "foo", value: "bar" });
+    });
+
+    it("still parses the single-space-after-dash form unchanged", () => {
+      const yaml = `items:
+  - name: foo
+    value: bar`;
+
+      const result = parseYaml(yaml) as Record<string, any>;
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0]).toEqual({ name: "foo", value: "bar" });
+    });
+  });
 });

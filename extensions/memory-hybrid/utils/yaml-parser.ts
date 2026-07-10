@@ -136,7 +136,8 @@ function parseSequence(ctx: ParseCtx, baseIndent: number): YAMLValue[] {
 
     ctx.pos++;
 
-    const afterDash = content.substring(2).trim();
+    const afterDashRaw = content.substring(2);
+    const afterDash = afterDashRaw.trim();
     if (afterDash === "") {
       skipBlanks(ctx);
       const next = ctx.pos < ctx.lines.length ? ctx.lines[ctx.pos] : null;
@@ -146,7 +147,13 @@ function parseSequence(ctx: ParseCtx, baseIndent: number): YAMLValue[] {
         result.push(null);
       }
     } else if (hasMappingColon(afterDash)) {
-      result.push(parseSeqMapItem(ctx, afterDash, baseIndent));
+      // The first key can start more than 2 columns past the dash (e.g. `-   name: foo` has 3
+      // spaces after `- `) -- sibling keys on later lines are indented to match wherever the
+      // first key's text actually starts, not a hardcoded `baseIndent + 2`. Passing the real
+      // column here (instead of assuming exactly one space after `- `) keeps the sibling-indent
+      // check in parseSeqMapItem aligned with hand-formatted YAML (#2067-followup).
+      const firstKeyIndent = indent + 2 + (afterDashRaw.length - afterDashRaw.trimStart().length);
+      result.push(parseSeqMapItem(ctx, afterDash, baseIndent, firstKeyIndent));
     } else {
       result.push(parseScalar(removeInlineComment(afterDash)));
     }
@@ -155,12 +162,17 @@ function parseSequence(ctx: ParseCtx, baseIndent: number): YAMLValue[] {
   return result;
 }
 
-function parseSeqMapItem(ctx: ParseCtx, firstPair: string, seqIndent: number): Record<string, YAMLValue> {
+function parseSeqMapItem(
+  ctx: ParseCtx,
+  firstPair: string,
+  seqIndent: number,
+  firstKeyIndent: number = seqIndent + 2,
+): Record<string, YAMLValue> {
   const result: Record<string, YAMLValue> = {};
 
-  parsePairInto(ctx, firstPair, seqIndent + 2, result);
+  parsePairInto(ctx, firstPair, firstKeyIndent, result);
 
-  const expectedSiblingIndent = seqIndent + 2;
+  const expectedSiblingIndent = firstKeyIndent;
 
   while (true) {
     skipBlanks(ctx);

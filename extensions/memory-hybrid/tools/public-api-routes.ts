@@ -8,6 +8,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig } from "../config.js";
+import { isValidCategory } from "../config.js";
 import { isNonActionableSubagentPlaceholderTask } from "../services/active-task.js";
 import {
   buildGatewayMemoryDiagnostics,
@@ -753,11 +754,20 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
         if (action === "create") {
           const text = typeof body.text === "string" ? body.text?.trim() : "";
           if (!text) return toJson(400, { error: "missing text" });
+          // Every sibling mutation path (fact-mutation-gateway.ts's memory_store, memory_edit)
+          // validates an externally-supplied category against isValidCategory() before storing;
+          // this HTTP create action skipped that check entirely, and its own fallback default
+          // ("general") isn't even a valid category itself (the real default is "other") --
+          // together this let an unvalidated/malformed category silently produce a fact invisible
+          // to every category-filtered query (#2067-followup).
+          const categoryParam = typeof body.category === "string" ? body.category.trim() : "";
+          const category = categoryParam || "other";
+          if (!isValidCategory(category)) {
+            return toJson(400, { error: `invalid category "${category}"` });
+          }
           const stored = ctx.factsDb.store({
             text,
-            category: (typeof body.category === "string"
-              ? body.category
-              : "general") as import("../config.js").MemoryCategory,
+            category: category as import("../config.js").MemoryCategory,
             importance: typeof body.importance === "number" ? body.importance : 0.5,
             source: "wiki-create",
             entity: typeof body.entity === "string" ? body.entity : null,

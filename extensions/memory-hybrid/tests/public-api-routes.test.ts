@@ -686,6 +686,34 @@ describe("registerPublicApiRoutes", () => {
     }
   });
 
+  it("fact mutate create rejects an invalid category instead of silently storing it (#2067-followup)", async () => {
+    const { api, routes } = makeApi();
+    registerPublicApiRoutes({ cfg: makeCfg(true), factsDb, narrativesDb, factMutationsEnabled: true }, api);
+    const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}/fact/mutate`)!;
+    const res = await invokeNodeHttpRoute(route.handler, {
+      method: "POST",
+      url: `${PUBLIC_API_PREFIX}/fact/mutate`,
+      headers: {},
+      body: JSON.stringify({ action: "create", text: "invalid category test", category: "not-a-real-category" }),
+    });
+    expect(res.status).toBe(400);
+    expect(JSON.parse(res.body).error).toContain("invalid category");
+  });
+
+  it("fact mutate create defaults an omitted category to the real default 'other', not the invalid 'general' (#2067-followup)", async () => {
+    const { api, routes } = makeApi();
+    registerPublicApiRoutes({ cfg: makeCfg(true), factsDb, narrativesDb, factMutationsEnabled: true }, api);
+    const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}/fact/mutate`)!;
+    const res = await invokeNodeHttpRoute(route.handler, {
+      method: "POST",
+      url: `${PUBLIC_API_PREFIX}/fact/mutate`,
+      headers: {},
+      body: JSON.stringify({ action: "create", text: "no category given test" }),
+    });
+    expect(res.status).toBe(201);
+    expect(JSON.parse(res.body).fact.category).toBe("other");
+  });
+
   it("export requires authentication", async () => {
     factsDb.store({
       text: "Export auth gate test fact",
