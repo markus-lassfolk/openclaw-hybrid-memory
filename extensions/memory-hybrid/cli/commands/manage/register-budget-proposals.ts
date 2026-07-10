@@ -77,6 +77,11 @@ By Tier:`);
         try {
           const DEFAULT_BUDGET = Math.ceil((32_000 * 0.8) / 3.8);
           const budgetVal = Number.parseInt(opts?.budget ?? String(DEFAULT_BUDGET), 10);
+          if (!Number.isFinite(budgetVal) || budgetVal < 1) {
+            console.error(`error: --budget must be a positive integer, got: ${opts?.budget}`);
+            process.exitCode = 1;
+            return;
+          }
           const result = factsDb.trimToBudget(budgetVal, true);
           const fmt = (n: number) => n.toLocaleString();
           console.log(`Budget Simulation (budget=${fmt(budgetVal)} tokens)`);
