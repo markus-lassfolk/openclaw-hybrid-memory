@@ -611,7 +611,9 @@ async function sweepHomeAssistantAnomaly(
     const states: Record<string, { state: string; last_updated: string }> = {};
     // Fetch only the specific watched entities by ID to avoid downloading all HA states.
     onProgress?.(`ha-anomaly: fetching ${watchEntities.length} watched entities`);
-    await Promise.all(
+    // Promise.allSettled (not Promise.all): one flaky/timed-out entity must not suppress
+    // the anomaly states already fetched for every other watched entity this cycle.
+    const settled = await Promise.allSettled(
       watchEntities.map(async (entityId) => {
         const entity = await fetchHaEntityById(ha, entityId);
         if (entity) {
@@ -619,6 +621,17 @@ async function sweepHomeAssistantAnomaly(
         }
       }),
     );
+    for (let i = 0; i < settled.length; i++) {
+      const outcome = settled[i];
+      if (outcome.status === "rejected") {
+        capturePluginError(outcome.reason instanceof Error ? outcome.reason : new Error(String(outcome.reason)), {
+          operation: "sweep-ha-anomaly:fetch-entity",
+          severity: "warning",
+          subsystem: "sensor-sweep",
+          entityId: watchEntities[i],
+        });
+      }
+    }
 
     if (Object.keys(states).length === 0) return result;
 
