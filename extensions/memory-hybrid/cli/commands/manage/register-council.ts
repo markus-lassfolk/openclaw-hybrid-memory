@@ -3,9 +3,12 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
+import type { CouncilProvenanceMode } from "../../../config/types/maintenance.js";
 import { buildCouncilSessionKey, buildProvenanceMetadata, generateTraceId } from "../../../utils/provenance.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
+
+const COUNCIL_PROVENANCE_MODES: readonly CouncilProvenanceMode[] = ["meta+receipt", "meta", "receipt", "none"];
 
 export function registerManageCouncil(mem: Chainable, b: ManageBindings): void {
   const { cfg } = b;
@@ -33,10 +36,13 @@ export function registerManageCouncil(mem: Chainable, b: ManageBindings): void {
           parentSession?: string;
           mode?: string;
         }) => {
+          if (opts?.mode && !COUNCIL_PROVENANCE_MODES.includes(opts.mode as CouncilProvenanceMode)) {
+            console.error(`error: --mode must be one of: ${COUNCIL_PROVENANCE_MODES.join(", ")} (got "${opts.mode}")`);
+            process.exitCode = 1;
+            return;
+          }
           const configMode = cfg.maintenance?.council?.provenance ?? "meta+receipt";
-          const mode =
-            (opts?.mode as import("../../../config/types/maintenance.js").CouncilProvenanceMode | undefined) ??
-            configMode;
+          const mode = (opts?.mode as CouncilProvenanceMode | undefined) ?? configMode;
           const sessionKeyPrefix = cfg.maintenance?.council?.sessionKeyPrefix ?? "council-review";
           const sessionKey = opts?.sessionKey?.trim() || buildCouncilSessionKey(sessionKeyPrefix);
 

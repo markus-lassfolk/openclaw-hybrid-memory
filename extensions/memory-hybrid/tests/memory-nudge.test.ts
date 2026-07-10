@@ -7,8 +7,10 @@ import {
   _getNudgeTrackedSessionCountForTests,
   buildMemoryNudge,
   DEFAULT_MEMORY_NUDGE_CONFIG,
+  isNudgeSuppressed,
   recordNudgeEmission,
   resetNudgeState,
+  suppressNudgeForSession,
 } from "../services/memory-nudge.js";
 import { insertRecallEvent } from "../services/recall-events.js";
 
@@ -22,6 +24,30 @@ describe("memory-nudge session eviction", () => {
       recordNudgeEmission(`session-${i}`);
     }
     expect(_getNudgeTrackedSessionCountForTests()).toBeLessThanOrEqual(201);
+  });
+});
+
+describe("evictOldestSession evicts by last-touched order, not insertion order (regression)", () => {
+  beforeEach(() => resetNudgeState());
+
+  it("does not evict a session that keeps being touched, even though it was inserted first", () => {
+    // session-active is the very first entry -- would be the "oldest by insertion" candidate.
+    suppressNudgeForSession("session-active", 1);
+    // Fill up to capacity (200) with distinct sessions.
+    for (let i = 0; i < 199; i++) {
+      recordNudgeEmission(`filler-${i}`);
+    }
+    expect(_getNudgeTrackedSessionCountForTests()).toBe(200);
+
+    // Re-touch session-active (simulating continued activity) without adding a new session.
+    expect(isNudgeSuppressed("session-active")).toBe(true);
+
+    // Admitting one more distinct session forces exactly one eviction.
+    recordNudgeEmission("filler-199");
+
+    // session-active was touched most recently of all 200 prior entries -- it must survive;
+    // filler-0 (the actual least-recently-touched entry) should be evicted instead.
+    expect(isNudgeSuppressed("session-active")).toBe(true);
   });
 });
 
