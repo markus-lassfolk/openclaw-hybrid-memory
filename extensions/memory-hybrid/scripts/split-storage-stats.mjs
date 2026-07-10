@@ -6,6 +6,21 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const path = join(root, "cli/commands/manage/register-storage-and-stats.ts");
 const lines = readFileSync(path, "utf8").split("\n");
+
+// One-shot migration (already run): register-storage-and-stats.ts is now a thin re-export shim,
+// not the pre-split monolith this script's hardcoded line offsets assume. Re-running against the
+// current file would unconditionally overwrite its already-split targets with near-empty stubs
+// sliced from far past the shim's end (#2067-followup). Refuse rather than silently destroy
+// production files.
+const MIN_EXPECTED_LINES = 3238;
+if (lines.length < MIN_EXPECTED_LINES) {
+  console.error(
+    `split-storage-stats.mjs: register-storage-and-stats.ts has ${lines.length} lines, expected at least ${MIN_EXPECTED_LINES}. ` +
+      "This one-shot migration already ran and the file is already split into shims -- re-running would overwrite them with near-empty stubs. Aborting.",
+  );
+  process.exit(1);
+}
+
 const imports = lines.slice(0, 42).join("\n");
 const helpers = lines.slice(43, 946).join("\n");
 const maintenanceBody = lines.slice(965, 1925).join("\n");

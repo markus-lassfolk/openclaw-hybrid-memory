@@ -26,6 +26,22 @@ const memPath = "tools/memory-tools.ts";
 const memFull = readFileSync(join(root, memPath), "utf-8");
 const memLines = memFull.split("\n");
 
+// One-shot migration (already run): tools/memory-tools.ts is now a thin orchestrator re-exporting
+// the already-split tools/memory/*.ts modules, not the pre-split monolith this script's hardcoded
+// line offsets assume. Re-running against the current file would unconditionally overwrite every
+// tools/memory/*.ts module (and helpers.ts/types.ts/build-runtime.ts/runtime.ts) with near-empty
+// stubs sliced from far past the orchestrator's end (#2067-followup). Refuse rather than silently
+// destroy production files -- `existsSync` was already imported for exactly this kind of guard but
+// never wired up.
+const MIN_EXPECTED_LINES = 3612;
+if (memLines.length < MIN_EXPECTED_LINES || !existsSync(join(root, "tools/memory/runtime.ts"))) {
+  console.error(
+    `split-large-files.mjs: ${memPath} has ${memLines.length} lines (expected >= ${MIN_EXPECTED_LINES}) or tools/memory/runtime.ts already exists. ` +
+      "This one-shot migration already ran and the target files are already split -- re-running would overwrite them with near-empty stubs. Aborting.",
+  );
+  process.exit(1);
+}
+
 // Lines 1-77: imports only (keep in memory-tools.ts orchestrator + per-module)
 const memImports = memLines.slice(0, 77).join("\n");
 

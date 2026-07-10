@@ -21,6 +21,32 @@ function slice(rel, start, end) {
   return lines(rel).slice(start - 1, end).join("\n");
 }
 
+// One-shot migration (already run): every source file this script slices is now a thin re-export
+// shim, not the pre-split monolith its hardcoded line offsets assume. Re-running against the
+// current repo state would unconditionally overwrite each already-split target with near-empty
+// stubs sliced from far past its shim's end (#2067-followup). Validate every source file up front
+// -- before any write() runs -- and refuse (all-or-nothing) rather than silently destroy some
+// production files while leaving others untouched.
+const REQUIRED_MIN_LINES = [
+  ["cli/cmd-verify.ts", 2194],
+  ["backends/vector-db.ts", 200],
+  ["cli/cmd-install.ts", 2252],
+  ["setup/cli-context.ts", 1199],
+  ["routes/dashboard-server.ts", 2134],
+  ["lifecycle/stage-recall.ts", 841],
+  ["lifecycle/stage-capture.ts", 1005],
+];
+const tooShort = REQUIRED_MIN_LINES.filter(([rel, min]) => lines(rel).length < min);
+if (tooShort.length > 0) {
+  console.error(
+    "split-remaining.mjs: this one-shot migration already ran and the following source files are " +
+      "already split (shorter than the pre-split monolith this script expects) -- re-running would " +
+      "overwrite their already-split targets with near-empty stubs. Aborting.\n" +
+      tooShort.map(([rel, min]) => `  ${rel}: ${lines(rel).length} lines (expected >= ${min})`).join("\n"),
+  );
+  process.exit(1);
+}
+
 // ─── 1. cmd-verify sections ───────────────────────────────────────────────────
 const verifyImports = lines("cli/cmd-verify.ts").slice(0, 98).join("\n");
 

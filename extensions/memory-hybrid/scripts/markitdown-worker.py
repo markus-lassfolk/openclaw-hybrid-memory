@@ -84,6 +84,16 @@ def main():
             print(json.dumps(resp), flush=True)
             continue
 
+        # json.loads accepts any valid JSON value (a bare number/string/array/null), not just an
+        # object -- handle()'s request.get("id") assumes a dict and crashes with AttributeError on
+        # anything else, killing this persistent worker process and silently dropping every
+        # subsequent queued request. Return a scoped JSON-RPC "Invalid Request" error instead
+        # (#2067-followup).
+        if not isinstance(request, dict):
+            resp = make_error(None, -32600, "Invalid Request: expected a JSON object")
+            print(json.dumps(resp), flush=True)
+            continue
+
         resp = handle(request)
         print(json.dumps(resp), flush=True)
 
