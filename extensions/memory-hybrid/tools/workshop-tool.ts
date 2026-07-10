@@ -16,6 +16,7 @@ import { buildWorkshopDigestReport } from "../services/unified-proposals.js";
 import {
   DEFAULT_WORKSHOP_TOOL_LIST_LIMIT,
   isAuthorizedChangeFeedSessionKey,
+  isWorkshopToolMutationEnabled,
   resolveWorkshopRevertSessionKey,
 } from "../services/workshop-config.js";
 import { revertChangeByOrdinal, buildChangeRevertContext } from "../services/change-feed-revert.js";
@@ -59,26 +60,45 @@ function buildWorkshopCtx(ctx: WorkshopToolsContext, api: ClawdbotPluginApi): Wo
   });
 }
 
+const READ_ONLY_WORKSHOP_ACTIONS = [Type.Literal("list"), Type.Literal("inspect"), Type.Literal("digest")];
+const MUTATING_WORKSHOP_ACTION_NAMES = [
+  "approve",
+  "reject",
+  "quarantine",
+  "revise",
+  "undo",
+  "revert_by_ordinal",
+] as const;
+const MUTATING_WORKSHOP_ACTIONS = MUTATING_WORKSHOP_ACTION_NAMES.map((action) => Type.Literal(action));
+
+function workshopMutationDisabledResponse(action: string) {
+  return {
+    content: [
+      {
+        type: "text",
+        text: `memory_workshop action '${action}' is disabled for agent tool calls. Review and mutate proposals from the trusted dashboard/gateway, or set workshop.allowAgentMutations=true to opt in.`,
+      },
+    ],
+    details: { ok: false, error: "workshop_agent_mutations_disabled" },
+  };
+}
+
 export function registerWorkshopTools(ctx: WorkshopToolsContext, api: ClawdbotPluginApi): void {
+  const allowMutations = isWorkshopToolMutationEnabled(ctx.cfg);
   api.registerTool({
     name: "memory_workshop",
     label: "Memory Workshop",
-    description:
-      "Unified review queue for persona proposals, crystallization skills, tool proposals, and procedure-skill promotions. Actions: list, inspect, approve, reject, quarantine, revise, undo, revert_by_ordinal, digest.",
+    description: allowMutations
+      ? "Unified review queue for persona proposals, crystallization skills, tool proposals, and procedure-skill promotions. Actions: list, inspect, approve, reject, quarantine, revise, undo, revert_by_ordinal, digest."
+      : "Read-only unified review queue for persona proposals, crystallization skills, tool proposals, and procedure-skill promotions. Actions: list, inspect, digest. Mutating actions are disabled unless workshop.allowAgentMutations=true.",
     parameters: Type.Object({
       action: Type.Union(
-        [
-          Type.Literal("list"),
-          Type.Literal("inspect"),
-          Type.Literal("approve"),
-          Type.Literal("reject"),
-          Type.Literal("quarantine"),
-          Type.Literal("revise"),
-          Type.Literal("undo"),
-          Type.Literal("revert_by_ordinal"),
-          Type.Literal("digest"),
-        ],
-        { description: "Workshop action to perform." },
+        allowMutations ? [...READ_ONLY_WORKSHOP_ACTIONS, ...MUTATING_WORKSHOP_ACTIONS] : READ_ONLY_WORKSHOP_ACTIONS,
+        {
+          description: allowMutations
+            ? "Workshop action to perform."
+            : "Read-only workshop action to perform. Mutating actions are disabled unless workshop.allowAgentMutations=true.",
+        },
       ),
       id: Type.Optional(
         Type.String({ description: "Unified proposal key (type:storeId) for inspect/approve/reject/etc." }),
@@ -103,6 +123,9 @@ export function registerWorkshopTools(ctx: WorkshopToolsContext, api: ClawdbotPl
       const action = params.action as string;
       const workshopCtx = buildWorkshopCtx(ctx, api);
       try {
+        if (MUTATING_WORKSHOP_ACTION_NAMES.some((mutatingAction) => mutatingAction === action) && !allowMutations) {
+          return workshopMutationDisabledResponse(action);
+        }
         switch (action) {
           case "list": {
             const items = workshopList(workshopCtx, {

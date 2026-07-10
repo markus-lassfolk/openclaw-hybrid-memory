@@ -187,6 +187,44 @@ describe("reregister-policy", () => {
     expect(canReuseDatabasesOnReregister(old, cfg, api)).toBe(false);
   });
 
+  it("reuse-databases declines when public route security settings change", () => {
+    vi.stubEnv("OPENCLAW_HYBRID_MEM_REREGISTER_POLICY", "reuse-databases");
+    const api = {
+      resolvePath: (p: string) => `/home/markus/.openclaw/${p}`,
+    };
+    const oldCfg = minimalCfg();
+    oldCfg.health = { enabled: true, authenticated: false } as HybridMemoryConfig["health"];
+    const newCfg = minimalCfg();
+    newCfg.health = { enabled: true, authenticated: true } as HybridMemoryConfig["health"];
+    const old = mockOldRuntime(
+      {
+        sqlite: api.resolvePath(oldCfg.sqlitePath),
+        lance: api.resolvePath(oldCfg.lanceDbPath),
+      },
+      oldCfg,
+    );
+    expect(canReuseDatabasesOnReregister(old, newCfg, api)).toBe(false);
+  });
+
+  it("reuse-databases declines when public routes are disabled", () => {
+    vi.stubEnv("OPENCLAW_HYBRID_MEM_REREGISTER_POLICY", "reuse-databases");
+    const api = {
+      resolvePath: (p: string) => `/home/markus/.openclaw/${p}`,
+    };
+    const oldCfg = minimalCfg();
+    oldCfg.health = { enabled: true, authenticated: false } as HybridMemoryConfig["health"];
+    const newCfg = minimalCfg();
+    newCfg.health = { enabled: false, authenticated: false } as HybridMemoryConfig["health"];
+    const old = mockOldRuntime(
+      {
+        sqlite: api.resolvePath(oldCfg.sqlitePath),
+        lance: api.resolvePath(oldCfg.lanceDbPath),
+      },
+      oldCfg,
+    );
+    expect(canReuseDatabasesOnReregister(old, newCfg, api)).toBe(false);
+  });
+
   it("reuse-databases declines when encryption key changes", () => {
     vi.stubEnv("OPENCLAW_HYBRID_MEM_REREGISTER_POLICY", "reuse-databases");
     const api = {

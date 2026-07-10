@@ -174,6 +174,35 @@ describe("tool registration generation guard", () => {
     expect(unregisterFn).toHaveBeenCalledTimes(1);
   });
 
+  it("disposes unregister handles returned by registerHttpRoute", () => {
+    const state = getHybridMemoryRegistrationState();
+    const disposeRoute = vi.fn();
+    const registerHttpRoute = vi.fn(() => ({ dispose: disposeRoute }));
+    const { api } = makeRegisterToolApi();
+    const apiWithRoutes = {
+      ...api,
+      registerHttpRoute,
+    };
+
+    state.registrationGenerationRef.value = 4;
+    const registration = createGenerationGuardedToolsApi(
+      {
+        registrationGeneration: 4,
+        currentRegistrationGenerationRef: state.registrationGenerationRef,
+      },
+      apiWithRoutes as never,
+    );
+
+    registration.api.registerHttpRoute?.({ path: "/plugins/memory-public/export" } as never);
+    expect(registerHttpRoute).toHaveBeenCalledTimes(1);
+
+    registration.handle.dispose();
+    expect(disposeRoute).toHaveBeenCalledTimes(1);
+
+    registration.handle.dispose();
+    expect(disposeRoute).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps generation state on globalThis across module reload", async () => {
     vi.resetModules();
     const moduleA = await import("../setup/hybrid-memory-generation-state.js");

@@ -94,6 +94,11 @@ export type PersonaProposalsConfig = {
 export type WorkshopConfig = {
   /** Master switch for workshop tool, HTTP/gateway routes, and dashboard tab integration. */
   enabled?: boolean;
+  /**
+   * Allow the LLM-callable memory_workshop tool to perform persistent mutations
+   * such as approve/reject/quarantine/undo/revert. Default: false (read-only tool).
+   */
+  allowAgentMutations?: boolean;
   /** Max pending items across all proposal backlogs (default: 50, 0 = unlimited). */
   maxPending?: number;
   /** Session key for change-feed events from Mission Control / dashboard actions. */

@@ -159,6 +159,11 @@ export function canReuseDatabasesOnReregister(
   const newEncKey = cfg.credentials?.encryptionKey ?? "";
   if (oldEncKey !== newEncKey) return false;
 
+  // Compare HTTP route security settings so auth hardening or route disablement
+  // cannot keep stale public/dashboard handlers alive on reused database handles.
+  if (oldCfg.health?.enabled !== cfg.health?.enabled) return false;
+  if (oldCfg.health?.authenticated !== cfg.health?.authenticated) return false;
+
   return true;
 }
 
