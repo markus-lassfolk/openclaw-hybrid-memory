@@ -13,10 +13,9 @@
  * - runUpgradeForCli
  */
 
-import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { delimiter, isAbsolute, join, resolve as pathResolve } from "node:path";
 
 import { getEnv } from "../../utils/env-manager.js";
 import { expandTilde } from "../../utils/path.js";
@@ -32,6 +31,33 @@ import {
   normalizeEmbeddingProvider,
   readString,
 } from "./config-merge.js";
+
+/**
+ * Check whether `command` exists on PATH without executing it, to avoid running an
+ * attacker-influenced binary when PATH/cwd can be controlled by untrusted input (#2072).
+ */
+function hasTrustedPathExecutable(command: string): boolean {
+  const rawPath = readString(process.env.PATH);
+  if (!rawPath) return false;
+
+  const cwd = process.cwd();
+  const pathExt =
+    process.platform === "win32"
+      ? (readString(process.env.PATHEXT)?.split(";").filter(Boolean) ?? [".EXE", ".CMD", ".BAT", ".COM"])
+      : [""];
+
+  for (const entry of rawPath.split(delimiter).map((part) => part.trim())) {
+    if (!entry || entry === ".") continue;
+    const resolvedEntry = pathResolve(entry);
+    if (resolvedEntry === cwd || !isAbsolute(resolvedEntry)) continue;
+
+    for (const ext of pathExt) {
+      if (existsSync(join(resolvedEntry, `${command}${ext}`))) return true;
+    }
+  }
+
+  return false;
+}
 
 export function detectRecommendedEmbeddingSetup(
   root: Record<string, unknown>,
@@ -68,14 +94,12 @@ export function detectRecommendedEmbeddingSetup(
 
   const ollamaHost = readString(getEnv("OLLAMA_HOST"));
   const ollamaInstalled =
-    existsSync(join(homedir(), ".ollama")) ||
-    ollamaHost !== undefined ||
-    spawnSync("ollama", ["--version"], { stdio: "ignore", timeout: 2_000 }).status === 0;
+    existsSync(join(homedir(), ".ollama")) || ollamaHost !== undefined || hasTrustedPathExecutable("ollama");
   if (ollamaInstalled) {
     return {
       provider: "ollama",
       model: "nomic-embed-text",
-      source: ollamaHost ? "OLLAMA_HOST" : existsSync(join(homedir(), ".ollama")) ? "~/.ollama" : "ollama --version",
+      source: ollamaHost ? "OLLAMA_HOST" : existsSync(join(homedir(), ".ollama")) ? "~/.ollama" : "ollama on PATH",
       reason: "Detected a local Ollama installation or endpoint hint.",
     };
   }
