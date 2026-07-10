@@ -92,3 +92,51 @@ describe("register-procedure-lifecycle exit codes (regression)", () => {
     expect(process.exitCode).toBeUndefined();
   });
 });
+
+describe("register-procedure-lifecycle 'list --limit' validation (#2067-followup)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    process.exitCode = undefined;
+  });
+
+  it("rejects a non-numeric --limit instead of silently listing 0 of 0 procedures", async () => {
+    const listProcedures = vi.fn(() => []);
+    const mem = makeProgram({ factsDb: { listProcedures } as unknown as ManageBindings["factsDb"] });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await mem.parseAsync(["procedure", "list", "--limit", "abc"], { from: "user" });
+
+    expect(process.exitCode).toBe(1);
+    expect(listProcedures).not.toHaveBeenCalled();
+  });
+
+  it("rejects a --limit of 0 instead of silently listing 0 of 0 procedures", async () => {
+    const listProcedures = vi.fn(() => []);
+    const mem = makeProgram({ factsDb: { listProcedures } as unknown as ManageBindings["factsDb"] });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await mem.parseAsync(["procedure", "list", "--limit", "0"], { from: "user" });
+
+    expect(process.exitCode).toBe(1);
+    expect(listProcedures).not.toHaveBeenCalled();
+  });
+
+  it("still lists procedures normally with a valid --limit", async () => {
+    const listProcedures = vi.fn(() => [
+      {
+        id: "proc-fixture-a",
+        procedureType: "positive",
+        taskPattern: "run the test-fixture workflow",
+        successRate: 0.5,
+        version: 1,
+      },
+    ]);
+    const mem = makeProgram({ factsDb: { listProcedures } as unknown as ManageBindings["factsDb"] });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await mem.parseAsync(["procedure", "list", "--limit", "5"], { from: "user" });
+
+    expect(process.exitCode).toBeUndefined();
+    expect(listProcedures).toHaveBeenCalledWith(15);
+  });
+});

@@ -8,8 +8,9 @@
  * Extracted from cli/handlers.ts to keep that file manageable.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { atomicWriteFile } from "../../../utils/atomic-write.js";
 
 import { getCronModelConfig } from "../../../config.js";
 import { reconcileAllCronRunLedgers } from "../../../services/cron-maintenance-reconciler.js";
@@ -401,7 +402,7 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
         }
 
         if (changed) {
-          writeFileSync(defaultConfigPath, JSON.stringify(fixConfig, null, 2), "utf-8");
+          atomicWriteFile(defaultConfigPath, JSON.stringify(fixConfig, null, 2));
         }
         if (applied.length > 0) {
           log("\n--- Applied fixes ---");

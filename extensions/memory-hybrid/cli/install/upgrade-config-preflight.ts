@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
 import { PLUGIN_ID } from "../../utils/constants.js";
-import { npxExecutable } from "./workspace.js";
+import { npxExecutable, NPM_INSTALL_TIMEOUT_MS } from "./workspace.js";
 
 export const MANUAL_UPGRADE_DOC_URL =
   "https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/UPGRADE-PLUGIN.md#manual-upgrade-copy-from-repo";
@@ -256,6 +256,7 @@ export function runStandaloneUpgradeInstall(version: string, extensionsParentDir
     cwd: homedir(),
     shell: false,
     env: { ...process.env, OPENCLAW_EXTENSIONS_DIR: extensionsParentDir },
+    timeout: NPM_INSTALL_TIMEOUT_MS,
   });
   if (r.status !== 0) {
     return {

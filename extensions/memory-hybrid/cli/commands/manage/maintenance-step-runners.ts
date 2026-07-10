@@ -679,18 +679,23 @@ export function buildCliMaintenanceRunners(
   });
 
   set("scope-promote", async () => {
-    const candidates = b.factsDb.findSessionFactsForPromotion(7, 0.7);
+    // Query-level cap plus deadline-checked iteration -- findSessionFactsForPromotion had no
+    // LIMIT and this loop had no deadline check, so a large session-scope backlog could run past
+    // the step's runtime budget with no graceful stop, the same class of bug repair-vectors was
+    // already fixed for (#2041 review finding) (#2067-followup).
+    const candidates = b.factsDb.findSessionFactsForPromotion(7, 0.7, 500);
     let promoted = 0;
     let skipped = 0;
     let failed = 0;
-    for (const f of candidates) {
+    const { truncatedAt } = await runUntilMaintenanceDeadline(candidates, async (f) => {
       const outcome = b.factsDb.promoteScopeToGlobalWithOutcome(f.id);
       if (outcome === "promoted") promoted++;
       else if (outcome === "skipped") skipped++;
       else failed++;
-    }
-    const partial = failed > 0;
-    const summary = `promoted=${promoted}/${candidates.length} skipped=${skipped} failed=${failed} semantic=${partial ? "partial" : "success"}`;
+    });
+    const deadlineHit = truncatedAt >= 0;
+    const partial = failed > 0 || deadlineHit;
+    const summary = `promoted=${promoted}/${candidates.length} skipped=${skipped} failed=${failed} deadlineHit=${deadlineHit} semantic=${partial ? "partial" : "success"}`;
     if (partial) {
       throw new Error(`scope-promote partial failure (${summary})`);
     }

@@ -8,8 +8,8 @@
  * Extracted from cli/handlers.ts to keep that file manageable.
  */
 
-import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { atomicWriteFile } from "../../../utils/atomic-write.js";
 import {
   detectDualPluginInstallVersionMismatch,
   buildDualInstallReconciliationGuidance,
@@ -286,7 +286,7 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
       );
       if (opts.fix) {
         agentsDefaults.pruning = undefined;
-        writeFileSync(defaultConfigPath, JSON.stringify(openclawConfigRead.root, null, 2), "utf-8");
+        atomicWriteFile(defaultConfigPath, JSON.stringify(openclawConfigRead.root, null, 2));
         log(`  → Removed agents.defaults.pruning from ${defaultConfigPath}`);
         state.fixes.pop();
         issues.pop();

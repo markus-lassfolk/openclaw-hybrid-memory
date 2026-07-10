@@ -479,6 +479,46 @@ describe("install embedding autofill safety", () => {
     expect(apiKey).toEqual({ source: "env", provider: "openclaw", id: "OPENAI_API_KEY" });
   });
 
+  it("redacts literal secret strings from the install --dry-run preview, including the credentials-vault encryption key (#2067-followup)", () => {
+    const rawEmbeddingKey = "sk-real-embedding-key-that-must-not-leak-1234567890";
+    const rawEncryptionKey = "real-vault-encryption-key-that-must-not-leak-32chars";
+    writeOpenclawConfig({
+      plugins: {
+        entries: {
+          "openclaw-hybrid-memory": {
+            config: {
+              embedding: {
+                provider: "openai",
+                model: "text-embedding-3-small",
+                apiKey: rawEmbeddingKey,
+              },
+              credentials: {
+                enabled: true,
+                encryptionKey: rawEncryptionKey,
+              },
+            },
+          },
+        },
+      },
+    });
+    const result = runInstallForCli({ dryRun: true });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    // The raw preview string must never contain either secret verbatim.
+    expect(result.configJson ?? "").not.toContain(rawEmbeddingKey);
+    expect(result.configJson ?? "").not.toContain(rawEncryptionKey);
+
+    const parsed = JSON.parse(result.configJson ?? "{}") as Record<string, unknown>;
+    const pluginCfg = (
+      ((parsed.plugins as Record<string, unknown>).entries as Record<string, unknown>)[
+        "openclaw-hybrid-memory"
+      ] as Record<string, unknown>
+    ).config as Record<string, unknown>;
+    expect((pluginCfg.embedding as Record<string, unknown>).apiKey).toBe("[REDACTED]");
+    expect((pluginCfg.credentials as Record<string, unknown>).encryptionKey).toBe("[REDACTED]");
+  });
+
   it("treats llm.providers.openai/azure-foundry keys as valid embedding fallback auth", () => {
     writeOpenclawConfig({
       plugins: {

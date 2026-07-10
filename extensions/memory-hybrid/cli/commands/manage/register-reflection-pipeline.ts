@@ -196,13 +196,26 @@ export function registerManageReflectionPipeline(
       .option("--limit <n>", "Max facts to store (default: no limit)")
       .action(
         withExit(async (opts?: { dryRun?: boolean; workspace?: string; limit?: string }) => {
+          let limit: number | undefined;
+          if (opts?.limit !== undefined) {
+            // A non-numeric --limit (e.g. "abc") parsed to NaN, and runBackfillForCli's cap check
+            // is `limit > 0 && stored >= limit` -- NaN > 0 is false, so the intended cap silently
+            // never applied and the backfill ran unbounded instead of rejecting the bad flag
+            // (#2067-followup).
+            limit = Number.parseInt(opts.limit, 10);
+            if (!Number.isFinite(limit) || limit < 1) {
+              console.error("error: --limit must be a positive integer");
+              process.exitCode = 1;
+              return;
+            }
+          }
           let res;
           try {
             res = await runBackfill(
               {
                 dryRun: !!opts?.dryRun,
                 workspace: opts?.workspace,
-                limit: opts?.limit ? Number.parseInt(opts.limit, 10) : undefined,
+                limit,
               },
               { log: console.log, warn: console.warn },
             );
@@ -288,6 +301,63 @@ export function registerManageReflectionPipeline(
             );
           },
         ),
+      );
+
+    const entityMentions = mem.command("entity-mentions").description("Audit and cleanup stored entity mention rows");
+
+    entityMentions
+      .command("audit")
+      .description("Audit mention quality and duplicates in fact_entity_mentions")
+      .option("--limit <n>", "Max facts to inspect (default 500)", "500")
+      .option("--json", "Output JSON")
+      .action(
+        withExit(async (opts?: { limit?: string; json?: boolean }) => {
+          const limitRaw = Number.parseInt(opts?.limit ?? "500", 10);
+          if (!Number.isFinite(limitRaw) || limitRaw < 1) throw new Error("--limit must be >= 1");
+          const summary = factsDb.auditEntityMentions(limitRaw);
+          if (opts?.json) {
+            console.log(JSON.stringify(summary));
+            return;
+          }
+          console.log(
+            `Entity mentions audit: facts=${summary.factsScanned} rows=${summary.rowsScanned} accepted=${summary.accepted} rejected=${summary.rejected} duplicates=${summary.duplicates} reclassified=${summary.reclassified}`,
+          );
+          if (Object.keys(summary.rejectReasons).length > 0) {
+            console.log("Reject reasons:");
+            for (const [reason, count] of Object.entries(summary.rejectReasons)) {
+              console.log(`  ${reason}: ${count}`);
+            }
+          }
+        }),
+      );
+
+    entityMentions
+      .command("cleanup")
+      .description("Remove duplicate/junk mentions and canonicalize known entity types")
+      .option("--limit <n>", "Max facts to process (default 500)", "500")
+      .option("--dry-run", "Preview cleanup changes without writing")
+      .option("--apply", "Apply cleanup changes")
+      .option("--json", "Output JSON")
+      .action(
+        withExit(async (opts?: { limit?: string; dryRun?: boolean; apply?: boolean; json?: boolean }) => {
+          const limitRaw = Number.parseInt(opts?.limit ?? "500", 10);
+          if (!Number.isFinite(limitRaw) || limitRaw < 1) throw new Error("--limit must be >= 1");
+          const apply = opts?.apply === true && opts?.dryRun !== true;
+          const summary = factsDb.cleanupEntityMentions({ limit: limitRaw, apply });
+          if (opts?.json) {
+            console.log(JSON.stringify({ ...summary, apply }));
+            return;
+          }
+          console.log(
+            `Entity mentions cleanup${apply ? "" : " (dry-run)"}: facts=${summary.factsScanned} changed=${summary.changedFacts} removed_rows=${summary.removedRows} duplicates=${summary.duplicates} rejected=${summary.rejected} reclassified=${summary.reclassified}`,
+          );
+          if (Object.keys(summary.rejectReasons).length > 0) {
+            console.log("Reject reasons:");
+            for (const [reason, count] of Object.entries(summary.rejectReasons)) {
+              console.log(`  ${reason}: ${count}`);
+            }
+          }
+        }),
       );
   }
 
@@ -469,6 +539,15 @@ export function registerManageReflectionPipeline(
             cmd?: CommanderOptsParent,
           ) => {
             const window = opts?.window ? Number.parseInt(opts.window, 10) : reflectionConfig.defaultWindow;
+            // A non-numeric --window (e.g. "abc") parses to NaN, which Math.min/Math.max propagate
+            // through runReflection's clamp and every downstream comparison silently matches zero
+            // rows -- the command then reports "analyzed 0 facts" with exit code 0 instead of
+            // rejecting the bad flag (#2067-followup).
+            if (!Number.isFinite(window) || window < 1) {
+              console.error("error: --window must be a positive integer (days)");
+              process.exitCode = 1;
+              return;
+            }
             const dryRun = !!opts?.dryRun;
             const model =
               opts?.model ?? reflectionConfig.model ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "maintenance");
@@ -675,65 +754,6 @@ export function registerManageReflectionPipeline(
       ),
     );
 
-    if (registerIngest) {
-      const entityMentions = mem.command("entity-mentions").description("Audit and cleanup stored entity mention rows");
-
-      entityMentions
-        .command("audit")
-        .description("Audit mention quality and duplicates in fact_entity_mentions")
-        .option("--limit <n>", "Max facts to inspect (default 500)", "500")
-        .option("--json", "Output JSON")
-        .action(
-          withExit(async (opts?: { limit?: string; json?: boolean }) => {
-            const limitRaw = Number.parseInt(opts?.limit ?? "500", 10);
-            if (!Number.isFinite(limitRaw) || limitRaw < 1) throw new Error("--limit must be >= 1");
-            const summary = factsDb.auditEntityMentions(limitRaw);
-            if (opts?.json) {
-              console.log(JSON.stringify(summary));
-              return;
-            }
-            console.log(
-              `Entity mentions audit: facts=${summary.factsScanned} rows=${summary.rowsScanned} accepted=${summary.accepted} rejected=${summary.rejected} duplicates=${summary.duplicates} reclassified=${summary.reclassified}`,
-            );
-            if (Object.keys(summary.rejectReasons).length > 0) {
-              console.log("Reject reasons:");
-              for (const [reason, count] of Object.entries(summary.rejectReasons)) {
-                console.log(`  ${reason}: ${count}`);
-              }
-            }
-          }),
-        );
-
-      entityMentions
-        .command("cleanup")
-        .description("Remove duplicate/junk mentions and canonicalize known entity types")
-        .option("--limit <n>", "Max facts to process (default 500)", "500")
-        .option("--dry-run", "Preview cleanup changes without writing")
-        .option("--apply", "Apply cleanup changes")
-        .option("--json", "Output JSON")
-        .action(
-          withExit(async (opts?: { limit?: string; dryRun?: boolean; apply?: boolean; json?: boolean }) => {
-            const limitRaw = Number.parseInt(opts?.limit ?? "500", 10);
-            if (!Number.isFinite(limitRaw) || limitRaw < 1) throw new Error("--limit must be >= 1");
-            const apply = opts?.apply === true && opts?.dryRun !== true;
-            const summary = factsDb.cleanupEntityMentions({ limit: limitRaw, apply });
-            if (opts?.json) {
-              console.log(JSON.stringify({ ...summary, apply }));
-              return;
-            }
-            console.log(
-              `Entity mentions cleanup${apply ? "" : " (dry-run)"}: facts=${summary.factsScanned} changed=${summary.changedFacts} removed_rows=${summary.removedRows} duplicates=${summary.duplicates} rejected=${summary.rejected} reclassified=${summary.reclassified}`,
-            );
-            if (Object.keys(summary.rejectReasons).length > 0) {
-              console.log("Reject reasons:");
-              for (const [reason, count] of Object.entries(summary.rejectReasons)) {
-                console.log(`  ${reason}: ${count}`);
-              }
-            }
-          }),
-        );
-    }
-
     if (runReflectIdentity) {
       mem
         .command("reflect-identity")
@@ -749,6 +769,13 @@ export function registerManageReflectionPipeline(
               cmd?: CommanderOptsParent,
             ) => {
               const window = opts?.window ? Number.parseInt(opts.window, 10) : reflectionConfig.defaultWindow;
+              // Same unvalidated-NaN silent-no-op pattern as `reflect --window` above
+              // (#2067-followup).
+              if (!Number.isFinite(window) || window < 1) {
+                console.error("error: --window must be a positive integer (days)");
+                process.exitCode = 1;
+                return;
+              }
               const dryRun = !!opts?.dryRun;
               const model =
                 opts?.model ??
@@ -1699,6 +1726,14 @@ export function registerManageReflectionPipeline(
         withExit(async (opts?: { dryRun?: boolean; limit?: string; model?: string }) => {
           const dryRun = !!opts?.dryRun;
           const limit = Number.parseInt(opts?.limit ?? "100", 10);
+          // A non-numeric --limit parses to NaN, which [...].slice(0, NaN) reduces to zero
+          // rows -- the command then reports "reclassified 0/0 facts" with exit code 0 instead
+          // of rejecting the bad flag (#2067-followup).
+          if (!Number.isFinite(limit) || limit < 1) {
+            console.error("error: --limit must be a positive integer");
+            process.exitCode = 1;
+            return;
+          }
           const model = opts?.model;
           let res;
           try {

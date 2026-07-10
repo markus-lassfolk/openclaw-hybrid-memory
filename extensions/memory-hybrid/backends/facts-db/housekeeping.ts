@@ -3,7 +3,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { rebuildFtsIndex } from "../../services/fts-search.js";
 import type { MemoryEntry, ScopeFilter } from "../../types/memory.js";
 import { getLanguageKeywordsFilePath } from "../../utils/language-keywords.js";
@@ -558,18 +558,21 @@ export function findSessionFactsForPromotion(
   db: DatabaseSync,
   thresholdDays: number,
   minImportance: number,
+  limit?: number,
 ): MemoryEntry[] {
   const nowSec = Math.floor(Date.now() / 1000);
   const thresholdSec = nowSec - thresholdDays * 86400;
-  const rows = db
-    .prepare(
-      `SELECT * FROM facts
+  const params: SQLInputValue[] = [minImportance, thresholdSec, nowSec];
+  let sql = `SELECT * FROM facts
          WHERE scope = 'session'
            AND importance >= ?
            AND created_at <= ?
            AND superseded_at IS NULL
-           AND (expires_at IS NULL OR expires_at > ?)`,
-    )
-    .all(minImportance, thresholdSec, nowSec) as Record<string, unknown>[];
+           AND (expires_at IS NULL OR expires_at > ?)`;
+  if (limit != null) {
+    sql += " LIMIT ?";
+    params.push(Math.max(1, Math.min(10_000, Math.floor(limit))));
+  }
+  const rows = db.prepare(sql).all(...params) as Record<string, unknown>[];
   return rows.map((r) => rowToMemoryEntry(r));
 }
