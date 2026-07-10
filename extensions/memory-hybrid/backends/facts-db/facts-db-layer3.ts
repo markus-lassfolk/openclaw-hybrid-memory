@@ -228,8 +228,8 @@ export class FactsDB extends FactsDBLayer2 {
     return listScopedFactIdsPendingPruneImpl(this.liveDb, scopeFilter);
   }
 
-  findSessionFactsForPromotion(thresholdDays: number, minImportance: number): MemoryEntry[] {
-    return findSessionFactsForPromotionImpl(this.liveDb, thresholdDays, minImportance);
+  findSessionFactsForPromotion(thresholdDays: number, minImportance: number, limit?: number): MemoryEntry[] {
+    return findSessionFactsForPromotionImpl(this.liveDb, thresholdDays, minImportance, limit);
   }
 
   // ============================================================================

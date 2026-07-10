@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ScopeFilter } from "../types/memory.js";
 import {
   buildToolScopeFilter,
   globalOnlyScopeFilter,
@@ -6,7 +7,6 @@ import {
   resolveGatewayScopeFilter,
   scopeFieldsFromFilter,
 } from "../utils/scope-filter.js";
-import type { ScopeFilter } from "../types/memory.js";
 
 describe("buildToolScopeFilter", () => {
   const mockConfig = {
@@ -235,6 +235,55 @@ describe("scope helper utilities", () => {
       agentId: "worker-1",
       sessionId: null,
     });
+  });
+
+  it("resolveGatewayScopeFilter falls back to sessionKey when sessionId is an empty string, not just when it's absent (#2067-followup)", () => {
+    // context.sessionId can arrive as "" from an upstream integration that always sets the field
+    // but leaves it blank when unset. An empty string is falsy but not null/undefined, so a naive
+    // `??` chain (missing the `|| null` normalization applied to userId/agentId) would stop right
+    // there instead of falling through to sessionKey -- silently widening this session-scoped read
+    // to the caller's entire user-level history instead of one session.
+    expect(
+      resolveGatewayScopeFilter(
+        { context: { agentId: "worker-1", userId: "user-x", sessionId: "", sessionKey: "session-alpha" } },
+        cfg,
+      ),
+    ).toEqual({
+      userId: "user-x",
+      agentId: "worker-1",
+      sessionId: "session-alpha",
+    });
+  });
+
+  it("resolveGatewayScopeFilter preserves trusted sessionId/userId for a non-orchestrator agent (regression)", () => {
+    // Two sessions sharing the same worker agent must NOT collapse onto the same scope --
+    // each session's own trusted identity must be applied as-is, not replaced by static config.
+    expect(
+      resolveGatewayScopeFilter(
+        { context: { agentId: "worker-1", sessionId: "session-alpha", userId: "user-x" } },
+        cfg,
+      ),
+    ).toEqual({
+      userId: "user-x",
+      agentId: "worker-1",
+      sessionId: "session-alpha",
+    });
+    expect(
+      resolveGatewayScopeFilter({ context: { agentId: "worker-1", sessionId: "session-beta", userId: "user-y" } }, cfg),
+    ).toEqual({
+      userId: "user-y",
+      agentId: "worker-1",
+      sessionId: "session-beta",
+    });
+  });
+
+  it("resolveGatewayScopeFilter falls back to autoRecall/global scope for the orchestrator agent", () => {
+    expect(
+      resolveGatewayScopeFilter(
+        { context: { agentId: "orchestrator-1", sessionId: "session-alpha", userId: "user-x" } },
+        cfg,
+      ),
+    ).toEqual(globalOnlyScopeFilter());
   });
 
   it("resolveCorpusScopeFilter uses agentSessionKey when configured scope absent", () => {

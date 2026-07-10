@@ -1419,6 +1419,24 @@ describe("hybridConfigSchema.parse", () => {
     expect(getProvidersWithKeys(cronCfg)).not.toContain("anthropic");
   });
 
+  it("getProvidersWithKeys does not drop a provider whose distill.apiKey is a short env: SecretRef (#2067-followup)", () => {
+    // Unlike embedding.apiKey, distill.apiKey is kept as the raw, unresolved SecretRef literal by
+    // hybridConfigSchema.parse -- so a short reference like "env:GK" (well under config/index.ts's
+    // internal hasKey() 10-char floor) reaches getProvidersWithKeys() exactly as written, and must
+    // still be recognized as "has a key" once resolved.
+    vi.stubEnv("GK", "google-resolved-key-that-is-long-enough");
+    try {
+      const cfg = hybridConfigSchema.parse({
+        ...validBase,
+        distill: { apiKey: "env:GK" },
+      });
+      const cronCfg = getCronModelConfig(cfg);
+      expect(getProvidersWithKeys(cronCfg)).toEqual(expect.arrayContaining(["google", "openai"]));
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("resolveVerificationModel skips disabled providers (#1956)", () => {
     const cfg = hybridConfigSchema.parse({
       ...validBase,

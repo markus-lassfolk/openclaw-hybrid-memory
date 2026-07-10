@@ -36,6 +36,17 @@ function readLog(logPath: string | undefined): string {
 function sqlQuery(dbPath: string, sql: string): string[][] {
   if (!existsSync(dbPath)) return [];
   const r = spawnSync("sqlite3", ["-separator", "\t", dbPath, sql], { encoding: "utf-8" });
+  // r.error (not just a non-zero status) means the process never launched at all -- typically
+  // ENOENT when the sqlite3 CLI binary isn't installed. Treating that the same as "query ran and
+  // matched zero rows" silently disables every DB-based privacy/quality check that reads through
+  // sqlQuery (private path/email leak scanning included) with no warning anywhere, letting a
+  // report claim "good"/no findings purely because the check never ran (#2067-followup). A real
+  // query failure or zero-row result still degrades to [] as before.
+  if (r.error) {
+    throw new Error(
+      `sqlite3 CLI unavailable (${r.error.message}) -- DB-based quality/privacy checks cannot run. Install sqlite3 or the offline-qa report will be incomplete.`,
+    );
+  }
   if (r.status !== 0 || !r.stdout?.trim()) return [];
   return r.stdout
     .trim()

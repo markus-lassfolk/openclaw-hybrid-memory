@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { classifyDistillBatchFailureKind } from "../cli/cmd-distill.js";
 import { extractTextFromSessionJsonl } from "../cli/distill-session-jsonl.js";
 
 describe("extractTextFromSessionJsonl", () => {
@@ -33,5 +34,20 @@ describe("extractTextFromSessionJsonl", () => {
 
     expect(() => extractTextFromSessionJsonl(filePath)).not.toThrow();
     expect(extractTextFromSessionJsonl(filePath)).toBe("keep me");
+  });
+});
+
+describe("classifyDistillBatchFailureKind", () => {
+  it("treats nested MiniMax aborts as retryable timeout failures", () => {
+    const abortCause = Object.assign(new Error("Request was aborted"), { name: "AbortError" });
+    const wrapped = Object.assign(new Error("stream error from minimax/MiniMax-M2.7-highspeed"), {
+      cause: abortCause,
+    });
+
+    expect(classifyDistillBatchFailureKind(wrapped)).toBe("timeout");
+  });
+
+  it("treats direct aborted requests as retryable timeout failures", () => {
+    expect(classifyDistillBatchFailureKind(new Error("Request was aborted"))).toBe("timeout");
   });
 });

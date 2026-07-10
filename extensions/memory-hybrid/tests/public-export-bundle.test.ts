@@ -30,6 +30,7 @@ describe("buildPublicExportBundle", () => {
       key: "style",
       value: "concise",
       source: "conversation",
+      provenanceJson: JSON.stringify({ sourceFacts: [{ text: "secret" }] }),
     });
 
     const factB = factsDb.store({
@@ -78,6 +79,7 @@ describe("buildPublicExportBundle", () => {
     expect(bundle.manifest.bundleVersion).toBe(1);
     expect(bundle.version.pluginVersion).toBeTruthy();
     expect(bundle.facts.length).toBeGreaterThanOrEqual(2);
+    expect(bundle.facts.every((f) => f.provenanceJson === null)).toBe(true);
     expect(bundle.episodes.length).toBe(1);
     expect(bundle.procedures.length).toBe(1);
     expect(bundle.narratives.length).toBe(1);

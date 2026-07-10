@@ -808,3 +808,60 @@ describe("sensor-sweep Home Assistant fetch boundaries (#1476)", () => {
     expect(garmin?.eventsWritten).toBe(1);
   });
 });
+
+describe("ha-anomaly partial entity fetch failure (regression)", () => {
+  const haConfig = { baseUrl: "http://ha.local:8123", token: "test-token", timeoutMs: 5_000 };
+  const watchEntities = ["sensor.watch_one", "sensor.watch_two", "sensor.watch_three"];
+
+  const anomalyCfg = parseSensorSweepConfig({
+    sensorSweep: {
+      enabled: true,
+      homeAssistant: haConfig,
+      garmin: { enabled: false },
+      github: { enabled: false },
+      sessionHistory: { enabled: false },
+      memoryPatterns: { enabled: false },
+      homeAssistantAnomaly: { enabled: true, watchEntities },
+    },
+  });
+
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("sensor.watch_two")) {
+          throw new TypeError("fetch failed: network error");
+        }
+        const entityId = url.split("/api/states/")[1];
+        return new Response(
+          JSON.stringify({
+            entity_id: entityId,
+            state: "unavailable",
+            attributes: {},
+            last_updated: new Date().toISOString(),
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("reports anomalies from the entities that succeeded instead of dropping all of them", async () => {
+    const result = await sweepAll(bus, anomalyCfg, makeFactsDbStub(), {
+      tier: 2,
+      sources: ["homeAssistantAnomaly"],
+    });
+    const haAnomaly = result.sensors.find((s) => s.sensor === "ha-anomaly");
+    expect(haAnomaly?.error).toBeUndefined();
+    expect(haAnomaly?.eventsWritten).toBe(1);
+
+    const [event] = bus.queryEvents({ type: "sensor.ha-anomaly" });
+    const entityStates = event.payload.entityStates as Record<string, unknown>;
+    expect(Object.keys(entityStates).sort()).toEqual(["sensor.watch_one", "sensor.watch_three"]);
+  });
+});

@@ -8,6 +8,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig } from "../config.js";
+import { isValidCategory } from "../config.js";
 import { isNonActionableSubagentPlaceholderTask } from "../services/active-task.js";
 import {
   buildGatewayMemoryDiagnostics,
@@ -96,6 +97,13 @@ const DEFAULT_ACTIVE_TASK_PROJECTION: ActiveTaskProjectionConfig = {
 
 function toJson(status: number, body: unknown): { status: number; headers: Record<string, string>; body: string } {
   return { status, headers: { ...JSON_HEADERS }, body: JSON.stringify(body) };
+}
+
+function redactFactForPublicApi<T extends { provenanceJson?: string | null }>(fact: T): T {
+  return {
+    ...fact,
+    provenanceJson: null,
+  };
 }
 
 function parseReqUrl(url: string): URL {
@@ -323,7 +331,9 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
       });
     }
 
-    const results = ctx.factsDb.search(query, limit, { tierFilter: "all", scopeFilter });
+    const results = ctx.factsDb
+      .search(query, limit, { tierFilter: "all", scopeFilter })
+      .map((result) => ({ ...result, entry: redactFactForPublicApi(result.entry) }));
     return toJson(200, {
       query,
       limit,
@@ -336,7 +346,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     const url = parseReqUrl(req.url);
     const limit = parseLimitParam(url.searchParams.get("limit"), 20, 200);
     const scopeFilter = resolveScopeFilter(req);
-    const facts = ctx.factsDb.getAll({ scopeFilter }).slice(0, limit);
+    const facts = ctx.factsDb.getAll({ scopeFilter }).slice(0, limit).map(redactFactForPublicApi);
 
     return toJson(200, {
       limit,
@@ -457,7 +467,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
 
     return toJson(200, {
       id: resolvedId,
-      fact,
+      fact: redactFactForPublicApi(fact),
       links: {
         outgoing: filteredOutgoingLinks,
         incoming: filteredIncomingLinks,
@@ -744,11 +754,20 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
         if (action === "create") {
           const text = typeof body.text === "string" ? body.text?.trim() : "";
           if (!text) return toJson(400, { error: "missing text" });
+          // Every sibling mutation path (fact-mutation-gateway.ts's memory_store, memory_edit)
+          // validates an externally-supplied category against isValidCategory() before storing;
+          // this HTTP create action skipped that check entirely, and its own fallback default
+          // ("general") isn't even a valid category itself (the real default is "other") --
+          // together this let an unvalidated/malformed category silently produce a fact invisible
+          // to every category-filtered query (#2067-followup).
+          const categoryParam = typeof body.category === "string" ? body.category.trim() : "";
+          const category = categoryParam || "other";
+          if (!isValidCategory(category)) {
+            return toJson(400, { error: `invalid category "${category}"` });
+          }
           const stored = ctx.factsDb.store({
             text,
-            category: (typeof body.category === "string"
-              ? body.category
-              : "general") as import("../config.js").MemoryCategory,
+            category: category as import("../config.js").MemoryCategory,
             importance: typeof body.importance === "number" ? body.importance : 0.5,
             source: "wiki-create",
             entity: typeof body.entity === "string" ? body.entity : null,

@@ -110,4 +110,52 @@ describe("benchmark CLI", () => {
 
     await expect(program.parseAsync(["benchmark", "run"], { from: "user" })).rejects.toThrow(/Database not found at:/);
   });
+
+  describe("--iterations validation (#2067-followup)", () => {
+    afterEach(() => {
+      process.exitCode = undefined;
+    });
+
+    it("run rejects a non-numeric --iterations instead of silently reporting a 0-sample benchmark", async () => {
+      const program = makeProgram(dbPath);
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await program.parseAsync(["benchmark", "run", "--iterations", "abc"], { from: "user" });
+
+        expect(process.exitCode).toBe(1);
+        expect(mocks.runAllBenchmarks).not.toHaveBeenCalled();
+        expect(mocks.runBenchmark).not.toHaveBeenCalled();
+      } finally {
+        err.mockRestore();
+      }
+    });
+
+    it("run rejects an --iterations of 0", async () => {
+      const program = makeProgram(dbPath);
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await program.parseAsync(["benchmark", "run", "--iterations", "0"], { from: "user" });
+
+        expect(process.exitCode).toBe(1);
+        expect(mocks.runAllBenchmarks).not.toHaveBeenCalled();
+      } finally {
+        err.mockRestore();
+      }
+    });
+
+    it("report rejects a non-numeric --iterations instead of silently reporting a 0-sample benchmark", async () => {
+      const program = makeProgram(dbPath);
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await program.parseAsync(["benchmark", "report", "--iterations", "abc"], { from: "user" });
+
+        expect(process.exitCode).toBe(1);
+        expect(mocks.runAllBenchmarks).not.toHaveBeenCalled();
+      } finally {
+        log.mockRestore();
+        err.mockRestore();
+      }
+    });
+  });
 });

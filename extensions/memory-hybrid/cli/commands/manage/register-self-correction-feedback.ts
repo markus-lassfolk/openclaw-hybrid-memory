@@ -7,6 +7,7 @@ import {
   createCommandGroup,
   deprecatedAction,
 } from "../../commands/cli-group-utils.js";
+import { parseDaysFlag } from "../../distill.js";
 import { registerScanMaintenanceOverrideOptions, scanMaintenanceOverridePayload } from "../../maintenance-overrides.js";
 import { type Chainable, SCAN_MIN_INTERVAL_MS, withExit } from "../../shared.js";
 import type { SelfCorrectionRunResult } from "../../types.js";
@@ -93,7 +94,8 @@ function registerManageSelfCorrectionFeedbackOnParent(
           "self-correction-extract",
           grouped ? "self-correction extract" : names.selfCorrectionExtract,
           async (opts?: { days?: string; output?: string; verbose?: boolean }, cmd?: CommanderOptsParent) => {
-            const days = opts?.days ? Number.parseInt(opts.days, 10) : 7;
+            const days = parseDaysFlag(opts?.days ?? "7");
+            if (days == null) return;
             const outputPath = opts?.output;
             const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
             let res;
@@ -157,7 +159,8 @@ function registerManageSelfCorrectionFeedbackOnParent(
           const extractPath = opts?.extractPath;
           const workspace = opts?.workspace;
           const dryRun = !!opts?.dryRun;
-          const days = opts?.days ? Number.parseInt(opts.days, 10) : 3;
+          const days = parseDaysFlag(opts?.days ?? "3");
+          if (days == null) return;
           const model = opts?.model?.trim() || undefined;
           const approve = !!opts?.approve;
           const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
@@ -264,7 +267,8 @@ function registerManageSelfCorrectionFeedbackOnParent(
             },
             cmd?: CommanderOptsParent,
           ) => {
-            const days = opts?.days ? Number.parseInt(opts.days, 10) : 3;
+            const days = parseDaysFlag(opts?.days ?? "3");
+            if (days == null) return;
             const dryRun = !!opts?.dryRun;
             const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
             const includeTrajectories = opts?.trajectories !== false;
@@ -385,7 +389,8 @@ function registerManageSelfCorrectionFeedbackOnParent(
               process.exitCode = 1;
               return;
             }
-            const days = opts?.days ? Number.parseInt(opts.days, 10) : 7;
+            const days = parseDaysFlag(opts?.days ?? "7");
+            if (days == null) return;
             const format = opts?.format === "compact" ? ("compact" as const) : ("pretty" as const);
             runCostReport(
               { days, model: !!opts?.model, feature: opts?.feature, csv: !!opts?.csv, format, modes: !!opts?.modes },
@@ -449,7 +454,8 @@ function registerManageSelfCorrectionFeedbackOnParent(
               process.exitCode = 1;
               return;
             }
-            const days = opts?.days ? Number.parseInt(opts.days, 10) : undefined;
+            const days = parseDaysFlag(opts?.days);
+            if (days === null) return;
             const outputPath = opts?.output;
             const learn = !!opts?.learn;
             const model = opts?.model?.trim() || undefined;

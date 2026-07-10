@@ -1,10 +1,13 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import { capturePluginError } from "../../../services/error-reporter.js";
+import type { ScopeFilter } from "../../../types/memory.js";
+import { scopeFilterClausePositional } from "../scope-sql.js";
 
 export function getProceduresForAudit(
   db: DatabaseSync,
   limit = 5,
+  scopeFilter?: ScopeFilter | null,
 ): Array<{
   taskPattern: string;
   recipeJson: string;
@@ -12,14 +15,19 @@ export function getProceduresForAudit(
   confidence: number;
 }> {
   try {
+    // Without a scope clause this pulls the top procedures across every tenant into the
+    // context-audit token-budget report, instead of the scope that would actually be injected
+    // for the caller's agent/session (#2067-followup).
+    const { clause, params } = scopeFilterClausePositional(scopeFilter);
     const rows = db
       .prepare(
         `SELECT task_pattern, recipe_json, procedure_type, confidence
            FROM procedures
+           WHERE 1=1${clause}
            ORDER BY confidence DESC, COALESCE(last_validated, created_at) DESC
            LIMIT ?`,
       )
-      .all(limit) as Array<{
+      .all(...params, limit) as Array<{
       task_pattern: string;
       recipe_json: string;
       procedure_type: "positive" | "negative";

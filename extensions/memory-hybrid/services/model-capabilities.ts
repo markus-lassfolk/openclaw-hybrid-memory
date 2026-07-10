@@ -234,6 +234,17 @@ const CAPABILITIES: Array<{ match: Matcher; cap: ModelCapabilities }> = [
   },
 ];
 
+/** Resolve provider shorthand aliases that are accepted by local config but not by every OpenAI-compatible gateway. */
+export function resolveModelAlias(model: string): string {
+  const trimmed = model.trim();
+  const segments = trimmed.split("/").filter(Boolean);
+  const leaf = segments.at(-1)?.toLowerCase();
+  const provider = segments.length > 1 ? segments.slice(0, -1).join("/") : "";
+  if (leaf === "m3") return provider ? `${provider}/MiniMax-M3` : "MiniMax-M3";
+  if (leaf === "m2.7" || leaf === "m27") return provider ? `${provider}/MiniMax-M2.7` : "MiniMax-M2.7";
+  return model;
+}
+
 /**
  * Return capabilities for the given model id (with or without provider prefix), or null if unknown.
  */

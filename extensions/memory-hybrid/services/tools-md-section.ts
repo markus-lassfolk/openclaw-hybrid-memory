@@ -108,7 +108,11 @@ export function insertRulesUnderSection(
     const sectionEnd = findSectionEnd(lines, sectionStart);
     const before = lines.slice(0, sectionEnd).join("\n");
     const after = lines.slice(sectionEnd).join("\n");
-    const insertBlock = (before.trimEnd().endsWith("\n") ? "" : "\n") + bulletLines.join("\n") + (after ? "\n" : "");
+    // `before.endsWith("\n")` (not trimEnd().endsWith("\n")) -- trimEnd() strips every trailing
+    // newline, so testing the trimmed value here always returns false and this branch never
+    // fires; each insert then unconditionally prepends a blank line, accumulating extra blank
+    // lines between rule batches over repeated self-correction/cron runs.
+    const insertBlock = (before.endsWith("\n") ? "" : "\n") + bulletLines.join("\n") + (after ? "\n" : "");
     newContent = before + insertBlock + (after ? `\n${after}` : "");
   } else {
     const sectionHeader = `\n\n## ${sectionTitle}\n\n`;

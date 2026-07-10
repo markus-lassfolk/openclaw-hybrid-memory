@@ -53,9 +53,13 @@ function readGatewayIdentity(api: {
 }): { userId: string | null; agentId: string | null; sessionId: string | null } {
   const userId = typeof api.context?.userId === "string" ? api.context.userId.trim() || null : null;
   const agentId = typeof api.context?.agentId === "string" ? api.context.agentId.trim() || null : null;
+  // `|| null` (not just the `??` below) on each branch, matching userId/agentId above: without it,
+  // an empty-string sessionId is falsy-but-not-null, so `??` never falls through to sessionKey --
+  // silently widening a session-scoped RPC/corpus read to the caller's entire user-level history
+  // instead of one session (#2067-followup).
   const sessionId =
-    (typeof api.context?.sessionId === "string" ? api.context.sessionId.trim() : null) ??
-    (typeof api.context?.sessionKey === "string" ? api.context.sessionKey.trim() : null) ??
+    (typeof api.context?.sessionId === "string" ? api.context.sessionId.trim() || null : null) ??
+    (typeof api.context?.sessionKey === "string" ? api.context.sessionKey.trim() || null : null) ??
     null;
   return { userId, agentId, sessionId };
 }
@@ -66,8 +70,19 @@ export function resolveGatewayScopeFilter(
   cfg: ScopeConfig,
 ): ScopeFilter {
   const { userId, agentId, sessionId } = readGatewayIdentity(api);
-  const built = buildToolScopeFilter({ userId, agentId, sessionId }, agentId, cfg);
-  return built ?? globalOnlyScopeFilter();
+  if (!userId && !agentId && !sessionId) {
+    return globalOnlyScopeFilter();
+  }
+  if (agentId && agentId === cfg.multiAgent.orchestratorId) {
+    // The orchestrator gets the configured/global fallback rather than a narrow scope -- it's
+    // the top-level coordinating agent, not a per-session worker.
+    return cfg.autoRecall.scopeFilter ?? globalOnlyScopeFilter();
+  }
+  // Unlike buildToolScopeFilter's untrusted-tool-param path, gateway identity (api.context) is
+  // already verified by trusted middleware, so userId/sessionId must be applied as-is instead of
+  // being replaced by a static autoRecall.scopeFilter value -- otherwise every session under the
+  // same non-orchestrator agent collapses onto one shared scope (#security).
+  return { userId, agentId, sessionId };
 }
 
 /** Resolve corpus supplement scope from session key or static config filter. */

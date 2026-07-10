@@ -292,9 +292,20 @@ export function registerManageStorageEntitiesDecay(mem: Chainable, b: ManageBind
   mem
     .command("context-audit")
     .description("Report token usage per injected context source and recommendations")
+    .option("--scope <s>", "Restrict to a scope (global/user/agent/session) instead of every tenant's data")
+    .option("--scope-target <st>", "Scope target (userId/agentId/sessionId)")
     .action(
-      withExit(async () => {
-        const audit = await runContextAudit({ cfg, factsDb });
+      withExit(async (opts?: { scope?: string; scopeTarget?: string }) => {
+        const scope = opts?.scope?.trim().toLowerCase();
+        const scopeTarget = opts?.scopeTarget?.trim();
+        const scopeValidation = validateSearchScopeOption(scope, scopeTarget);
+        if (!scopeValidation.ok) {
+          console.error(`error: ${scopeValidation.error}`);
+          process.exitCode = 1;
+          return;
+        }
+        const scopeFilter = buildHybridSearchScopeFilter(scope, scopeTarget);
+        const audit = await runContextAudit({ cfg, factsDb, scopeFilter });
 
         console.log("=== Context Budget Audit ===");
         console.log(

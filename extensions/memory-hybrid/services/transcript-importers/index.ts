@@ -157,11 +157,23 @@ export function parseSlackExport(raw: string): ParsedConversation[] {
   }
 }
 
+// Kept in sync with services/error-reporter/sanitize.ts's scrubString pattern set (#2067-followup
+// sweep): the original list here only matched plain "sk-<alnum>" keys, missing the sk-ant-/sk-proj-
+// prefixed formats and any keyword-based (password=/secret=/token=) or private-key-block secrets —
+// this is the only redaction pass applied before raw transcript content is stored as facts.text.
 const SECRET_PATTERNS: Array<{ name: string; regex: RegExp }> = [
-  { name: "openai_key", regex: /\bsk-[A-Za-z0-9]{20,}\b/g },
-  { name: "github_token", regex: /\bghp_[A-Za-z0-9]{20,}\b/g },
+  { name: "anthropic_key", regex: /\bsk-ant-[A-Za-z0-9_-]{20,}\b/g },
+  { name: "openai_key", regex: /\bsk-(?:proj-[A-Za-z0-9_-]{20,}|[A-Za-z0-9_]{20,})\b/g },
+  { name: "github_token", regex: /\bgh[po]_[A-Za-z0-9]{20,}\b/g },
   { name: "aws_key", regex: /\bAKIA[0-9A-Z]{16}\b/g },
+  { name: "slack_token", regex: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g },
   { name: "bearer", regex: /\bBearer\s+[A-Za-z0-9_.~+/=-]{12,}\b/gi },
+  { name: "jwt", regex: /\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g },
+  { name: "private_key_block", regex: /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g },
+  {
+    name: "keyword_secret",
+    regex: /\b(?:password|secret|token|api[_-]?key)\s*[:=]\s*["']?[^\s"']{6,}["']?/gi,
+  },
 ];
 
 /** Redact common secret patterns before mine ingest. */

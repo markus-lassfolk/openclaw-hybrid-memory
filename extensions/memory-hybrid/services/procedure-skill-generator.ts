@@ -9,11 +9,11 @@ import type { GenerateAutoSkillsResult } from "../cli/register.js";
 import { MAX_SKILL_FILE_BYTES, utf8ByteLength } from "../config/skill-size-limits.js";
 import type { MemoryEntry, MemoryScope, ProcedureEntry, ScopeFilter } from "../types/memory.js";
 import { atomicWriteSkillDir, SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
-import { bumpSkillsSnapshotBestEffort } from "./bump-skills-snapshot.js";
-import { isAtomicSkillWriteScratchDir } from "../utils/skill-discovery.js";
 import { resolveCliWorkspaceRoot } from "../utils/cli-workspace-root.js";
 import { resolveWorkspacePath, toWorkspaceRelativePath } from "../utils/path.js";
+import { isAtomicSkillWriteScratchDir } from "../utils/skill-discovery.js";
 import { escapeRegExp, stripLeadingHtmlComments, titleCase } from "../utils/text.js";
+import { bumpSkillsSnapshotBestEffort } from "./bump-skills-snapshot.js";
 import { capturePluginError } from "./error-reporter.js";
 import { redactAutopilotText } from "./pending-autopilot/redaction.js";
 import { buildClusterDeferMap, clusterProcedureItems } from "./procedure-cluster.js";
@@ -566,7 +566,11 @@ export function generateAutoSkillForProcedure(
     resolveBatchPromotionPolicy(options.policy, options.apply),
   );
   const proc = factsDb.getProcedureById(options.procedureId);
-  if (!proc) return { ok: false, reason: "not-found" };
+  // SECURITY: auto skill-generation writes into the shared, globally-installed skills directory
+  // -- mirrors getProceduresReadyForSkill's scope='global' restriction for the batch path, so a
+  // user/agent/session-scoped procedure can't be drafted into a skill visible to every tenant.
+  // Reported as "not-found" (not a distinct reason) to avoid confirming a scoped id's existence.
+  if (proc?.scope !== "global") return { ok: false, reason: "not-found" };
 
   const pathInfo = resolveSkillWritePaths(options);
   const { writeRelativePath, basePath, autoPathAbs, pendingPathAbs, existingSkillDirs } = pathInfo;
@@ -959,9 +963,7 @@ function loadExistingSkillDescriptions(...skillsBasePaths: string[]): string[] {
           descriptions.push(desc);
         }
       }
-    } catch {
-      continue;
-    }
+    } catch {}
   }
   return descriptions;
 }

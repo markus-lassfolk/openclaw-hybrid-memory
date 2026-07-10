@@ -382,6 +382,13 @@ type ClusterCacheEntry = {
   linkCount: number | null;
 };
 
+/** Stable string key for a scope filter, used to keep per-tenant cluster caches from colliding. */
+function scopeCacheKey(scopeFilter: ScopeFilter | null | undefined): string {
+  if (!scopeFilter) return "global";
+  const { global, userId, agentId, sessionId } = scopeFilter;
+  return `g:${global ?? ""}|u:${userId ?? ""}|a:${agentId ?? ""}|s:${sessionId ?? ""}`;
+}
+
 /** Exported for direct unit testing of the per-FactsDB-instance caching behavior. */
 export class ClusterCache {
   // Keyed by FactsDB instance identity (not just linksCount/minClusterSize): a module-level
@@ -391,24 +398,37 @@ export class ClusterCache {
   // membership for the caller who didn't own that cached result. A WeakMap keyed by the FactsDB
   // reference gives each instance its own cache slot and lets entries be garbage-collected
   // automatically once their FactsDB is no longer referenced elsewhere.
-  private cache = new WeakMap<FactLookup & ClusterFactLookup, ClusterCacheEntry>();
+  //
+  // Each FactsDB instance's slot is itself keyed by scopeCacheKey(scopeFilter): a single shared
+  // FactsDB instance serves every tenant, and detectClusters() traverses memory_links, which
+  // carries no scope column of its own — an unscoped cluster computation mixes every tenant's
+  // graph topology together. Without per-scope keys, tenant B's retrieval could reuse tenant A's
+  // cached (unscoped) cluster map within the TTL window and receive a ranking boost based on
+  // graph structure formed through facts tenant B never authorized and cannot see.
+  private cache = new WeakMap<FactLookup & ClusterFactLookup, Map<string, ClusterCacheEntry>>();
   private readonly ttlMs: number;
 
   constructor(ttlMs = 5 * 60 * 1000) {
     this.ttlMs = ttlMs;
   }
 
-  getClusterMap(factsDb: FactLookup & ClusterFactLookup, minClusterSize?: number): Map<string, string> {
+  getClusterMap(
+    factsDb: FactLookup & ClusterFactLookup,
+    minClusterSize?: number,
+    scopeFilter?: ScopeFilter | null,
+  ): Map<string, string> {
     const now = Date.now();
     const linkCount = typeof factsDb.linksCount === "function" ? factsDb.linksCount() : null;
-    const existing = this.cache.get(factsDb);
+    const scopeKey = scopeCacheKey(scopeFilter);
+    const perScope = this.cache.get(factsDb);
+    const existing = perScope?.get(scopeKey);
     if (existing && now - existing.timestamp < this.ttlMs) {
       if ((linkCount == null || linkCount === existing.linkCount) && existing.minClusterSize === minClusterSize) {
         return existing.clusters;
       }
     }
 
-    const clusterResult = detectClusters(factsDb, { minClusterSize });
+    const clusterResult = detectClusters(factsDb, { minClusterSize, scopeFilter });
     const clusterByFact = new Map<string, string>();
     for (const cluster of clusterResult.clusters) {
       for (const id of cluster.factIds) {
@@ -416,7 +436,9 @@ export class ClusterCache {
       }
     }
 
-    this.cache.set(factsDb, { clusters: clusterByFact, timestamp: now, minClusterSize, linkCount });
+    const scopeMap = perScope ?? new Map<string, ClusterCacheEntry>();
+    scopeMap.set(scopeKey, { clusters: clusterByFact, timestamp: now, minClusterSize, linkCount });
+    this.cache.set(factsDb, scopeMap);
     return clusterByFact;
   }
 
@@ -1175,7 +1197,11 @@ export async function runExplicitDeepRetrieval(
 
     if (clustersConfig?.enabled && hasClusterLookup(factsDb)) {
       try {
-        const clusterByFact = clusterCache.getClusterMap(factsDb, clustersConfig.minClusterSize);
+        const clusterByFact = clusterCache.getClusterMap(
+          factsDb,
+          clustersConfig.minClusterSize,
+          scopeFilter as ScopeFilter | undefined,
+        );
         if (clusterByFact.size > 0) {
           const clusterToIndices = new Map<string, number[]>();
           for (let index = 0; index < scopedFused.length; index++) {

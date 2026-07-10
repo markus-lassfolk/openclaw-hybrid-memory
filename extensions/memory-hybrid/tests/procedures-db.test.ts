@@ -192,6 +192,27 @@ describe("FactsDB procedures table", () => {
       const after = db.getProcedureById(aliceProc.id, aliceScope);
       expect(after?.successCount).toBe(2);
     });
+
+    it("getProceduresReadyForSkill excludes a user-scoped procedure (#2067-followup): auto skill-generation must not leak scoped recipes globally", () => {
+      db.upsertProcedure({
+        taskPattern: "Victim user's private deploy recipe",
+        recipeJson: "[]",
+        procedureType: "positive",
+        successCount: 5,
+        scope: "user",
+        scopeTarget: "victim-user",
+      });
+      const globalProc = db.upsertProcedure({
+        taskPattern: "Global shared recipe",
+        recipeJson: "[]",
+        procedureType: "positive",
+        successCount: 5,
+      });
+
+      const ready = db.getProceduresReadyForSkill(3, 10);
+      expect(ready.some((p) => p.taskPattern === "Victim user's private deploy recipe")).toBe(false);
+      expect(ready.some((p) => p.id === globalProc.id)).toBe(true);
+    });
   });
 
   it("getProceduresReadyForSkill excludes procedures older than skillTTLDays", () => {

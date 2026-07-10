@@ -739,6 +739,8 @@ export async function runReflection(
   let stored = 0;
   let duplicatesSkipped = 0;
   let newPatternEmbedFailures = 0;
+  let vectorStoreFailures = 0;
+  let metadataFailures = 0;
   let storeDedupeVectorFallbackSuppressed = 0;
   const reflectionRunId = provenanceService ? randomUUID() : null;
   const candidateStartMs = Date.now();
@@ -903,6 +905,7 @@ export async function runReflection(
       });
       vectorStored = true;
     } catch (err) {
+      vectorStoreFailures++;
       logger.warn(`memory-hybrid: reflection vector store failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "reflection-vector-store",
@@ -984,6 +987,7 @@ export async function runReflection(
         );
         factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
       } catch (err) {
+        metadataFailures++;
         logger.warn(`memory-hybrid: reflection metadata update failed after vector store: ${err}`);
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "reflection-metadata-update",
@@ -1148,7 +1152,7 @@ export async function runReflection(
     factsDb.setMaintenanceState("reflection_input_hash", inputHash);
   }
   logger.info(
-    `memory-hybrid: reflection — finished: ${stored} pattern(s) stored in DB + vector index, ${duplicatesSkipped} skipped as near-duplicate(s), ${newPatternEmbedFailures} new-pattern embed failure(s), ${uniqueNewPatterns.length} candidate(s) total`,
+    `memory-hybrid: reflection — finished: ${stored} pattern(s) stored in DB + vector index, ${duplicatesSkipped} skipped as near-duplicate(s), ${newPatternEmbedFailures} new-pattern embed failure(s), ${vectorStoreFailures} vector-store failure(s), ${metadataFailures} metadata failure(s), ${uniqueNewPatterns.length} candidate(s) total`,
   );
   if (storeDedupeVectorFallbackSuppressed > 0) {
     logger.info(
@@ -1162,7 +1166,14 @@ export async function runReflection(
     patternsExtracted: uniqueNewPatterns.length,
     patternsStored: stored,
     window: windowDays,
-    semanticOutcome: newPatternEmbedFailures > 0 ? "partial" : "success",
+    // vectorStoreFailures/metadataFailures are infrastructure errors (LanceDB locked/disk full,
+    // SQLite write failure after a successful vector store) -- distinct from newPatternEmbedFailures
+    // (an embedding-API call failure), but both silently vanish a synthesized pattern the same way.
+    // Sibling runReflectionRules already folds its equivalent counters into its outcome; this
+    // brought runReflection's status in line so a systemic vector-store outage that drops every
+    // pattern every run is no longer reported as "success".
+    semanticOutcome:
+      newPatternEmbedFailures > 0 || vectorStoreFailures > 0 || metadataFailures > 0 ? "partial" : "success",
   };
 }
 
@@ -2107,6 +2118,8 @@ export async function runReflectionMeta(
   let stored = 0;
   let metaDuplicatesSkipped = 0;
   let newMetaEmbedFailures = 0;
+  let vectorStoreFailures = 0;
+  let metadataFailures = 0;
   let storeDedupeVectorFallbackSuppressed = 0;
   const reflectionRunId = provenanceService ? randomUUID() : null;
   const inRunFactVectors = new Map<string, { vector: number[]; embeddingModel: string }>();
@@ -2249,6 +2262,7 @@ export async function runReflectionMeta(
       });
       vectorStored = true;
     } catch (err) {
+      vectorStoreFailures++;
       logger.warn(`memory-hybrid: reflect-meta vector store failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "reflection-meta-vector-store",
@@ -2330,6 +2344,7 @@ export async function runReflectionMeta(
         );
         factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
       } catch (err) {
+        metadataFailures++;
         logger.warn(`memory-hybrid: reflect-meta metadata update failed after vector store: ${err}`);
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "reflection-meta-metadata-update",
@@ -2475,7 +2490,7 @@ export async function runReflectionMeta(
   }
 
   logger.info(
-    `memory-hybrid: reflect-meta — finished: ${stored} meta-pattern(s) stored, ${metaDuplicatesSkipped} skipped as near-duplicate(s), ${newMetaEmbedFailures} embed failure(s), ${uniqueMetas.length} candidate(s) total`,
+    `memory-hybrid: reflect-meta — finished: ${stored} meta-pattern(s) stored, ${metaDuplicatesSkipped} skipped as near-duplicate(s), ${newMetaEmbedFailures} embed failure(s), ${vectorStoreFailures} vector-store failure(s), ${metadataFailures} metadata failure(s), ${uniqueMetas.length} candidate(s) total`,
   );
   if (storeDedupeVectorFallbackSuppressed > 0) {
     logger.info(
@@ -2492,7 +2507,10 @@ export async function runReflectionMeta(
       parsedCandidates: parseResult.parseableLines,
       rejectedLength: parseResult.rejectedLength,
       stored,
-      status: newMetaEmbedFailures > 0 ? "partial" : "ok",
+      // See runReflection's identical fix: vectorStoreFailures/metadataFailures are
+      // infrastructure errors that previously vanished a synthesized meta-pattern without ever
+      // affecting `status`, unlike the embed-call failures already tracked here.
+      status: newMetaEmbedFailures > 0 || vectorStoreFailures > 0 || metadataFailures > 0 ? "partial" : "ok",
     },
   };
 }

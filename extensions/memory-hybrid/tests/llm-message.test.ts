@@ -23,6 +23,31 @@ describe("extractAssistantMessageText", () => {
     });
   });
 
+  it("strips leading MiniMax reasoning blocks from content", () => {
+    expect(
+      extractAssistantMessageText({
+        content: '<think>\nprivate chain of thought\n</think>\n[{"remediationType":"NO_ACTION"}]',
+      }),
+    ).toEqual({
+      text: '[{"remediationType":"NO_ACTION"}]',
+      source: "content",
+    });
+  });
+
+  it("strips leading MiniMax reasoning blocks from content blocks", () => {
+    expect(
+      extractAssistantMessageText({
+        content: [
+          { type: "thinking", thinking: "private reasoning" },
+          { type: "text", text: '<reasoning>hidden</reasoning>\n{"items":[]}' },
+        ],
+      }),
+    ).toEqual({
+      text: '{"items":[]}',
+      source: "content_blocks",
+    });
+  });
+
   it("uses native tool_calls arguments when content is empty", () => {
     expect(
       extractAssistantMessageText({

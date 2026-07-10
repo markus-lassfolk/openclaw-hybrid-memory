@@ -125,4 +125,33 @@ describe("runContextAudit", () => {
     expect(audit.autoRecall.hotTokens).toBeLessThan(80);
     expect(audit.autoRecall.fixedBlocks.estimatedTokens.hot).toBe(audit.autoRecall.hotTokens);
   });
+
+  it("excludes another tenant's procedures from the audit when a scopeFilter is passed (#2067-followup)", async () => {
+    const cfg = hybridConfigSchema.parse({
+      embedding: { provider: "openai", apiKey: "sk-test-key-that-is-long-enough-to-pass" },
+      procedures: { enabled: true, validationThreshold: 1 },
+    });
+    factsDb.upsertProcedure({
+      taskPattern: "Deploy tenant-a's release pipeline",
+      recipeJson: JSON.stringify([{ tool: "exec", args: { command: "deploy" } }]),
+      procedureType: "positive",
+      confidence: 0.9,
+      scope: "user",
+      scopeTarget: "tenant-a",
+    });
+
+    // Without a scopeFilter, every tenant's procedures are visible (existing/global-audit behavior).
+    const unscoped = await runContextAudit({ cfg, factsDb, workspaceRoot: tmpDir });
+    expect(unscoped.procedures.lines).toBeGreaterThan(0);
+
+    // A caller scoped to a different tenant must not see tenant-a's procedure in its budget report.
+    const scoped = await runContextAudit({
+      cfg,
+      factsDb,
+      workspaceRoot: tmpDir,
+      scopeFilter: { userId: "tenant-b" },
+    });
+    expect(scoped.procedures.lines).toBe(0);
+    expect(scoped.procedures.tokens).toBe(0);
+  });
 });

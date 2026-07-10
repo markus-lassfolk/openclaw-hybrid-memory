@@ -187,6 +187,44 @@ describe("reregister-policy", () => {
     expect(canReuseDatabasesOnReregister(old, cfg, api)).toBe(false);
   });
 
+  it("reuse-databases declines when public route security settings change", () => {
+    vi.stubEnv("OPENCLAW_HYBRID_MEM_REREGISTER_POLICY", "reuse-databases");
+    const api = {
+      resolvePath: (p: string) => `/home/markus/.openclaw/${p}`,
+    };
+    const oldCfg = minimalCfg();
+    oldCfg.health = { enabled: true, authenticated: false } as HybridMemoryConfig["health"];
+    const newCfg = minimalCfg();
+    newCfg.health = { enabled: true, authenticated: true } as HybridMemoryConfig["health"];
+    const old = mockOldRuntime(
+      {
+        sqlite: api.resolvePath(oldCfg.sqlitePath),
+        lance: api.resolvePath(oldCfg.lanceDbPath),
+      },
+      oldCfg,
+    );
+    expect(canReuseDatabasesOnReregister(old, newCfg, api)).toBe(false);
+  });
+
+  it("reuse-databases declines when public routes are disabled", () => {
+    vi.stubEnv("OPENCLAW_HYBRID_MEM_REREGISTER_POLICY", "reuse-databases");
+    const api = {
+      resolvePath: (p: string) => `/home/markus/.openclaw/${p}`,
+    };
+    const oldCfg = minimalCfg();
+    oldCfg.health = { enabled: true, authenticated: false } as HybridMemoryConfig["health"];
+    const newCfg = minimalCfg();
+    newCfg.health = { enabled: false, authenticated: false } as HybridMemoryConfig["health"];
+    const old = mockOldRuntime(
+      {
+        sqlite: api.resolvePath(oldCfg.sqlitePath),
+        lance: api.resolvePath(oldCfg.lanceDbPath),
+      },
+      oldCfg,
+    );
+    expect(canReuseDatabasesOnReregister(old, newCfg, api)).toBe(false);
+  });
+
   it("reuse-databases declines when encryption key changes", () => {
     vi.stubEnv("OPENCLAW_HYBRID_MEM_REREGISTER_POLICY", "reuse-databases");
     const api = {
@@ -207,6 +245,51 @@ describe("reregister-policy", () => {
         sqlite: api.resolvePath(oldCfg.sqlitePath),
         lance: api.resolvePath(oldCfg.lanceDbPath),
       },
+      oldCfg,
+    );
+    expect(canReuseDatabasesOnReregister(old, newCfg, api)).toBe(false);
+  });
+
+  it("reuse-databases declines when a conditionally-constructed store's enabled flag changes", () => {
+    // Covers wal/personaProposals/identityReflection/identityPromotion/nightlyCycle/
+    // graph.autoSupersede/passiveObserver/aliases/verification/provenance — each gates a store
+    // instantiated in bootstrap-optional.ts, so flipping it must force a full teardown rather
+    // than silently reusing a donor whose store handle doesn't match the new flag.
+    const flagCases: Array<[key: string, oldVal: unknown, newVal: unknown]> = [
+      ["wal", { enabled: false }, { enabled: true }],
+      ["personaProposals", { enabled: false }, { enabled: true }],
+      ["identityReflection", { enabled: false }, { enabled: true }],
+      ["identityPromotion", { enabled: false }, { enabled: true }],
+      ["nightlyCycle", { enabled: false }, { enabled: true }],
+      ["passiveObserver", { enabled: false }, { enabled: true }],
+      ["aliases", { enabled: false }, { enabled: true }],
+      ["verification", { enabled: false }, { enabled: true }],
+      ["provenance", { enabled: false }, { enabled: true }],
+    ];
+    for (const [key, oldVal, newVal] of flagCases) {
+      vi.stubEnv("OPENCLAW_HYBRID_MEM_REREGISTER_POLICY", "reuse-databases");
+      const api = { resolvePath: (p: string) => `/home/markus/.openclaw/${p}` };
+      const oldCfg = minimalCfg();
+      (oldCfg as unknown as Record<string, unknown>)[key] = oldVal;
+      const newCfg = minimalCfg();
+      (newCfg as unknown as Record<string, unknown>)[key] = newVal;
+      const old = mockOldRuntime(
+        { sqlite: api.resolvePath(oldCfg.sqlitePath), lance: api.resolvePath(oldCfg.lanceDbPath) },
+        oldCfg,
+      );
+      expect(canReuseDatabasesOnReregister(old, newCfg, api), `flag: ${key}`).toBe(false);
+    }
+  });
+
+  it("reuse-databases declines when graph.autoSupersede changes", () => {
+    vi.stubEnv("OPENCLAW_HYBRID_MEM_REREGISTER_POLICY", "reuse-databases");
+    const api = { resolvePath: (p: string) => `/home/markus/.openclaw/${p}` };
+    const oldCfg = minimalCfg();
+    (oldCfg as unknown as Record<string, unknown>).graph = { autoSupersede: false };
+    const newCfg = minimalCfg();
+    (newCfg as unknown as Record<string, unknown>).graph = { autoSupersede: true };
+    const old = mockOldRuntime(
+      { sqlite: api.resolvePath(oldCfg.sqlitePath), lance: api.resolvePath(oldCfg.lanceDbPath) },
       oldCfg,
     );
     expect(canReuseDatabasesOnReregister(old, newCfg, api)).toBe(false);

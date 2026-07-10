@@ -535,8 +535,14 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
   // Contextual Variant Generator (Issue #159)
   // ========================================================================
 
-  let variantQueue: VariantGenerationQueue | null = null;
-  if (cfg.contextualVariants.enabled) {
+  // Carried over from donorRuntime like every sibling optional service below (eventBus,
+  // pythonBridge, learningsDb, auditStore, agentHealthStore) -- VariantGenerationQueue has no
+  // dispose/drain/shutdown method, so rebuilding it unconditionally on every register() call
+  // (even a reuse-databases hot-reload triggered by an unrelated config change) silently
+  // discarded any contextual-variant-generation work still queued on the old instance, with no
+  // warning or retry (#2067-followup).
+  let variantQueue: VariantGenerationQueue | null = donorRuntime?.variantQueue ?? null;
+  if (cfg.contextualVariants.enabled && !variantQueue) {
     const variantGenerator = new ContextualVariantGenerator(cfg.contextualVariants, dbContext.openai);
     variantQueue = new VariantGenerationQueue(variantGenerator, async (factId, variantType, variants) => {
       for (const v of variants) {

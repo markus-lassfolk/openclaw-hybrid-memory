@@ -20,7 +20,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig } from "../config.js";
-import type { MemoryEntry } from "../types/memory.js";
+import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { runPreConsolidationFlush, WAL_FLUSH_ABORT_MESSAGE } from "./pre-consolidation-flush.js";
@@ -308,6 +308,26 @@ export function buildContextBlock(
   return lines.join("\n");
 }
 
+function scopeFilterForSession(sessionId: string | undefined): ScopeFilter | null {
+  const trimmed = sessionId?.trim();
+  return trimmed ? { sessionId: trimmed } : null;
+}
+
+/**
+ * Combine the deployment's static autoRecall scope config with the current session's own
+ * scope. scopeFilterClausePositional treats each ScopeFilter field as an additional allowed
+ * dimension (OR'd together, plus global facts always match), so merging never narrows below
+ * what the static config already allowed -- it only adds this session's own facts as visible,
+ * closing the cross-session leak PR #2068 targets without dropping any existing restriction.
+ */
+function mergeScopeFilters(
+  base: ScopeFilter | null | undefined,
+  sessionScope: ScopeFilter | null,
+): ScopeFilter | undefined {
+  if (!base && !sessionScope) return undefined;
+  return { ...base, ...sessionScope };
+}
+
 /**
  * Minimal ContextEngine that integrates hybrid-memory into the OpenClaw
  * context lifecycle. Designed for backward compatibility — every method
@@ -362,10 +382,11 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
       const limit = cfg.autoRecall?.limit ?? 10;
       const query = extractLastUserMessageText({ messages: params.messages })?.trim();
       let facts: MemoryEntry[] = [];
+      const scopeFilter = mergeScopeFilters(cfg.autoRecall?.scopeFilter, scopeFilterForSession(params.sessionId));
       if (query && query.length >= 5) {
         const tierFilter = cfg.memoryTiering?.enabled ? ("warm" as const) : ("all" as const);
         const results = factsDb.search(query, Math.min(limit, 15), {
-          scopeFilter: cfg.autoRecall?.scopeFilter,
+          scopeFilter,
           tierFilter,
           interactiveFtsFastPath: true,
           deferAccessRefresh: true,
@@ -373,7 +394,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
         facts = results.map((r) => r.entry);
       }
       if (facts.length === 0) {
-        facts = factsDb.list(Math.min(limit, 15), { scopeFilter: cfg.autoRecall?.scopeFilter });
+        facts = factsDb.list(Math.min(limit, 15), { scopeFilter });
       }
 
       if (facts.length === 0) {
@@ -478,7 +499,12 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
         sessionFacts = factsDb.getCount();
         // after_compaction hook owns post-compaction injection when auto-recall is on (#957).
         if (!this.opts.cfg.autoRecall?.enabled) {
-          topFacts = factsDb.list(8, { scopeFilter: this.opts.cfg.autoRecall?.scopeFilter });
+          topFacts = factsDb.list(8, {
+            scopeFilter: mergeScopeFilters(
+              this.opts.cfg.autoRecall?.scopeFilter,
+              scopeFilterForSession(_params.sessionId),
+            ),
+          });
           const block = buildContextBlock(
             topFacts,
             "post-compaction memory summary",
@@ -541,7 +567,9 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
 
       // Fetch top-N recent/important facts to seed the sub-agent's context
       const limit = cfg.autoRecall?.limit ?? 10;
-      let topFacts = factsDb.list(Math.min(limit, 15), { scopeFilter: cfg.autoRecall?.scopeFilter });
+      let topFacts = factsDb.list(Math.min(limit, 15), {
+        scopeFilter: mergeScopeFilters(cfg.autoRecall?.scopeFilter, scopeFilterForSession(params.parentSessionKey)),
+      });
       topFacts = filterFactsNotYetInjected(this.opts.injectedFactIdsBySession, params.childSessionKey, topFacts);
 
       if (topFacts.length === 0) {

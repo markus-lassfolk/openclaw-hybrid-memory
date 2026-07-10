@@ -22,6 +22,23 @@ function normalizeIsoForParse(trimmed: string): string {
   return `${trimmed}Z`;
 }
 
+/**
+ * Date.UTC(year, monthIndex, day), but returns null instead of silently normalizing an
+ * out-of-range component (e.g. Date.UTC(2026, 1, 30) rolls "Feb 30" into March 2 rather than
+ * erroring). Mirrors the rollover check already used by date-detector.ts's relative/absolute date
+ * parsers; callers here (parseTimestamp/parseSourceDate/parseCompactDateDigits) previously had no
+ * such guard, so a malformed-but-date-shaped string -- including LLM tool-call input like
+ * memory_recall's `asOf` param -- was silently accepted as a different, valid-looking date instead
+ * of being rejected (#2067-followup).
+ */
+function dateUtcMsOrNull(year: number, monthIndex: number, day: number): number | null {
+  const ms = Date.UTC(year, monthIndex, day);
+  if (Number.isNaN(ms)) return null;
+  const check = new Date(ms);
+  if (check.getUTCMonth() !== monthIndex || check.getUTCDate() !== day) return null;
+  return ms;
+}
+
 /** True when value looks like legacy non-ISO TEXT still needing backfill. */
 export function isLegacyTextTimestamp(value: string): boolean {
   const trimmed = value.trim();
@@ -123,8 +140,8 @@ export function parseTimestamp(value: unknown): number | null {
   const isoDateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
   if (isoDateOnly) {
     const [, y, m, d] = isoDateOnly;
-    const ms = Date.UTC(Number.parseInt(y!, 10), Number.parseInt(m!, 10) - 1, Number.parseInt(d!, 10));
-    return Number.isNaN(ms) ? null : Math.floor(ms / 1000);
+    const ms = dateUtcMsOrNull(Number.parseInt(y!, 10), Number.parseInt(m!, 10) - 1, Number.parseInt(d!, 10));
+    return ms == null ? null : Math.floor(ms / 1000);
   }
 
   const normalized = normalizeIsoForParse(trimmed);
@@ -181,8 +198,8 @@ export function parseSourceDate(v: string | number | null | undefined): number |
   const iso = /^(\d{4})-(\d{2})-(\d{2})(?:T\d{2}:\d{2}:\d{2})?/.exec(s);
   if (iso) {
     const [, y, m, d] = iso;
-    const ms = Date.UTC(Number.parseInt(y!, 10), Number.parseInt(m!, 10) - 1, Number.parseInt(d!, 10));
-    return Number.isNaN(ms) ? null : Math.floor(ms / 1000);
+    const ms = dateUtcMsOrNull(Number.parseInt(y!, 10), Number.parseInt(m!, 10) - 1, Number.parseInt(d!, 10));
+    return ms == null ? null : Math.floor(ms / 1000);
   }
   const n = Number.parseInt(s, 10);
   return !Number.isNaN(n) && n > 0 ? n : null;
@@ -228,6 +245,6 @@ function isNumericEpochString(value: string): boolean {
 function parseCompactDateDigits(value: string): number | null {
   const match = /^(\d{4})(\d{2})(\d{2})$/.exec(value);
   if (!match) return null;
-  const ms = Date.UTC(Number.parseInt(match[1], 10), Number.parseInt(match[2], 10) - 1, Number.parseInt(match[3], 10));
-  return Number.isNaN(ms) ? null : Math.floor(ms / 1000);
+  const ms = dateUtcMsOrNull(Number.parseInt(match[1], 10), Number.parseInt(match[2], 10) - 1, Number.parseInt(match[3], 10));
+  return ms == null ? null : Math.floor(ms / 1000);
 }

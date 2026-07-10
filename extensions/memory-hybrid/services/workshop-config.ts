@@ -58,6 +58,15 @@ export function isWorkshopEnabled(cfg?: HybridMemoryConfig): boolean {
   );
 }
 
+/**
+ * The in-chat memory_workshop tool is LLM-callable, so persistent mutations must
+ * be an explicit operator opt-in. Dashboard/gateway review flows remain governed
+ * by isWorkshopEnabled().
+ */
+export function isWorkshopToolMutationEnabled(cfg?: HybridMemoryConfig): boolean {
+  return cfg?.workshop?.allowAgentMutations === true;
+}
+
 export function resolveWorkshopMaxPending(cfg?: HybridMemoryConfig): number {
   const fromWorkshop = cfg?.workshop?.maxPending;
   if (typeof fromWorkshop === "number" && fromWorkshop >= 0) return Math.floor(fromWorkshop);

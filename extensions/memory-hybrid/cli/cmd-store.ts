@@ -7,26 +7,26 @@
 
 import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { tryParseCredentialForVault, isStructuredCredentialCandidate } from "../services/auto-capture.js";
+import { isStructuredCredentialCandidate, tryParseCredentialForVault } from "../services/auto-capture.js";
+import { classifyMemoryOperation } from "../services/classification.js";
+import { matchesExactScope, validateScopedClassificationTarget } from "../services/classification-scope.js";
 import {
+  abortCredentialVaultWriteOnPointerDedupe,
   buildCredentialPointerText,
   ensureCredentialVaultPointer,
-  abortCredentialVaultWriteOnPointerDedupe,
   rollbackVaultCredentialWrite,
 } from "../services/credential-vault-pointer.js";
-import { classifyMemoryOperation } from "../services/classification.js";
-import { validateScopedClassificationTarget } from "../services/classification-scope.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
+import type { MemoryEntry } from "../types/memory.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
 import { extractTags } from "../utils/tags.js";
 import type { HandlerContext } from "./handlers.js";
 import type { StoreCliOpts, StoreCliResult } from "./types.js";
-import type { MemoryEntry } from "../types/memory.js";
 
 /**
  * Infer which identity file a rule or suggestion should target (#260).
@@ -74,13 +74,14 @@ export async function runStoreForCli(
     if (cfg.credentials.enabled && credentialsDb) {
       let storedInVault = false;
       try {
-        storedInVault = credentialsDb.storeIfNew({
-          service: parsed.service,
-          type: parsed.type,
-          value: parsed.secretValue,
-          url: parsed.url,
-          notes: parsed.notes,
-        }) != null;
+        storedInVault =
+          credentialsDb.storeIfNew({
+            service: parsed.service,
+            type: parsed.type,
+            value: parsed.secretValue,
+            url: parsed.url,
+            notes: parsed.notes,
+          }) != null;
       } catch (err) {
         capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:credential-vault-store" });
         return { outcome: "credential_vault_error" };
@@ -426,8 +427,26 @@ export async function runStoreForCli(
       context: "cli-store",
     });
     if (supersedesId && storeResult.newlyStored) {
-      factsDb.supersede(supersedesId, entry.id);
-      aliasDb?.deleteByFactId(supersedesId);
+      // SECURITY: the `--supersedes` id is caller-supplied and unrelated to any classifier
+      // candidate set, so unlike the classify-before-write DELETE/UPDATE paths above it can't
+      // reuse validateScopedClassificationTarget's candidate check -- but it must still be
+      // blocked from touching a fact outside this write's own scope, or any CLI caller could
+      // pass another tenant's fact id to silently supersede (soft-delete) it. Mirrors the
+      // equivalent guard already in tools/memory/register-store-tools.ts's memory_store
+      // (#2067-followup).
+      const supersedeTarget = factsDb.getById(supersedesId);
+      if (supersedeTarget && matchesExactScope(supersedeTarget, scope, scopeTarget)) {
+        factsDb.supersede(supersedesId, entry.id);
+        aliasDb?.deleteByFactId(supersedesId);
+        await deleteVectorForFactId({
+          vectorDb,
+          factId: supersedesId,
+          logger: log,
+          context: "cli-store-manual-supersede",
+        });
+      } else {
+        log.warn(`memory-hybrid: blocked cross-scope or unknown --supersedes target ${supersedesId}`);
+      }
     }
     try {
       if (storeResult.embeddingStale) {

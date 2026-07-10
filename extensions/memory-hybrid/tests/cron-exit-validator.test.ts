@@ -701,6 +701,46 @@ error: unknown command 'bar'
       expect(second.reportableIssues[0]?.fingerprint.join(":")).toBe(first.reportableIssues[0]?.fingerprint.join(":"));
     });
 
+    it("does not flag skipped_guard reflect-rules as zero stored semantic failure", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "weekly-reflection-20260710T070000Z-111.exit.txt");
+      const logPath = join(tmpDir, "reflect.log");
+      writeFileSync(
+        exitPath,
+        "2026-07-10T07:00:00Z reflect-rules exit=0 status=skipped_guard reason=locked_by_concurrent_run\n",
+      );
+      writeFileSync(logPath, "reflect-rules parse_success=true stored=0 semantic=success\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["reflect-rules"]);
+
+      expect(
+        result.reportableIssues.some(
+          (i) => i.stepName === "reflect-rules" && i.failureClass === "reflect_rules_zero_stored",
+        ),
+      ).toBe(false);
+      expect(result.maintenanceStatus).toBe("success");
+    });
+
+    it("does not flag skipped_gate reflect-rules as zero stored semantic failure", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "weekly-reflection-20260710T070000Z-222.exit.txt");
+      const logPath = join(tmpDir, "reflect.log");
+      writeFileSync(
+        exitPath,
+        "2026-07-10T07:00:00Z reflect-rules exit=0 status=skipped_gate reason=reflection_disabled\n",
+      );
+      writeFileSync(logPath, "reflect-rules parse_success=true stored=0 semantic=success\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["reflect-rules"]);
+
+      expect(
+        result.reportableIssues.some(
+          (i) => i.stepName === "reflect-rules" && i.failureClass === "reflect_rules_zero_stored",
+        ),
+      ).toBe(false);
+      expect(result.maintenanceStatus).toBe("success");
+    });
+
     it("does not flag reflect-rules zero_rules_reason=valid_no_actionable_rules as a semantic failure (#2043)", () => {
       // The model ran fine and legitimately found nothing to extract — maintenance-step-runners.ts and
       // semantic-outcome.ts already treat this as success; this validator must agree.

@@ -194,54 +194,69 @@ describe("session-state", () => {
     });
 
     describe("clearSessionState", () => {
-      it("should clear all state for a session", () => {
+      it("should clear genuinely turn-scoped state for a session", () => {
         // Populate state
-        state.sessionStartSeen.add("session-1");
-        state.ambientSeenFactsMap.set("session-1", new SessionSeenFacts());
-        state.ambientLastEmbeddingMap.set("session-1", [1, 2, 3]);
-        state.frustrationStateMap.set("session-1", { level: 2, turns: [] });
         state.sessionLastActivity.set("session-1", Date.now());
-        state.authFailureRecallsThisSession.set("session-1:key1", 5);
-        state.authFailureRecallsThisSession.set("session-1:key2", 3);
+        state.recallInFlightBySession.set("session-1", Date.now());
+        state.pendingCheckpointGuardBySession.set("session-1", "guard-token");
 
         // Clear
         state.clearSessionState("session-1");
 
         // Verify cleared
-        expect(state.sessionStartSeen.has("session-1")).toBe(false);
-        expect(state.ambientSeenFactsMap.has("session-1")).toBe(false);
-        expect(state.ambientLastEmbeddingMap.has("session-1")).toBe(false);
-        expect(state.frustrationStateMap.has("session-1")).toBe(false);
         expect(state.sessionLastActivity.has("session-1")).toBe(false);
-        expect(state.authFailureRecallsThisSession.has("session-1:key1")).toBe(false);
-        expect(state.authFailureRecallsThisSession.has("session-1:key2")).toBe(false);
+        expect(state.recallInFlightBySession.has("session-1")).toBe(false);
+        expect(state.pendingCheckpointGuardBySession.has("session-1")).toBe(false);
       });
 
-      it("should only clear state for specified session", () => {
-        // Populate multiple sessions
+      it("should NOT clear frustration/change-notify/revert/ambient-recall/auth-failure state, since clearSessionState runs every turn (regression)", () => {
+        // All of these carry state meant to persist for the whole chat session, not reset every
+        // agent turn (frustration trend accumulation, change-notify dedup cursor, revert-target
+        // resolution, session-start-once gating, ambient cross-turn dedup, and the auth-failure
+        // per-target recall cap all depend on it surviving past a single turn).
+        state.frustrationStateMap.set("session-1", { level: 2, turns: [] });
+        state.frustrationThresholdBandMap.set("session-1", "medium");
+        state.changeNotifyStateMap.set("session-1", { lastNotifiedOrdinal: 3, lastNotifiedBroadcastOrdinal: 1 });
+        state.displayRevertMap.set("session-1", new Map([[1, "change-event-abc"]]));
         state.sessionStartSeen.add("session-1");
-        state.sessionStartSeen.add("session-2");
-        state.authFailureRecallsThisSession.set("session-1:key", 1);
-        state.authFailureRecallsThisSession.set("session-2:key", 2);
+        const seenFacts = new SessionSeenFacts();
+        state.ambientSeenFactsMap.set("session-1", seenFacts);
+        state.ambientLastEmbeddingMap.set("session-1", [1, 2, 3]);
+        state.authFailureRecallsThisSession.set("session-1:key1", 5);
+        state.sessionLastActivity.set("session-1", Date.now());
+
+        state.clearSessionState("session-1");
+
+        // Genuinely turn-scoped state still clears normally.
+        expect(state.sessionLastActivity.has("session-1")).toBe(false);
+
+        // Chat-scoped state must survive a single clearSessionState call.
+        expect(state.frustrationStateMap.get("session-1")).toEqual({ level: 2, turns: [] });
+        expect(state.frustrationThresholdBandMap.get("session-1")).toBe("medium");
+        expect(state.changeNotifyStateMap.get("session-1")).toEqual({
+          lastNotifiedOrdinal: 3,
+          lastNotifiedBroadcastOrdinal: 1,
+        });
+        expect(state.displayRevertMap.get("session-1")?.get(1)).toBe("change-event-abc");
+        expect(state.sessionStartSeen.has("session-1")).toBe(true);
+        expect(state.ambientSeenFactsMap.get("session-1")).toBe(seenFacts);
+        expect(state.ambientLastEmbeddingMap.get("session-1")).toEqual([1, 2, 3]);
+        expect(state.authFailureRecallsThisSession.get("session-1:key1")).toBe(5);
+      });
+
+      it("should only clear turn-scoped state for the specified session", () => {
+        // Populate multiple sessions
+        state.sessionLastActivity.set("session-1", Date.now());
+        state.sessionLastActivity.set("session-2", Date.now());
+        state.recallInFlightBySession.set("session-1", Date.now());
+        state.recallInFlightBySession.set("session-2", Date.now());
 
         // Clear only session-1
         state.clearSessionState("session-1");
 
         // Verify session-2 still exists
-        expect(state.sessionStartSeen.has("session-2")).toBe(true);
-        expect(state.authFailureRecallsThisSession.has("session-2:key")).toBe(true);
-      });
-
-      it("should clear auth failure keys with session prefix", () => {
-        state.authFailureRecallsThisSession.set("session-1:provider1", 1);
-        state.authFailureRecallsThisSession.set("session-1:provider2", 2);
-        state.authFailureRecallsThisSession.set("session-2:provider1", 3);
-
-        state.clearSessionState("session-1");
-
-        expect(state.authFailureRecallsThisSession.has("session-1:provider1")).toBe(false);
-        expect(state.authFailureRecallsThisSession.has("session-1:provider2")).toBe(false);
-        expect(state.authFailureRecallsThisSession.has("session-2:provider1")).toBe(true);
+        expect(state.sessionLastActivity.has("session-2")).toBe(true);
+        expect(state.recallInFlightBySession.has("session-2")).toBe(true);
       });
 
       it("should handle clearing non-existent session", () => {
@@ -269,15 +284,13 @@ describe("session-state", () => {
 
       it("should NOT clear capabilityHintsSessionsSeen (persists across agent turns)", () => {
         // Populate state including capability hints
-        state.sessionStartSeen.add("session-1");
-        state.capabilityHintsSessionsSeen.add("session-1");
         state.sessionLastActivity.set("session-1", Date.now());
+        state.capabilityHintsSessionsSeen.add("session-1");
 
         // Clear session state
         state.clearSessionState("session-1");
 
-        // Verify most state is cleared
-        expect(state.sessionStartSeen.has("session-1")).toBe(false);
+        // Verify turn-scoped state is cleared
         expect(state.sessionLastActivity.has("session-1")).toBe(false);
 
         // But capabilityHintsSessionsSeen should persist across agent turns
@@ -422,9 +435,10 @@ describe("session-state", () => {
         // Clear
         state.clearSessionState("session-1");
 
-        // Verify cleared
+        // sessionLastActivity is turn-scoped and clears; sessionStartSeen is chat-scoped (gates
+        // the one-time session-start recall directive) and must survive clearSessionState.
         expect(state.sessionLastActivity.has("session-1")).toBe(false);
-        expect(state.sessionStartSeen.has("session-1")).toBe(false);
+        expect(state.sessionStartSeen.has("session-1")).toBe(true);
       });
 
       it("should handle concurrent session tracking", () => {

@@ -59,4 +59,24 @@ describe("tools-md-section", () => {
     const { inserted } = insertRulesUnderSection(path, "Self-correction rules", ["Same rule.", "same rule."]);
     expect(inserted).toBe(0);
   });
+
+  it("keeps rule bullets as one unbroken list across repeated inserts, instead of a blank line before every new batch (#2067-followup)", () => {
+    const path = join(tmpDir, "TOOLS.md");
+    writeFileSync(
+      path,
+      "# TOOLS\n\n## Self-correction rules\n- First batch rule.\n\n## Other\n- Rest.",
+      "utf-8",
+    );
+    insertRulesUnderSection(path, "Self-correction rules", ["Second batch rule."]);
+    insertRulesUnderSection(path, "Self-correction rules", ["Third batch rule."]);
+
+    const content = readFileSync(path, "utf-8");
+    // The dead `before.trimEnd().endsWith("\n")` check always evaluated false, so every insert
+    // unconditionally prepended a blank line before its new bullet(s) -- breaking what should be
+    // one continuous bullet list under the section into visually-disconnected mini-lists that
+    // grow more fragmented with every self-correction/cron cycle that appends rules.
+    expect(content).toContain(
+      "## Self-correction rules\n- First batch rule.\n- Second batch rule.\n- Third batch rule.\n\n## Other",
+    );
+  });
 });

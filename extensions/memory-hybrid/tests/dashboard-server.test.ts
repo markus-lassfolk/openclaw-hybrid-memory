@@ -380,6 +380,26 @@ describe("collectStatus", () => {
     expect(Number.isInteger(status.memory.vectorCount)).toBe(true);
   });
 
+  it("does not let a memory-stats collection failure discard the other collectors' results", async () => {
+    // ctx.factsDb.count() (or any other synchronous call in collectMemoryStats) can throw, e.g.
+    // SQLITE_BUSY while a maintenance job holds a lock. collectStatus() fans out to
+    // collectMemoryStats alongside collectCronJobs/collectTaskQueue/collectForgeState/
+    // collectGitActivity via a bare Promise.all — a throw here must not reject the whole call and
+    // discard the other collectors' already-succeeded results.
+    const countSpy = vi.spyOn(ctx.factsDb, "count").mockImplementation(() => {
+      throw new Error("SQLITE_BUSY: database is locked");
+    });
+    try {
+      const status = await collectStatus(ctx);
+      expect(status.memory.activeFacts).toBe(0);
+      expect(Array.isArray(status.cronJobs)).toBe(true);
+      expect(Array.isArray(status.forge)).toBe(true);
+      expect(Array.isArray(status.git.prs)).toBe(true);
+    } finally {
+      countSpy.mockRestore();
+    }
+  });
+
   it("shares one lance directory traversal across concurrent collectStatus calls (#1501)", async () => {
     const isolatedCtx = makeContext(mkdtempSync(join(tmpdir(), "dashboard-lance-race-")));
     const getDirSizeSpy = vi.spyOn(fsUtils, "getDirSize");
@@ -1079,6 +1099,25 @@ describe("Memory Viewer API (Issue #1023)", () => {
       const updated = listPayload.facts.find((fact: { id: string }) => fact.id === target.id);
       expect(updated).toBeTruthy();
       expect(updated.verified).toBe(true);
+    });
+  });
+
+  it("POST /api/viewer/facts/:id/verify rejects an untrusted verifiedBy value instead of persisting it verbatim", async () => {
+    await withServer(async (ctx, port) => {
+      ctx.factsDb.store({ text: "To verify with bad verifiedBy", category: "fact", source: "test" });
+      const { body: lb } = await apiGet(port, "/api/viewer/facts");
+      const { facts } = JSON.parse(lb);
+      const target = facts.find((fact: { text: string; id: string }) => fact.text === "To verify with bad verifiedBy");
+      expect(target?.id).toBeTruthy();
+      const { status, body } = await apiPost(
+        port,
+        `/api/viewer/facts/${target.id}/verify`,
+        JSON.stringify({ verifiedBy: "anything-i-want" }),
+      );
+      expect(status).toBe(200);
+      // An untrusted verifiedBy outside the "agent"|"user"|"system" enum must fall back to
+      // "agent", not be persisted verbatim into VerificationStore's trusted provenance column.
+      expect(JSON.parse(body).message).toContain("verified as agent");
     });
   });
 

@@ -44,6 +44,7 @@ const CREDENTIAL_KEY_NORMALIZED = new Set(
     "clientsecret",
     "privatekey",
     "secretkey",
+    "encryptionkey",
   ].map((key) => key.toLowerCase()),
 );
 
@@ -140,4 +141,29 @@ export function redactAutopilotValue(value: unknown): unknown {
 function isCredentialKey(key: string): boolean {
   const normalized = key.replace(/[\s_-]/g, "").toLowerCase();
   return CREDENTIAL_KEY_NORMALIZED.has(normalized);
+}
+
+/**
+ * Like redactAutopilotValue, but only redacts a credential-keyed field when its value is a plain
+ * string (a literal secret) -- a SecretRef object (`{ source: "env"|"file", ... }`, this
+ * codebase's pointer-to-a-secret shape) carries no secret material itself, just metadata about
+ * where to resolve one, so blanket-redacting it would destroy useful non-sensitive preview
+ * information (e.g. which env var a key comes from) for no security benefit. Intended for
+ * displaying a raw, not-yet-parsed config object (e.g. an install/upgrade dry-run preview) where
+ * SecretRef objects must survive intact but literal secret strings must not (#2067-followup).
+ */
+export function redactCredentialStringsOnly(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((v) => redactCredentialStringsOnly(v));
+  if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+    const out: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      if (isCredentialKey(key) && typeof child === "string" && child.length > 0) {
+        out[key] = "[REDACTED]";
+      } else {
+        out[key] = redactCredentialStringsOnly(child);
+      }
+    }
+    return out;
+  }
+  return value;
 }

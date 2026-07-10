@@ -66,7 +66,42 @@ describe("chunkSessionText", () => {
       expect(chunks[i].length).toBeLessThanOrEqual(maxChars);
     }
   });
+
+  it("terminates instead of looping forever when maxTokens is zero or negative (regression)", () => {
+    const text = "a".repeat(100);
+    for (const maxTokens of [0, -1, -100]) {
+      const chunks = withIterationGuard(() => chunkSessionText(text, maxTokens));
+      // Content must still be fully covered, never dropped.
+      expect(chunks.join("").includes("a")).toBe(true);
+      expect(chunks[0][0]).toBe("a");
+      expect(chunks[chunks.length - 1].slice(-1)).toBe("a");
+    }
+  });
 });
+
+/**
+ * Runs `fn` on a Proxy'd Array.prototype.push-instrumented call and throws if the underlying
+ * chunking loop pushes more than a sane bound of chunks -- turns a would-be infinite loop into a
+ * fast, deterministic test failure instead of hanging the whole suite.
+ */
+function withIterationGuard<T>(fn: () => T[]): T[] {
+  const originalPush = Array.prototype.push;
+  let pushCount = 0;
+  // biome-ignore lint/suspicious/noExplicitAny: instrumenting the built-in for a bounded-loop test guard
+  (Array.prototype as any).push = function guardedPush(...args: unknown[]) {
+    pushCount++;
+    if (pushCount > 10_000) {
+      Array.prototype.push = originalPush;
+      throw new Error("chunking loop exceeded 10,000 iterations -- likely non-terminating");
+    }
+    return originalPush.apply(this, args as never[]);
+  };
+  try {
+    return fn();
+  } finally {
+    Array.prototype.push = originalPush;
+  }
+}
 
 describe("chunkTextByChars", () => {
   it("returns single chunk when text fits", () => {

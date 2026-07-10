@@ -12,6 +12,7 @@ import { makeUnifiedKey } from "../services/unified-proposals.js";
 import { MISSION_CONTROL_SESSION_KEY } from "../services/workshop-config.js";
 import {
   workshopApprove,
+  workshopPendingCount,
   workshopQuarantine,
   workshopReject,
   workshopRevise,
@@ -380,5 +381,46 @@ describe("workshopApprove persona proposals", () => {
     expect(applied?.sessionKey).toBe(MISSION_CONTROL_SESSION_KEY);
     const proposed = changeFeed.listRecent({ sessionKey: BROADCAST_CHANGE_SESSION_KEY, limit: 10 });
     expect(proposed.some((e) => e.proposalKey === key && e.action === "proposed")).toBe(false);
+  });
+});
+
+describe("workshopPendingCount (#2067-followup)", () => {
+  it("still counts an older pending persona proposal when a burst of newer procedure-skill candidates exceeds listUnifiedProposals()'s default 100-item window", () => {
+    const ctx = {
+      resolvedSqlitePath: ":memory:",
+      proposalsDb: {
+        list: (filters?: { status?: string }) =>
+          filters?.status === "pending"
+            ? [
+                {
+                  id: "old-persona",
+                  title: "old real pending proposal",
+                  status: "pending",
+                  confidence: 0.5,
+                  createdAt: 1,
+                  targetFile: "SOUL.md",
+                  observation: "",
+                  suggestedChange: "",
+                },
+              ]
+            : [],
+      },
+      crystallizationStore: null,
+      toolProposalStore: null,
+      factsDb: {
+        // 100 recently-validated procedure candidates -- enough alone to fill
+        // listUnifiedProposals()'s default limit (100) ahead of the older persona proposal.
+        getProceduresReadyForSkill: () =>
+          Array.from({ length: 100 }, (_, i) => ({
+            id: `proc-${i}`,
+            taskPattern: `pattern ${i}`,
+            successCount: 5,
+            lastValidated: 1_000_000 + i,
+          })),
+      },
+      cfg: { personaProposals: { enabled: true }, procedures: { enabled: true, validationThreshold: 3 } },
+    } as never;
+
+    expect(workshopPendingCount(ctx)).toBe(101);
   });
 });

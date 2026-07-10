@@ -3,6 +3,7 @@ import { parseWorkshopConfig } from "../config/parsers/features.js";
 import {
   DEFAULT_WORKSHOP_MAX_PENDING,
   isWorkshopEnabled,
+  isWorkshopToolMutationEnabled,
   listWorkshopDashboardChangeFeedSessions,
   MISSION_CONTROL_SESSION_KEY,
   resolveWorkshopAppliedSessionKey,
@@ -25,6 +26,12 @@ describe("workshop-config", () => {
     expect(isWorkshopEnabled({ selfExtension: { enabled: true } } as never)).toBe(true);
     expect(isWorkshopEnabled({ procedures: { enabled: true } } as never)).toBe(true);
     expect(isWorkshopEnabled({ procedures: { enabled: false } } as never)).toBe(false);
+  });
+
+  it("isWorkshopToolMutationEnabled requires explicit opt-in", () => {
+    expect(isWorkshopToolMutationEnabled({ workshop: { enabled: true } } as never)).toBe(false);
+    expect(isWorkshopToolMutationEnabled({ procedures: { enabled: true } } as never)).toBe(false);
+    expect(isWorkshopToolMutationEnabled({ workshop: { allowAgentMutations: true } } as never)).toBe(true);
   });
 
   it("resolveWorkshopMaxPending prefers workshop.maxPending", () => {
@@ -66,9 +73,9 @@ describe("parseWorkshopConfig", () => {
   it("parses enabled, maxPending, and sessionKey", () => {
     expect(
       parseWorkshopConfig({
-        workshop: { enabled: true, maxPending: 40, sessionKey: "  ops-desk  " },
+        workshop: { enabled: true, allowAgentMutations: true, maxPending: 40, sessionKey: "  ops-desk  " },
       }),
-    ).toEqual({ enabled: true, maxPending: 40, sessionKey: "ops-desk" });
+    ).toEqual({ enabled: true, allowAgentMutations: true, maxPending: 40, sessionKey: "ops-desk" });
   });
 
   it("returns undefined when workshop block is absent or empty", () => {

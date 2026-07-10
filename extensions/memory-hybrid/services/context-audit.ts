@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
+import type { ScopeFilter } from "../types/memory.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
 import { estimateTokens, sanitizeRecallFactText } from "../utils/text.js";
@@ -75,8 +76,15 @@ export async function runContextAudit(opts: {
   cfg: HybridMemoryConfig;
   factsDb: FactsDB;
   workspaceRoot?: string;
+  /**
+   * Restricts the ledger/procedures/hot-facts reads below to the caller's scope, matching what
+   * would actually be injected for that agent/session. Omitting it aggregates every tenant's
+   * data into the token-budget report, which is only appropriate for a global/operator-level
+   * audit (#2067-followup).
+   */
+  scopeFilter?: ScopeFilter | null;
 }): Promise<ContextAuditResult> {
-  const { cfg, factsDb } = opts;
+  const { cfg, factsDb, scopeFilter } = opts;
   const workspaceRoot = opts.workspaceRoot ?? getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
 
   const workspaceFiles: Array<{ file: string; tokens: number }> = [];
@@ -99,7 +107,7 @@ export async function runContextAudit(opts: {
       const staleMinutes = parseDuration(cfg.activeTask.staleThreshold);
       let activeRows: import("./active-task.js").ActiveTaskEntry[] = [];
       if (cfg.activeTask.ledger === "facts") {
-        const { active } = readActiveTaskRowsFromFacts(factsDb, staleMinutes);
+        const { active } = readActiveTaskRowsFromFacts(factsDb, staleMinutes, scopeFilter);
         activeRows = active;
       } else {
         const taskFile = await readActiveTaskFile(
@@ -134,7 +142,7 @@ export async function runContextAudit(opts: {
   let proceduresLines = 0;
   if (cfg.procedures.enabled) {
     try {
-      const procedures = factsDb.getProceduresForAudit(5);
+      const procedures = factsDb.getProceduresForAudit(5, scopeFilter);
       const positive = procedures.filter((p) => p.procedureType === "positive");
       const negative = procedures.filter((p) => p.procedureType === "negative");
       const lines: string[] = [];
@@ -193,7 +201,7 @@ export async function runContextAudit(opts: {
   let hotTokens = 0;
   if (cfg.memoryTiering.enabled && cfg.memoryTiering.hotMaxTokens > 0) {
     try {
-      const hotResults = factsDb.getHotFacts(cfg.memoryTiering.hotMaxTokens);
+      const hotResults = factsDb.getHotFacts(cfg.memoryTiering.hotMaxTokens, scopeFilter);
       if (hotResults.length > 0) {
         const hotLines = hotResults
           .map((r) => {

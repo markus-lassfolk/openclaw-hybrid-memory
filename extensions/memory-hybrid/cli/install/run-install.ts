@@ -4,6 +4,7 @@ import { basename, dirname, join } from "node:path";
 import { atomicWriteFile } from "../../utils/atomic-write.js";
 import { getEnv } from "../../utils/env-manager.js";
 import { findPluginRoot } from "../../utils/plugin-root.js";
+import { redactCredentialStringsOnly } from "../../services/pending-autopilot/redaction.js";
 
 import { type CronModelConfig, getCronModelConfig } from "../../config.js";
 import { parseDigestWeeklyDeliveryOnly } from "../../config/parsers/features.js";
@@ -31,6 +32,7 @@ import {
   installHybridMemoryWorkspaceSkill,
   isPathInsideDir,
   npxExecutable,
+  NPM_INSTALL_TIMEOUT_MS,
   PLUGIN_JOB_ID_PREFIX,
   resolveAgentWorkspaceRoot,
   resolveUpgradeExtensionsParentDir,
@@ -172,12 +174,20 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
     }
     previewRemaining.push("Restart the gateway after applying the config.");
     previewRemaining.push("Run `openclaw hybrid-mem verify` to confirm the install.");
+    // SECURITY: `after` (used below for the real atomic write) must stay the real, unredacted
+    // config -- but this dry-run preview only ever goes to console.log, and `config` is the
+    // *entire* gateway config (every plugin's, not just this one's), including real API keys and
+    // the credentials-vault encryption key re-asserted above. Redact a separate copy for display
+    // only. Uses redactCredentialStringsOnly (not the more aggressive redactAutopilotValue) so a
+    // SecretRef object (env:/file: pointer, no secret material of its own) still displays as-is
+    // (#2067-followup).
+    const redactedConfigJson = JSON.stringify(redactCredentialStringsOnly(config), null, 2);
     return {
       ok: true,
       configPath,
       dryRun: true,
       written: false,
-      configJson: after,
+      configJson: redactedConfigJson,
       pluginId: PLUGIN_ID,
       workspaceSkillPath: skillPreview.path,
       workspaceSkillError: skillPreview.error,
@@ -477,6 +487,7 @@ async function updateNpmProjectDependencyPin(opts: {
     cwd: projectRoot,
     stdio: "inherit",
     shell: false,
+    timeout: NPM_INSTALL_TIMEOUT_MS,
   });
   if (r.status !== 0) {
     const npmRollback = rollbackNpmProjectPinAfterUpgradeFailure(pinBackup);

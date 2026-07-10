@@ -159,6 +159,27 @@ export function canReuseDatabasesOnReregister(
   const newEncKey = cfg.credentials?.encryptionKey ?? "";
   if (oldEncKey !== newEncKey) return false;
 
+  // Compare HTTP route security settings so auth hardening or route disablement
+  // cannot keep stale public/dashboard handlers alive on reused database handles.
+  if (oldCfg.health?.enabled !== cfg.health?.enabled) return false;
+  if (oldCfg.health?.authenticated !== cfg.health?.authenticated) return false;
+
+  // Compare every flag that gates a conditionally-constructed store in bootstrap-optional.ts.
+  // Without this, flipping one of these on/off in config has no effect on a reuse-databases
+  // reload — the donor's store handle (often still null) is carried over unchanged, so the
+  // feature silently stays off (or, for wal.enabled, writes silently keep bypassing WAL) until
+  // some unrelated field forces a full teardown.
+  if (oldCfg.wal?.enabled !== cfg.wal?.enabled) return false;
+  if (oldCfg.personaProposals?.enabled !== cfg.personaProposals?.enabled) return false;
+  if (oldCfg.identityReflection?.enabled !== cfg.identityReflection?.enabled) return false;
+  if (oldCfg.identityPromotion?.enabled !== cfg.identityPromotion?.enabled) return false;
+  if (oldCfg.nightlyCycle?.enabled !== cfg.nightlyCycle?.enabled) return false;
+  if (oldCfg.graph?.autoSupersede !== cfg.graph?.autoSupersede) return false;
+  if (oldCfg.passiveObserver?.enabled !== cfg.passiveObserver?.enabled) return false;
+  if (oldCfg.aliases?.enabled !== cfg.aliases?.enabled) return false;
+  if (oldCfg.verification?.enabled !== cfg.verification?.enabled) return false;
+  if (oldCfg.provenance?.enabled !== cfg.provenance?.enabled) return false;
+
   return true;
 }
 

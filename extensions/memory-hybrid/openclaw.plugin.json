@@ -1,7 +1,7 @@
 {
   "id": "openclaw-hybrid-memory",
   "kind": "memory",
-  "version": "2026.7.197",
+  "version": "2026.7.208",
   "contracts": {
     "tools": [
       "active_task_checkpoint",
@@ -1485,6 +1485,10 @@
           "sessionKey": {
             "type": "string",
             "description": "Change-feed session key for Mission Control / dashboard workshop actions (default: mission-control)"
+          },
+          "allowAgentMutations": {
+            "type": "boolean",
+            "description": "Allow the LLM-callable memory_workshop tool to perform persistent mutations (approve/reject/quarantine/undo/revert). Default: false; use trusted dashboard/gateway for human-reviewed mutations."
           }
         },
         "description": "Unified memory workshop — proposal review queue across persona, crystallization, tool, and procedure-skill backlogs"

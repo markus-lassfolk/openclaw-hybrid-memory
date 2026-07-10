@@ -33,6 +33,7 @@ import {
   requiresMaxCompletionTokens,
   shouldOmitSamplingParams,
   resolveWireApi,
+  resolveModelAlias,
 } from "./model-capabilities.js";
 import { callResponsesApi, mapResponsesFinishReason } from "./responses-adapter.js";
 import { recordProviderHttpAttempt, formatRecentHttpAttemptsForRateLimitLog } from "./recent-http-attempts.js";
@@ -512,7 +513,7 @@ export async function chatCompleteDetailed(opts: {
   thinkingMode?: MiniMaxThinkingMode;
 }): Promise<ChatCompleteDetailedResult> {
   const {
-    model,
+    model: requestedModel,
     content,
     temperature = 0.2,
     maxTokens,
@@ -523,6 +524,7 @@ export async function chatCompleteDetailed(opts: {
     responseFormat,
     thinkingMode,
   } = opts;
+  const model = resolveModelAlias(requestedModel);
   const effectiveMaxTokens = maxTokens ?? distillMaxOutputTokens(model);
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);

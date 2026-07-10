@@ -133,7 +133,13 @@ function evictOldestSession() {
 
 /** Track session activity; evict oldest entry before admitting a new session id. */
 function touchNudgeSession(sessionId: string): void {
-  if (!sessionLastActivity.has(sessionId)) {
+  if (sessionLastActivity.has(sessionId)) {
+    // Map.set() on an existing key updates its value but does NOT move it in iteration
+    // order -- delete + re-set so evictOldestSession()'s "first key" read reflects
+    // least-recently-touched, not original insertion order (matches query-expander.ts's
+    // LRUCache.get() refresh pattern).
+    sessionLastActivity.delete(sessionId);
+  } else {
     evictOldestSession();
   }
   sessionLastActivity.set(sessionId, Date.now());

@@ -331,6 +331,60 @@ describe("install UX helpers", () => {
     }
   });
 
+  describe("ollama detection scans PATH instead of executing the binary (#2072 regression)", () => {
+    const savedPath = process.env.PATH;
+    const savedOllamaHost = process.env.OLLAMA_HOST;
+    const savedOpenclawHome = process.env.OPENCLAW_HOME;
+    let binDir: string;
+    let pluginRootDir: string;
+
+    beforeEach(() => {
+      binDir = join(tmpdir(), `mh-ollama-path-${randomUUID()}`);
+      pluginRootDir = join(tmpdir(), `mh-ollama-pluginroot-${randomUUID()}`);
+      mkdirSync(binDir, { recursive: true });
+      mkdirSync(pluginRootDir, { recursive: true });
+      Reflect.deleteProperty(process.env, "OLLAMA_HOST");
+      // Isolate from any real ~/.openclaw/extensions/node_modules/onnxruntime-node on this
+      // machine, so the onnx branch (checked before ollama) can't make this test flaky.
+      process.env.OPENCLAW_HOME = pluginRootDir;
+    });
+
+    afterEach(() => {
+      if (savedPath !== undefined) process.env.PATH = savedPath;
+      else Reflect.deleteProperty(process.env, "PATH");
+      if (savedOllamaHost !== undefined) process.env.OLLAMA_HOST = savedOllamaHost;
+      else Reflect.deleteProperty(process.env, "OLLAMA_HOST");
+      if (savedOpenclawHome !== undefined) process.env.OPENCLAW_HOME = savedOpenclawHome;
+      else Reflect.deleteProperty(process.env, "OPENCLAW_HOME");
+      rmSync(binDir, { recursive: true, force: true });
+      rmSync(pluginRootDir, { recursive: true, force: true });
+    });
+
+    it("detects ollama when a real executable sits on an absolute PATH entry", () => {
+      writeFileSync(join(binDir, "ollama"), "#!/bin/sh\necho fake ollama\n", { mode: 0o755 });
+      process.env.PATH = `${binDir}${process.platform === "win32" ? ";" : ":"}${savedPath ?? ""}`;
+
+      const result = detectRecommendedEmbeddingSetup({}, pluginRootDir);
+
+      expect(result.provider).toBe("ollama");
+    });
+
+    it("does not trust a cwd-relative '.' PATH entry (matches the original CVE-adjacent risk)", () => {
+      // A "." (or otherwise non-absolute) PATH entry lets an attacker who controls the working
+      // directory plant a same-named binary that would previously have been spawned unqualified.
+      writeFileSync(join(binDir, "ollama"), "#!/bin/sh\necho fake ollama\n", { mode: 0o755 });
+      const originalCwd = process.cwd();
+      process.chdir(binDir);
+      try {
+        process.env.PATH = `.${process.platform === "win32" ? ";" : ":"}${savedPath ?? ""}`;
+        const result = detectRecommendedEmbeddingSetup({}, pluginRootDir);
+        expect(result.provider).not.toBe("ollama");
+      } finally {
+        process.chdir(originalCwd);
+      }
+    });
+  });
+
   it("builds dashboard URL from plugin config", () => {
     expect(
       getDashboardUrl({
@@ -423,6 +477,46 @@ describe("install embedding autofill safety", () => {
       ).embedding as Record<string, unknown>
     ).apiKey;
     expect(apiKey).toEqual({ source: "env", provider: "openclaw", id: "OPENAI_API_KEY" });
+  });
+
+  it("redacts literal secret strings from the install --dry-run preview, including the credentials-vault encryption key (#2067-followup)", () => {
+    const rawEmbeddingKey = "sk-real-embedding-key-that-must-not-leak-1234567890";
+    const rawEncryptionKey = "real-vault-encryption-key-that-must-not-leak-32chars";
+    writeOpenclawConfig({
+      plugins: {
+        entries: {
+          "openclaw-hybrid-memory": {
+            config: {
+              embedding: {
+                provider: "openai",
+                model: "text-embedding-3-small",
+                apiKey: rawEmbeddingKey,
+              },
+              credentials: {
+                enabled: true,
+                encryptionKey: rawEncryptionKey,
+              },
+            },
+          },
+        },
+      },
+    });
+    const result = runInstallForCli({ dryRun: true });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    // The raw preview string must never contain either secret verbatim.
+    expect(result.configJson ?? "").not.toContain(rawEmbeddingKey);
+    expect(result.configJson ?? "").not.toContain(rawEncryptionKey);
+
+    const parsed = JSON.parse(result.configJson ?? "{}") as Record<string, unknown>;
+    const pluginCfg = (
+      ((parsed.plugins as Record<string, unknown>).entries as Record<string, unknown>)[
+        "openclaw-hybrid-memory"
+      ] as Record<string, unknown>
+    ).config as Record<string, unknown>;
+    expect((pluginCfg.embedding as Record<string, unknown>).apiKey).toBe("[REDACTED]");
+    expect((pluginCfg.credentials as Record<string, unknown>).encryptionKey).toBe("[REDACTED]");
   });
 
   it("treats llm.providers.openai/azure-foundry keys as valid embedding fallback auth", () => {

@@ -23,6 +23,46 @@ export interface PluginContext {
 }
 
 /**
+ * SECURITY: FactsDB.getConnectedFactIds() is a raw, unscoped BFS -- filtering its result set
+ * afterward (as this tool previously did) lets a hidden (out-of-scope) fact serve as a
+ * stepping-stone: visible A -> hidden B -> visible C would traverse through B to reach C, and C
+ * still comes back even though no link on that path was ever visible to the caller, indirectly
+ * confirming hidden B exists. Every traversed edge must instead be scope-checked (both endpoints
+ * resolve under the caller's scopeFilter) before it's followed, the same per-edge guarantee
+ * routes/graphql-resolvers.ts's scopedConnectedFactIds() already enforces for the equivalent
+ * GraphQL traversal (#2067-followup). CONTRADICTS links are excluded from traversal, matching
+ * getConnectedFactIds' own documented behavior.
+ */
+function scopedConnectedFactIds(
+  factsDb: FactsDB,
+  seedIds: string[],
+  maxDepth: number,
+  getByIdOpts: NonNullable<Parameters<FactsDB["getById"]>[1]>,
+): string[] {
+  const visited = new Set<string>(seedIds);
+  let frontier = new Set<string>(seedIds);
+  for (let depth = 0; depth < maxDepth && frontier.size > 0; depth++) {
+    const next = new Set<string>();
+    for (const id of frontier) {
+      for (const l of factsDb.getLinksFrom(id)) {
+        if (l.linkType === "CONTRADICTS" || visited.has(l.targetFactId)) continue;
+        if (factsDb.getById(l.targetFactId, getByIdOpts) == null) continue;
+        visited.add(l.targetFactId);
+        next.add(l.targetFactId);
+      }
+      for (const l of factsDb.getLinksTo(id)) {
+        if (l.linkType === "CONTRADICTS" || visited.has(l.sourceFactId)) continue;
+        if (factsDb.getById(l.sourceFactId, getByIdOpts) == null) continue;
+        visited.add(l.sourceFactId);
+        next.add(l.sourceFactId);
+      }
+    }
+    frontier = next;
+  }
+  return [...visited];
+}
+
+/**
  * Register graph-related tools with the plugin API.
  *
  * This includes: memory_link and memory_graph (when graph is enabled).
@@ -146,9 +186,7 @@ export function registerGraphTools(ctx: PluginContext, api: ClawdbotPluginApi): 
               `  ← [${l.linkType}] ${s.text.slice(0, 60)}${s.text.length > 60 ? "…" : ""} (strength: ${l.strength.toFixed(2)})`,
             );
           }
-          const connectedIds = factsDb
-            .getConnectedFactIds([factId], maxD, { hubDegreeCap: cfg.graph.hubDegreeCap })
-            .filter((id) => factsDb.getById(id, { scopeFilter }) != null);
+          const connectedIds = scopedConnectedFactIds(factsDb, [factId], maxD, { scopeFilter });
           lines.push("");
           lines.push(`Total connected facts (depth ${maxD}): ${connectedIds.length}`);
           return {

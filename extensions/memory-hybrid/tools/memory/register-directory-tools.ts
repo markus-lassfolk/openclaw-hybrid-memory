@@ -137,12 +137,15 @@ export function registerDirectoryTools(runtime: MemoryToolRuntime): void {
             // facts linked to them are, and memory_promote/memory_forget in this same file already
             // scope-check their fact reads the same way.
             const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
-            const factSummaries = factIds.map((id) => {
-              const f = factsDb.getById(id, { scopeFilter });
-              return f
-                ? { id: f.id, text: f.text.slice(0, 240), category: f.category }
-                : { id, text: "(missing)", category: "?" };
-            });
+            // SECURITY: omit out-of-scope facts entirely rather than keeping the raw id with a
+            // "(missing)" placeholder — an out-of-scope id in the response still discloses that
+            // id's existence and its org-linkage to a caller who cannot otherwise see it, the same
+            // leak the sibling memory_graph tool's `if (!t) continue` guard is built to prevent
+            // (#2067-followup).
+            const factSummaries = factIds
+              .map((id) => factsDb.getById(id, { scopeFilter }))
+              .filter((f): f is NonNullable<typeof f> => f != null)
+              .map((f) => ({ id: f.id, text: f.text.slice(0, 240), category: f.category }));
             const personLine = (p: (typeof people)[number]) =>
               `- ${p.displayName} (contact id=${p.id})${p.role ? ` — ${p.role}` : ""}${p.email ? ` <${p.email}>` : ""}`;
             // Issue #2014: group board vs management vs unclassified when board_status is set.

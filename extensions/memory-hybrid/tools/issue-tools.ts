@@ -186,12 +186,23 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
         limit: Type.Optional(Type.Number({ description: "Maximum number of results (default: 50)" })),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const { status, severity, tags, limit } = params as {
+        const { status, severity, tags, limit: limitRaw } = params as {
           status?: IssueStatus[];
           severity?: string[];
           tags?: string[];
           limit?: number;
         };
+        // IssueStore.list() only appends a SQL LIMIT clause when `limit > 0` -- omitting the
+        // param (the documented default path) or passing 0/negative returns the entire issues
+        // table unbounded instead of the documented "default: 50" cap, the same
+        // non-positive-limit-defeats-SQL-LIMIT pattern already fixed on sibling tools
+        // (memory_search_episodes, fact-mutation-gateway). A non-positive value is treated the
+        // same as "not provided" (falls back to the default) rather than clamped up to 1, which
+        // would silently turn an accidental 0 into a near-useless single-row result.
+        const limit =
+          typeof limitRaw === "number" && Number.isFinite(limitRaw) && limitRaw > 0
+            ? Math.max(1, Math.min(500, Math.floor(limitRaw)))
+            : 50;
 
         const issues = withErrorTracking(() => issueStore.list({ status, severity, tags, limit }), {
           subsystem: "issues",

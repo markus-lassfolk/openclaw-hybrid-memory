@@ -297,3 +297,65 @@ describe("memory_store — variant queue integration (Issue #159)", () => {
     expect(variants.length).toBeGreaterThan(0);
   });
 });
+
+describe("memory_store — contradiction disclosure", () => {
+  it("does not return old fact previews in contradiction details", async () => {
+    const api = makeMockApi();
+    const vectorDb = makeMockVectorDb();
+    const embeddings = makeMockEmbeddings();
+    const cfg = makeBaseCfg();
+
+    registerMemoryTools(
+      {
+        factsDb: factsDb as never,
+        edictStore: null as never,
+        vectorDb: vectorDb as never,
+        cfg: cfg as never,
+        embeddings: embeddings as never,
+        openai: {} as never,
+        wal: null,
+        credentialsDb: null,
+        eventLog: null,
+        lastProgressiveIndexIds: [],
+        currentAgentIdRef: { value: "test-agent" },
+        pendingLLMWarnings: { drain: vi.fn().mockReturnValue([]) } as never,
+        aliasDb: null,
+        variantQueue: null,
+      },
+      api as never,
+      (_params, _currentAgent, _cfg) => undefined,
+      (_op, _data, _logger) => "wal-id",
+      (_id, _logger) => undefined,
+      async (_vdb, _fdb, _vec, _limit) => [],
+    );
+
+    const storeTool = api.getTool("memory_store");
+    expect(storeTool).toBeDefined();
+
+    await storeTool?.execute("victim-store", {
+      text: "Victim deployment code is BLUE ORCHID 42",
+      importance: 0.8,
+      category: "technical",
+      entity: "deployment",
+      key: "code",
+      value: "BLUE ORCHID 42",
+      scope: "user",
+      scopeTarget: "victim-user",
+    });
+
+    const result = (await storeTool?.execute("attacker-store", {
+      text: "Victim deployment code is RED TULIP 99",
+      importance: 0.8,
+      category: "technical",
+      entity: "deployment",
+      key: "code",
+      value: "RED TULIP 99",
+      scope: "user",
+      scopeTarget: "victim-user",
+    })) as { details: { contradictions?: Array<Record<string, unknown>> } };
+
+    expect(result.details.contradictions).toHaveLength(1);
+    expect(result.details.contradictions?.[0]).not.toHaveProperty("preview");
+    expect(JSON.stringify(result.details.contradictions)).not.toContain("BLUE ORCHID 42");
+  });
+});

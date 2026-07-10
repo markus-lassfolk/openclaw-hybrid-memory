@@ -673,6 +673,47 @@ description: Existing legacy skill created before completion markers.
     expect(deferredDecisions.every((d) => !d.skillPath?.endsWith("-1"))).toBe(true);
   });
 
+  it("generateAutoSkillForProcedure refuses to promote a user-scoped procedure (#2067-followup)", () => {
+    const proc = db.upsertProcedure({
+      taskPattern: "Victim user's private deploy recipe",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: "Check status" },
+        { tool: "exec", args: { command: "npm test" }, summary: "Run validation test" },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
+      ]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "scoped-single-1",
+      scope: "user",
+      scopeTarget: "victim-user",
+    });
+    recordDistinctSuccesses(proc.id);
+
+    const result = generateAutoSkillForProcedure(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        skillsPendingPath: join(tmpDir, "skills-pending"),
+        requireApprovalForPromote: false,
+        validationThreshold: 3,
+        skillTTLDays: 30,
+        procedureId: proc.id,
+        // apply/auto-safe bypasses the human-approval policy gate, matching the "should succeed
+        // and write" pattern used elsewhere in this file -- without those, every single-procedure
+        // call (scoped or not) hits "policy-blocked" before the scope check ever matters, which
+        // would make this test pass for the wrong reason.
+        apply: true,
+        policy: "auto-safe",
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    expect(result).toMatchObject({ ok: false, reason: "not-found" });
+    // The function must return before any skill directory is created at all.
+    expect(existsSync(skillsDir)).toBe(false);
+  });
+
   it("single procedure dry-run under default draft-only policy requires human approval and writes nothing", () => {
     const proc = db.upsertProcedure({
       taskPattern: "Validate single procedure report",

@@ -49,6 +49,10 @@ beforeEach(() => {
   changeFeed = new ChangeFeed(factsDb);
   cfg = {
     liveChangeFeed: { enabled: true },
+    // This suite specifically exercises revert_by_ordinal's session-key authorization guard
+    // (a mutating action), so it must opt into agent mutations to reach that logic at all --
+    // see services/workshop-config.ts's isWorkshopToolMutationEnabled (#2070).
+    workshop: { allowAgentMutations: true },
     personaProposals: {
       enabled: true,
       autoApply: false,

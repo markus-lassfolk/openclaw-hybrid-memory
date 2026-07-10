@@ -6,6 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryEntry } from "../types/memory.js";
+import { capturePluginError } from "./error-reporter.js";
 import { runExplicitDeepRetrieval, type RetrievalPipelineOptions } from "./retrieval-orchestrator.js";
 import type { FusedResult } from "./rrf-fusion.js";
 import type { VaultHandle } from "./vault-registry.js";
@@ -90,12 +91,32 @@ export async function runMultiVaultExplicitDeepRetrieval(
     return { ...slice, vaultByFactId };
   }
 
-  const slices = await Promise.all(
+  // Promise.allSettled (not Promise.all): one vault's SQLite/Lance error must not discard
+  // the other vaults' already-completed results -- degrade to the vaults that succeeded
+  // instead of failing the whole multi-vault query.
+  const settled = await Promise.allSettled(
     handles.map(async (h) => ({
       vaultName: h.name,
       slice: await runExplicitDeepRetrieval(query, queryVector, h.factsDb.getRawDb(), h.vectorDb, h.factsDb, options),
     })),
   );
+  const slices: Array<{ vaultName: string; slice: OrchestratorSlice }> = [];
+  for (let i = 0; i < settled.length; i++) {
+    const outcome = settled[i];
+    if (outcome.status === "fulfilled") {
+      slices.push(outcome.value);
+    } else {
+      capturePluginError(outcome.reason instanceof Error ? outcome.reason : new Error(String(outcome.reason)), {
+        subsystem: "multi-vault-retrieval",
+        operation: "vault-fanout",
+        vaultName: handles[i]?.name,
+        severity: "warning",
+      });
+    }
+  }
+  if (slices.length === 0) {
+    throw new Error("multi-vault retrieval: all vaults failed");
+  }
   return mergeOrchestratorSlices(slices);
 }
 

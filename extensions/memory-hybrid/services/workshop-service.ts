@@ -703,7 +703,11 @@ export function workshopUndo(
 }
 
 export function workshopPendingCount(ctx: WorkshopServiceContext): number {
-  return listUnifiedProposals(ctx, { status: "pending" }).length;
+  // listUnifiedProposals() truncates to `limit` (default 100) before returning -- the same
+  // undercounting bug already fixed for countPendingUnifiedProposals in unified-proposals.ts.
+  // This dashboard-badge/gateway-RPC count plateaus at 100 once the real pending backlog exceeds
+  // it, masking a genuine review-queue problem. Pass an effectively unlimited limit.
+  return listUnifiedProposals(ctx, { status: "pending", limit: Number.MAX_SAFE_INTEGER }).length;
 }
 
 export function workshopMaxPending(ctx: WorkshopServiceContext): number {

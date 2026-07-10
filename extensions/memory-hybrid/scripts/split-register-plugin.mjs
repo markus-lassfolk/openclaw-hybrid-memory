@@ -7,6 +7,21 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const indexPath = join(root, "index.ts");
 const lines = readFileSync(indexPath, "utf8").split("\n");
 
+// One-shot migration (already run in commit 2282c1bf): index.ts is now a thin re-export shim,
+// not the pre-split monolith this script's hardcoded line offsets assume. Re-running against the
+// current file would unconditionally overwrite setup/register-plugin.ts and index-help.ts with
+// near-empty stubs sliced from far past the shim's end (#2067-followup). Refuse rather than
+// silently destroy production files.
+const MIN_EXPECTED_LINES = 886;
+if (lines.length < MIN_EXPECTED_LINES) {
+  console.error(
+    `split-register-plugin.mjs: index.ts has ${lines.length} lines, expected at least ${MIN_EXPECTED_LINES}. ` +
+      "This one-shot migration already ran (commit 2282c1bf) and index.ts is now a re-export shim -- " +
+      "re-running this script would overwrite setup/register-plugin.ts and index-help.ts with near-empty stubs. Aborting.",
+  );
+  process.exit(1);
+}
+
 const registerImports = `import { dirname, join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { AgentHealthStore, agentHealthDbPathForMemorySqlite } from "../backends/agent-health-store.js";

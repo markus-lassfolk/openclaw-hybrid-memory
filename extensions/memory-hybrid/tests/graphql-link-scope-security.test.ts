@@ -50,6 +50,7 @@ describe("GraphQL link/subscription scope enforcement", () => {
       getRawDb: vi.fn(() => ({
         prepare: vi.fn(() => ({
           all: vi.fn(() => getRawRows),
+          get: vi.fn((id: string) => getRawRows.find((row) => row.id === id)),
           run: vi.fn(() => ({ changes: 1 })),
         })),
       })),
@@ -130,20 +131,38 @@ describe("GraphQL link/subscription scope enforcement", () => {
   });
 
   it("relatedFacts does not use an out-of-scope root factId as a graph-traversal oracle (loop iteration 18 regression)", () => {
-    // b-fact (tenantB) is "connected" to g-fact (global, visible to everyone) — if the resolver
-    // traverses from an unchecked root, tenantA gets g-fact back and thereby confirms b-fact
-    // exists and is linked, even though b-fact itself is never returned.
-    const factsDb = makeFactsDb([], (factIds) => [...factIds, "g-fact"]);
+    // b-fact (tenantB) is linked to g-fact (global, visible to everyone) — if the resolver
+    // traversed from an unchecked root, tenantA would get g-fact back and thereby confirm b-fact
+    // exists and is linked, even though b-fact itself is never returned. The root-visibility
+    // guard must reject before any link traversal even runs.
+    const factsDb = makeFactsDb([
+      {
+        id: "link-b-g",
+        source_fact_id: "b-fact",
+        target_fact_id: "g-fact",
+        link_type: "RELATED_TO",
+        strength: 1,
+        created_at: 1,
+      },
+    ]);
     const context = { factsDb, scopeFilter: { userId: "tenantA" } } as unknown as ResolverContext;
 
     const result = resolvers.Query.relatedFacts(null, { factId: "b-fact" } as ResolverArgs, context);
 
     expect(result).toEqual([]);
-    expect(factsDb.getConnectedFactIds).not.toHaveBeenCalled();
   });
 
   it("relatedFacts still traverses from a visible root factId", () => {
-    const factsDb = makeFactsDb([], (factIds) => [...factIds, "g-fact"]);
+    const factsDb = makeFactsDb([
+      {
+        id: "link-a-g",
+        source_fact_id: "a-fact",
+        target_fact_id: "g-fact",
+        link_type: "RELATED_TO",
+        strength: 1,
+        created_at: 1,
+      },
+    ]);
     const context = { factsDb, scopeFilter: { userId: "tenantA" } } as unknown as ResolverContext;
 
     const result = resolvers.Query.relatedFacts(null, { factId: "a-fact" } as ResolverArgs, context) as Array<{
@@ -151,6 +170,42 @@ describe("GraphQL link/subscription scope enforcement", () => {
     }>;
 
     expect(result.map((fact) => fact.id)).toEqual(["g-fact"]);
+  });
+
+  it("relatedFacts (no linkTypes given) does not surface a fact reachable only through a hidden intermediate fact (#2067-followup regression)", () => {
+    // Visible A -> hidden B -> visible C, with NO linkTypes filter (the branch that previously
+    // called the raw, unscoped FactsDB.getConnectedFactIds directly instead of going through the
+    // link-layer isLinkVisible-scoped BFS that the linkTypes branch already used).
+    const factsDb = makeFactsDb(
+      [
+        {
+          id: "link-a-b",
+          source_fact_id: "a-fact",
+          target_fact_id: "b-fact",
+          link_type: "RELATED_TO",
+          strength: 1,
+          created_at: 1,
+        },
+        {
+          id: "link-b-g",
+          source_fact_id: "b-fact",
+          target_fact_id: "g-fact",
+          link_type: "RELATED_TO",
+          strength: 1,
+          created_at: 2,
+        },
+      ],
+      undefined,
+    );
+    const context = { factsDb, scopeFilter: { userId: "tenantA" } } as unknown as ResolverContext;
+
+    const result = resolvers.Query.relatedFacts(
+      null,
+      { factId: "a-fact", maxDepth: 3 } as ResolverArgs,
+      context,
+    ) as Array<{ id: string }>;
+
+    expect(result.map((fact) => fact.id)).toEqual([]);
   });
 
   it("relatedFacts respects maxDepth when linkTypes is given instead of only looking at direct links (loop iteration 19 regression)", () => {

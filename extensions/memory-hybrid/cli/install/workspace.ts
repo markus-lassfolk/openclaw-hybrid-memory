@@ -34,6 +34,15 @@ import {
 export { loadOpenclawRootForWorkspace, resolveAgentWorkspaceRoot, resolveOpenclawJsonPathForWorkspace };
 import { TOOLS_MD_MANAGED_BEGIN, TOOLS_MD_MANAGED_END } from "../../services/tools-md-rewrite.js";
 
+/**
+ * Bound for `npm install`/`npx` child processes spawned during install/upgrade so a stalled
+ * registry or network partition can't hang the CLI indefinitely -- matches the convention set by
+ * upgrade-config-preflight.ts's NPM_PACK_PREFLIGHT_TIMEOUT_MS for its `npm pack`/`tar` calls
+ * (#2067-followup). `npm install` resolves and fetches a full dependency tree (not just one
+ * tarball), so it gets a longer bound than the 120s preflight pack timeout.
+ */
+export const NPM_INSTALL_TIMEOUT_MS = 300_000;
+
 import type { HybridMemoryConfig } from "../../config.js";
 import { compileHeartbeatMatchers } from "../../services/goal-stewardship-heartbeat.js";
 import type { PreFilterConfig } from "../../services/session-pre-filter.js";
@@ -322,6 +331,7 @@ export function runNpmInstallExactPin(projectRoot: string, version: string): { o
     stdio: "pipe",
     shell: false,
     encoding: "utf-8",
+    timeout: NPM_INSTALL_TIMEOUT_MS,
   });
   if (r.status !== 0) {
     const detail = [r.stderr, r.stdout].filter(Boolean).join("\n").trim();

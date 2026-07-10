@@ -212,8 +212,20 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
     .option("--type <type>", "Filter by type: positive, negative, or all (default: all)")
     .option("--limit <n>", "Maximum number to show (default: 20)")
     .action(
-      withExit(async (opts: { type?: string; limit?: number }) => {
-        const limit = opts.limit ?? 20;
+      withExit(async (opts: { type?: string; limit?: string }) => {
+        // opts.limit is Commander's raw string (the `number` type above was never actually
+        // true), so `(opts.limit ?? 20) * 3` relied on JS's implicit string-to-number coercion --
+        // works by accident for a valid numeric string, but a non-numeric --limit (e.g. "abc")
+        // coerces to NaN. NaN bound into listProcedures()'s `LIMIT ?` clause throws a SQLite
+        // "datatype mismatch", which listProcedures() itself catches and swallows (logging via
+        // capturePluginError only), so the CLI silently prints "Procedures (showing 0 of 0):"
+        // with exit code 0 instead of surfacing the bad flag (#2067-followup).
+        const limit = opts.limit !== undefined ? Number.parseInt(opts.limit, 10) : 20;
+        if (!Number.isFinite(limit) || limit < 1) {
+          console.error("error: --limit must be a positive integer");
+          process.exitCode = 1;
+          return;
+        }
         const procs = factsDb.listProcedures(limit * 3); // over-fetch then filter
         const filtered = opts.type && opts.type !== "all" ? procs.filter((p) => p.procedureType === opts.type) : procs;
         const shown = filtered.slice(0, limit);
@@ -413,6 +425,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
           console.error(
             `Uninstalled ${res.pluginId}: config error (${res.error}), cleaned ${res.cleaned.length} files.`,
           );
+          process.exitCode = 1;
         } else if (res.outcome === "leave_config") {
           console.log(`Uninstalled ${res.pluginId}: config left intact, cleaned ${res.cleaned.length} files.`);
         }
@@ -451,6 +464,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
           console.log(`  LanceDB:  ${lanceKb} KB`);
           if (!res.integrityOk) {
             console.warn("⚠ SQLite integrity check failed — backup may be from a corrupt source.");
+            process.exitCode = 1;
           }
           if (res.snapshotSkewMs > 1000) {
             // SQLite and LanceDB are snapshotted sequentially, not atomically (#81) — a write

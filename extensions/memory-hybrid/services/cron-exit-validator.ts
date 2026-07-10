@@ -40,8 +40,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { extractAuditHealthJsonFromLog } from "./audit-health-json.js";
 import { isEntityEnrichmentHardFailure } from "./entity-enrichment-adaptive.js";
-import { MAINTENANCE_STEPS } from "./maintenance-orchestrator.js";
-import type { JobRunSemanticOutcome, OrchestratorRunSummary } from "./maintenance-job-run/types.js";
 import {
   jobRunOutcomeToValidatorSemantic,
   parseSemanticTokenFromSummary,
@@ -50,6 +48,8 @@ import {
   semanticOutcomeBlocksOrchestratorGuard,
   semanticOutcomeIsPartialFailure,
 } from "./maintenance-job-run/semantic-outcome.js";
+import type { JobRunSemanticOutcome, OrchestratorRunSummary } from "./maintenance-job-run/types.js";
+import { MAINTENANCE_STEPS } from "./maintenance-orchestrator.js";
 
 const SKIP_REASON_COOLDOWN = "skipped_cooldown";
 const SKIP_REASON_CONCURRENCY = "skipped_concurrency";
@@ -147,9 +147,9 @@ export function parseExitLine(line: string): ExitStep | null {
   if (!trimmed) return null;
 
   // Legacy format: "<ts> <step> exit=<code>"
-  // Extended format: "<ts> step=<step> exit=<code> status=<ok|failed|skipped> reason=<reason> duration_ms=<ms>"
+  // Extended format: "<ts> step=<step> exit=<code> status=<ok|failed|skipped_guard|skipped_gate|...> reason=<reason> duration_ms=<ms>"
   const match = trimmed.match(
-    /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+((?:step=)?(\S+))\s+exit=(-?\d+)(?:\s+status=(ok|failed|skipped))?(?:\s+reason=(\S+))?(?:\s+duration_ms=(\d+))?\s*$/,
+    /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+((?:step=)?(\S+))\s+exit=(-?\d+)(?:\s+status=(ok|failed|skipped(?:_[A-Za-z0-9_-]+)?))?(?:\s+reason=(\S+))?(?:\s+duration_ms=(\d+))?\s*$/,
   );
   if (!match) return null;
   const step = normalizeExitStepName(match[2]);
@@ -636,6 +636,10 @@ function isStepInValidationScope(stepName: string, requiredSteps: string[], ledg
   return requiredSteps.includes(stepName) || ledgerSteps.some((step) => step.step === stepName);
 }
 
+function isGuardOrGateSkippedStep(step: ExitStep | undefined): boolean {
+  return !!step && /\bstatus=skipped_(?:guard|gate|dep)\b/i.test(step.line);
+}
+
 function collectMaintenanceTelemetryIssues(params: {
   exitPath: string;
   logPath?: string;
@@ -796,7 +800,10 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const reflectRulesDetected = isStepInValidationScope("reflect-rules", requiredSteps, ledgerSteps);
+  const reflectRulesLedgerStep = ledgerSteps.find((step) => normalizeExitStepName(step.step) === "reflect-rules");
+  const reflectRulesSkipped = isGuardOrGateSkippedStep(reflectRulesLedgerStep);
+  const reflectRulesDetected =
+    !reflectRulesSkipped && isStepInValidationScope("reflect-rules", requiredSteps, ledgerSteps);
   const reflectRulesLog = reflectRulesDetected ? extractStepLog(logContent, "reflect-rules") : "";
   const reflectParseFailed = /\bparse[_\s-]?success\s*[=:]\s*(false|0)\b/i.test(reflectRulesLog);
   const reflectStored = parsePositiveMetric(reflectRulesLog, "stored");
