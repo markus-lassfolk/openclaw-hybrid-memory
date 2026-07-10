@@ -101,6 +101,11 @@ export function canReuseDatabasesOnReregister(
   // Compare credentials.encryptionKey to detect when vault key has changed
   if (oldCfg.credentials?.encryptionKey !== cfg.credentials?.encryptionKey) return false;
 
+  // Compare HTTP route security settings so auth hardening or route disablement
+  // cannot keep stale public/dashboard handlers alive on reused database handles.
+  if (oldCfg.health?.enabled !== cfg.health?.enabled) return false;
+  if (oldCfg.health?.authenticated !== cfg.health?.authenticated) return false;
+
   return true;
 }
 

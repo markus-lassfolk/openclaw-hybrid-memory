@@ -81,6 +81,10 @@ export function createGenerationGuardedToolsApi(
   const ownerGeneration = ctx.registrationGeneration ?? ctx.currentRegistrationGenerationRef?.value ?? -1;
   const generationRef = ctx.currentRegistrationGenerationRef ?? { value: ownerGeneration };
   const baseRegisterTool = api.registerTool.bind(api) as (...args: unknown[]) => unknown;
+  const baseRegisterHttpRoute =
+    typeof api.registerHttpRoute === "function"
+      ? (api.registerHttpRoute.bind(api) as (...args: unknown[]) => unknown)
+      : undefined;
   const disposeCandidates: Array<() => void> = [];
   let disposed = false;
 
@@ -121,9 +125,19 @@ export function createGenerationGuardedToolsApi(
     return registrationResult;
   };
 
+  const guardedRegisterHttpRoute = (...args: unknown[]): unknown => {
+    if (!baseRegisterHttpRoute) return undefined;
+    const registrationResult = baseRegisterHttpRoute(...args);
+    collectUnregister(disposeCandidates, registrationResult);
+    return registrationResult;
+  };
+
   const guardedApi = {
     ...api,
     registerTool: guardedRegisterTool as ClawdbotPluginApi["registerTool"],
+    ...(baseRegisterHttpRoute
+      ? { registerHttpRoute: guardedRegisterHttpRoute as ClawdbotPluginApi["registerHttpRoute"] }
+      : {}),
   } as ClawdbotPluginApi;
 
   return {
