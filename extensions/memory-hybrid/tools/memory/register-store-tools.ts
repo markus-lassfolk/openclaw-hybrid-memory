@@ -1270,7 +1270,6 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                         fact_id: c.oldFactId,
                         score: c.score,
                         heuristicSignals: c.heuristicSignals,
-                        preview: c.preview,
                       })),
                     }
                   : {}),
