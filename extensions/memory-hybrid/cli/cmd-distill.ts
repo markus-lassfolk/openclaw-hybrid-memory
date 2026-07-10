@@ -34,6 +34,7 @@ import {
   distillMaxOutputTokens,
   is403QuotaOrRateLimitLike,
   is429OrWrapped,
+  isAbortOrTransientLlmError,
   isConnectionErrorLike,
   isContextLengthError,
   parseRetryAfterMs,
@@ -83,6 +84,25 @@ import { classifyStoreDedupeMode, resolveDistillVectorCandidates } from "./vecto
 // Constants used only by distill functions
 const FULL_DISTILL_MAX_DAYS = 90;
 const INCREMENTAL_MIN_DAYS = 3;
+
+export function classifyDistillBatchFailureKind(error: Error): AdaptiveFailureKind {
+  const isContext = isContextLengthError(error);
+  const isRateLimit = is429OrWrapped(error);
+  const isQuota = is403QuotaOrRateLimitLike(error);
+  const isTimeout =
+    /timed out|llm request timeout|request was aborted/i.test(error.message) ||
+    isAbortOrTransientLlmError(error);
+  const isConn = isConnectionErrorLike(error);
+  return isContext
+    ? "context_length"
+    : isRateLimit
+      ? "rate_limit"
+      : isQuota
+        ? "quota"
+        : isTimeout || isConn
+          ? "timeout"
+          : "other";
+}
 
 export function gatherSessionFiles(opts: {
   all?: boolean;
@@ -761,20 +781,12 @@ export async function runDistillForCli(
           batchFailureReason ??= `batch ${batchNum} aborted: maintenance run deadline reached before completion`;
           break;
         }
-        const isContext = isContextLengthError(e);
-        const isRateLimit = is429OrWrapped(e);
-        const isQuota = is403QuotaOrRateLimitLike(e);
-        const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted/i.test(e.message);
+        const kind = classifyDistillBatchFailureKind(e);
+        const isContext = kind === "context_length";
+        const isRateLimit = kind === "rate_limit";
+        const isQuota = kind === "quota";
+        const isTimeout = kind === "timeout" && !isConnectionErrorLike(e);
         const isConn = isConnectionErrorLike(e);
-        const kind = isContext
-          ? "context_length"
-          : isRateLimit
-            ? "rate_limit"
-            : isQuota
-              ? "quota"
-              : isTimeout || isConn
-                ? "timeout"
-                : "other";
         const failureModel =
           typeof (e as Error & { lastAttemptedModel?: string }).lastAttemptedModel === "string"
             ? (e as Error & { lastAttemptedModel: string }).lastAttemptedModel
