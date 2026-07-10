@@ -121,6 +121,7 @@ describe("registerPublicApiRoutes", () => {
       key: "public_api",
       value: "enabled",
       source: "conversation",
+      provenanceJson: JSON.stringify({ sourceFacts: [{ text: "secret" }] }),
     });
 
     factsDb.recordEpisode({
@@ -190,7 +191,9 @@ describe("registerPublicApiRoutes", () => {
       fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.fact}?id=${stored.id}`),
     );
     expect(factRes.status).toBe(200);
-    expect(JSON.parse(factRes.body).id).toBe(stored.id);
+    const factBody = JSON.parse(factRes.body);
+    expect(factBody.id).toBe(stored.id);
+    expect(factBody.fact.provenanceJson).toBeNull();
 
     const badSearchRes = await invokeNodeHttpRoute(
       search.handler,
@@ -692,6 +695,7 @@ describe("registerPublicApiRoutes", () => {
       key: null,
       value: null,
       source: "conversation",
+      provenanceJson: JSON.stringify({ sourceFacts: [{ text: "secret" }] }),
     });
     const { api, routes } = makeApi();
     registerPublicApiRoutes({ cfg: makeCfg(true), factsDb, narrativesDb }, api);
@@ -701,7 +705,11 @@ describe("registerPublicApiRoutes", () => {
       fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.export}?limit=10`),
     );
     expect(res.status).toBe(200);
-    expect(JSON.parse(res.body).manifest.counts.facts).toBeGreaterThanOrEqual(1);
+    const body = JSON.parse(res.body);
+    expect(body.manifest.counts.facts).toBeGreaterThanOrEqual(1);
+    // #2073: provenanceJson can embed scoped/source fact excerpts and must never reach the
+    // public API even for authenticated callers.
+    expect(body.facts.every((f: { provenanceJson: string | null }) => f.provenanceJson === null)).toBe(true);
   });
 
   it("active-tasks render rejects unauthenticated callers", async () => {
