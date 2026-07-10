@@ -280,7 +280,22 @@ export class ContinuousVerifier {
             metadata: { factId: fact.factId },
           });
           recordVerificationError(result, `fact=${fact.factId.slice(0, 8)}…`, err);
-          outcome = "UNCERTAIN";
+          // Relabeling an infrastructure/provider failure as outcome "UNCERTAIN" made it flow
+          // into result.uncertain++ below without ever touching result.errors, so
+          // assessContinuousVerificationResult's verdicts===checked invariant held even when
+          // every "uncertain" fact was actually an LLM call failure -- masking real infra
+          // errors as a healthy (or merely "all uncertain") cycle. Count it as an error instead
+          // (mirroring the outer per-fact catch below) and skip tagging the fact for review --
+          // a transient provider error isn't evidence the fact itself needs human review.
+          result.errors++;
+          const n = result.checked;
+          const total = due.length;
+          if (this.onProgress && (total <= 25 || n === 1 || n === total || n % 10 === 0)) {
+            this.onProgress(
+              `memory-hybrid: continuous-verification — ${n}/${total} (ERROR) fact=${fact.factId.slice(0, 8)}…`,
+            );
+          }
+          continue;
         }
 
         if (outcome === "CONFIRMED") {

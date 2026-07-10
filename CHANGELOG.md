@@ -21,6 +21,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.198] - 2026-07-10
+
+### Fixed
+
+Follow-up QA batch (6 fixes) on a fresh branch after PR #2062 merged, from a new flat sweep round (`lifecycle/`+`api/`, `services/` remaining files):
+
+- **`cli/commands/manage/register-council.ts`**: `council provenance-headers --mode` cast a free-form string to `CouncilProvenanceMode` with no validation; `buildProvenanceMetadata` only does equality checks with no `else` error case, so a typo'd `--mode` silently returned `{ headers: null, receipt: null }` with exit code 0. Now validated against the known enum before use.
+- **`services/memory-nudge.ts`**: `touchNudgeSession` called `Map.set()` on existing keys, which updates the value but not iteration order — `evictOldestSession`'s "first key" read reflected insertion order, not last-touched order, so a continuously-active session could be evicted (wiping its suppress state) ahead of a genuinely stale one. Now deletes and re-sets on touch, matching `query-expander.ts`'s `LRUCache` refresh pattern.
+- **`services/multi-vault-retrieval.ts`**: `runMultiVaultExplicitDeepRetrieval` fanned out to every vault with a bare `Promise.all`, so one vault's SQLite/Lance error discarded every other vault's already-completed results. Now uses `Promise.allSettled` and merges whatever succeeded, only throwing when every vault fails.
+- **`services/sensor-sweep.ts`**: `sweepHomeAssistantAnomaly` fetched watched entities with a bare `Promise.all`, so one flaky/timed-out Home Assistant entity suppressed anomaly detection for every other watched entity that cycle. Now uses `Promise.allSettled`.
+- **`lifecycle/session-state.ts`**: `clearSessionState` runs at the end of *every* agent turn, but was still deleting `frustrationStateMap`, `frustrationThresholdBandMap`, `changeNotifyStateMap`, and `displayRevertMap` — state meant to persist for the whole chat session (a half-finished refactor: `pruneSessionMaps` already had bounded, recency-based eviction for exactly these four, matching the already-fixed `capabilityHintsSessionsSeen`/memory-nudge pattern, but `clearSessionState` was never updated to stop clearing them). This meant frustration-trend detection could never accumulate past a single message, change-notify re-injected the same notice every turn, and "revert change N" could silently resolve to the wrong change event once its display-position mapping was gone. Now excluded from the per-turn clear, matching the established pattern.
+- **`services/continuous-verifier.ts`**: a per-fact LLM call failure was relabeled as outcome `"UNCERTAIN"` and folded into `result.uncertain++`, never touching `result.errors` — so `assessContinuousVerificationResult` (in `dream-cycle-followup.ts`) could report a "healthy" or merely "all_uncertain" cycle even when every "uncertain" result was actually an infrastructure/provider failure, not a genuine LLM verdict. Now counted as `result.errors` and the fact is not tagged for review (a transient provider error isn't evidence the fact itself needs human attention), restoring `assessContinuousVerificationResult`'s existing `errors_present` detection without needing to change that function at all.
+
+One candidate from the same sweep round was investigated and rejected as a false positive: `services/cross-agent-learning.ts`'s always-on `"*"` wildcard tag was flagged as defeating agent-scoped lesson filtering, but the actual LLM prompt (`prompts/cross-agent-generalize.txt`) explicitly only generalizes lessons meant to apply to *all* agents — `sourceAgents` is attribution-only (used for "learned by X" display in `formatBriefInjection`), not a distribution restriction. No fix needed.
+
+Each fix verified via `git stash` to fail without the fix, tsc clean, biome clean (zero new findings beyond pre-existing baseline on every touched file), and passing related test suites with zero regressions.
+
 ## [2026.7.197] - 2026-07-09
 
 ### Fixed
