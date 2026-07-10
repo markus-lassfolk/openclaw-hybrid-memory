@@ -3,9 +3,9 @@
  */
 
 import { appendFactProvenance } from "../backends/facts-db/provenance-json.js";
+import { scopeFilterClausePositional } from "../backends/facts-db/scope-sql.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { SQLInputValue } from "node:sqlite";
-import { GLOBAL_ONLY_SCOPE_SENTINEL } from "../utils/scope-filter.js";
 
 export const DEFAULT_PIN_QUOTA = 10;
 
@@ -48,23 +48,15 @@ export function countPinnedFacts(
   scopeFilter?: { userId?: string | null; agentId?: string | null; sessionId?: string | null },
 ): number {
   const db = factsDb.getRawDb();
-  let sql = "SELECT COUNT(*) AS cnt FROM facts WHERE pinned_at IS NOT NULL AND superseded_at IS NULL";
-  const params: unknown[] = [];
-  if (scopeFilter) {
-    if (scopeFilter.sessionId) {
-      sql += " AND scope = 'session' AND scope_target = ?";
-      params.push(scopeFilter.sessionId);
-    } else if (scopeFilter.userId) {
-      sql += " AND scope = 'user' AND scope_target = ?";
-      params.push(scopeFilter.userId);
-    } else if (scopeFilter.agentId && scopeFilter.agentId !== GLOBAL_ONLY_SCOPE_SENTINEL) {
-      sql += " AND scope = 'agent' AND scope_target = ?";
-      params.push(scopeFilter.agentId);
-    } else {
-      sql += " AND scope = 'global'";
-    }
-  }
-  const row = db.prepare(sql).get(...(params as SQLInputValue[])) as { cnt: number } | undefined;
+  const sql = "SELECT COUNT(*) AS cnt FROM facts WHERE pinned_at IS NOT NULL AND superseded_at IS NULL";
+  // Quota enforcement must count every pinned fact *visible* to this caller, not just one scope
+  // tier picked exclusively -- buildToolScopeFilter() routinely sets both userId and agentId at
+  // once for a non-orchestrator agent, and the old if/else-if chain only ever counted the first
+  // matching tier, letting an agent accumulate far more than DEFAULT_PIN_QUOTA total pins by
+  // spreading them across scope tiers. Reuses the same OR-based, all-dimensions visibility clause
+  // every other read path (getById/search) uses.
+  const { clause, params } = scopeFilterClausePositional(scopeFilter);
+  const row = db.prepare(sql + clause).get(...(params as SQLInputValue[])) as { cnt: number } | undefined;
   return row?.cnt ?? 0;
 }
 

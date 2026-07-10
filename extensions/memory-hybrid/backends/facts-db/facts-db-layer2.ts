@@ -414,8 +414,11 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
   }
 
   /** Snapshot of top procedures for context-audit (sorted by confidence). */
-  getProceduresForAudit(limit = 5): ReturnType<typeof getProceduresForAuditImpl> {
-    return getProceduresForAuditImpl(this.liveDb, limit);
+  getProceduresForAudit(
+    limit = 5,
+    scopeFilter?: Parameters<typeof getProceduresForAuditImpl>[2],
+  ): ReturnType<typeof getProceduresForAuditImpl> {
+    return getProceduresForAuditImpl(this.liveDb, limit, scopeFilter);
   }
 
   /** Count of procedures (from procedures table). Returns 0 if table does not exist. */

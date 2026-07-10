@@ -12,7 +12,9 @@ import {
   parseProcedurePromotionPolicy,
 } from "../services/procedure-promotion-policy.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";
+import { applyProgressiveDisclosure } from "../services/procedure-skill-shrink.js";
 import { SkillValidator } from "../services/skill-validator.js";
+import { sanitizeRecipePromptInjection } from "../services/skill-prompt-injection.js";
 import { determineRiskLevel, parseRecipeOrRaw } from "../utils/procedure-risk.js";
 import type { ProcedureEntry } from "../types/memory.js";
 import { SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
@@ -1643,5 +1645,68 @@ metadata:
     );
 
     expect(evaluation.metadata.rejectionReasons).not.toContain("private_data_risk");
+  });
+
+  describe("progressive-disclosure recipe redaction (#2067-followup)", () => {
+    it("applyProgressiveDisclosure does not itself redact the recipe it renders -- callers must pass an already-redacted recipe", () => {
+      const rawSecret = "hunter2secretvalue123456789";
+      const recipe = [
+        {
+          tool: "exec",
+          args: { command: `curl -X POST https://api.example.com/hook -d '{"password":"${rawSecret}"}'` },
+          summary: "post status update",
+        },
+      ];
+      // targetBytes=1 forces the "still over target" branch every time, regardless of content
+      // size, so this test doesn't need to fabricate a 96KB+ payload to exercise the code path.
+      const result = applyProgressiveDisclosure("# Skill\n\n## Workflow\n1. placeholder\n", recipe, "task", 1, "high");
+
+      expect(result.referenceWorkflowMd).toContain(rawSecret);
+    });
+
+    it("evaluateProcedureForPromotion's draft.workflowRecipe redacts a credential embedded in args.command, unlike the prompt-injection-only sanitized recipe threaded through the old code path", () => {
+      // JSON-quoted form ("password":"...", no space before the colon) is specifically missed by
+      // scanSafety's CREDENTIAL_PATTERNS (which requires a bare colon/equals directly after the
+      // keyword, no quote tolerance) and by HIGH_RISK_PATTERN, so this procedure clears every
+      // promotion gate -- but the value is still a real credential that redactAutopilotText (used
+      // inside sanitizeStep when building sanitizedSteps/workflowRecipe) does catch.
+      const rawSecret = "hunter2secretvalue123456789";
+      const rawRecipe = [
+        {
+          tool: "exec",
+          args: { command: `echo '{"password":"${rawSecret}"}'` },
+          summary: "run diagnostic echo",
+        },
+        { tool: "read", args: { path: "report.json" }, summary: "verify report" },
+      ];
+      const proc = addProcedure({
+        taskPattern: "Validate release with credentialed command text",
+        recipeJson: JSON.stringify(rawRecipe),
+        sourceSessionId: "cred-cmd-a",
+      });
+      db.recordProcedureSuccess(proc.id, undefined, "cred-cmd-b");
+      db.recordProcedureSuccess(proc.id, undefined, "cred-cmd-c");
+
+      // Re-fetch: proc is a stale snapshot from before recordProcedureSuccess updated
+      // sourceSessions, and createProcedurePromotionItem reads sourceSessionCount off the object
+      // passed in, not a live DB query.
+      const freshProc = requireProcedure(proc.id);
+      const evaluation = evaluateProcedureForPromotion(
+        createProcedurePromotionItem(freshProc, parseProcedurePromotionPolicy("auto-safe")),
+        parseProcedurePromotionPolicy("auto-safe"),
+        { skillsAutoPath: skillsDir, validationThreshold: 3 },
+      );
+
+      expect(evaluation.metadata.rejectionReasons).not.toContain("credential_risk");
+      expect(evaluation.draft).not.toBeNull();
+      const workflowRecipe = evaluation.draft?.workflowRecipe as Array<{ args: Record<string, unknown> }>;
+      expect(String(workflowRecipe[0].args.command)).not.toContain(rawSecret);
+
+      // The old code threaded sanitizeRecipePromptInjection(recipe) (prompt-injection-only) into
+      // the progressive-disclosure re-render instead -- that value never redacts credentials at
+      // all, unlike draft.workflowRecipe.
+      const weaklySanitized = sanitizeRecipePromptInjection(rawRecipe) as Array<{ args: Record<string, unknown> }>;
+      expect(String(weaklySanitized[0].args.command)).toContain(rawSecret);
+    });
   });
 });

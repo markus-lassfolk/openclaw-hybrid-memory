@@ -25,7 +25,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.203] - 2026-07-10
+
+### Fixed
+
+Follow-up QA batch (6 fixes) on `claude/memory-hybrid-qa-followup`, from a sixth flat sweep round targeting `services/` (the largest single directory, ~295 files, only partially covered across batches 1-3):
+
+- **`services/fact-lifecycle-verbs.ts`** (security): `countPinnedFacts()` — used to enforce `DEFAULT_PIN_QUOTA` — used an exclusive session/user/agent/global if/else-if chain (write-scope semantics: pick exactly one tier) instead of the OR-based, all-dimensions visibility clause every other read path (`getById`/`search`) uses. `buildToolScopeFilter()` routinely sets both `userId` and `agentId` at once for a non-orchestrator agent, so the old code only ever counted pins in the first matching tier — an agent could pin far more than the quota by spreading pins across scope tiers. Now reuses `scopeFilterClausePositional()`.
+- **`services/procedure-promotion-policy.ts`** (security): the progressive-disclosure re-render path (`finalizeProcedureSkillDraft`, triggered when a drafted `SKILL.md` overflows its size cap) rendered the shrunk Workflow section from `sanitizedRecipeForPolicy` — a recipe that had only been through prompt-injection stripping plus `scanSafety`'s narrower `CREDENTIAL_PATTERNS`/`HIGH_RISK_PATTERN` gate checks, which lack the quote-tolerance and compound-identifier matching that `redactAutopilotValue` (used for the *initial* draft render) has. A JSON-quoted credential (e.g. `{"password":"..."}` inside an `args.command` string) can slip past both the reject gate and risk classification while still being genuinely secret, and would only get caught by the initial render's stronger redaction — not the re-render. The re-render now reuses the same fully-redacted `workflowRecipe` the initial draft already computed, closing the gap between the two render paths.
+- **`services/workshop-service.ts`**: `workshopPendingCount()` — the dashboard-badge/gateway-RPC pending count — called `listUnifiedProposals()` without an explicit `limit`, so it silently truncated to the function's default of 100 before counting. The count plateaus at 100 once the real pending backlog exceeds it, masking a genuine review-queue problem. Mirrors the identical fix already shipped for `countPendingUnifiedProposals()` in `services/unified-proposals.ts`; now passes an effectively unlimited limit.
+- **`services/tools-md-section.ts`**: `insertRulesUnderSection()`'s blank-line-avoidance check tested `before.trimEnd().endsWith("\n")`, but `trimEnd()` strips every trailing newline, so that condition always evaluated to `false` and the "already has a blank line, don't add another" branch never fired. Every self-correction/cron run that appended a new rule batch under an existing section unconditionally prepended a blank line, fragmenting what should be one continuous bullet list into visually-disconnected mini-lists that grew choppier with each cycle. Now checks `before.endsWith("\n")` directly.
+- **`services/context-audit.ts`** (security): `runContextAudit()` never threaded a scope filter into `readActiveTaskRowsFromFacts()`, `factsDb.getProceduresForAudit()`, or `factsDb.getHotFacts()` — the token-budget audit aggregated every tenant's active tasks, procedures, and hot facts regardless of which agent/session it was reporting for, unlike the actual injection paths it's meant to model. `getProceduresForAudit()` (backend + `FactsDB` wrapper) now accepts an optional `scopeFilter` and applies the same OR-based visibility clause used elsewhere; `runContextAudit()` accepts and forwards an optional `scopeFilter` to all three reads; the `hybrid-mem context-audit` CLI command gained the same `--scope`/`--scope-target` options (with the same validation) already used by `hybrid-mem search`.
+
+Each fix verified via a stash-based regression proof (new test fails without the fix, passes with it), tsc clean, biome clean (zero findings on every changed file), and passing related test suites with zero regressions.
+
 ## [2026.7.202] - 2026-07-10
+
+### Fixed
 
 ### Fixed
 

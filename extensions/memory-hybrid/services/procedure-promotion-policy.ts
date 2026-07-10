@@ -194,6 +194,13 @@ export interface GeneratedProcedureSkillDraft {
   generationDiagnostics?: Record<string, unknown>;
   historicalPrompts?: string[];
   baselineDescriptions?: string[];
+  /**
+   * The fully credential-redacted recipe (via summarizeRecipeForSidecar -> redactAutopilotValue)
+   * used to render the initial Workflow section. Progressive disclosure re-renders must reuse
+   * this exact value, not a lighter-sanitized one, or a credential missed by the initial draft's
+   * gate check could still be laundered into the shrunk SKILL.md (#2067-followup).
+   */
+  workflowRecipe?: unknown;
 }
 
 export interface ProcedurePromotionEvaluation {
@@ -502,7 +509,13 @@ export function evaluateProcedureForPromotion(
   let draft = initialGates > 0 ? null : buildProcedureSkillDraft(item, policy, options, gates, resolvedSkillSlug);
   let evalsWereRun = false;
   if (draft && gates.length === initialGates) {
-    const finalized = finalizeProcedureSkillDraft(draft, item, gates, now, sanitizedRecipeForPolicy);
+    // Use the fully credential-redacted recipe (draft.workflowRecipe, via redactAutopilotValue)
+    // for progressive disclosure, not sanitizedRecipeForPolicy -- the latter has only been
+    // through prompt-injection sanitization and scanSafety's narrower CREDENTIAL_PATTERNS gate,
+    // which misses JSON-quoted, camelCase-compound, and AWS-key credential formats that
+    // redactAutopilotValue catches. Re-rendering the shrunk Workflow section from the weaker
+    // value could launder an undetected credential into the on-disk SKILL.md (#2067-followup).
+    const finalized = finalizeProcedureSkillDraft(draft, item, gates, now, draft.workflowRecipe);
     draft = finalized.draft;
     evalsWereRun = finalized.evalsWereRun;
   }
@@ -1071,6 +1084,7 @@ ${examplesSection}${antiPatternsBlock}
     redactionCount: redactedTask.redactionCount,
     historicalPrompts: options.historicalPrompts,
     baselineDescriptions: options.baselineDescriptions,
+    workflowRecipe,
   };
 }
 
