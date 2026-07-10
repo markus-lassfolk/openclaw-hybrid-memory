@@ -113,6 +113,25 @@ export type DistillRegistrationOptions = {
   flatDeprecatedOn?: Chainable;
 };
 
+/**
+ * Parse a --days CLI flag into a positive integer. Returns `undefined` when `raw` is missing or
+ * empty (caller applies its own default/optional semantics), or `null` after printing an error
+ * and setting process.exitCode when `raw` is present but not a positive integer -- callers must
+ * `return` immediately when they see `null` instead of silently falling back to a default, since
+ * a negative/NaN days value previously loop-guarded (`for (let d = 0; d < daysBack; d++)`) into a
+ * silent zero-days no-op that still reported success.
+ */
+function parseDaysFlag(raw: string | undefined): number | undefined | null {
+  if (raw == null || raw === "") return undefined;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    console.error(`error: --days must be a positive integer, got: ${raw}`);
+    process.exitCode = 1;
+    return null;
+  }
+  return parsed;
+}
+
 export function registerDistillCommands(mem: Chainable, ctx: DistillContext, opts?: DistillRegistrationOptions): void {
   if (opts?.flatDeprecatedOn) {
     registerDistillCommandsOnParent(opts.flatDeprecatedOn, ctx, FLAT_DISTILL_COMMAND_NAMES, deprecatedAction, {
@@ -207,13 +226,14 @@ function registerDistillCommandsOnParent(
             };
             const maxSessions = Math.max(0, Number.parseInt(opts.maxSessions || "0", 10) || 0);
             const maxSessionTokens = Math.max(0, Number.parseInt(opts.maxSessionTokens || "0", 10) || 0);
-            const days = opts.days != null ? Number.parseInt(opts.days, 10) : undefined;
+            const days = parseDaysFlag(opts.days);
+            if (days === null) return;
             const overrides = scanMaintenanceOverridePayload(opts);
             const result = await runDistill(
               {
                 dryRun: !!opts.dryRun,
                 all: !!opts.all,
-                days: Number.isFinite(days) ? days : undefined,
+                days,
                 since: opts.since?.trim() || undefined,
                 model: opts.model,
                 verbose: resolveHybridMemVerbose(opts, cmd),
@@ -301,7 +321,8 @@ function registerDistillCommandsOnParent(
           opts: { days: string; dryRun?: boolean; verbose?: boolean; force?: boolean; full?: boolean },
           cmd?: CommanderOptsParent,
         ) => {
-          const daysBack = Number.parseInt(opts.days, 10);
+          const daysBack = parseDaysFlag(opts.days);
+          if (daysBack == null) return;
           const result = await runExtractDaily(
             {
               days: daysBack,
@@ -357,10 +378,11 @@ function registerDistillCommandsOnParent(
           },
           cmd?: CommanderOptsParent,
         ) => {
-          const days = opts.days != null ? Number.parseInt(opts.days, 10) : undefined;
+          const days = parseDaysFlag(opts.days);
+          if (days === null) return;
           const result = await runExtractProcedures({
             sessionDir: opts.dir,
-            days: Number.isFinite(days) ? days : undefined,
+            days,
             dryRun: !!opts.dryRun,
             verbose: resolveHybridMemVerbose(opts, cmd),
             ...scanMaintenanceOverridePayload(opts),
@@ -505,7 +527,8 @@ function registerDistillCommandsOnParent(
           },
           cmd?: CommanderOptsParent,
         ) => {
-          const days = Number.parseInt(opts.days ?? "3", 10);
+          const days = parseDaysFlag(opts.days ?? "3");
+          if (days == null) return;
           const result = await runExtractDirectives({
             days,
             verbose: resolveHybridMemVerbose(opts, cmd),
@@ -576,7 +599,8 @@ function registerDistillCommandsOnParent(
           },
           cmd?: CommanderOptsParent,
         ) => {
-          const days = Number.parseInt(opts.days ?? "3", 10);
+          const days = parseDaysFlag(opts.days ?? "3");
+          if (days == null) return;
           const result = await runExtractReinforcement({
             days,
             verbose: resolveHybridMemVerbose(opts, cmd),
