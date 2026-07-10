@@ -13,10 +13,9 @@
  * - runUpgradeForCli
  */
 
-import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve as pathResolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve as pathResolve } from "node:path";
 
 import { getEnv } from "../utils/env-manager.js";
 import { expandTilde } from "../utils/path.js";
@@ -1566,6 +1565,29 @@ function inspectExistingEmbeddingSetup(root: Record<string, unknown>): Embedding
   };
 }
 
+function hasTrustedPathExecutable(command: string): boolean {
+  const rawPath = readString(process.env.PATH);
+  if (!rawPath) return false;
+
+  const cwd = process.cwd();
+  const pathExt =
+    process.platform === "win32"
+      ? (readString(process.env.PATHEXT)?.split(";").filter(Boolean) ?? [".EXE", ".CMD", ".BAT", ".COM"])
+      : [""];
+
+  for (const entry of rawPath.split(delimiter).map((part) => part.trim())) {
+    if (!entry || entry === ".") continue;
+    const resolvedEntry = pathResolve(entry);
+    if (resolvedEntry === cwd || !isAbsolute(resolvedEntry)) continue;
+
+    for (const ext of pathExt) {
+      if (existsSync(join(resolvedEntry, `${command}${ext}`))) return true;
+    }
+  }
+
+  return false;
+}
+
 export function detectRecommendedEmbeddingSetup(
   root: Record<string, unknown>,
   pluginRootDir: string,
@@ -1602,7 +1624,7 @@ export function detectRecommendedEmbeddingSetup(
   const ollamaInstalled =
     existsSync(join(homedir(), ".ollama")) ||
     readString(process.env.OLLAMA_HOST) !== undefined ||
-    spawnSync("ollama", ["--version"], { stdio: "ignore" }).status === 0;
+    hasTrustedPathExecutable("ollama");
   if (ollamaInstalled) {
     return {
       provider: "ollama",
