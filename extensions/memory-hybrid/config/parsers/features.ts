@@ -436,6 +436,8 @@ export function parseWorkshopConfig(cfg: Record<string, unknown>): WorkshopConfi
   const out: WorkshopConfig = {};
   if (raw.enabled === true) out.enabled = true;
   if (raw.enabled === false) out.enabled = false;
+  if (raw.allowAgentMutations === true) out.allowAgentMutations = true;
+  if (raw.allowAgentMutations === false) out.allowAgentMutations = false;
   if (typeof raw.maxPending === "number" && raw.maxPending >= 0) {
     out.maxPending = Math.floor(raw.maxPending);
   }

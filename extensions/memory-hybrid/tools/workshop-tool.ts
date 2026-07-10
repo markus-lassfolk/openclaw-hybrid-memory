@@ -13,7 +13,11 @@ import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { buildWorkshopDigestReport } from "../services/unified-proposals.js";
-import { DEFAULT_WORKSHOP_TOOL_LIST_LIMIT, resolveWorkshopRevertSessionKey } from "../services/workshop-config.js";
+import {
+  DEFAULT_WORKSHOP_TOOL_LIST_LIMIT,
+  isWorkshopToolMutationEnabled,
+  resolveWorkshopRevertSessionKey,
+} from "../services/workshop-config.js";
 import { revertChangeByOrdinal, buildChangeRevertContext } from "../services/change-feed-revert.js";
 import type { ChangeFeed } from "../services/change-feed.js";
 import type { SessionState } from "../lifecycle/types.js";
@@ -55,38 +59,72 @@ function buildWorkshopCtx(ctx: WorkshopToolsContext, api: ClawdbotPluginApi): Wo
   });
 }
 
+const READ_ONLY_WORKSHOP_ACTIONS = [Type.Literal("list"), Type.Literal("inspect"), Type.Literal("digest")];
+const MUTATING_WORKSHOP_ACTION_NAMES = [
+  "approve",
+  "reject",
+  "quarantine",
+  "revise",
+  "undo",
+  "revert_by_ordinal",
+] as const;
+const MUTATING_WORKSHOP_ACTIONS = MUTATING_WORKSHOP_ACTION_NAMES.map((action) => Type.Literal(action));
+
+function workshopMutationDisabledResponse(action: string) {
+  return {
+    content: [
+      {
+        type: "text",
+        text: `memory_workshop action '${action}' is disabled for agent tool calls. Review and mutate proposals from the trusted dashboard/gateway, or set workshop.allowAgentMutations=true to opt in.`,
+      },
+    ],
+    details: { ok: false, error: "workshop_agent_mutations_disabled" },
+  };
+}
+
 export function registerWorkshopTools(ctx: WorkshopToolsContext, api: ClawdbotPluginApi): void {
+  const allowMutations = isWorkshopToolMutationEnabled(ctx.cfg);
   api.registerTool({
     name: "memory_workshop",
     label: "Memory Workshop",
-    description:
-      "Unified review queue for persona proposals, crystallization skills, tool proposals, and procedure-skill promotions. Actions: list, inspect, approve, reject, quarantine, revise, undo, revert_by_ordinal, digest.",
+    description: allowMutations
+      ? "Unified review queue for persona proposals, crystallization skills, tool proposals, and procedure-skill promotions. Actions: list, inspect, approve, reject, quarantine, revise, undo, revert_by_ordinal, digest."
+      : "Read-only unified review queue for persona proposals, crystallization skills, tool proposals, and procedure-skill promotions. Actions: list, inspect, digest. Mutating actions are disabled unless workshop.allowAgentMutations=true.",
     parameters: Type.Object({
       action: Type.Union(
-        [
-          Type.Literal("list"),
-          Type.Literal("inspect"),
-          Type.Literal("approve"),
-          Type.Literal("reject"),
-          Type.Literal("quarantine"),
-          Type.Literal("revise"),
-          Type.Literal("undo"),
-          Type.Literal("revert_by_ordinal"),
-          Type.Literal("digest"),
-        ],
-        { description: "Workshop action to perform." },
+        allowMutations ? [...READ_ONLY_WORKSHOP_ACTIONS, ...MUTATING_WORKSHOP_ACTIONS] : READ_ONLY_WORKSHOP_ACTIONS,
+        {
+          description: allowMutations
+            ? "Workshop action to perform."
+            : "Read-only workshop action to perform. Mutating actions are disabled unless workshop.allowAgentMutations=true.",
+        },
       ),
-      id: Type.Optional(Type.String({ description: "Unified proposal key (type:storeId) for inspect/approve/reject/etc." })),
-      ordinal: Type.Optional(Type.Integer({ minimum: 1, description: "Change feed ordinal (#N) for revert_by_ordinal." })),
-      sessionKey: Type.Optional(Type.String({ description: "Session key for revert_by_ordinal (defaults to current session)." })),
+      id: Type.Optional(
+        Type.String({ description: "Unified proposal key (type:storeId) for inspect/approve/reject/etc." }),
+      ),
+      ordinal: Type.Optional(
+        Type.Integer({ minimum: 1, description: "Change feed ordinal (#N) for revert_by_ordinal." }),
+      ),
+      sessionKey: Type.Optional(
+        Type.String({ description: "Session key for revert_by_ordinal (defaults to current session)." }),
+      ),
       reason: Type.Optional(Type.String({ description: "Rejection or quarantine reason." })),
       revision: Type.Optional(Type.String({ description: "Revised suggested_change body (persona proposals only)." })),
-      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100, description: `Max proposals for list (default ${DEFAULT_WORKSHOP_TOOL_LIST_LIMIT}).` })),
+      limit: Type.Optional(
+        Type.Integer({
+          minimum: 1,
+          maximum: 100,
+          description: `Max proposals for list (default ${DEFAULT_WORKSHOP_TOOL_LIST_LIMIT}).`,
+        }),
+      ),
     }),
     async execute(_toolCallId: string, params: Record<string, unknown>) {
       const action = params.action as string;
       const workshopCtx = buildWorkshopCtx(ctx, api);
       try {
+        if (MUTATING_WORKSHOP_ACTION_NAMES.some((mutatingAction) => mutatingAction === action) && !allowMutations) {
+          return workshopMutationDisabledResponse(action);
+        }
         switch (action) {
           case "list": {
             const items = workshopList(workshopCtx, {
@@ -114,7 +152,8 @@ export function registerWorkshopTools(ctx: WorkshopToolsContext, api: ClawdbotPl
             const id = params.id as string | undefined;
             if (!id) return { content: [{ type: "text", text: "id is required for inspect" }], details: { ok: false } };
             const item = workshopInspect(workshopCtx, id);
-            if (!item) return { content: [{ type: "text", text: `Proposal not found: ${id}` }], details: { ok: false } };
+            if (!item)
+              return { content: [{ type: "text", text: `Proposal not found: ${id}` }], details: { ok: false } };
             return {
               content: [{ type: "text", text: `${item.type} ${item.title}\n\n${item.fullContent ?? item.preview}` }],
               details: item,
@@ -140,7 +179,8 @@ export function registerWorkshopTools(ctx: WorkshopToolsContext, api: ClawdbotPl
           }
           case "quarantine": {
             const id = params.id as string | undefined;
-            if (!id) return { content: [{ type: "text", text: "id is required for quarantine" }], details: { ok: false } };
+            if (!id)
+              return { content: [{ type: "text", text: "id is required for quarantine" }], details: { ok: false } };
             const result = workshopQuarantine(workshopCtx, id, params.reason as string | undefined);
             return {
               content: [{ type: "text", text: result.ok ? result.message : result.error }],
@@ -151,7 +191,10 @@ export function registerWorkshopTools(ctx: WorkshopToolsContext, api: ClawdbotPl
             const id = params.id as string | undefined;
             const revision = params.revision as string | undefined;
             if (!id || !revision) {
-              return { content: [{ type: "text", text: "id and revision are required for revise" }], details: { ok: false } };
+              return {
+                content: [{ type: "text", text: "id and revision are required for revise" }],
+                details: { ok: false },
+              };
             }
             const result = workshopRevise(workshopCtx, id, revision);
             return {
@@ -183,8 +226,7 @@ export function registerWorkshopTools(ctx: WorkshopToolsContext, api: ClawdbotPl
               };
             }
             const chatSessionKey =
-              (api.context?.sessionKey as string | undefined) ??
-              (api.context?.sessionId as string | undefined);
+              (api.context?.sessionKey as string | undefined) ?? (api.context?.sessionId as string | undefined);
             const sessionKey = resolveWorkshopRevertSessionKey(
               ctx.cfg,
               params.sessionKey as string | undefined,
