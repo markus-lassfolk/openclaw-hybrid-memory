@@ -63,6 +63,42 @@ describe("contact profile enrichment and merge (#2014)", () => {
     expect(contacts[0].boardStatus).toBe("management");
   });
 
+  it("does not enrich global contact profile fields from scoped facts", () => {
+    const text = "Jane Private email jane.private@secret.example phone +1 555 010 4242";
+    const fact = db.store({
+      text,
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.5,
+      source: "test",
+      scope: "user",
+      scopeTarget: "alice",
+    });
+    db.applyEntityEnrichment(
+      fact.id,
+      [
+        {
+          label: "PERSON",
+          surfaceText: "Jane Private",
+          normalizedSurface: "jane private",
+          startOffset: 0,
+          endOffset: "Jane Private".length,
+          confidence: 0.9,
+        },
+      ],
+      "eng",
+    );
+
+    const result = db.applyContactProfileEnrichment(fact.id, text, "ner");
+    expect(result).toBeNull();
+
+    const jane = db.listContactsByNamePrefix("Jane", 10)[0];
+    expect(jane.email).toBeNull();
+    expect(jane.phone).toBeNull();
+  });
+
   it("does not enrich when a fact mentions more than one person (ambiguous attribution)", () => {
     const fact = db.store({
       text: "Alice alice@example.com and Bob bob@example.com discussed the roadmap.",
@@ -76,8 +112,22 @@ describe("contact profile enrichment and merge (#2014)", () => {
     db.applyEntityEnrichment(
       fact.id,
       [
-        { label: "PERSON", surfaceText: "Alice", normalizedSurface: "alice", startOffset: 0, endOffset: 5, confidence: 0.9 },
-        { label: "PERSON", surfaceText: "Bob", normalizedSurface: "bob", startOffset: 29, endOffset: 32, confidence: 0.9 },
+        {
+          label: "PERSON",
+          surfaceText: "Alice",
+          normalizedSurface: "alice",
+          startOffset: 0,
+          endOffset: 5,
+          confidence: 0.9,
+        },
+        {
+          label: "PERSON",
+          surfaceText: "Bob",
+          normalizedSurface: "bob",
+          startOffset: 29,
+          endOffset: 32,
+          confidence: 0.9,
+        },
       ],
       "eng",
     );
@@ -141,7 +191,16 @@ describe("contact profile enrichment and merge (#2014)", () => {
     });
     db.applyEntityEnrichment(
       fact.id,
-      [{ label: "PERSON", surfaceText: "Erik", normalizedSurface: "erik", startOffset: 0, endOffset: 4, confidence: 0.9 }],
+      [
+        {
+          label: "PERSON",
+          surfaceText: "Erik",
+          normalizedSurface: "erik",
+          startOffset: 0,
+          endOffset: 4,
+          confidence: 0.9,
+        },
+      ],
       "eng",
       { requireSurnameForNewContacts: true },
     );
@@ -161,8 +220,22 @@ describe("contact profile enrichment and merge (#2014)", () => {
     db.applyEntityEnrichment(
       fact.id,
       [
-        { label: "PERSON", surfaceText: "Erik", normalizedSurface: "erik", startOffset: 0, endOffset: 4, confidence: 0.9 },
-        { label: "ORG", surfaceText: "Acme Corp", normalizedSurface: "acme corp", startOffset: 10, endOffset: 19, confidence: 0.9 },
+        {
+          label: "PERSON",
+          surfaceText: "Erik",
+          normalizedSurface: "erik",
+          startOffset: 0,
+          endOffset: 4,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "Acme Corp",
+          normalizedSurface: "acme corp",
+          startOffset: 10,
+          endOffset: 19,
+          confidence: 0.9,
+        },
       ],
       "eng",
       { requireSurnameForNewContacts: true },
@@ -185,7 +258,9 @@ describe("contact profile enrichment and merge (#2014)", () => {
     if (!result.ok) throw new Error("expected ok");
     expect(result.mergedFactMentions).toBeGreaterThanOrEqual(1);
 
-    const remaining = db.listContactsByNamePrefix("", 20).filter((c) => c.id === alphaContact.id || c.id === betaContact.id);
+    const remaining = db
+      .listContactsByNamePrefix("", 20)
+      .filter((c) => c.id === alphaContact.id || c.id === betaContact.id);
     expect(remaining).toHaveLength(1);
     expect(remaining[0].id).toBe(betaContact.id);
     expect(remaining[0].email).toBe("alpha@example.com");

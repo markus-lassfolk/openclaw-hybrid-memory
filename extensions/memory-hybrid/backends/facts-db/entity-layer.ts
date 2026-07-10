@@ -630,8 +630,11 @@ export function replaceFactEntityMentions(
           insOrgLink.run(org.id, factId, now);
         }
       } else if (m.label === "PERSON") {
-        const allowNewContact = options.requireSurnameForNewContacts !== true || hasSurname(m.surfaceText) || hasOrgMention;
-        const con = allowNewContact ? upsertContact(db, m.surfaceText, null, { source: "ner", updatedBy: "ner" }) : null;
+        const allowNewContact =
+          options.requireSurnameForNewContacts !== true || hasSurname(m.surfaceText) || hasOrgMention;
+        const con = allowNewContact
+          ? upsertContact(db, m.surfaceText, null, { source: "ner", updatedBy: "ner" })
+          : null;
         if (con) {
           contactId = con.id;
           personRows.push({ surface: m.surfaceText, contactId: con.id });
@@ -693,6 +696,11 @@ export function applyContactProfileEnrichmentForFact(
   factText: string,
   source: ContactProfileEnrichmentSource,
 ): ContactProfileEnrichmentResult | null {
+  const factScope = db.prepare("SELECT scope FROM facts WHERE id = ?").get(factId) as
+    | { scope: string | null }
+    | undefined;
+  if (!factScope || (factScope.scope ?? "global") !== "global") return null;
+
   const personRows = db
     .prepare(
       `SELECT DISTINCT contact_id FROM fact_entity_mentions
@@ -869,7 +877,10 @@ function applyContactProfileFields(db: DatabaseSync, contactId: string, fields: 
   let nextNotes = row.notes;
   const noteLine = fields.notes?.trim();
   if (noteLine) {
-    const existingLines = (row.notes ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
+    const existingLines = (row.notes ?? "")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
     if (!existingLines.includes(noteLine)) {
       nextNotes = [...existingLines, noteLine].join("\n");
     }
@@ -880,7 +891,19 @@ function applyContactProfileFields(db: DatabaseSync, contactId: string, fields: 
     `UPDATE contacts SET email = ?, phone = ?, mobile = ?, role = ?, board_status = ?, notes = ?,
        source = COALESCE(?, source), source_date = ?, updated_by = COALESCE(?, updated_by), updated_at = ?
      WHERE id = ?`,
-  ).run(nextEmail, nextPhone, nextMobile, nextRole, nextBoardStatus, nextNotes, fields.source ?? null, now, fields.updatedBy ?? null, now, contactId);
+  ).run(
+    nextEmail,
+    nextPhone,
+    nextMobile,
+    nextRole,
+    nextBoardStatus,
+    nextNotes,
+    fields.source ?? null,
+    now,
+    fields.updatedBy ?? null,
+    now,
+    contactId,
+  );
 }
 
 /** True when one name's tokens are a contiguous prefix or suffix run of the other's (#2014). */
@@ -905,9 +928,7 @@ export function findContactMergeCandidates(db: DatabaseSync, normalizedKey: stri
       ? db.prepare("SELECT * FROM contacts WHERE id != ?").all(excludeId)
       : db.prepare("SELECT * FROM contacts").all()
   ) as Array<Record<string, unknown>>;
-  return rows
-    .filter((row) => isTokenPrefixOrSuffix(normalizedKey, row.normalized_key as string))
-    .map(rowToContact);
+  return rows.filter((row) => isTokenPrefixOrSuffix(normalizedKey, row.normalized_key as string)).map(rowToContact);
 }
 
 export function listFactIdsForOrg(db: DatabaseSync, orgId: string, limit: number): string[] {
