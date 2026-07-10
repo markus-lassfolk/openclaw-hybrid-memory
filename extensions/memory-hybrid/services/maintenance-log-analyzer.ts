@@ -223,6 +223,10 @@ export function parseMaintenanceSinceMs(value = "24h"): number {
 export interface CollectMaintenanceStepsOptions {
   /** Flag logs with no mtime/progress updates beyond this duration as stale orchestration anomalies. */
   staleThresholdMs?: number;
+  /** Currently executing run id; its empty/incomplete ledger must not be reported as a failure yet. */
+  currentRunId?: string;
+  /** Currently executing HM_EXIT path; useful when RUN_ID is unavailable or non-standard. */
+  currentExitPath?: string;
 }
 
 function extractJobName(file: string): string {
@@ -248,6 +252,24 @@ function safeStatMtimeMs(path: string): number {
   } catch {
     return 0;
   }
+}
+
+function normalizePathForCompare(path: string | undefined): string | null {
+  const trimmed = path?.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/\\/g, "/");
+}
+
+function pathContainsRunId(path: string, runId: string | null): boolean {
+  return !!runId && basename(path).includes(runId);
+}
+
+function isCurrentInFlightArtifact(path: string, opts: CollectMaintenanceStepsOptions): boolean {
+  const runId = opts.currentRunId?.trim() || process.env.HM_RUN_ID?.trim() || process.env.RUN_ID?.trim() || null;
+  const currentExitPath = normalizePathForCompare(opts.currentExitPath ?? process.env.HM_EXIT);
+  const normalizedPath = normalizePathForCompare(path);
+  if (currentExitPath && normalizedPath === currentExitPath) return true;
+  return pathContainsRunId(path, runId);
 }
 
 /**
@@ -546,6 +568,7 @@ export function collectMaintenanceSteps(
 
   for (const exitPath of exitFiles) {
     if (exitPathsFromSummary.has(exitPath)) continue;
+    if (isCurrentInFlightArtifact(exitPath, opts)) continue;
     const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
     const exitMtime = safeStatMtimeMs(exitPath);
     const logMtime = safeStatMtimeMs(logPath);
@@ -609,7 +632,7 @@ export function collectMaintenanceSteps(
     // Files like stdout.log, stderr.log, or QA transcripts are not maintenance wrapper artifacts.
     if (isUnderAuxiliaryDir(logPath, root) || !isCanonicalMaintenanceLog(logPath)) continue;
     const exitPath = logPath.replace(/\.log$/, ".exit.txt");
-    if (seenExit.has(exitPath) || existsSync(exitPath)) continue;
+    if (seenExit.has(exitPath) || existsSync(exitPath) || isCurrentInFlightArtifact(exitPath, opts)) continue;
     const logContent = safeRead(logPath);
     const job = extractJobFromPath(logPath, ".log");
     // Aggregate `<job>.cron.log` files never have a sibling `<job>.cron.exit.txt`; instead each run

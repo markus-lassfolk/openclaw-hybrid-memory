@@ -459,6 +459,39 @@ describe("maintenance log analyzer", () => {
     expect(steps[1].step).toBe("digest-autopilot");
   });
 
+  it("does not flag the current in-flight HM_EXIT ledger as an empty-exit orchestration bug", () => {
+    const root = tmpRoot();
+    const runId = "20260710T075700Z-4242";
+    const exitPath = join(root, `maintenance-log-analyzer-${runId}.exit.txt`);
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(exitPath, "");
+    writeFileSync(logPath, "memory-hybrid: analyze-maintenance-logs — still running after 10s");
+
+    const nowMs = Date.UTC(2026, 6, 10, 7, 58, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, {
+      staleThresholdMs: 45 * 60 * 1000,
+      currentRunId: runId,
+      currentExitPath: exitPath,
+    });
+
+    expect(steps).toHaveLength(0);
+  });
+
+  it("uses HM_EXIT from the environment to suppress self/in-flight empty ledger findings", () => {
+    const root = tmpRoot();
+    const exitPath = join(root, "maintenance-log-analyzer-20260710T075700Z-4242.exit.txt");
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(exitPath, "");
+    writeFileSync(logPath, "memory-hybrid: analyze-maintenance-logs — still running after 10s");
+    vi.stubEnv("HM_EXIT", exitPath);
+
+    const nowMs = Date.UTC(2026, 6, 10, 7, 58, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
+
+    expect(steps).toHaveLength(0);
+    vi.unstubAllEnvs();
+  });
+
   it("flags empty exit ledger + progress log as orchestration bug (root-level cron files)", () => {
     const root = tmpRoot();
     const exitPath = join(root, "nightly-dream-cycle-20260511T024522Z-17502.exit.txt");
