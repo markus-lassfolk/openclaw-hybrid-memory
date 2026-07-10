@@ -1349,6 +1349,106 @@ describe("reflection merge rollback", () => {
   });
 });
 
+describe("runReflection/runReflectionMeta infra-failure attribution (regression)", () => {
+  it("reports semanticOutcome partial when a metadata write fails after a successful vector store", async () => {
+    const patternText = "User consistently prefers functional composition over object-oriented patterns";
+    const factsDb = {
+      sqlitePath: join(tmpdir(), "reflect-metadata-failure.db"),
+      getRecentFacts: () => [makeEntry({ category: "preference", text: "User likes functional code" })],
+      getByCategory: () => [],
+      storeWithResult: vi.fn(() => ({
+        skipped: false as const,
+        evictedFactId: null,
+        embeddingStale: false,
+        newlyStored: true,
+        entry: makeEntry({ id: "pattern-new", category: "pattern", text: patternText }),
+      })),
+      // Vector store succeeds; the metadata write after it is what fails here.
+      setEmbeddingModel: vi.fn(() => {
+        throw new Error("metadata write failed");
+      }),
+      delete: vi.fn(() => undefined),
+      getMaintenanceState: () => null,
+      setMaintenanceState: () => undefined,
+    };
+    const vectorDb = {
+      store: vi.fn(async () => undefined),
+      delete: vi.fn(async () => true),
+      getVectorDim: () => 2,
+      getVectorsByFactIds: async () => new Map(),
+    };
+    const embeddings = { embed: async () => [1, 0], modelName: "test-model" };
+    const openai = {
+      chat: {
+        completions: {
+          create: async () => ({ choices: [{ message: { content: `PATTERN: ${patternText}` } }] }),
+        },
+      },
+    };
+
+    const res = await runReflection(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai as never,
+      { defaultWindow: 14, minObservations: 1, enabled: true },
+      { window: 7, dryRun: false, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    // The infrastructure error (metadata write failure) must be visible in the outcome, the
+    // same way an embed-call failure already was -- not silently reported as "success" just
+    // because the vectorDb.store() call itself succeeded.
+    expect(res.semanticOutcome).toBe("partial");
+  });
+
+  it("reports diagnostics.status partial when a metadata write fails after a successful vector store (meta-pattern layer)", async () => {
+    const patternA = makeEntry({ id: "p1", category: "pattern", text: "Pattern one with enough detail to be valid" });
+    const patternB = makeEntry({ id: "p2", category: "pattern", text: "Pattern two with enough detail to be valid" });
+    const patternC = makeEntry({ id: "p3", category: "pattern", text: "Pattern three with enough detail to be valid" });
+    const metaText = "A stable meta-pattern is that the user prefers explicit iterative validation loops";
+    const factsDb = {
+      getByCategory: () => [patternA, patternB, patternC],
+      storeWithResult: vi.fn(() => ({
+        skipped: false as const,
+        evictedFactId: null,
+        embeddingStale: false,
+        newlyStored: true,
+        entry: makeEntry({ id: "meta-new", category: "pattern", text: metaText, tags: ["reflection", "meta"] }),
+      })),
+      setEmbeddingModel: vi.fn(() => {
+        throw new Error("metadata write failed");
+      }),
+      delete: vi.fn(() => undefined),
+    };
+    const vectorDb = {
+      store: vi.fn(async () => undefined),
+      delete: vi.fn(async () => true),
+      getVectorDim: () => 2,
+      getVectorsByFactIds: async () => new Map(),
+    };
+    const embeddings = { embed: async () => [1, 0], modelName: "test-model" };
+    const openai = {
+      chat: {
+        completions: {
+          create: async () => ({ choices: [{ message: { content: `META: ${metaText}` } }] }),
+        },
+      },
+    };
+
+    const res = await runReflectionMeta(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai as never,
+      { dryRun: false, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(res.diagnostics?.status).toBe("partial");
+  });
+});
+
 describe("runReflectionMeta cost attribution", () => {
   it("LLM call is attributed to 'reflection-meta' feature", async () => {
     let capturedFeature: string | undefined;
