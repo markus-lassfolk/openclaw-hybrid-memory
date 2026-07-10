@@ -93,7 +93,13 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
     .action(
       withExit(async (opts: { status?: string; limit?: string; json?: boolean }) => {
         const store = requireStore(ctx);
-        const limit = opts.limit ? Math.max(1, Math.min(100, Number(opts.limit))) : 20;
+        const parsedLimit = Number(opts.limit);
+        if (opts.limit && (!Number.isFinite(parsedLimit) || parsedLimit < 1)) {
+          console.error(`error: --limit must be a positive number, got: ${opts.limit}`);
+          process.exitCode = 1;
+          return;
+        }
+        const limit = opts.limit ? Math.max(1, Math.min(100, parsedLimit)) : 20;
         const status = (opts.status as CrystallizationQueueStatusFilter | undefined) ?? undefined;
         let proposals;
         try {
