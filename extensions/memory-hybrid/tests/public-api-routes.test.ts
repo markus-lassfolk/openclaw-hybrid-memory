@@ -91,6 +91,7 @@ describe("registerPublicApiRoutes", () => {
       key: "public_api",
       value: "enabled",
       source: "conversation",
+      provenanceJson: JSON.stringify({ sourceFacts: [{ text: "secret" }] }),
     });
 
     factsDb.recordEpisode({
@@ -152,7 +153,9 @@ describe("registerPublicApiRoutes", () => {
       fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.export}?limit=10`),
     );
     expect(exportRes.status).toBe(200);
-    expect(JSON.parse(exportRes.body).manifest.counts.facts).toBeGreaterThanOrEqual(1);
+    const exportBody = JSON.parse(exportRes.body);
+    expect(exportBody.manifest.counts.facts).toBeGreaterThanOrEqual(1);
+    expect(exportBody.facts.every((f: { provenanceJson: string | null }) => f.provenanceJson === null)).toBe(true);
 
     const fact = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.fact}`)!;
     const factRes = await invokeNodeHttpRoute(
@@ -160,7 +163,9 @@ describe("registerPublicApiRoutes", () => {
       fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.fact}?id=${stored.id}`),
     );
     expect(factRes.status).toBe(200);
-    expect(JSON.parse(factRes.body).id).toBe(stored.id);
+    const factBody = JSON.parse(factRes.body);
+    expect(factBody.id).toBe(stored.id);
+    expect(factBody.fact.provenanceJson).toBeNull();
 
     const badSearchRes = await invokeNodeHttpRoute(
       search.handler,

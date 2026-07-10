@@ -65,6 +65,13 @@ export interface BuildPublicExportBundleOptions {
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 2000;
 
+function redactFactForPublicApi(fact: MemoryEntry): MemoryEntry {
+  return {
+    ...fact,
+    provenanceJson: null,
+  };
+}
+
 function parseLimit(value: number | undefined, fallback = DEFAULT_LIMIT): number {
   if (value == null) return fallback;
   if (!Number.isFinite(value)) return fallback;
@@ -118,7 +125,7 @@ export function buildPublicExportBundle(
   const linksLimit = parseLimit(options.linksLimit);
   const scopeFilter = options.scopeFilter ?? null;
 
-  const facts = factsDb.getAll({ scopeFilter }).slice(0, factsLimit);
+  const facts = factsDb.getAll({ scopeFilter }).slice(0, factsLimit).map(redactFactForPublicApi);
   const scopedFactIds = new Set(facts.map((f) => f.id));
   const episodes = factsDb
     .searchEpisodes({ limit: MAX_LIMIT })

@@ -42,6 +42,13 @@ function toJson(status: number, body: unknown): { status: number; headers: Recor
   return { status, headers: { ...JSON_HEADERS }, body: JSON.stringify(body) };
 }
 
+function redactFactForPublicApi<T extends { provenanceJson?: string | null }>(fact: T): T {
+  return {
+    ...fact,
+    provenanceJson: null,
+  };
+}
+
 function parseReqUrl(url: string): URL {
   return new URL(url, "http://localhost");
 }
@@ -140,7 +147,9 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
       });
     }
 
-    const results = ctx.factsDb.search(query, limit, { tierFilter: "all", scopeFilter });
+    const results = ctx.factsDb
+      .search(query, limit, { tierFilter: "all", scopeFilter })
+      .map((result) => ({ ...result, entry: redactFactForPublicApi(result.entry) }));
     return toJson(200, {
       query,
       limit,
@@ -153,7 +162,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     const url = parseReqUrl(req.url);
     const limit = parseLimitParam(url.searchParams.get("limit"), 20, 200);
     const scopeFilter = resolveScopeFilter(req);
-    const facts = ctx.factsDb.getAll({ scopeFilter }).slice(0, limit);
+    const facts = ctx.factsDb.getAll({ scopeFilter }).slice(0, limit).map(redactFactForPublicApi);
 
     return toJson(200, {
       limit,
@@ -271,7 +280,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
 
     return toJson(200, {
       id: resolvedId,
-      fact,
+      fact: redactFactForPublicApi(fact),
       links: {
         outgoing: filteredOutgoingLinks,
         incoming: filteredIncomingLinks,
