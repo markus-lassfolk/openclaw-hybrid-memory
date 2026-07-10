@@ -413,6 +413,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
           console.error(
             `Uninstalled ${res.pluginId}: config error (${res.error}), cleaned ${res.cleaned.length} files.`,
           );
+          process.exitCode = 1;
         } else if (res.outcome === "leave_config") {
           console.log(`Uninstalled ${res.pluginId}: config left intact, cleaned ${res.cleaned.length} files.`);
         }
@@ -451,6 +452,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
           console.log(`  LanceDB:  ${lanceKb} KB`);
           if (!res.integrityOk) {
             console.warn("⚠ SQLite integrity check failed — backup may be from a corrupt source.");
+            process.exitCode = 1;
           }
           if (res.snapshotSkewMs > 1000) {
             // SQLite and LanceDB are snapshotted sequentially, not atomically (#81) — a write
