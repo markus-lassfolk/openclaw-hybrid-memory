@@ -199,7 +199,6 @@ describe("session-state", () => {
         state.sessionStartSeen.add("session-1");
         state.ambientSeenFactsMap.set("session-1", new SessionSeenFacts());
         state.ambientLastEmbeddingMap.set("session-1", [1, 2, 3]);
-        state.frustrationStateMap.set("session-1", { level: 2, turns: [] });
         state.sessionLastActivity.set("session-1", Date.now());
         state.authFailureRecallsThisSession.set("session-1:key1", 5);
         state.authFailureRecallsThisSession.set("session-1:key2", 3);
@@ -211,10 +210,34 @@ describe("session-state", () => {
         expect(state.sessionStartSeen.has("session-1")).toBe(false);
         expect(state.ambientSeenFactsMap.has("session-1")).toBe(false);
         expect(state.ambientLastEmbeddingMap.has("session-1")).toBe(false);
-        expect(state.frustrationStateMap.has("session-1")).toBe(false);
         expect(state.sessionLastActivity.has("session-1")).toBe(false);
         expect(state.authFailureRecallsThisSession.has("session-1:key1")).toBe(false);
         expect(state.authFailureRecallsThisSession.has("session-1:key2")).toBe(false);
+      });
+
+      it("should NOT clear frustration/change-notify/revert state, since clearSessionState runs every turn (regression)", () => {
+        // These four all carry state meant to persist for the whole chat session, not reset
+        // every agent turn (frustration trend accumulation, change-notify dedup cursor, and
+        // revert-target resolution all depend on it surviving past a single turn).
+        state.frustrationStateMap.set("session-1", { level: 2, turns: [] });
+        state.frustrationThresholdBandMap.set("session-1", "medium");
+        state.changeNotifyStateMap.set("session-1", { lastNotifiedOrdinal: 3, lastNotifiedBroadcastOrdinal: 1 });
+        state.displayRevertMap.set("session-1", new Map([[1, "change-event-abc"]]));
+        state.sessionStartSeen.add("session-1");
+
+        state.clearSessionState("session-1");
+
+        // Turn-scoped state still clears normally.
+        expect(state.sessionStartSeen.has("session-1")).toBe(false);
+
+        // Chat-scoped state must survive a single clearSessionState call.
+        expect(state.frustrationStateMap.get("session-1")).toEqual({ level: 2, turns: [] });
+        expect(state.frustrationThresholdBandMap.get("session-1")).toBe("medium");
+        expect(state.changeNotifyStateMap.get("session-1")).toEqual({
+          lastNotifiedOrdinal: 3,
+          lastNotifiedBroadcastOrdinal: 1,
+        });
+        expect(state.displayRevertMap.get("session-1")?.get(1)).toBe("change-event-abc");
       });
 
       it("should only clear state for specified session", () => {
