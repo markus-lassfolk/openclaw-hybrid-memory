@@ -93,15 +93,13 @@ export function createSessionState(
   }
 
   function clearSessionState(sessionKey: string): void {
-    sessionStartSeen.delete(sessionKey);
-    ambientSeenFactsMap.delete(sessionKey);
-    ambientLastEmbeddingMap.delete(sessionKey);
     sessionLastActivity.delete(sessionKey);
     // Do NOT clear frustrationStateMap/frustrationThresholdBandMap/changeNotifyStateMap/
-    // displayRevertMap here, for the same reason capabilityHintsSessionsSeen and memory-nudge
-    // state are excluded below: clearSessionState runs at the end of EVERY agent turn (see
-    // run-capture.ts), not once per chat session. These four all carry state that is meant to
-    // persist across the whole chat, not reset every turn:
+    // displayRevertMap/sessionStartSeen/ambientSeenFactsMap/ambientLastEmbeddingMap/
+    // authFailureRecallsThisSession here, for the same reason capabilityHintsSessionsSeen and
+    // memory-nudge state are excluded below: clearSessionState runs at the end of EVERY agent
+    // turn (see run-capture.ts), not once per chat session. All of these carry state that is
+    // meant to persist across the whole chat, not reset every turn:
     //   - frustrationStateMap / frustrationThresholdBandMap: frustration-detector.ts's
     //     multi-turn windowed/decay trend ("rising"/"falling") needs turns to accumulate across
     //     calls; clearing it every turn caps detection at whatever a single isolated message
@@ -112,9 +110,17 @@ export function createSessionState(
     //     each time a notice is built) back to a real change-event id; clearing it before the
     //     user's next turn means "revert change N" can silently resolve to a different event via
     //     change-feed-revert.ts's ordinal fallback instead of the one actually displayed.
+    //   - sessionStartSeen: gates autoRecall.retrievalDirectives.sessionStart to fire once per
+    //     chat session; clearing it every turn made the one-time directive re-fire every turn.
+    //   - ambientSeenFactsMap / ambientLastEmbeddingMap: SessionSeenFacts' cross-turn dedup of
+    //     already-injected ambient facts after a topic shift; clearing it every turn made the
+    //     same facts eligible to be re-injected turn after turn.
+    //   - authFailureRecallsThisSession: caps credential-hint recalls per target across the whole
+    //     session (autoRecall.authFailure.maxRecallsPerTarget); clearing it every turn meant the
+    //     cap never engaged past a single turn, re-injecting the same hint every subsequent turn.
     // pruneSessionMaps' recency-based coordinated eviction (keyed off sessionLastActivity,
     // touched once per turn in stage-setup.ts) plus its own per-map insertion-order backstop
-    // now bound all four, so per-turn clearing here is no longer needed for size control either.
+    // now bound all of these, so per-turn clearing here is no longer needed for size control either.
     //
     // Do NOT clear capabilityHintsSessionsSeen here — that set persists across agent turns
     // within the same chat session so "session" mode injects once per chat, not once per turn.
@@ -125,10 +131,6 @@ export function createSessionState(
     // would re-fire on every single turn instead of at most once per throttle window.
     // services/memory-nudge.ts's own sweepStaleNudgeSessionState (TTL-based) and
     // disposeMemoryNudge (plugin shutdown) handle cleanup of this state instead.
-    const prefix = `${sessionKey}:`;
-    for (const key of authFailureRecallsThisSession.keys()) {
-      if (key.startsWith(prefix)) authFailureRecallsThisSession.delete(key);
-    }
     recallInFlightBySession.delete(sessionKey);
     pendingCheckpointGuardBySession.delete(sessionKey);
     progressiveIndexBySession?.delete(sessionKey);

@@ -121,7 +121,7 @@ export type DistillRegistrationOptions = {
  * a negative/NaN days value previously loop-guarded (`for (let d = 0; d < daysBack; d++)`) into a
  * silent zero-days no-op that still reported success.
  */
-function parseDaysFlag(raw: string | undefined): number | undefined | null {
+export function parseDaysFlag(raw: string | undefined): number | undefined | null {
   if (raw == null || raw === "") return undefined;
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed) || parsed < 1) {

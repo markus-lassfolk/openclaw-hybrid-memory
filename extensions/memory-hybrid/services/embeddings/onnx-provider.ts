@@ -117,7 +117,8 @@ async function fileExists(path: string): Promise<boolean> {
   }
 }
 
-function sanitizeRepoDir(repo: string): string {
+/** Exported for tests: neutralizes path-traversal/separator characters before use in a cache path. */
+export function sanitizeRepoDir(repo: string): string {
   return repo.replace(/[^\w.-]+/g, "__");
 }
 
@@ -127,6 +128,17 @@ function splitRepoAndRevision(input: string): { repo: string; revision: string }
     return { repo: input.slice(0, at), revision: input.slice(at + 1) };
   }
   return { repo: input, revision: "main" };
+}
+
+/**
+ * Exported for tests: `revision` is operator-supplied (via embedding.model, split at the last
+ * "@") and must be sanitized the same way `repo` is — otherwise a value like
+ * "model@../../../tmp/evil" resolves the cache dir outside `cacheDir`, and downloadFile() writes
+ * the fetched model/vocab there.
+ */
+export function resolveOnnxRepoCacheDir(cacheDir: string, repoAndRevisionInput: string): string {
+  const { repo, revision } = splitRepoAndRevision(repoAndRevisionInput);
+  return join(cacheDir, sanitizeRepoDir(repo), sanitizeRepoDir(revision));
 }
 
 const ONNX_DOWNLOAD_TIMEOUT_MS = 120_000;
@@ -203,7 +215,7 @@ async function resolveOnnxModelFiles(
   const { repo, revision } = splitRepoAndRevision(spec?.repo ?? model);
   const modelFile = spec?.modelFile ?? "onnx/model.onnx";
   const vocabCandidates = spec?.vocabFileCandidates ?? ["vocab.txt", "tokenizer/vocab.txt"];
-  const repoDir = join(cacheDir, sanitizeRepoDir(repo), revision);
+  const repoDir = resolveOnnxRepoCacheDir(cacheDir, spec?.repo ?? model);
   const modelPath = join(repoDir, modelFile);
   if (!(await fileExists(modelPath))) {
     const modelUrl = `https://huggingface.co/${repo}/resolve/${revision}/${modelFile}`;

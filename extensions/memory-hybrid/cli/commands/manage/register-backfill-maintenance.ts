@@ -15,6 +15,7 @@ import {
   formatMaintenanceCoverageReport,
 } from "../../../services/maintenance-coverage.js";
 import { parseSessionMessagesFromLines } from "../../../services/session-signal-context.js";
+import { parseDaysFlag } from "../../distill.js";
 import { collectWorkflowToolsFromSessionFile } from "../../../services/session-v3-parser.js";
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
@@ -94,7 +95,8 @@ function registerWorkflowTraceQaCommands(mem: Chainable, b: ManageBindings): voi
     .option("--json", "Emit JSON")
     .action(
       withExit(async (opts?: { days?: string; json?: boolean }) => {
-        const days = Number.parseInt(opts?.days ?? "30", 10);
+        const days = parseDaysFlag(opts?.days ?? "30");
+        if (days == null) return;
         const sinceSec = Math.floor(Date.now() / 1000) - days * 86400;
         const workflowStore = new WorkflowStore(defaultWorkflowDbPath());
         try {
@@ -198,7 +200,8 @@ export function registerBackfillMaintenanceCommands(
       .action(
         withExit(async (opts?: { all?: boolean; days?: string }) => {
           if (!opts?.all) return;
-          const days = Number.parseInt(opts.days ?? "60", 10);
+          const days = parseDaysFlag(opts.days ?? "60");
+          if (days == null) return;
           let dailyLogs = 0;
           let sessionLanguages = 0;
           let recallEvents = 0;
@@ -231,7 +234,8 @@ export function registerBackfillMaintenanceCommands(
     .option("--json", "Emit JSON")
     .action(
       withExit(async (opts?: { days?: string; json?: boolean }) => {
-        const days = Number.parseInt(opts?.days ?? "60", 10);
+        const days = parseDaysFlag(opts?.days ?? "60");
+        if (days == null) return;
         let inserted = 0;
         const failedFiles: string[] = [];
         const paths = resolveExtractSessionFilePaths(cfg, days);
@@ -275,7 +279,8 @@ export function registerBackfillMaintenanceCommands(
     .option("--json", "Emit JSON")
     .action(
       withExit(async (opts?: { days?: string; json?: boolean }) => {
-        const days = Number.parseInt(opts?.days ?? "60", 10);
+        const days = parseDaysFlag(opts?.days ?? "60");
+        if (days == null) return;
         let written = 0;
         const failedFiles: string[] = [];
         const paths = resolveExtractSessionFilePaths(cfg, days);
@@ -306,7 +311,8 @@ export function registerBackfillMaintenanceCommands(
     .option("--json", "Emit JSON")
     .action(
       withExit(async (opts?: { days?: string; json?: boolean }) => {
-        const days = Number.parseInt(opts?.days ?? "60", 10);
+        const days = parseDaysFlag(opts?.days ?? "60");
+        if (days == null) return;
         let rows = 0;
         const failedFiles: string[] = [];
         const paths = resolveExtractSessionFilePaths(cfg, days);
@@ -337,7 +343,8 @@ export function registerBackfillMaintenanceCommands(
     .option("--json", "Emit JSON")
     .action(
       withExit(async (opts?: { days?: string; json?: boolean }) => {
-        const days = Number.parseInt(opts?.days ?? "60", 10);
+        const days = parseDaysFlag(opts?.days ?? "60");
+        if (days == null) return;
         const workflowStore = new WorkflowStore(defaultWorkflowDbPath());
         try {
           let traces = 0;
@@ -381,7 +388,8 @@ export function registerMaintenanceCoverageCommand(mem: Chainable, b: ManageBind
     .option("--json", "Emit JSON")
     .action(
       withExit(async (opts?: { days?: string; json?: boolean }) => {
-        const days = Number.parseInt(opts?.days ?? "7", 10);
+        const days = parseDaysFlag(opts?.days ?? "7");
+        if (days == null) return;
         const report = buildMaintenanceCoverageReport({
           factsDbPath: factsDb.sqlitePath || defaultFactsDbPath(),
           workflowDbPath: defaultWorkflowDbPath(),

@@ -301,8 +301,18 @@ export function registerManageReflectionPipeline(
       .action(
         withExit(async (opts?: { threshold?: string; includeStructured?: boolean; limit?: string }) => {
           const threshold = Number.parseFloat(opts?.threshold ?? "0.85");
+          if (!Number.isFinite(threshold) || threshold <= 0 || threshold > 1) {
+            console.error("error: --threshold must be a number greater than 0 and at most 1");
+            process.exitCode = 1;
+            return;
+          }
           const includeStructured = !!opts?.includeStructured;
           const limit = Number.parseInt(opts?.limit ?? "100", 10);
+          if (!Number.isFinite(limit) || limit < 1) {
+            console.error("error: --limit must be a positive integer");
+            process.exitCode = 1;
+            return;
+          }
           let res;
           try {
             res = await runFindDuplicates({ threshold, includeStructured, limit });
@@ -347,9 +357,19 @@ export function registerManageReflectionPipeline(
             cmd?: CommanderOptsParent,
           ) => {
             const threshold = Number.parseFloat(opts?.threshold ?? "0.85");
+            if (!Number.isFinite(threshold) || threshold <= 0 || threshold > 1) {
+              console.error("error: --threshold must be a number greater than 0 and at most 1");
+              process.exitCode = 1;
+              return;
+            }
             const includeStructured = !!opts?.includeStructured;
             const dryRun = !!opts?.dryRun;
             const limit = Number.parseInt(opts?.limit ?? "10", 10);
+            if (!Number.isFinite(limit) || limit < 1) {
+              console.error("error: --limit must be a positive integer");
+              process.exitCode = 1;
+              return;
+            }
             const model = opts?.model ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "maintenance");
             const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
             let res;

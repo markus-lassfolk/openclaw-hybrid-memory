@@ -126,6 +126,10 @@ export function getProceduresReadyForSkill(
   const now = Math.floor(Date.now() / 1000);
   const useTtl = skillTTLDays != null ? 1 : 0;
   const cutoff = skillTTLDays != null ? now - Math.max(1, Math.floor(skillTTLDays)) * 24 * 60 * 60 : 0;
+  // SECURITY: auto skill-generation writes a SKILL.md to the shared, globally-installed skills
+  // directory (services/procedure-skill-generator.ts) -- restricted to scope='global' procedures
+  // so a user/agent/session-scoped procedure (e.g. via memory_procedure_feedback's registerIfMissing)
+  // can never be drafted into a skill visible to every other tenant.
   const rows = db
     .prepare(
       `SELECT * FROM procedures
@@ -134,6 +138,7 @@ export function getProceduresReadyForSkill(
           AND promoted_to_skill = 0
           AND (skill_state IS NULL OR trim(skill_state) = '' OR LOWER(trim(skill_state)) NOT IN ('rejected', 'archived'))
           AND (? = 0 OR COALESCE(last_validated, updated_at, created_at) >= ?)
+          AND (scope IS NULL OR scope = 'global')
         ORDER BY success_count DESC, COALESCE(last_validated, updated_at, created_at) DESC, rowid ASC
         LIMIT ?`,
     )

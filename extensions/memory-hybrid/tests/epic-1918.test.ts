@@ -318,6 +318,22 @@ describe("transcript importers (#1915)", () => {
     expect(redacted).toBeGreaterThan(0);
     expect(text).toContain("[REDACTED:");
   });
+
+  it("redacts Anthropic and OpenAI project key formats (#2067-followup)", () => {
+    const anthropic = redactSecretsInText("ANTHROPIC_API_KEY=sk-ant-api03-fakefakefakefakefakefakefake");
+    expect(anthropic.redacted).toBeGreaterThan(0);
+    expect(anthropic.text).not.toContain("sk-ant-api03");
+
+    const openaiProject = redactSecretsInText("key: sk-proj-fakefakefakefakefakefakefakefakefake");
+    expect(openaiProject.redacted).toBeGreaterThan(0);
+    expect(openaiProject.text).not.toContain("sk-proj-fake");
+  });
+
+  it("redacts keyword-based secrets that have no recognizable key prefix (#2067-followup)", () => {
+    const { text, redacted } = redactSecretsInText("password: hunter2-fake-not-real-secret-value");
+    expect(redacted).toBeGreaterThan(0);
+    expect(text).not.toContain("hunter2-fake-not-real-secret-value");
+  });
 });
 
 describe("pin quota (#1911)", () => {
