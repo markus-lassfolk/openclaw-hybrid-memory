@@ -10,9 +10,21 @@ export type AssistantMessageTextResult = {
   source: AssistantMessageTextSource;
 };
 
+function stripLeadingReasoningBlocks(value: string): string {
+  let text = value.trim();
+  for (;;) {
+    const next = text
+      .replace(/^(?:<think>|<thinking>|<reasoning>|<analysis>)\s*[\s\S]*?\s*<\/(?:think|thinking|reasoning|analysis)>\s*/i, "")
+      .replace(/^```(?:think|thinking|reasoning|analysis)\s*[\s\S]*?```\s*/i, "")
+      .trim();
+    if (next === text) return text;
+    text = next;
+  }
+}
+
 function trimNonEmpty(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  const trimmed = value.trim();
+  const trimmed = stripLeadingReasoningBlocks(value);
   return trimmed.length > 0 ? trimmed : null;
 }
 
@@ -24,11 +36,13 @@ function contentBlocksToString(content: unknown): string | null {
     const block = part as Record<string, unknown>;
     const type = typeof block.type === "string" ? block.type : "";
     if (type === "text" && typeof block.text === "string" && block.text.trim()) {
-      parts.push(block.text.trim());
+      const text = trimNonEmpty(block.text);
+      if (text) parts.push(text);
       continue;
     }
     if (typeof block.text === "string" && block.text.trim()) {
-      parts.push(block.text.trim());
+      const text = trimNonEmpty(block.text);
+      if (text) parts.push(text);
     }
   }
   const joined = parts.join("\n").trim();

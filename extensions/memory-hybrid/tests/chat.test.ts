@@ -130,6 +130,20 @@ describe("chatComplete", () => {
     );
   });
 
+  it("resolves shorthand MiniMax M3 model aliases", async () => {
+    await chatComplete({
+      model: "minimax/m3",
+      content: "test",
+      openai: mockOpenai,
+    });
+    expect(mockOpenai.chat.completions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "minimax/MiniMax-M3",
+      }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
   it("uses max_completion_tokens and thinking disabled for MiniMax M3", async () => {
     await chatComplete({
       model: "minimax/MiniMax-M3",
