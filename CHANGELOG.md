@@ -21,6 +21,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.199] - 2026-07-10
+
+### Fixed
+
+Follow-up QA batch (9 fixes) on `claude/memory-hybrid-qa-followup`, from a second flat sweep round (`services/` reflection+consolidation, `services/` retrieval+embedding, remaining `cli/`):
+
+- **`services/consolidation.ts`**: `runConsolidate`'s final per-cluster cleanup step (vector deletion + fact deletes) was the only step in the loop with no try/catch, so a single cluster's cleanup failure threw out of the whole function, discarding every already-merged cluster's result. Now contained per-cluster, incrementing `clustersFailed` and continuing.
+- **`services/reflection.ts`**: `runReflection` and `runReflectionMeta` never counted vector-store/metadata write failures toward their final `semanticOutcome`/`diagnostics.status`, unlike the already-correct sibling `runReflectionRules`, so an infra failure during either pipeline could still report `"success"`/`"ok"`. Now both count `vectorStoreFailures`/`metadataFailures` into a `"partial"` outcome, matching the established pattern.
+- **`services/retrieval-orchestrator.ts`**: `ClusterCache.getClusterMap()` cached cluster membership keyed only by `FactsDB` instance identity and never threaded the caller's `scopeFilter` into `detectClusters()`. Since one `FactsDB` instance is shared across tenants and `memory_links` carries no scope column, one tenant's retrieval could receive a cluster-boost ranking computed over a different tenant's facts. Now scoped by a per-tenant cache key nested inside the existing per-instance cache, with `scopeFilter` threaded through to `detectClusters()`.
+- **`services/diversity.ts`**: `jaccardBigramSimilarity` returned `1` (maximally similar) whenever both texts' bigram sets were empty — true for any text of length <= 1 after normalization — so two distinct single-character facts (e.g. two unrelated one-digit facts) were treated as near-duplicates and one could be wrongly demoted. Now falls back to direct string equality when both bigram sets are empty.
+- **`cli/skills.ts`**: `skills queue --limit` computed `Number(opts.limit)` with no `Number.isFinite` check; a non-numeric value became `NaN`, and `CrystallizationStore.list()`'s `filter?.limit && filter.limit > 0` guard is falsy for `NaN`, so the SQL `LIMIT` clause was silently skipped and the whole unfiltered queue was returned. Now validated, mirroring the sibling `suggest` command's existing check.
+- **`cli/commands/manage/register-storage-graph-audit.ts`**: `list --tier` cast the flag straight through with no runtime validation, unlike the sibling `dump` command's `--order` flag; `listFacts()` silently returns `[]` for any unrecognized tier. Now validated against `DASHBOARD_TIER_FILTER` before use.
+- **`cli/commands/manage/register-budget-proposals.ts`**: `budget simulate --budget` had no `Number.isFinite`/positivity check; `trimToBudget()`'s `currentTokens <= tokenBudget` guard is always false for `NaN` or a negative budget, so the trim simulation ran to near-exhaustion of the non-preserved pool instead of the CLI rejecting the flag.
+- **`cli/distill.ts`**: `extract-daily` parsed `--days` with zero validation (not even a NaN check); `extract-directives`/`extract-reinforcement` did the same. A negative/non-numeric `--days` flows into a `for (let d = 0; d < daysBack; d++)` loop (`cmd-extract-daily.ts`) that silently no-ops when the condition is false from the start, reporting success with zero facts processed. `distill`/`extract-procedures` guarded NaN but not negative values. All five `--days` sites now share one `parseDaysFlag()` helper that rejects anything but a positive integer (or an omitted/empty flag, preserving each command's existing default).
+- **`cli/commands/manage/register-procedure-lifecycle.ts`**: `uninstall`'s `config_error` branch logged the error but never set `process.exitCode`, so a corrupted/unwritable `openclaw.json` during uninstall exited 0 even though the plugin's `enabled:false` flag was never written. `backup`'s `integrityOk:false` branch only warned, unlike the sibling `backup verify` subcommand which already sets exit code 1 for the identical condition. Both now set `process.exitCode = 1`.
+
+One candidate from the same sweep round was investigated and rejected as a false positive: `services/issue-retrieval.ts`'s `runIssueRetrievalStrategy` increments its RRF `rank` counter once per related-fact instead of once per issue. A 500,000-trial brute-force comparison of the old and new formulas (including cases where a fact is linked to multiple issues) found the two never produce a different final fact order or membership — the score-monotonicity across issues sorted descending, combined with the stable sort's insertion-order tie-breaking, means the discrepancy never surfaces through the public API. Reverted; no fix applied.
+
+Each fix verified via `git stash` to fail without the fix, tsc clean, biome clean (zero new findings beyond pre-existing baseline on every touched file), and passing related test suites with zero regressions.
+
 ## [2026.7.198] - 2026-07-10
 
 ### Fixed
