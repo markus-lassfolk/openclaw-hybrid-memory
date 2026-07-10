@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createCipheriv, createDecipheriv, pbkdf2Sync, randomBytes } from "node:crypto";
 import { isValidCategory } from "../../../config.js";
+import { DASHBOARD_TIER_FILTER } from "../../../backends/facts-db/stats.js";
 import { buildAuditFailureArtifact, buildAuditHealthExitInfo } from "../../../services/audit-health-exit-info.js";
 import { listDumpTypeAliases, runSqliteTableDump } from "../../../services/cli-sql-dump.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
@@ -934,6 +935,13 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
             const limitParsed = Number.parseInt(opts?.limit ?? "10", 10);
             if (!Number.isFinite(limitParsed) || limitParsed < 1 || limitParsed > 50_000) {
               console.error("error: --limit must be an integer from 1 to 50000");
+              process.exitCode = 1;
+              return;
+            }
+            if (opts?.tier != null && opts.tier !== "" && !DASHBOARD_TIER_FILTER.has(opts.tier)) {
+              console.error(
+                `error: --tier must be one of: ${[...DASHBOARD_TIER_FILTER].join(", ")} (got: ${opts.tier})`,
+              );
               process.exitCode = 1;
               return;
             }
