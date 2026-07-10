@@ -970,6 +970,7 @@ export class CredentialsDB extends BaseSqliteStore {
 
   get(service: string, type?: CredentialType): CredentialEntry | null {
     this.maybeMigrateLegacyCredentialTypes();
+    this.maybeAdoptExternalVaultMigration();
     const row = type
       ? (this.liveDb.prepare("SELECT * FROM credentials WHERE service = ? AND type = ?").get(service, type) as
           | Record<string, unknown>
@@ -1132,6 +1133,7 @@ export class CredentialsDB extends BaseSqliteStore {
    */
   listAllWithSkipped(): { entries: CredentialEntry[]; skippedCount: number } {
     this.maybeMigrateLegacyCredentialTypes();
+    this.maybeAdoptExternalVaultMigration();
     const rows = this.liveDb.prepare("SELECT * FROM credentials ORDER BY service, type").all() as Array<
       Record<string, unknown>
     >;

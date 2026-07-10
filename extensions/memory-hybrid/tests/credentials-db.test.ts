@@ -291,6 +291,86 @@ describe("CredentialsDB cross-instance", () => {
     expect(dbC.get("new-svc", "api_key")?.value).toBe("new-secret");
     dbC.close();
   });
+
+  it("get() adopts a concurrent process's v1->v2 migration instead of decrypting with a stale v1 key (regression)", () => {
+    const dbPath = join(tmpDir, "race-get.db");
+
+    // Same hand-crafted legacy v1 vault setup as the store() regression above, but with two
+    // credentials so dbA's own get() can migrate the vault while a *different* row is what dbB
+    // reads afterward -- migrateLegacyVault() re-encrypts every row in the vault, not just the
+    // one dbA happened to fetch.
+    const v1Key = deriveKey(TEST_ENCRYPTION_KEY, Buffer.alloc(0), 1);
+    const raw = new DatabaseSync(dbPath);
+    raw.exec("CREATE TABLE IF NOT EXISTS vault_meta (key TEXT PRIMARY KEY, value BLOB NOT NULL)");
+    raw.exec(
+      `CREATE TABLE IF NOT EXISTS credentials (
+         service TEXT NOT NULL, type TEXT NOT NULL DEFAULT 'other', value BLOB NOT NULL,
+         url TEXT, notes TEXT, created INTEGER NOT NULL, updated INTEGER NOT NULL, expires INTEGER,
+         PRIMARY KEY (service, type)
+       )`,
+    );
+    const now = Math.floor(Date.now() / 1000);
+    const insert = raw.prepare(
+      "INSERT INTO credentials (service, type, value, url, notes, created, updated, expires) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    );
+    insert.run("legacy-svc-1", "api_key", encryptValue("legacy-secret-1", v1Key), null, null, now, now, null);
+    insert.run("legacy-svc-2", "api_key", encryptValue("legacy-secret-2", v1Key), null, null, now, now, null);
+    raw.close();
+
+    const dbA = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+    const dbB = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+
+    // dbA's get() triggers the lazy v1 -> v2 migration, re-encrypting BOTH rows on disk.
+    expect(dbA.get("legacy-svc-1", "api_key")?.value).toBe("legacy-secret-1");
+    expect(dbA.getVaultStatus().kdfVersion).toBe(2);
+
+    // dbB never saw the migration -- its in-memory key/version are still stale v1. Before the
+    // fix, get() decrypted directly with that stale key against now-v2 ciphertext and threw
+    // "Unsupported state or unable to authenticate data" instead of adopting the new key first.
+    expect(dbB.getVaultStatus().kdfVersion).toBe(1);
+    expect(dbB.get("legacy-svc-2", "api_key")?.value).toBe("legacy-secret-2");
+
+    dbA.close();
+    dbB.close();
+  });
+
+  it("listAllWithSkipped() adopts a concurrent process's v1->v2 migration instead of silently dropping valid rows (regression)", () => {
+    const dbPath = join(tmpDir, "race-list.db");
+
+    const v1Key = deriveKey(TEST_ENCRYPTION_KEY, Buffer.alloc(0), 1);
+    const raw = new DatabaseSync(dbPath);
+    raw.exec("CREATE TABLE IF NOT EXISTS vault_meta (key TEXT PRIMARY KEY, value BLOB NOT NULL)");
+    raw.exec(
+      `CREATE TABLE IF NOT EXISTS credentials (
+         service TEXT NOT NULL, type TEXT NOT NULL DEFAULT 'other', value BLOB NOT NULL,
+         url TEXT, notes TEXT, created INTEGER NOT NULL, updated INTEGER NOT NULL, expires INTEGER,
+         PRIMARY KEY (service, type)
+       )`,
+    );
+    const now = Math.floor(Date.now() / 1000);
+    const insert = raw.prepare(
+      "INSERT INTO credentials (service, type, value, url, notes, created, updated, expires) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    );
+    insert.run("legacy-svc-1", "api_key", encryptValue("legacy-secret-1", v1Key), null, null, now, now, null);
+    insert.run("legacy-svc-2", "api_key", encryptValue("legacy-secret-2", v1Key), null, null, now, now, null);
+    raw.close();
+
+    const dbA = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+    const dbB = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+
+    expect(dbA.get("legacy-svc-1", "api_key")?.value).toBe("legacy-secret-1");
+    expect(dbA.getVaultStatus().kdfVersion).toBe(2);
+    expect(dbB.getVaultStatus().kdfVersion).toBe(1);
+
+    // Before the fix, dbB's stale v1 key failed to decrypt every now-v2-encrypted row, so both
+    // perfectly valid credentials were silently dropped into skippedCount instead of returned.
+    const result = dbB.listAllWithSkipped();
+    expect(result.skippedCount).toBe(0);
+    expect(result.entries.map((e) => e.service).sort()).toEqual(["legacy-svc-1", "legacy-svc-2"]);
+
+    dbA.close();
+    dbB.close();
+  });
 });
 
 // ---------------------------------------------------------------------------
