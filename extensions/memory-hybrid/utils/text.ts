@@ -43,9 +43,12 @@ export function estimateTokensForDisplay(text: string): number {
  * @param overlapRatio - Fraction of chunk to overlap (default 0.1)
  */
 export function chunkSessionText(text: string, maxTokens: number, overlapRatio = 0.1): string[] {
-  const maxChars = maxTokens * 4;
+  const maxChars = Math.max(1, maxTokens * 4);
   if (text.length <= maxChars) return [text];
-  const overlapChars = Math.floor(maxChars * overlapRatio);
+  // Clamp below maxChars so the offset always advances by at least 1 char per iteration --
+  // an unclamped overlapChars (e.g. from a maxTokens <= 0 caller, or overlapRatio >= 1) can make
+  // maxChars - overlapChars <= 0, which loops forever pushing empty-or-non-advancing chunks.
+  const overlapChars = Math.min(maxChars - 1, Math.max(0, Math.floor(maxChars * overlapRatio)));
   const chunks: string[] = [];
   let offset = 0;
   while (offset < text.length) {
