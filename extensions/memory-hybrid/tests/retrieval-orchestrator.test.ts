@@ -370,4 +370,60 @@ describe("ClusterCache", () => {
     expect(first).not.toBe(second);
     expect(Array.from(second.keys()).sort()).toEqual(["a1", "a2"]);
   });
+
+  it("does not leak one tenant's cluster assignments to another tenant sharing the same FactsDB instance (regression)", () => {
+    // A single shared FactsDB instance (the realistic case: one vault, many tenants), with
+    // memory_links spanning two tenants' facts. getById is scope-aware, matching how the real
+    // FactsDB.getById(id, { scopeFilter }) behaves -- returns null for facts outside scope.
+    const factOwners = new Map<string, string>([
+      ["a1", "tenant-a"],
+      ["a2", "tenant-a"],
+      ["b1", "tenant-b"],
+      ["b2", "tenant-b"],
+    ]);
+    const allFactIds = [...factOwners.keys()];
+    const allLinks = [
+      { sourceFactId: "a1", targetFactId: "a2" },
+      { sourceFactId: "b1", targetFactId: "b2" },
+    ];
+    const sharedDb: FactLookup & ClusterFactLookup = {
+      getById: (id: string, options?: { scopeFilter?: { userId?: string | null } | null }) => {
+        const owner = factOwners.get(id);
+        if (!owner) return null;
+        const requestedTenant = options?.scopeFilter?.userId;
+        if (requestedTenant && requestedTenant !== owner) return null;
+        return {
+          id,
+          text: `fake fact ${id}`,
+          category: "fact",
+          importance: 0.5,
+          entity: null,
+          key: null,
+          value: null,
+          source: "test",
+          createdAt: 0,
+          decayClass: "stable",
+          expiresAt: null,
+          lastConfirmedAt: 0,
+          confidence: 0.5,
+        };
+      },
+      getAllLinkedFactIds: () => allFactIds,
+      getAllLinks: () => allLinks,
+      linksCount: () => allLinks.length,
+    };
+
+    const cache = new ClusterCache();
+    const tenantAView = cache.getClusterMap(sharedDb, 1, { userId: "tenant-a" });
+    expect(Array.from(tenantAView.keys()).sort()).toEqual(["a1", "a2"]);
+
+    const tenantBView = cache.getClusterMap(sharedDb, 1, { userId: "tenant-b" });
+    expect(Array.from(tenantBView.keys()).sort()).toEqual(["b1", "b2"]);
+
+    // Re-requesting tenant A's view (within the TTL window, after tenant B's request populated
+    // the cache) must still return only tenant A's own facts -- not tenant B's cached clusters,
+    // and not an unscoped mix of both.
+    const tenantAViewAgain = cache.getClusterMap(sharedDb, 1, { userId: "tenant-a" });
+    expect(Array.from(tenantAViewAgain.keys()).sort()).toEqual(["a1", "a2"]);
+  });
 });
