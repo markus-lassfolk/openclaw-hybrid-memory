@@ -25,6 +25,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.207] - 2026-07-10
+
+### Fixed
+
+Follow-up QA batch on `claude/memory-hybrid-qa-followup`, from a tenth sweep round — this round targeted the recurring unvalidated-numeric-CLI-flag bug class specifically (rather than another blanket directory sweep), triaging every remaining `Number.parseInt(opts...)`/`Number.parseFloat(opts...)` call site across `cli/**/*.ts`. All but one were already guarded from earlier rounds:
+
+- **`cli/benchmark.ts`**: `benchmark run --iterations` and `benchmark report --iterations` both parsed the flag with raw `Number.parseInt` and never checked `Number.isFinite`. A non-numeric value (e.g. `"abc"`) parses to `NaN`, which makes `measureLatency()`'s `for (let i = 0; i < iterations; i++)` loop bound always false — the command then silently printed `"p50=0.00ms p95=0.00ms p99=0.00ms (n=0)"` with exit code 0 instead of rejecting the bad flag, and `benchmark report` fed the same 0-sample result into the quality report's failure-rate calculation without ever setting a non-zero exit code either. Both now validate the same way the codebase's other numeric CLI flags do.
+
+Verified via a stash-based regression proof. tsc clean, biome clean (identical distribution before/after). Full sweep confirms the unvalidated-numeric-CLI-flag bug class is now effectively closed out across `cli/**/*.ts`.
+
 ## [2026.7.206] - 2026-07-10
 
 ### Fixed

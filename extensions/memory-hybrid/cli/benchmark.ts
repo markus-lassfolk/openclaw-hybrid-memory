@@ -233,6 +233,17 @@ export function registerBenchmarkCommands(mem: Chainable, _ctx: HybridMemCliCont
       const cfg = (_ctx.cfg ?? {}) as Record<string, unknown>;
       const dbPath = resolveBenchmarkDbPath(cfg);
 
+      const iterations = typeof opts.iterations === "string" ? Number.parseInt(opts.iterations, 10) : 100;
+      // A non-numeric --iterations (e.g. "abc") parses to NaN, which makes measureLatency's
+      // `for (let i = 0; i < iterations; i++)` loop bound always false -- the command then
+      // silently prints "p50=0.00ms p95=0.00ms p99=0.00ms (n=0)" with exit code 0 instead of
+      // rejecting the bad flag (#2067-followup).
+      if (!Number.isFinite(iterations) || iterations < 1) {
+        console.error("error: --iterations must be a positive integer");
+        process.exitCode = 1;
+        return;
+      }
+
       await runBenchmarkCommand(
         { dbPath },
         {
@@ -240,7 +251,7 @@ export function registerBenchmarkCommands(mem: Chainable, _ctx: HybridMemCliCont
           accuracy: parseBooleanOption(opts.accuracy),
           shadow: parseBooleanOption(opts.shadow),
           format: (opts.format === "json" ? "json" : "text") as "text" | "json",
-          iterations: typeof opts.iterations === "string" ? Number.parseInt(opts.iterations, 10) : 100,
+          iterations,
           judgeModel: typeof opts["judge-model"] === "string" ? opts["judge-model"] : "openai/gpt-4.1-nano",
         },
       );
@@ -259,6 +270,13 @@ export function registerBenchmarkCommands(mem: Chainable, _ctx: HybridMemCliCont
       const dbPath = resolveBenchmarkDbPath(cfg);
       const format = opts.format === "json" ? "json" : "markdown";
       const iterations = typeof opts.iterations === "string" ? Number.parseInt(opts.iterations, 10) : 100;
+      // Same unvalidated-NaN silent-zero-sample pattern as `benchmark run --iterations` above
+      // (#2067-followup).
+      if (!Number.isFinite(iterations) || iterations < 1) {
+        console.error("error: --iterations must be a positive integer");
+        process.exitCode = 1;
+        return;
+      }
       const results = await runAllBenchmarks(
         { dbPath },
         {
