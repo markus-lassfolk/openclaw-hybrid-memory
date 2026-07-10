@@ -66,8 +66,19 @@ export function resolveGatewayScopeFilter(
   cfg: ScopeConfig,
 ): ScopeFilter {
   const { userId, agentId, sessionId } = readGatewayIdentity(api);
-  const built = buildToolScopeFilter({ userId, agentId, sessionId }, agentId, cfg);
-  return built ?? globalOnlyScopeFilter();
+  if (!userId && !agentId && !sessionId) {
+    return globalOnlyScopeFilter();
+  }
+  if (agentId && agentId === cfg.multiAgent.orchestratorId) {
+    // The orchestrator gets the configured/global fallback rather than a narrow scope -- it's
+    // the top-level coordinating agent, not a per-session worker.
+    return cfg.autoRecall.scopeFilter ?? globalOnlyScopeFilter();
+  }
+  // Unlike buildToolScopeFilter's untrusted-tool-param path, gateway identity (api.context) is
+  // already verified by trusted middleware, so userId/sessionId must be applied as-is instead of
+  // being replaced by a static autoRecall.scopeFilter value -- otherwise every session under the
+  // same non-orchestrator agent collapses onto one shared scope (#security).
+  return { userId, agentId, sessionId };
 }
 
 /** Resolve corpus supplement scope from session key or static config filter. */
