@@ -26,6 +26,7 @@ import {
   rollbackVaultCredentialWrite,
 } from "../../services/credential-vault-pointer.js";
 import { autoLinkSemanticallySimilarFacts } from "../../services/graph-autolink.js";
+import { claimInlineEnrichment } from "../../services/post-store-enrichment.js";
 import { AllEmbeddingProvidersFailed, shouldSuppressEmbeddingError } from "../../services/embeddings.js";
 import { extractEntityMentionsWithLlm } from "../../services/entity-enrichment.js";
 import { addOperationBreadcrumb, capturePluginError } from "../../services/error-reporter.js";
@@ -432,7 +433,9 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
           // must never be shared across scopes, or an agent/user-scoped store can be wrongly
           // rejected as "duplicate" against an unrelated global fact with the same text (or vice
           // versa) — see the scope guard in services/dedupe-policy.ts's applyDedupe().
-          if (storeFactsDb.hasDuplicate(textToStore, "conversation", { category, entity, key, value }, scope, scopeTarget)) {
+          if (
+            storeFactsDb.hasDuplicate(textToStore, "conversation", { category, entity, key, value }, scope, scopeTarget)
+          ) {
             return {
               content: [
                 {
@@ -734,7 +737,14 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               });
             }
             if (similarFacts.length === 0) {
-              similarFacts = storeFactsDb.findSimilarForClassification(textToStore, entity ?? null, key ?? null, 5, scope, scopeTarget);
+              similarFacts = storeFactsDb.findSimilarForClassification(
+                textToStore,
+                entity ?? null,
+                key ?? null,
+                5,
+                scope,
+                scopeTarget,
+              );
             }
             if (similarFacts.length > 0) {
               const classification = await classifyMemoryOperation(
@@ -1043,27 +1053,23 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
 
           // Scope was resolved above (before classify-before-write) for WAL and classification consistency.
 
-          const walEntryId = await writeStoreWal(
-            storeWal,
-            "store",
-            {
-              text: textToStore,
-              why: whyStored,
-              category,
-              importance,
-              entity,
-              key,
-              value,
-              source: "conversation",
-              decayClass: paramDecayClass,
-              summary,
-              tags,
-              vector,
-              embeddingModelName: vector ? embeddings.modelName : undefined,
-              scope,
-              scopeTarget,
-            },
-          );
+          const walEntryId = await writeStoreWal(storeWal, "store", {
+            text: textToStore,
+            why: whyStored,
+            category,
+            importance,
+            entity,
+            key,
+            value,
+            source: "conversation",
+            decayClass: paramDecayClass,
+            summary,
+            tags,
+            vector,
+            embeddingModelName: vector ? embeddings.modelName : undefined,
+            scope,
+            scopeTarget,
+          });
           if (storeWalWriteFailed(storeWal, walEntryId)) {
             return walWriteFailedResponse();
           }
@@ -1383,9 +1389,12 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               }
             }
 
-            // Auto-link to similar facts when enabled (embedding-gated when vector available)
+            // Auto-link to similar facts when enabled (embedding-gated when vector available).
+            // Claim the id with the universal post-store enricher first: this path owns the
+            // freshly computed vector, so it links inline and the subscriber must not repeat it.
             let autoLinked = 0;
             if (cfg.graph.enabled && cfg.graph.autoLink) {
+              claimInlineEnrichment(entry.id);
               const entryScope = entry.scope ?? "global";
               const entryScopeTarget = entryScope === "global" ? null : (entry.scopeTarget ?? null);
               autoLinked = await autoLinkSemanticallySimilarFacts(

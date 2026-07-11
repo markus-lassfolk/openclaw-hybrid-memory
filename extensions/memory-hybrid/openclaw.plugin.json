@@ -1678,6 +1678,15 @@
             "type": "boolean",
             "description": "Strengthen RELATED_TO links when facts are recalled together (default: true; bounded by linkDecay)"
           },
+          "temporalEdges": {
+            "type": "boolean",
+            "description": "Chain PRECEDED_BY edges between consecutive facts of a session (default: true)"
+          },
+          "autoLinkBudgetPerMin": {
+            "type": "number",
+            "minimum": 1,
+            "description": "Max facts/minute enriched by the universal post-store auto-linker (default: 30)"
+          },
           "linkDecay": {
             "type": "object",
             "additionalProperties": false,

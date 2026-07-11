@@ -27,6 +27,7 @@ export const LINK_COLORS: Record<string, string> = {
   SUPERSEDES: "#ef4444",
   INSTANCE_OF: "#22c55e",
   CONTRADICTS: "#f43f5e",
+  PRECEDED_BY: "#64748b",
   superseded_by: "#ef4444",
 };
 

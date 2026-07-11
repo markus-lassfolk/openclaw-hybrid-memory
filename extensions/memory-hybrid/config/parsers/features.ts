@@ -93,7 +93,9 @@ export function parseGraphConfig(cfg: Record<string, unknown>): GraphConfig {
   }
   return {
     enabled: graphRaw?.enabled !== false,
-    autoLink: graphRaw?.autoLink === true,
+    // Default ON: neighbors at formation for EVERY write path (post-store enrichment) — a fact
+    // without edges can never be found associatively.
+    autoLink: graphRaw?.autoLink !== false,
     autoLinkStrength,
     autoLinkSimilarityThreshold,
     autoLinkMinScore: autoLinkStrength,
@@ -116,6 +118,11 @@ export function parseGraphConfig(cfg: Record<string, unknown>): GraphConfig {
     // Default ON: co-recalled memories bond (Hebbian). Bounded by linkDecay below + hubDegreeCap,
     // so the graph learns from use without saturating.
     strengthenOnRecall: graphRaw?.strengthenOnRecall !== false,
+    temporalEdges: graphRaw?.temporalEdges !== false,
+    autoLinkBudgetPerMin:
+      typeof graphRaw?.autoLinkBudgetPerMin === "number" && graphRaw.autoLinkBudgetPerMin > 0
+        ? Math.floor(graphRaw.autoLinkBudgetPerMin)
+        : 30,
     linkDecay: parseLinkDecayConfig(graphRaw?.linkDecay),
     hubDegreeCap:
       graphRaw?.hubDegreeCap === null

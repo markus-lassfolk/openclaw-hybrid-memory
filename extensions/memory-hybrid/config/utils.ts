@@ -75,7 +75,7 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
     },
     autoClassify: { enabled: true, suggestCategories: true },
     store: { fuzzyDedupe: false, classifyBeforeWrite: false },
-    graph: { enabled: true, autoLink: false, useInRecall: true, strengthenOnRecall: true, hubDegreeCap: 500 },
+    graph: { enabled: true, autoLink: true, useInRecall: true, strengthenOnRecall: true, hubDegreeCap: 500 },
     procedures: { enabled: true, requireApprovalForPromote: true },
     reflection: { enabled: false },
     wal: { enabled: true },

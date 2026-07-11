@@ -12,6 +12,7 @@ import { getMemoryTriggers } from "../services/auto-capture.js";
 import { detectCategory as detectCategoryUtil, shouldCapture as shouldCaptureUtil } from "../services/capture-utils.js";
 import { ContextualVariantGenerator, VariantGenerationQueue } from "../services/contextual-variants.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { wirePostStoreEnrichment } from "../services/post-store-enrichment.js";
 import { ChangeFeed } from "../services/change-feed.js";
 import { runReflection, runReflectionMeta, runReflectionRules } from "../services/reflection.js";
 import { PythonBridge } from "../services/python-bridge.js";
@@ -647,6 +648,16 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     bootstrapSettledRef.value = true;
   });
 
+  // Universal at-formation enrichment (living-memory P2.1/P4.2): every newlyStored fact — from
+  // ANY write path — gets neighbors (auto-links) and a PRECEDED_BY temporal chain, via the
+  // factStored bus event. Idempotent; deps refresh on re-register.
+  wirePostStoreEnrichment({
+    factsDb: dbContext.factsDb,
+    vectorDb: dbContext.vectorDb,
+    cfg,
+    logger: logApi.logger,
+  });
+
   const newRuntime: PluginRuntime = {
     cfg,
     parsedCfgSnapshot,
@@ -724,9 +735,7 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     logger: logApi.logger,
     pluginVersion: versionInfo.pluginVersion,
     registerContextEngine:
-      typeof api.registerContextEngine === "function"
-        ? api.registerContextEngine.bind(api)
-        : undefined,
+      typeof api.registerContextEngine === "function" ? api.registerContextEngine.bind(api) : undefined,
   });
 
   // Phase 2.6 / Phase 3: Single plugin context satisfying MemoryPluginAPI (stable internal API).

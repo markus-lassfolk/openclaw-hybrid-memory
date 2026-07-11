@@ -7,6 +7,9 @@ export const MEMORY_LINK_TYPES = [
   "DEPENDS_ON",
   "CONTRADICTS",
   "INSTANCE_OF",
+  // Temporal chain: this fact was formed right after the target in the same session ("edges
+  // carry across time"). Excluded from Hebbian strengthening and link decay (RELATED_TO-only).
+  "PRECEDED_BY",
 ] as const;
 
 export type MemoryLinkType = (typeof MEMORY_LINK_TYPES)[number];

@@ -123,5 +123,6 @@ export const LINK_TYPES = [
   "SUPERSEDES",
   "INSTANCE_OF",
   "CONTRADICTS",
+  "PRECEDED_BY",
 ] as const;
 export type LinkType = (typeof LINK_TYPES)[number];

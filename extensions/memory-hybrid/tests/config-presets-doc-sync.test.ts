@@ -42,7 +42,8 @@ describe("PRESET_OVERRIDES (config/utils.ts) — invariants for CONFIGURATION-MO
   it("minimal: graph/procedures on, reflection off, entity lookup off, authFailure on", () => {
     const p = PRESET_OVERRIDES.minimal;
     expect(p.reflection).toEqual({ enabled: false });
-    expect(p.graph).toMatchObject({ enabled: true, autoLink: false, useInRecall: true });
+    // autoLink flipped ON (living-memory P2.1: neighbors at formation for every write path).
+    expect(p.graph).toMatchObject({ enabled: true, autoLink: true, useInRecall: true });
     expect(p.procedures).toMatchObject({ enabled: true });
     const ar = p.autoRecall as Record<string, unknown>;
     expect((ar.entityLookup as { enabled: boolean }).enabled).toBe(false);

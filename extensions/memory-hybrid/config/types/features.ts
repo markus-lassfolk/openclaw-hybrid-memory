@@ -40,6 +40,10 @@ export type GraphConfig = {
   autoSupersede: boolean;
   /** When true, strengthen RELATED_TO links between facts recalled together (Hebbian). Default true — bounded by linkDecay + hubDegreeCap. */
   strengthenOnRecall: boolean;
+  /** Chain PRECEDED_BY edges between consecutive facts of a session (default true). */
+  temporalEdges: boolean;
+  /** Max facts/minute enriched by the universal post-store auto-linker (default 30). */
+  autoLinkBudgetPerMin: number;
   /** Use-it-or-lose-it decay for Hebbian RELATED_TO links (typed/curated links never decay). */
   linkDecay: {
     enabled: boolean;
