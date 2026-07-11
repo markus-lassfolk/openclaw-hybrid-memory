@@ -11,6 +11,7 @@ import "../config.js";
 import { trimBlockToBudget } from "../services/context-block-trim.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { resolveFactsDbForEntry, resolveRecallInjectionText } from "../services/fragment-recall.js";
+import { strengthenHebbianLinks } from "../services/hebbian.js";
 import { recordInjectionAttribution } from "../services/injection-attribution-store.js";
 import { type InjectionFilterMode, scanInjectionFilter } from "../services/injection-filter.js";
 import { attributeInjectionToTurn, segmentTranscriptIntoTurns } from "../services/per-turn-attribution.js";
@@ -40,42 +41,6 @@ import { resolveRecallScopeFilter } from "./stage-recall/degraded-recall.js";
 import type { LifecycleContext, RecallResult } from "./types.js";
 
 const INJECTION_STAGE_TIMEOUT_MS = 10_000;
-const HEBBIAN_MAX_K = 8;
-
-/** Collect top-K pairs and batch-strengthen in a single transaction, fire-and-forget. */
-function strengthenHebbianLinks(
-  ids: string[],
-  factsDb: LifecycleContext["factsDb"],
-  logger: { warn: (msg: string) => void },
-): void {
-  const topK = Array.from(new Set(ids)).slice(0, HEBBIAN_MAX_K);
-  const pairs: [string, string][] = [];
-  for (let i = 0; i < topK.length; i++) {
-    for (let j = i + 1; j < topK.length; j++) {
-      pairs.push([topK[i], topK[j]]);
-    }
-  }
-  if (pairs.length === 0) return;
-  setImmediate(() => {
-    try {
-      // Check database connection before deferred operation to prevent race condition during shutdown (#1288)
-      if (typeof factsDb.isOpen === "function" && !factsDb.isOpen()) {
-        return;
-      }
-      factsDb.strengthenRelatedLinksBatch(pairs);
-    } catch (err) {
-      const e = err instanceof Error ? err : new Error(String(err));
-      // Expected when the plugin is shutting down or the database closed mid-operation
-      if (!/database connection is not open/i.test(e.message)) {
-        capturePluginError(e, {
-          operation: "hebbian-strengthen",
-          subsystem: "stage-injection",
-        });
-        logger.warn(`memory-hybrid: hebbian link strengthening failed: ${err}`);
-      }
-    }
-  });
-}
 
 type InjectionSideEffects = {
   accessedIds?: string[];

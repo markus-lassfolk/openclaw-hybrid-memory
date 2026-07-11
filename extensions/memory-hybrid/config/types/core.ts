@@ -14,7 +14,10 @@ export type DecayClass = (typeof DECAY_CLASSES)[number];
 /** TTL defaults in seconds per decay class. null = never expires. */
 export const TTL_DEFAULTS: Record<DecayClass, number | null> = {
   permanent: null,
-  durable: 90 * 24 * 3600, // ~3 months
+  // 180d: durable was previously 90d — indistinguishable from `normal`, so the class's "lasts
+  // longer" promise was a no-op. Existing rows self-heal on next recall (refreshAccessedFacts
+  // renews expires_at from these defaults).
+  durable: 180 * 24 * 3600, // ~6 months
   // Issue #1186/#1189: trajectory lessons and other source-/importance-defaulted facts use
   // `normal` and need ~90 days of grace before they expire (was 14 days). Reinforcement on
   // recall keeps useful facts alive; never-recalled facts now actually expire.

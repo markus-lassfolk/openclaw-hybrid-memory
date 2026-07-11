@@ -91,12 +91,14 @@ describe("PRESET_OVERRIDES (config/utils.ts) — invariants for CONFIGURATION-MO
 });
 
 describe("parseConfig effective config — presets (CONFIGURATION-MODES.md)", () => {
-  it("preset defaults: queryExpansion off by default; graph.strengthenOnRecall false in minimal+ presets", () => {
+  it("preset defaults: queryExpansion off by default; graph.strengthenOnRecall ON in all presets (Hebbian, bounded by linkDecay)", () => {
     const modes: ConfigMode[] = ["local", "minimal", "enhanced", "complete"];
     for (const mode of modes) {
       const r = parseMode(mode);
       expect(r.queryExpansion.enabled, `mode=${mode}`).toBe(false);
-      expect(r.graph?.strengthenOnRecall, `mode=${mode}`).toBe(false);
+      expect(r.graph?.strengthenOnRecall, `mode=${mode}`).toBe(true);
+      // The safety valve for the Hebbian default must ship on with it.
+      expect(r.graph?.linkDecay?.enabled, `mode=${mode}`).toBe(true);
     }
   });
 

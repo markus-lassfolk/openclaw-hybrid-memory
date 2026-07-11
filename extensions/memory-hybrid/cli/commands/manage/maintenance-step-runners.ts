@@ -308,11 +308,15 @@ export function buildCliMaintenanceRunners(
   set("prune", async () => {
     // Shared with the plugin-cycle runner so CLI-triggered maintenance applies the SAME decay
     // semantics (this variant used to skip decayConfidence entirely).
-    const outcome = await runFactsPruneStep(b.factsDb, b.vectorDb, { operationPrefix: "orchestrator" });
+    const outcome = await runFactsPruneStep(b.factsDb, b.vectorDb, {
+      operationPrefix: "orchestrator",
+      decayMode: b.cfg.maintenance?.decay?.mode ?? "half-life",
+      secondChance: b.cfg.maintenance?.decay?.secondChance !== false,
+    });
     const [expiredCleanup, decayCleanup] = outcome.cleanups;
     const deleted = expiredCleanup.deleted + decayCleanup.deleted;
     const attempted = expiredCleanup.attempted + decayCleanup.attempted;
-    const summary = `pruned=${outcome.expired} decayed=${outcome.decayed} vectors=${deleted}/${attempted} failures=${outcome.vectorFailures} semantic=${outcome.vectorFailures > 0 ? "partial" : "success"}`;
+    const summary = `pruned=${outcome.expired} decayed=${outcome.decayed} reprieved=${outcome.secondChances} vectors=${deleted}/${attempted} failures=${outcome.vectorFailures} semantic=${outcome.vectorFailures > 0 ? "partial" : "success"}`;
     assertVectorCleanupNotPartial("prune", outcome.cleanups, summary);
     return summary;
   });
@@ -320,6 +324,12 @@ export function buildCliMaintenanceRunners(
   set("compact", async () => {
     const c = await b.runCompaction({ apply: true });
     return `hot=${c.hot} warm=${c.warm} cold=${c.cold} semantic=success`;
+  });
+
+  set("link-decay", async () => {
+    const { halfLifeDays, floor } = b.cfg.graph.linkDecay;
+    const r = b.factsDb.decayLinkStrengths({ halfLifeDays, floor });
+    return `decayed=${r.decayed} pruned=${r.pruned} halfLifeDays=${halfLifeDays} semantic=success`;
   });
 
   set("auto-classify", async () => {
@@ -900,7 +910,11 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
   const discoveredPath = join(dirname(deps.resolvedSqlitePath), ".discovered-categories.json");
 
   runners.set("prune", async () => {
-    const outcome = await runFactsPruneStep(deps.factsDb, deps.vectorDb, { operationPrefix: "orchestrator-cycle" });
+    const outcome = await runFactsPruneStep(deps.factsDb, deps.vectorDb, {
+      operationPrefix: "orchestrator-cycle",
+      decayMode: deps.cfg.maintenance?.decay?.mode ?? "half-life",
+      secondChance: deps.cfg.maintenance?.decay?.secondChance !== false,
+    });
     const hardPruned = outcome.expired;
     const softPruned = outcome.decayed;
     const [expiredCleanup, decayCleanup] = outcome.cleanups;
@@ -932,6 +946,12 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
       return `hot=${c.hot} warm=${c.warm} cold=${c.cold} semantic=success`;
     });
   }
+
+  runners.set("link-decay", async () => {
+    const { halfLifeDays, floor } = deps.cfg.graph.linkDecay;
+    const r = deps.factsDb.decayLinkStrengths({ halfLifeDays, floor });
+    return `decayed=${r.decayed} pruned=${r.pruned} halfLifeDays=${halfLifeDays} semantic=success`;
+  });
 
   if (deps.cfg.autoClassify?.enabled) {
     runners.set("auto-classify", async () => {

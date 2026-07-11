@@ -203,6 +203,14 @@ function migrateMemoryLinksTable(db: DatabaseSync): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_links_target ON memory_links(target_fact_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_links_type ON memory_links(link_type)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_links_source_type ON memory_links(source_fact_id, link_type)");
+
+  // Link-decay anchor: epoch seconds of the last strength write (strengthen OR decay re-anchor).
+  // Backfill = created_at so pre-existing links start their decay clock at creation, not at 1970.
+  const linkCols = db.prepare("PRAGMA table_info(memory_links)").all() as Array<{ name: string }>;
+  if (!linkCols.some((c) => c.name === "strength_updated_at")) {
+    db.exec("ALTER TABLE memory_links ADD COLUMN strength_updated_at INTEGER");
+    db.exec("UPDATE memory_links SET strength_updated_at = created_at WHERE strength_updated_at IS NULL");
+  }
 }
 
 /** Add tier column; default 'warm' for existing rows. */
@@ -1555,6 +1563,14 @@ function migrateFactsLifecycleColumns(db: DatabaseSync): void {
   add("mine_batch_id", "ALTER TABLE facts ADD COLUMN mine_batch_id TEXT");
   add("parent_fact_id", "ALTER TABLE facts ADD COLUMN parent_fact_id TEXT");
   db.exec("CREATE INDEX IF NOT EXISTS idx_facts_parent_fact_id ON facts(parent_fact_id)");
+  // Half-life decay anchor (living-memory P1.3): backfilled to NOW so pre-existing facts start
+  // their decay clock at migration, never retroactively (a year-old fact must not lose a year of
+  // confidence on upgrade). New facts fall back to created_at via COALESCE in the decay run.
+  if (!cols.some((c) => c.name === "last_decay_at")) {
+    db.exec("ALTER TABLE facts ADD COLUMN last_decay_at INTEGER");
+    db.exec("UPDATE facts SET last_decay_at = strftime('%s','now') WHERE last_decay_at IS NULL");
+  }
+  add("decay_second_chance_at", "ALTER TABLE facts ADD COLUMN decay_second_chance_at INTEGER");
 }
 
 function migrateMaintenanceRunsTable(db: DatabaseSync): void {

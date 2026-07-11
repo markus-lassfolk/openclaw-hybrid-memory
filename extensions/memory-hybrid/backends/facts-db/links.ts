@@ -17,8 +17,8 @@ function insertLinkRow(
   createdAt: number,
 ): void {
   db.prepare(
-    "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-  ).run(id, sourceFactId, targetFactId, linkType, clampedStrength, createdAt);
+    "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at, strength_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run(id, sourceFactId, targetFactId, linkType, clampedStrength, createdAt, createdAt);
 }
 
 export function createLink(
@@ -72,7 +72,11 @@ export function createOrStrengthenRelatedLink(
 
       const newStrength = Math.min(1, (existing?.strength ?? 0) + deltaStrength);
       if (existing) {
-        db.prepare("UPDATE memory_links SET strength = ? WHERE id = ?").run(newStrength, existing.id);
+        db.prepare("UPDATE memory_links SET strength = ?, strength_updated_at = ? WHERE id = ?").run(
+          newStrength,
+          Math.floor(Date.now() / 1000),
+          existing.id,
+        );
         box.value = {
           kind: "linkUpdated",
           event: {
@@ -130,6 +134,8 @@ export function updateLink(
   if (changes.strength !== undefined) {
     sets.push("strength = ?");
     params.push(Math.max(0, Math.min(1, changes.strength)));
+    sets.push("strength_updated_at = ?");
+    params.push(Math.floor(Date.now() / 1000));
   }
   if (sets.length === 0) return false;
   params.push(id);
@@ -170,9 +176,9 @@ export function strengthenRelatedLinksBatch(db: DatabaseSync, pairs: [string, st
   const selectStmt = db.prepare(
     `SELECT id, strength FROM memory_links WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'RELATED_TO'`,
   );
-  const updateStmt = db.prepare("UPDATE memory_links SET strength = ? WHERE id = ?");
+  const updateStmt = db.prepare("UPDATE memory_links SET strength = ?, strength_updated_at = ? WHERE id = ?");
   const insertStmt = db.prepare(
-    `INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?, ?, ?, 'RELATED_TO', ?, ?)`,
+    `INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at, strength_updated_at) VALUES (?, ?, ?, 'RELATED_TO', ?, ?, ?)`,
   );
   const now = Math.floor(Date.now() / 1000);
   const tx = createTransaction(db, () => {
@@ -182,13 +188,60 @@ export function strengthenRelatedLinksBatch(db: DatabaseSync, pairs: [string, st
       const existing = selectStmt.get(source, target) as { id: string; strength: number } | undefined;
       const newStrength = Math.max(0, Math.min(1, (existing?.strength ?? 0) + deltaStrength));
       if (existing) {
-        updateStmt.run(newStrength, existing.id);
+        updateStmt.run(newStrength, now, existing.id);
       } else {
-        insertStmt.run(randomUUID(), source, target, newStrength, now);
+        insertStmt.run(randomUUID(), source, target, newStrength, now, now);
       }
     }
   });
   tx();
+}
+
+/**
+ * "Use it or lose it" for Hebbian edges: exponentially decay RELATED_TO link strength by the time
+ * since its last strength write, then hard-prune links that fell below the floor. Typed/curated
+ * links (SUPERSEDES, CONTRADICTS, PART_OF, ...) never decay — they encode structure, not usage.
+ *
+ * Each decayed row re-anchors strength_updated_at = now, so repeated runs compose to exactly
+ * 0.5^(totalDays/halfLifeDays) regardless of run cadence.
+ */
+export function decayLinkStrengths(
+  db: DatabaseSync,
+  opts: { halfLifeDays: number; floor: number; nowSec?: number },
+): { decayed: number; pruned: number } {
+  const nowSec = opts.nowSec ?? Math.floor(Date.now() / 1000);
+  const halfLifeSec = Math.max(1, opts.halfLifeDays) * 86_400;
+  // Skip sub-hour deltas: repeated cycle runs shouldn't churn rows for negligible decay.
+  const minDeltaSec = 3_600;
+  const rows = db
+    .prepare(
+      `SELECT id, strength, COALESCE(strength_updated_at, created_at) AS anchored_at
+         FROM memory_links WHERE link_type = 'RELATED_TO'`,
+    )
+    .all() as Array<{ id: string; strength: number; anchored_at: number }>;
+
+  const updateStmt = db.prepare("UPDATE memory_links SET strength = ?, strength_updated_at = ? WHERE id = ?");
+  const toPrune: string[] = [];
+  let decayed = 0;
+  const tx = createTransaction(db, () => {
+    for (const row of rows) {
+      const deltaSec = nowSec - (row.anchored_at ?? nowSec);
+      if (deltaSec < minDeltaSec) continue;
+      const next = row.strength * 0.5 ** (deltaSec / halfLifeSec);
+      if (next < opts.floor) {
+        toPrune.push(row.id);
+      } else {
+        updateStmt.run(next, nowSec, row.id);
+        decayed++;
+      }
+    }
+    if (toPrune.length > 0) {
+      const placeholders = toPrune.map(() => "?").join(",");
+      db.prepare(`DELETE FROM memory_links WHERE id IN (${placeholders})`).run(...toPrune);
+    }
+  });
+  tx();
+  return { decayed, pruned: toPrune.length };
 }
 
 export function getLinksFrom(

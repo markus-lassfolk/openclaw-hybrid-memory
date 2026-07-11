@@ -5,7 +5,9 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import type { DecayClass, MemoryCategory } from "../../config.js";
+import { TTL_DEFAULTS } from "../../config/types/core.js";
 import { capturePluginError } from "../../services/error-reporter.js";
+import { effectiveHalfLifeDays } from "../../services/semantic-lifecycle.js";
 import type { MemoryEntry, MemoryTier, ScopeFilter } from "../../types/memory.js";
 import { calculateExpiry, classifyDecay } from "../../utils/decay.js";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
@@ -687,10 +689,36 @@ export function listFactIdsToBeDeletedByDecayRun(db: DatabaseSync, nowSec = Math
 export function pruneExpiredWithDetails(
   db: DatabaseSync,
   nowSec = Math.floor(Date.now() / 1000),
-): { factsPruned: number; deletedFactIds: string[] } {
+  opts?: { secondChance?: boolean },
+): { factsPruned: number; deletedFactIds: string[]; secondChances: number } {
   const tx = createTransaction(
     db,
     () => {
+      let secondChances = 0;
+      if (opts?.secondChance !== false) {
+        // Lifecycle and ranking used to disagree: a high-importance or frequently-recalled fact
+        // still ranked well yet was hard-deleted the moment its TTL passed. Give such facts ONE
+        // reprieve — half a TTL more life at reduced confidence — before deletion applies. The
+        // decay_second_chance_at stamp guarantees once-only.
+        const reprieved = db
+          .prepare(
+            `SELECT id, decay_class FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
+             AND pinned_at IS NULL
+             AND decay_second_chance_at IS NULL
+             AND (importance >= 0.7 OR recall_count >= 3)
+             AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
+             AND id NOT IN (SELECT fact_id FROM verified_facts)`,
+          )
+          .all({ "@now": nowSec }) as Array<{ id: string; decay_class: DecayClass }>;
+        const reprieveStmt = db.prepare(
+          `UPDATE facts SET expires_at = ?, confidence = MAX(0.15, confidence * 0.7), decay_second_chance_at = ? WHERE id = ?`,
+        );
+        for (const row of reprieved) {
+          const ttl = TTL_DEFAULTS[row.decay_class] ?? 45 * 24 * 3600;
+          reprieveStmt.run(nowSec + Math.floor((ttl ?? 45 * 24 * 3600) / 2), nowSec, row.id);
+          secondChances++;
+        }
+      }
       // pinned_at exempts user-pinned facts: pinning promises "stays central and decay-frozen",
       // so TTL expiry must never hard-delete a pinned fact (quota of 10 bounds the exemption).
       const rows = db
@@ -702,19 +730,19 @@ export function pruneExpiredWithDetails(
         )
         .all({ "@now": nowSec }) as Array<{ id: string }>;
       const deletedFactIds = extractFactIds(rows);
-      if (deletedFactIds.length === 0) return { factsPruned: 0, deletedFactIds };
+      if (deletedFactIds.length === 0) return { factsPruned: 0, deletedFactIds, secondChances };
       deleteContradictionsForFactIds(db, deletedFactIds);
       deleteLinksForFactIds(db, deletedFactIds);
       const factsPruned = deleteFactsByIds(db, deletedFactIds);
-      return { factsPruned, deletedFactIds };
+      return { factsPruned, deletedFactIds, secondChances };
     },
     "IMMEDIATE",
   );
   return tx();
 }
 
-export function pruneExpired(db: DatabaseSync): number {
-  return pruneExpiredWithDetails(db).factsPruned;
+export function pruneExpired(db: DatabaseSync, nowSec?: number, opts?: { secondChance?: boolean }): number {
+  return pruneExpiredWithDetails(db, nowSec, opts).factsPruned;
 }
 
 /** Same row filter as `pruneSessionScope` DELETE on `facts` (for vector cleanup preview/maintenance). */
@@ -816,6 +844,89 @@ export function decayConfidenceWithDetails(
     return { factsDecayed: Number(updateResult.changes ?? 0), deletedFactIds };
   });
   return tx();
+}
+
+const CONFIDENCE_FLOOR = 0.1;
+/**
+ * Minimum Δt before a fact's confidence is re-decayed (6h). The prune step runs hourly; without
+ * this, every run would rewrite confidence for every fact. Re-anchoring makes runs compose
+ * exponentially, so coarser batching changes granularity, never the curve.
+ */
+const DECAY_MIN_DELTA_SEC = 6 * 3_600;
+
+/**
+ * Continuous per-content-type confidence decay (the replacement for the 75%-cliff halving):
+ * confidence *= 0.5^(Δt / effectiveHalfLifeDays(category, daysSinceAccess, recall_count)).
+ * effectiveHalfLifeDays extends a fact's half-life up to 3× with recall — this IS the
+ * "strengthens when recalled" curve. Categories with a null half-life (decision, preference,
+ * edict, ...) never decay by time. Pure computation — apply/preview callers share it so vector
+ * cleanup always matches the actual deletions.
+ */
+function computeHalfLifeDecay(
+  db: DatabaseSync,
+  nowSec: number,
+): { updates: Array<{ id: string; confidence: number }>; deletions: string[] } {
+  const rows = db
+    .prepare(
+      `SELECT id, category, confidence, recall_count,
+              COALESCE(last_decay_at, created_at) AS anchored_at,
+              COALESCE(last_accessed, created_at) AS last_touch
+         FROM facts
+        WHERE pinned_at IS NULL
+          AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
+          AND id NOT IN (SELECT fact_id FROM verified_facts)`,
+    )
+    .all({ "@now": nowSec }) as Array<{
+    id: string;
+    category: string;
+    confidence: number;
+    recall_count: number | null;
+    anchored_at: number;
+    last_touch: number;
+  }>;
+
+  const updates: Array<{ id: string; confidence: number }> = [];
+  const deletions: string[] = [];
+  for (const row of rows) {
+    if (row.confidence < CONFIDENCE_FLOOR) {
+      deletions.push(row.id);
+      continue;
+    }
+    const daysSinceAccess = Math.max(0, (nowSec - (row.last_touch ?? nowSec)) / 86_400);
+    const halfLife = effectiveHalfLifeDays(row.category, daysSinceAccess, row.recall_count ?? 0);
+    if (halfLife == null) continue; // never decays by time
+    const deltaSec = nowSec - (row.anchored_at ?? nowSec);
+    if (deltaSec < DECAY_MIN_DELTA_SEC) continue;
+    const next = row.confidence * 0.5 ** (deltaSec / 86_400 / halfLife);
+    if (next < CONFIDENCE_FLOOR) deletions.push(row.id);
+    else updates.push({ id: row.id, confidence: next });
+  }
+  return { updates, deletions };
+}
+
+/** Apply the half-life decay curve; re-anchors last_decay_at so runs compose exponentially. */
+export function decayConfidenceHalfLifeWithDetails(
+  db: DatabaseSync,
+  nowSec = Math.floor(Date.now() / 1000),
+): { factsDecayed: number; deletedFactIds: string[] } {
+  const tx = createTransaction(db, () => {
+    const { updates, deletions } = computeHalfLifeDecay(db, nowSec);
+    const updateStmt = db.prepare("UPDATE facts SET confidence = ?, last_decay_at = ? WHERE id = ?");
+    for (const u of updates) updateStmt.run(u.confidence, nowSec, u.id);
+    deleteContradictionsForFactIds(db, deletions);
+    deleteLinksForFactIds(db, deletions);
+    deleteFactsByIds(db, deletions);
+    return { factsDecayed: updates.length, deletedFactIds: deletions };
+  });
+  return tx();
+}
+
+/** Preview of decayConfidenceHalfLifeWithDetails deletions (for vector-cleanup scheduling). */
+export function listFactIdsToBeDeletedByHalfLifeDecayRun(
+  db: DatabaseSync,
+  nowSec = Math.floor(Date.now() / 1000),
+): string[] {
+  return computeHalfLifeDecay(db, nowSec).deletions;
 }
 
 export function confirmFact(db: DatabaseSync, id: string): boolean {

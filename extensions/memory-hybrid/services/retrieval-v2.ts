@@ -21,6 +21,7 @@ import {
 } from "./intent-classifier.js";
 import { emitRecallVerboseLog, isHmVerbose } from "./recall-verbose-log.js";
 import { recordRecallStageTiming, recordBypassDecision } from "./recall-timing-stats.js";
+import { countCoRecalls } from "./recall-events.js";
 import { computeCrossDomainBoost, aggregateRecallStats } from "./recall-signals.js";
 
 export type BypassConfig = {
@@ -127,6 +128,10 @@ export async function applyRetrievalV2(opts: ApplyRetrievalV2Opts): Promise<Retr
   const compositeCfg = opts.config.compositeScore;
   const recallStats =
     opts.factsDb && compositeCfg.version === 2 ? aggregateRecallStats(opts.factsDb.getRawDb(), 30) : null;
+  // Co-activation from real recall history: candidates that past recalls surfaced TOGETHER boost
+  // each other (was hardcoded to 1 — the signal existed in recall_events but was never computed).
+  const coRecallCounts =
+    opts.factsDb && compositeCfg.version === 2 ? countCoRecalls(opts.factsDb.getRawDb(), v1Order, 30) : null;
   let finalResults: SearchResult[];
   let demotedCount = 0;
 
@@ -139,7 +144,7 @@ export async function applyRetrievalV2(opts: ApplyRetrievalV2Opts): Promise<Retr
       confidence: entry.confidence ?? 1,
       bodyLength: entry.text.length,
       qualityScore: (entry as MemoryEntry & { qualityScore?: number }).qualityScore,
-      coActivationBoost: 1,
+      coActivationBoost: 1 + Math.min(0.15, 0.03 * (coRecallCounts?.get(r.entry.id) ?? 0)),
       pinBoost: entry.pinnedAt != null ? compositeCfg.pinBoostDefault : 0,
       freqBoost: computeFrequencyBoost(
         (entry as MemoryEntry & { revisionCount?: number }).revisionCount ?? 0,

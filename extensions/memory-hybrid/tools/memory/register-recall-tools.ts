@@ -16,6 +16,7 @@ import { capturePluginError } from "../../services/error-reporter.js";
 import { emitFeatureTelemetry } from "../../services/feature-telemetry.js";
 import { searchFts } from "../../services/fts-search.js";
 import { expandGraph, formatLinkPath, type GraphExpandedResult } from "../../services/graph-retrieval.js";
+import { strengthenHebbianLinks } from "../../services/hebbian.js";
 import {
   type MultiVaultRetrievalResult,
   runMultiVaultExplicitDeepRetrieval,
@@ -1265,6 +1266,10 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
           .filter((r) => !(r.entry.supersededAt != null || r.entry.supersededBy != null))
           .map((r) => r.entry.id);
         if (accessedIds.length > 0) recallFactsDb.refreshAccessedFacts(accessedIds);
+        // Hebbian: memories recalled TOGETHER bond — same rule ambient injection applies.
+        if (cfg.graph.enabled && cfg.graph.strengthenOnRecall && accessedIds.length >= 2) {
+          strengthenHebbianLinks(accessedIds, recallFactsDb, api.logger, "memory-recall-tool");
+        }
       } catch {
         /* reinforcement is best-effort — never fails the recall */
       }

@@ -15,6 +15,7 @@ export const GRAPH_CONFIG_INPUT_KEYS = [
   "coOccurrenceWeight",
   "autoSupersede",
   "strengthenOnRecall",
+  "linkDecay",
   "hubDegreeCap",
   "hubScorePenalty",
 ] as const;

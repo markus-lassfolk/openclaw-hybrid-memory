@@ -43,6 +43,7 @@ import {
   backfillDecayClasses as backfillDecayClassesImpl,
   confirmFact as confirmFactImpl,
   decayConfidence as decayConfidenceImpl,
+  decayConfidenceHalfLifeWithDetails as decayConfidenceHalfLifeWithDetailsImpl,
   decayConfidenceWithDetails as decayConfidenceWithDetailsImpl,
   expireBySourcePattern as expireBySourcePatternImpl,
   lifecycleEntityReport as lifecycleEntityReportImpl,
@@ -218,12 +219,15 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     return listFactIdsToBeDeletedByDecayRunImpl(this.liveDb, nowSec);
   }
 
-  pruneExpired(): number {
-    return pruneExpiredImpl(this.liveDb);
+  pruneExpired(nowSec?: number, opts?: { secondChance?: boolean }): number {
+    return pruneExpiredImpl(this.liveDb, nowSec, opts);
   }
 
-  pruneExpiredWithDetails(nowSec?: number): { factsPruned: number; deletedFactIds: string[] } {
-    return pruneExpiredWithDetailsImpl(this.liveDb, nowSec);
+  pruneExpiredWithDetails(
+    nowSec?: number,
+    opts?: { secondChance?: boolean },
+  ): { factsPruned: number; deletedFactIds: string[]; secondChances: number } {
+    return pruneExpiredWithDetailsImpl(this.liveDb, nowSec, opts);
   }
 
   /** Session-scoped fact ids that `pruneSessionScope(sessionId)` would delete. */
@@ -255,6 +259,11 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
 
   decayConfidenceWithDetails(nowSec?: number): { factsDecayed: number; deletedFactIds: string[] } {
     return decayConfidenceWithDetailsImpl(this.liveDb, nowSec);
+  }
+
+  /** Continuous per-content-type half-life decay (living-memory P1.3; default prune mode). */
+  decayConfidenceHalfLifeWithDetails(nowSec?: number): { factsDecayed: number; deletedFactIds: string[] } {
+    return decayConfidenceHalfLifeWithDetailsImpl(this.liveDb, nowSec);
   }
 
   confirmFact(id: string): boolean {

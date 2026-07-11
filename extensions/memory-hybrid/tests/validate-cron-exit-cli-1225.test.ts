@@ -264,6 +264,7 @@ Error: LanceDB commit conflict detected
           },
         },
         maintenance: {
+          decay: { mode: "half-life" as const, secondChance: true },
           failureReporting: {
             enabled: true,
           },

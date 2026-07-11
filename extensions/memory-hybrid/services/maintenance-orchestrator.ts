@@ -120,6 +120,15 @@ export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
   { name: "prune", tier: "cycle", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h1, llmTier: "none" },
   { name: "compact", tier: "cycle", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20, llmTier: "none" },
   {
+    // Use-it-or-lose-it for Hebbian RELATED_TO links: the counterpart to graph.strengthenOnRecall,
+    // so co-recall bonding shapes the graph without saturating every edge at 1.0.
+    name: "link-decay",
+    tier: "cycle",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20,
+    llmTier: "none",
+    featureGate: (cfg) => cfg.graph?.enabled !== false && cfg.graph?.linkDecay?.enabled !== false,
+  },
+  {
     name: "auto-classify",
     tier: "cycle",
     guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20,

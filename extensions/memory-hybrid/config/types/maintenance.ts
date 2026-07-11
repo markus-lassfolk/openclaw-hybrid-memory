@@ -193,6 +193,17 @@ export type MaintenanceConfig = {
   council: CouncilConfig;
   /** Hybrid maintenance orchestrator settings. */
   orchestrator?: MaintenanceOrchestratorConfig;
+  /** Confidence-decay behavior for the prune step (living-memory plan P1.3). */
+  decay: {
+    /**
+     * "half-life" (default): confidence decays continuously per content-type half-life
+     * (services/semantic-lifecycle.ts), extended by recall. "cliff": legacy one-shot 0.5×
+     * halving past 75% of the TTL window — the escape hatch if the curve misbehaves.
+     */
+    mode: "half-life" | "cliff";
+    /** Give important/frequently-recalled facts ONE TTL/2 reprieve instead of deletion at expiry. */
+    secondChance: boolean;
+  };
 };
 
 /**

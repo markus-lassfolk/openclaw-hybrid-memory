@@ -74,7 +74,7 @@ describe("runFactsPruneStep (shared CLI/plugin prune semantics)", () => {
     expect(remaining.map((r) => r.id)).toEqual([healthy]);
   });
 
-  it("halves confidence for facts deep in their TTL window (the decay half of the step)", async () => {
+  it("cliff mode preserves the legacy 75%-window halving as the escape hatch", async () => {
     const nowSec = Math.floor(Date.now() / 1000);
     const decaying = storeFact("deep in TTL window");
     db.getRawDb()
@@ -82,12 +82,33 @@ describe("runFactsPruneStep (shared CLI/plugin prune semantics)", () => {
       .run(nowSec - 90, nowSec + 10, decaying);
 
     const { vectorDb } = makeVectorDb();
-    const outcome = await runFactsPruneStep(db, vectorDb, { nowSec });
+    const outcome = await runFactsPruneStep(db, vectorDb, { nowSec, decayMode: "cliff" });
 
     expect(outcome.decayed).toBe(1);
     const row = db.getRawDb().prepare("SELECT confidence FROM facts WHERE id = ?").get(decaying) as {
       confidence: number;
     };
     expect(row.confidence).toBeCloseTo(0.4);
+  });
+
+  it("default mode is the half-life curve (no cliff halving inside the TTL window)", async () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const decaying = storeFact("deep in TTL window but freshly decay-anchored");
+    db.getRawDb()
+      .prepare(
+        "UPDATE facts SET last_confirmed_at = ?, expires_at = ?, confidence = 0.8, last_decay_at = ? WHERE id = ?",
+      )
+      .run(nowSec - 90, nowSec + 10, nowSec - 60, decaying);
+
+    const { vectorDb } = makeVectorDb();
+    const outcome = await runFactsPruneStep(db, vectorDb, { nowSec });
+
+    // Sub-6h delta since the decay anchor → the curve leaves confidence untouched, where the
+    // cliff would have halved it (the 75%-of-TTL condition holds above).
+    expect(outcome.decayed).toBe(0);
+    const row = db.getRawDb().prepare("SELECT confidence FROM facts WHERE id = ?").get(decaying) as {
+      confidence: number;
+    };
+    expect(row.confidence).toBeCloseTo(0.8);
   });
 });

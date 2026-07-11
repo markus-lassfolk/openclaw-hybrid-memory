@@ -149,6 +149,41 @@ export function listRecentRecallEvents(db: DatabaseSync, limit = 50): RecallOccu
   });
 }
 
+// Recent recall-event id-sets, cached per raw DB handle for 5 minutes: co-activation is computed
+// on every v2-scored recall, and the underlying rows only change as fast as recalls happen.
+const CO_RECALL_CACHE_TTL_MS = 5 * 60_000;
+const CO_RECALL_ROW_CAP = 2_000;
+const coRecallCache = new WeakMap<object, { ts: number; sets: string[][] }>();
+
+function recentRecallIdSets(db: DatabaseSync, windowDays: number): string[][] {
+  const cached = coRecallCache.get(db);
+  if (cached && Date.now() - cached.ts < CO_RECALL_CACHE_TTL_MS) return cached.sets;
+  const sinceSec = Math.floor(Date.now() / 1000) - windowDays * 86_400;
+  const rows = db
+    .prepare(`SELECT fact_ids FROM recall_events WHERE occurred_at >= ? ORDER BY occurred_at DESC LIMIT ?`)
+    .all(sinceSec, CO_RECALL_ROW_CAP) as Array<{ fact_ids: string }>;
+  const sets = rows.map((r) => parseFactIdsJson(String(r.fact_ids ?? "[]"))).filter((ids) => ids.length >= 2);
+  coRecallCache.set(db, { ts: Date.now(), sets });
+  return sets;
+}
+
+/**
+ * Co-activation signal for ranking: for each candidate, how many recent recall events contained it
+ * TOGETHER with at least one other current candidate. Facts that history recalls as a group boost
+ * each other when any of them matches again.
+ */
+export function countCoRecalls(db: DatabaseSync, candidateIds: string[], windowDays = 30): Map<string, number> {
+  const counts = new Map<string, number>();
+  if (candidateIds.length < 2) return counts;
+  const wanted = new Set(candidateIds);
+  for (const ids of recentRecallIdSets(db, windowDays)) {
+    const present = ids.filter((id) => wanted.has(id));
+    if (present.length < 2) continue;
+    for (const id of present) counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  return counts;
+}
+
 /** Parse the scores JSON column ({ factId: score }); null on absent/malformed content. */
 function parseScoresJson(raw: unknown): Record<string, number> | null {
   if (typeof raw !== "string" || raw.length === 0) return null;

@@ -12,6 +12,7 @@ const graph: GraphConfig = {
   autoLinkStrength: 0.7,
   autoLinkSimilarityThreshold: 0.85,
   autoLinkMinScore: 0.7,
+  linkDecay: { enabled: true, halfLifeDays: 30, floor: 0.05 },
   autoLinkLimit: 3,
   maxTraversalDepth: 2,
   useInRecall: false,

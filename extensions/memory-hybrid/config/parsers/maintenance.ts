@@ -267,6 +267,7 @@ export function parseMaintenanceConfig(cfg: Record<string, unknown>): Maintenanc
         ? Math.min(31, Math.max(1, Math.floor(monthlyReviewRaw.dayOfMonth)))
         : 1,
   };
+  const decayRaw = maintenanceRaw?.decay as Record<string, unknown> | undefined;
   return {
     monthlyReview,
     cronReliability: parseCronReliabilityConfig(cfg),
@@ -274,5 +275,9 @@ export function parseMaintenanceConfig(cfg: Record<string, unknown>): Maintenanc
     privacyRedaction: parseMaintenancePrivacyRedactionConfig(cfg),
     council: parseCouncilConfig(cfg),
     orchestrator: parseMaintenanceOrchestratorConfig(cfg),
+    decay: {
+      mode: decayRaw?.mode === "cliff" ? "cliff" : "half-life",
+      secondChance: decayRaw?.secondChance !== false,
+    },
   };
 }

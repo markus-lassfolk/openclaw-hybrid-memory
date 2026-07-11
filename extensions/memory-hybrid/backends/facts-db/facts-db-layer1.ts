@@ -41,6 +41,7 @@ import {
   getLinksFrom as getLinksFromHelper,
   getLinksTo as getLinksToHelper,
   refreshFactDegrees as refreshFactDegreesHelper,
+  decayLinkStrengths as decayLinkStrengthsHelper,
   strengthenRelatedLinksBatch as strengthenRelatedLinksBatchHelper,
   updateLink as updateLinkHelper,
 } from "./links.js";
@@ -660,6 +661,14 @@ export class FactsDBLayer1 extends BaseSqliteStore {
    */
   strengthenRelatedLinksBatch(pairs: [string, string][], deltaStrength = 0.1): void {
     strengthenRelatedLinksBatchHelper(this.liveDb, pairs, deltaStrength);
+  }
+
+  /** Hebbian counterpart: exponentially decay unused RELATED_TO links; prune below the floor. */
+  decayLinkStrengths(opts: { halfLifeDays: number; floor: number; nowSec?: number }): {
+    decayed: number;
+    pruned: number;
+  } {
+    return decayLinkStrengthsHelper(this.liveDb, opts);
   }
 
   /** Get links from a fact (outgoing). */
