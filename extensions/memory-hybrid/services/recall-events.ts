@@ -5,15 +5,16 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { timestampFromFilename } from "../utils/text.js";
+import { emitMemoryEvent } from "./memory-events.js";
+import { parseSessionMessagesFromLines } from "./session-signal-context.js";
 import {
-  type ParsedRecallEvent,
   extractFactIdsFromToolResultPayload,
   extractRecallEventsFromMessages,
   extractRecallEventsFromTrajectoryLines,
+  type ParsedRecallEvent,
   readTrajectoryLines,
 } from "./session-v3-parser.js";
-import { parseSessionMessagesFromLines } from "./session-signal-context.js";
-import { timestampFromFilename } from "../utils/text.js";
 
 export type RecallEventSource = "tool" | "auto-recall" | "backfill";
 
@@ -25,6 +26,8 @@ export type RecallEventInput = {
   factIds: string[];
   hit: boolean;
   source: RecallEventSource;
+  /** Optional per-fact recall scores ({ factId: score }) for the live overlay's recall pulses. */
+  scores?: Record<string, number> | null;
 };
 
 /** Stable primary key for backfilled recall rows (session + occurrence + query + fact set). */
@@ -44,11 +47,13 @@ export function backfillRecallEventId(input: {
 export function insertRecallEvent(db: DatabaseSync, input: RecallEventInput, opts?: { id?: string }): boolean {
   const id = opts?.id ?? randomUUID();
   const occurredAt = input.occurredAtSec ?? Math.floor(Date.now() / 1000);
-  const factIdsJson = JSON.stringify([...input.factIds].sort().slice(0, 100));
+  const cappedIds = [...input.factIds].sort().slice(0, 100);
+  const factIdsJson = JSON.stringify(cappedIds);
+  const scoresJson = serializeScores(input.scores, cappedIds);
   const result = db
     .prepare(
-      `INSERT OR IGNORE INTO recall_events (id, occurred_at, session_key, agent_id, query, fact_ids, hit, source)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT OR IGNORE INTO recall_events (id, occurred_at, session_key, agent_id, query, fact_ids, hit, source, scores)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -59,12 +64,47 @@ export function insertRecallEvent(db: DatabaseSync, input: RecallEventInput, opt
       factIdsJson,
       input.hit ? 1 : 0,
       input.source,
+      scoresJson,
     );
   return (result.changes ?? 0) > 0;
 }
 
+/** Serialize per-fact scores to JSON, restricted to the (capped) persisted fact ids. Null when absent. */
+function serializeScores(scores: Record<string, number> | null | undefined, factIds: string[]): string | null {
+  if (!scores) return null;
+  const filtered: Record<string, number> = {};
+  for (const id of factIds) {
+    const s = scores[id];
+    if (typeof s === "number" && Number.isFinite(s)) filtered[id] = s;
+  }
+  return Object.keys(filtered).length > 0 ? JSON.stringify(filtered) : null;
+}
+
 export function logRecallEvent(db: DatabaseSync, input: RecallEventInput): boolean {
   return insertRecallEvent(db, input);
+}
+
+/**
+ * Persist a recall event AND broadcast it to the live Memory Graph overlay (recall pulses).
+ * Use this on live recall paths (auto-recall injection, `memory_recall` tool); the emit is
+ * deferred + isolated so it never affects the recall's own latency or success.
+ */
+export function recordRecallEvent(db: DatabaseSync, input: RecallEventInput): boolean {
+  const inserted = insertRecallEvent(db, input);
+  const occurredAt = input.occurredAtSec ?? Math.floor(Date.now() / 1000);
+  const hits = [...input.factIds].slice(0, 100).map((factId) => ({
+    factId,
+    score: input.scores?.[factId] ?? 1,
+  }));
+  emitMemoryEvent("recallOccurred", {
+    query: input.query ?? null,
+    source: input.source,
+    sessionKey: input.sessionKey ?? null,
+    agentId: input.agentId ?? null,
+    occurredAt,
+    hits,
+  });
+  return inserted;
 }
 
 export type RecallEventRow = {

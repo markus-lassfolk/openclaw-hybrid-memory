@@ -9,21 +9,31 @@ interface MemoryPluginContext {
 }
 
 import { createSchema, createYoga, type YogaInitialContext } from "graphql-yoga";
-import type { FactsDB } from "../backends/facts-db.js";
 import { scopedRowMatchesFilter } from "../backends/facts-db/scope-sql.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryScope, ScopeFilter } from "../types/memory.js";
-import { graphqlSchema } from "./graphql-schema.js";
-import { graphqlPubSub } from "./graphql-pubsub.js";
 import { pluginLogger } from "../utils/logger.js";
 import { scopeFilterFromIdentityHeaders } from "../utils/scope-filter.js";
-import { isLinkVisible, resolvers, type GraphQLContext } from "./graphql-resolvers.js";
+import { graphqlPubSub } from "./graphql-pubsub.js";
+import { type GraphQLContext, isLinkVisible, resolvers } from "./graphql-resolvers.js";
+import { graphqlSchema } from "./graphql-schema.js";
+import { wireMemoryEventsToPubSub } from "./memory-events-bridge.js";
 
 type FactSubscriptionPayload = { fact: unknown; category?: string; scope?: string };
 type FactUpdatedPayload = { fact: unknown; factId?: string; category?: string };
 type FactDeletedPayload = { id: string; category?: string; scope?: string; scopeTarget?: string | null };
 type LinkCreatedPayload = { link: unknown; sourceId?: string; targetId?: string };
 type StatsUpdatedPayload = { stats: unknown };
+type RecallHitPayload = { factId: string; score: number };
+type RecallOccurredPayload = {
+  query: string | null;
+  source: string;
+  sessionKey: string | null;
+  agentId: string | null;
+  occurredAt: number;
+  hits: RecallHitPayload[];
+};
 
 const pubSub = graphqlPubSub;
 
@@ -112,6 +122,11 @@ async function* filterAsyncIterator<T>(source: AsyncIterable<T>, predicate: (pay
   }
 }
 
+/** Restrict recall hits to facts the caller may read (per-fact scope gate, fail-closed). */
+function visibleRecallHits(context: GraphQLContext, hits: RecallHitPayload[]): RecallHitPayload[] {
+  return hits.filter((h) => context.factsDb.getById(h.factId, { scopeFilter: context.scopeFilter }) != null);
+}
+
 /**
  * Create GraphQL Yoga server instance
  */
@@ -120,6 +135,10 @@ export function createGraphQLServer(
   vectorDb: VectorDB | undefined,
   pluginContext: MemoryPluginContext,
 ) {
+  // Bridge backend write-path events (tool/auto-capture/CLI/GraphQL/maintenance) onto the pubsub
+  // so subscribers see ALL memory activity, not just GraphQL mutations. Idempotent + global.
+  wireMemoryEventsToPubSub(factsDb);
+
   const yoga = createYoga<GraphQLContext>({
     schema: createSchema({
       typeDefs: graphqlSchema,
@@ -173,6 +192,40 @@ export function createGraphQLServer(
                 );
               }),
             resolve: (payload: LinkCreatedPayload) => payload.link,
+          },
+          linkUpdated: {
+            subscribe: (_parent: unknown, args: { sourceId?: string; targetId?: string }, context: GraphQLContext) =>
+              filterAsyncIterator(pubSub.subscribe("linkUpdated"), (payload) => {
+                const sourceId = linkEndpoint(payload.link, "sourceId", payload.sourceId);
+                const targetId = linkEndpoint(payload.link, "targetId", payload.targetId);
+                return (
+                  matchesLinkCreatedSubscription(payload, args) &&
+                  !!sourceId &&
+                  !!targetId &&
+                  isLinkVisible(context.factsDb, { sourceId, targetId }, context.scopeFilter)
+                );
+              }),
+            resolve: (payload: LinkCreatedPayload) => payload.link,
+          },
+          recallOccurred: {
+            // SECURITY: recall hits reference facts across the whole store. Only pass through a
+            // recall the caller can see at least one hit of, and trim the returned hits to exactly
+            // the facts in their scope — mirrors the per-fact scope gate every read resolver applies.
+            subscribe: (_parent: unknown, args: { sessionKey?: string }, context: GraphQLContext) =>
+              filterAsyncIterator(
+                pubSub.subscribe("recallOccurred"),
+                (payload) =>
+                  optionalMatches(args.sessionKey, payload.sessionKey) &&
+                  visibleRecallHits(context, payload.hits).length > 0,
+              ),
+            resolve: (payload: RecallOccurredPayload, _args: unknown, context: GraphQLContext) => ({
+              query: payload.query,
+              source: payload.source,
+              sessionKey: payload.sessionKey,
+              agentId: payload.agentId,
+              occurredAt: payload.occurredAt,
+              hits: visibleRecallHits(context, payload.hits),
+            }),
           },
           statsUpdated: {
             // Unlike the fact/link subscriptions above, this has no scope filter — `stats` is an

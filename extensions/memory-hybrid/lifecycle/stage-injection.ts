@@ -8,36 +8,36 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { getCronModelConfig, getDefaultCronModel } from "../config/index.js";
 import "../config.js";
-import { capturePluginError } from "../services/error-reporter.js";
 import { trimBlockToBudget } from "../services/context-block-trim.js";
-import { consumePrependBudget } from "../services/prepend-budget.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { resolveFactsDbForEntry, resolveRecallInjectionText } from "../services/fragment-recall.js";
+import { recordInjectionAttribution } from "../services/injection-attribution-store.js";
+import { type InjectionFilterMode, scanInjectionFilter } from "../services/injection-filter.js";
+import { attributeInjectionToTurn, segmentTranscriptIntoTurns } from "../services/per-turn-attribution.js";
 import { shouldPinFactForInjection } from "../services/pinned-recall-policy.js";
+import { consumePrependBudget } from "../services/prepend-budget.js";
+import { recordRecallEvent } from "../services/recall-events.js";
+import { createRecallSpan, createRecallTimingLogger } from "../services/recall-timing.js";
+import { emitRecallVerboseLog } from "../services/recall-verbose-log.js";
 import {
   assembleRecallPrependContext,
   buildEdictBlock,
   DEFAULT_EDICT_BUDGET_FRACTION,
   finalizeInjectionMemoryContent,
 } from "../services/recalled-context-assembler.js";
-import { logRecallEvent } from "../services/recall-events.js";
-import { recordInjectionAttribution } from "../services/injection-attribution-store.js";
-import { attributeInjectionToTurn, segmentTranscriptIntoTurns } from "../services/per-turn-attribution.js";
-import { scanInjectionFilter, type InjectionFilterMode } from "../services/injection-filter.js";
-import { emitRecallVerboseLog } from "../services/recall-verbose-log.js";
-import { createRecallSpan, createRecallTimingLogger } from "../services/recall-timing.js";
-import { resolveRecallInjectionText, resolveFactsDbForEntry } from "../services/fragment-recall.js";
+import { markFactsInjectedForSession } from "../services/session-injection-dedup.js";
 import { sanitizePromptInjection } from "../services/skill-prompt-injection.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
+import { setProgressiveIndexIds } from "../utils/progressive-index-session.js";
 import {
   estimateTokens,
   estimateTokensForDisplay,
   formatProgressiveIndexLine,
   sanitizeRecallFactText,
 } from "../utils/text.js";
-import { markFactsInjectedForSession } from "../services/session-injection-dedup.js";
-import { setProgressiveIndexIds } from "../utils/progressive-index-session.js";
-import type { LifecycleContext, RecallResult } from "./types.js";
 import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
 import { resolveRecallScopeFilter } from "./stage-recall/degraded-recall.js";
+import type { LifecycleContext, RecallResult } from "./types.js";
 
 const INJECTION_STAGE_TIMEOUT_MS = 10_000;
 const HEBBIAN_MAX_K = 8;
@@ -311,7 +311,9 @@ async function runInjection(
             attribution: vaultAttr,
           });
           const queryText = extractLastUserMessageText(event) ?? "";
-          logRecallEvent(db, {
+          // recordRecallEvent persists the row AND broadcasts a `recallOccurred` event so the live
+          // Memory Graph overlay pulses the injected facts as the agent recalls them each turn.
+          recordRecallEvent(db, {
             sessionKey: api.context?.sessionKey ?? api.context?.sessionId ?? null,
             agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? null,
             query: queryText.slice(0, 500) || null,

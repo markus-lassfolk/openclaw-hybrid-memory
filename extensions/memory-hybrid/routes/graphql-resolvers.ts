@@ -2,25 +2,19 @@
 // Keep this module conservative: it must compile against the real FactsDB API and
 // return safe placeholders for schema areas that are not implemented yet.
 
-import type { FactsDB } from "../backends/facts-db.js";
 import { isPreStoreGuardBlocked } from "../backends/facts-db/crud.js";
+import type { MemoryLinkType } from "../backends/facts-db/types.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import { DECAY_CLASSES, type DecayClass } from "../config.js";
-import type { MemoryLinkType } from "../backends/facts-db/types.js";
 import { isPromptArtifactOrReasoningTrace } from "../services/capture-utils.js";
-import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import type { EmbeddingProvider } from "../services/embeddings/types.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
+import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
 import { pluginLogger } from "../utils/logger.js";
 import { scopeFieldsFromFilter } from "../utils/scope-filter.js";
-import {
-  notifyGraphqlFactCreated,
-  notifyGraphqlFactDeleted,
-  notifyGraphqlFactUpdated,
-  notifyGraphqlLinkCreated,
-} from "./graphql-pubsub.js";
 
 export type GraphQLContext = {
   factsDb: FactsDB;
@@ -224,7 +218,9 @@ function getAllLinks(factsDb: FactsDB): GraphQLLink[] {
 
 // Indexed by-id lookup for the single-link call sites (link(), createLink(), deleteLink()) --
 // these don't need to scan/materialize the whole table just to find one row by its primary key.
-function getLinkById(factsDb: FactsDB, id: string): GraphQLLink | null {
+// Exported so the memory-events → pubsub bridge can republish a canonical, GraphQL-ready link
+// (correct `weight`/`createdAt` shape) rather than the minimal backend event payload.
+export function getLinkById(factsDb: FactsDB, id: string): GraphQLLink | null {
   const row = factsDb
     .getRawDb()
     .prepare(
@@ -510,7 +506,9 @@ export const resolvers: GraphQLResolvers = {
       const linkEdges = getAllLinks(context.factsDb)
         .filter(
           (link) =>
-            factIds.has(link.sourceId) && factIds.has(link.targetId) && (!linkTypes?.length || linkTypes.includes(link.linkType)),
+            factIds.has(link.sourceId) &&
+            factIds.has(link.targetId) &&
+            (!linkTypes?.length || linkTypes.includes(link.linkType)),
         )
         .map((link) => ({
           source: link.sourceId,
@@ -601,7 +599,8 @@ export const resolvers: GraphQLResolvers = {
       await cleanupGraphqlEviction(context, result.evictedFactId);
       if (result.newlyStored) {
         await indexGraphqlFactVector(context, result.entry);
-        notifyGraphqlFactCreated(result.entry, result.entry.category, result.entry.scope);
+        // Real-time publish is handled centrally by FactsDB.storeWithResult → memory-events bridge,
+        // so every store path (tool/auto-capture/CLI/GraphQL/maintenance) fires exactly once.
       }
       return result.entry;
     },
@@ -646,7 +645,8 @@ export const resolvers: GraphQLResolvers = {
           });
         }
         await indexGraphqlFactVector(context, result.entry);
-        notifyGraphqlFactUpdated(result.entry);
+        // factStored (new fact) + factUpdated (old fact now superseded) are published centrally by
+        // FactsDB.storeWithResult/supersede via the memory-events bridge.
       }
       await cleanupGraphqlEviction(context, result.evictedFactId);
       return result.entry;
@@ -668,9 +668,7 @@ export const resolvers: GraphQLResolvers = {
           context: "graphql-delete-fact",
         });
       }
-      if (deleted) {
-        notifyGraphqlFactDeleted(id, existing?.category, existing?.scope, existing?.scopeTarget);
-      }
+      // factDeleted is published centrally by FactsDB.delete via the memory-events bridge.
       return deleted;
     },
 
@@ -693,7 +691,7 @@ export const resolvers: GraphQLResolvers = {
           context: "graphql-supersede",
         });
       }
-      notifyGraphqlFactUpdated(newFact);
+      // factUpdated (old fact now superseded) is published centrally by FactsDB.supersede.
       return newFact;
     },
 
@@ -713,7 +711,7 @@ export const resolvers: GraphQLResolvers = {
       }
       const id = context.factsDb.createLink(sourceId, targetId, linkType, weight);
       const link = getLinkById(context.factsDb, id) ?? undefined;
-      if (link) notifyGraphqlLinkCreated(link);
+      // linkCreated is published centrally by createLink (links.ts) via the memory-events bridge.
       return link;
     },
     deleteLink: (_parent, args, context) => {
@@ -744,7 +742,7 @@ export const resolvers: GraphQLResolvers = {
         if (result.entry.id !== "" && result.newlyStored) {
           stored.push(result.entry);
           await indexGraphqlFactVector(context, result.entry);
-          notifyGraphqlFactCreated(result.entry, result.entry.category, result.entry.scope);
+          // factStored published centrally by FactsDB.storeWithResult via the memory-events bridge.
         }
         await cleanupGraphqlEviction(context, result.evictedFactId);
       }
@@ -765,7 +763,7 @@ export const resolvers: GraphQLResolvers = {
       for (const fact of toDelete) {
         if (context.factsDb.delete(fact.id)) {
           deleted++;
-          notifyGraphqlFactDeleted(fact.id, fact.category, fact.scope, fact.scopeTarget);
+          // factDeleted published centrally by FactsDB.delete via the memory-events bridge.
           if (context.vectorDb) {
             await deleteVectorForFactId({
               vectorDb: context.vectorDb,

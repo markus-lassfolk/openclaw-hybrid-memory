@@ -1,9 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
-import { backfillFactsDbTextTimestamps } from "../../utils/timestamp-migration.js";
 import { normalizedHash } from "../../utils/tags.js";
+import { backfillFactsDbTextTimestamps } from "../../utils/timestamp-migration.js";
 import { migrateEntityLayerTables } from "../facts-db/entity-layer.js";
 import { runProcedureMigrations } from "./procedures.js";
+
 /**
  * Procedure feedback loop — version tracking and failure logging (#782).
  * procedure_versions: per-version success/failure counts and avoidance notes.
@@ -909,6 +910,12 @@ function migrateRecallEventsTable(db: DatabaseSync): void {
     ON recall_events(session_key, occurred_at, query, fact_ids)
     WHERE source = 'backfill'
   `);
+  // Per-fact recall scores as JSON ({ factId: score }) for the live Memory Graph overlay's
+  // recall pulses. Additive column on pre-existing tables; NULL on legacy/backfill rows.
+  const recallCols = db.prepare("PRAGMA table_info(recall_events)").all() as Array<{ name: string }>;
+  if (!recallCols.some((c) => c.name === "scores")) {
+    db.exec("ALTER TABLE recall_events ADD COLUMN scores TEXT");
+  }
 }
 
 /** Per-turn injection attribution for recall feedback (#1916). */

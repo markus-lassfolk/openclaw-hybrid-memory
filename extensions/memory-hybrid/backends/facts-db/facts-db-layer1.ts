@@ -7,13 +7,13 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import type { StoreConfig } from "../../config.js";
+import { emitMemoryEvent } from "../../services/memory-events.js";
 import type { MemoryEntry, MemoryScope, MemoryTier, ScopeFilter, SearchResult } from "../../types/memory.js";
-import { normalizedHash } from "../../utils/tags.js";
 import { tryRestrictSqliteDbFileMode } from "../../utils/sqlite-file-perms.js";
+import { normalizedHash } from "../../utils/tags.js";
 import { BaseSqliteStore } from "../base-sqlite-store.js";
 import { runFactsMigrations } from "../migrations/facts-migrations.js";
 import { SupersededTextsCache } from "./cache-manager.js";
-import { resolveFactsDbPragmas } from "./resolve-facts-db-pragmas.js";
 import {
   deleteFact,
   hasDuplicateText,
@@ -55,6 +55,7 @@ import {
   type TieringOptions,
   trimToBudget as trimToBudgetImpl,
 } from "./maintenance.js";
+import { resolveFactsDbPragmas } from "./resolve-facts-db-pragmas.js";
 import { getScanCursor as getScanCursorHelper, updateScanCursor as updateScanCursorHelper } from "./scan-cursors.js";
 import { bootstrapFactsCoreSchema } from "./schema-bootstrap.js";
 import {
@@ -267,7 +268,7 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       process.stderr.write(`${message}
 `);
     };
-    return storeFact(
+    const result = storeFact(
       {
         db: this.liveDb,
         fuzzyDedupe: this.fuzzyDedupe,
@@ -284,6 +285,13 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       },
       entry,
     );
+    // Live Memory Graph overlay: a genuinely new fact node appeared. Guard on newlyStored so
+    // dedupe/skip/no-op paths (which carry a placeholder or an existing row) don't emit. This is
+    // the single choke point for every store path — tools, auto-capture, CLI, GraphQL, maintenance.
+    if (!result.skipped && result.newlyStored && result.entry.id) {
+      emitMemoryEvent("factStored", { entry: result.entry });
+    }
+    return result;
   }
 
   statsDailyWrites(): Array<{ source: string; day: string; count: number; dropped: number; evicted: number }> {
@@ -502,7 +510,19 @@ export class FactsDBLayer1 extends BaseSqliteStore {
   }
 
   delete(id: string): boolean {
-    return deleteFact(this.liveDb, id);
+    // Capture scope/category BEFORE the row is gone so the live overlay's factDeleted event can
+    // be scope-filtered by subscribers (the fact is unqueryable afterwards).
+    const existing = getByIdImpl(this.liveDb, id);
+    const deleted = deleteFact(this.liveDb, id);
+    if (deleted) {
+      emitMemoryEvent("factDeleted", {
+        id,
+        category: existing?.category,
+        scope: existing?.scope,
+        scopeTarget: existing?.scopeTarget ?? null,
+      });
+    }
+    return deleted;
   }
 
   /** Exact match or dedupe policy would block a new insert (per-source if `source` set; global probe if omitted, #1202). */
@@ -535,6 +555,10 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       .run(nowSec, newId, nowSec, oldId);
     if (result.changes > 0) {
       this.invalidateSupersededCache();
+      // Live overlay: the old fact just became superseded — re-read it so the node updates
+      // (dims / gains its superseded marker). The replacing fact surfaces via its own store event.
+      const updated = getByIdImpl(this.liveDb, oldId);
+      if (updated) emitMemoryEvent("factUpdated", { entry: updated });
     }
     return result.changes > 0;
   }

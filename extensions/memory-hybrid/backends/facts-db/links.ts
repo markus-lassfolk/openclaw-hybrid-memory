@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 
+import { emitMemoryEvent } from "../../services/memory-events.js";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 
 import type { MemoryLinkType } from "./types.js";
@@ -17,9 +18,14 @@ export function createLink(
   }
   const id = randomUUID();
   const now = Math.floor(Date.now() / 1000);
+  const clampedStrength = Math.max(0, Math.min(1, strength));
   db.prepare(
     "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-  ).run(id, sourceFactId, targetFactId, linkType, Math.max(0, Math.min(1, strength)), now);
+  ).run(id, sourceFactId, targetFactId, linkType, clampedStrength, now);
+  // Live Memory Graph overlay: a new edge appeared (deferred + isolated, never breaks the write).
+  emitMemoryEvent("linkCreated", {
+    link: { id, sourceId: sourceFactId, targetId: targetFactId, linkType, strength: clampedStrength },
+  });
   return id;
 }
 
@@ -31,6 +37,12 @@ export function createOrStrengthenRelatedLink(
 ): void {
   if (factIdA === factIdB) return;
   const [source, target] = factIdA < factIdB ? [factIdA, factIdB] : [factIdB, factIdA];
+
+  // Captured inside the transaction, emitted after it commits. The create branch is handled by
+  // createLink()'s own linkCreated emit; only the strengthen (update) branch is reported here.
+  // Held on an object (not a bare `let`) so the `tx()` call below resets narrowing and TS keeps
+  // the declared type instead of collapsing the closure-assigned value to `never`.
+  const captured: { strengthened: { id: string; strength: number } | null } = { strengthened: null };
 
   // memory_links has no UNIQUE constraint on (source_fact_id, target_fact_id, link_type), so the
   // read-then-write below must be atomic — otherwise two concurrent writers (e.g. an interactive
@@ -48,6 +60,7 @@ export function createOrStrengthenRelatedLink(
       const newStrength = Math.min(1, (existing?.strength ?? 0) + deltaStrength);
       if (existing) {
         db.prepare("UPDATE memory_links SET strength = ? WHERE id = ?").run(newStrength, existing.id);
+        captured.strengthened = { id: existing.id, strength: newStrength };
       } else {
         createLink(db, source, target, "RELATED_TO", newStrength);
       }
@@ -55,6 +68,18 @@ export function createOrStrengthenRelatedLink(
     "IMMEDIATE",
   );
   tx();
+  if (captured.strengthened) {
+    // Live overlay: an existing Hebbian edge got stronger (co-recall reinforcement).
+    emitMemoryEvent("linkUpdated", {
+      link: {
+        id: captured.strengthened.id,
+        sourceId: source,
+        targetId: target,
+        linkType: "RELATED_TO",
+        strength: captured.strengthened.strength,
+      },
+    });
+  }
 }
 
 export function strengthenRelatedLinksBatch(db: DatabaseSync, pairs: [string, string][], deltaStrength = 0.1): void {

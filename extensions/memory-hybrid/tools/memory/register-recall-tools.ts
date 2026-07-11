@@ -7,52 +7,52 @@
 
 import { Type } from "@sinclair/typebox";
 import type { RetrievalConfig } from "../../config.js";
-import { capturePluginError } from "../../services/error-reporter.js";
-import { guardAgainstWrapperArgsDropped } from "../../services/tool-args-guard.js";
-import { expandGraph, formatLinkPath, type GraphExpandedResult } from "../../services/graph-retrieval.js";
-import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
-import { QueryExpander } from "../../services/query-expander.js";
-import { resolveRecallRrfStrategies } from "../../services/recall-rrf-strategies.js";
-import {
-  resolveConstrainedRetrievalPolicy,
-  resolveExplicitDeepRetrievalPolicy,
-  type ExplicitDeepRetrievalPolicy,
-} from "../../services/retrieval-mode-policy.js";
-import { buildExplicitSemanticQueryVector, runExplicitDeepRetrieval } from "../../services/retrieval-orchestrator.js";
-import {
-  runMultiVaultExplicitDeepRetrieval,
-  type MultiVaultRetrievalResult,
-} from "../../services/multi-vault-retrieval.js";
-import { runScopedFtsVectorFallback } from "../../services/retrieval-scoped-fallback.js";
-import { searchFts } from "../../services/fts-search.js";
-import {
-  isInQuietWindow,
-  listWorkerLeases,
-  quietWindowEndEpochSec,
-  resolveWorkerLeasesConfig,
-} from "../../services/worker-lease.js";
-import { emitFeatureTelemetry } from "../../services/feature-telemetry.js";
-import { executeProcedureFeedbackTool } from "../../services/procedure-feedback-tool.js";
-import { inferEntityFilterFromQuery, inferRetrievalModeFromQuery } from "../../services/retrieval-mode-selector.js";
 import {
   getFactIdsForEntitySurfaces,
   loadKnownEntitySurfaces,
   matchEntitySurfacesInText,
 } from "../../services/entity-retrieval.js";
+import { capturePluginError } from "../../services/error-reporter.js";
+import { emitFeatureTelemetry } from "../../services/feature-telemetry.js";
+import { searchFts } from "../../services/fts-search.js";
+import { expandGraph, formatLinkPath, type GraphExpandedResult } from "../../services/graph-retrieval.js";
+import {
+  type MultiVaultRetrievalResult,
+  runMultiVaultExplicitDeepRetrieval,
+} from "../../services/multi-vault-retrieval.js";
+import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
+import { executeProcedureFeedbackTool } from "../../services/procedure-feedback-tool.js";
+import { QueryExpander } from "../../services/query-expander.js";
+import { recordRecallEvent } from "../../services/recall-events.js";
+import { resolveRecallRrfStrategies } from "../../services/recall-rrf-strategies.js";
 import {
   formatMemoryRecallToolLine,
   memoryRecallToolBoundaryPrefix,
   sanitizeMemoryField,
   sanitizeProcedureText,
 } from "../../services/recalled-context-assembler.js";
+import {
+  type ExplicitDeepRetrievalPolicy,
+  resolveConstrainedRetrievalPolicy,
+  resolveExplicitDeepRetrievalPolicy,
+} from "../../services/retrieval-mode-policy.js";
+import { inferEntityFilterFromQuery, inferRetrievalModeFromQuery } from "../../services/retrieval-mode-selector.js";
+import { buildExplicitSemanticQueryVector, runExplicitDeepRetrieval } from "../../services/retrieval-orchestrator.js";
+import { runScopedFtsVectorFallback } from "../../services/retrieval-scoped-fallback.js";
+import { guardAgainstWrapperArgsDropped } from "../../services/tool-args-guard.js";
+import {
+  isInQuietWindow,
+  listWorkerLeases,
+  quietWindowEndEpochSec,
+  resolveWorkerLeasesConfig,
+} from "../../services/worker-lease.js";
 import type { MemoryEntry, ScopeFilter, SearchResult } from "../../types/memory.js";
 import { getSessionLogFileSuffix } from "../../utils/constants.js";
-import { formatDateUtc, formatTimestampUtc } from "../../utils/dates.js";
-import { getProgressiveIndexIds, resolveProgressiveIndexSessionKey } from "../../utils/progressive-index-session.js";
-import { parseSourceDate } from "../../utils/dates.js";
+import { formatDateUtc, formatTimestampUtc, parseSourceDate } from "../../utils/dates.js";
 import { embedCallWithTimeoutAndRetry } from "../../utils/embed-call.js";
+import { getProgressiveIndexIds, resolveProgressiveIndexSessionKey } from "../../utils/progressive-index-session.js";
 import type { MemoryToolRuntime } from "./runtime.js";
-import { resolveToolVaultBackends, listToolVaultHandles, groupByResultVault } from "./vault-resolve.js";
+import { groupByResultVault, listToolVaultHandles, resolveToolVaultBackends } from "./vault-resolve.js";
 
 export function registerRecallTools(runtime: MemoryToolRuntime): void {
   const {
@@ -313,9 +313,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         });
 
         if (summaries.length === 0) {
-          const scopeMsg = sessionId
-            ? `for session ${sessionId}`
-            : "across recent sessions (last ~14 days)";
+          const scopeMsg = sessionId ? `for session ${sessionId}` : "across recent sessions (last ~14 days)";
           return {
             content: [
               {
@@ -1300,6 +1298,24 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
           : {}),
       };
     });
+
+    // Live Memory Graph overlay: broadcast the explicit recall with per-fact scores so the graph
+    // pulses exactly which memories were called upon, ranked. Non-fatal — never fails the recall.
+    try {
+      if (typeof recallFactsDb.getRawDb === "function") {
+        recordRecallEvent(recallFactsDb.getRawDb(), {
+          sessionKey: api.context?.sessionKey ?? api.context?.sessionId ?? null,
+          agentId: agentIdForAudit() || null,
+          query: query ? query.slice(0, 500) : null,
+          factIds: results.map((r) => r.entry.id),
+          hit: results.length > 0,
+          source: "tool",
+          scores: Object.fromEntries(results.map((r) => [r.entry.id, r.score])),
+        });
+      }
+    } catch {
+      /* recall event broadcast is best-effort */
+    }
 
     auditAppend({
       agentId: agentIdForAudit(),

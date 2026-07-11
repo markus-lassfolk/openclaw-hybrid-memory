@@ -100,6 +100,22 @@ export const graphqlSchema = `#graphql
     count: Int!
   }
 
+  # A single recalled fact and the score it was ranked with (live overlay recall pulses).
+  type RecallHit {
+    factId: ID!
+    score: Float!
+  }
+
+  # A recall that just happened — auto-recall injection or an explicit memory_recall.
+  type RecallEvent {
+    query: String
+    source: String!
+    sessionKey: String
+    agentId: String
+    occurredAt: DateTime!
+    hits: [RecallHit!]!
+  }
+
   # Graph structure for visualization
   type GraphData {
     nodes: [GraphNode!]!
@@ -245,6 +261,11 @@ export const graphqlSchema = `#graphql
 
     # Real-time link changes
     linkCreated(sourceId: ID, targetId: ID): Link!
+    linkUpdated(sourceId: ID, targetId: ID): Link!
+
+    # Real-time recall activity — which memories were just called upon (with per-fact scores).
+    # Hits are scope-filtered per subscriber before delivery.
+    recallOccurred(sessionKey: String): RecallEvent!
 
     # Statistics updates
     statsUpdated: MemoryStats!

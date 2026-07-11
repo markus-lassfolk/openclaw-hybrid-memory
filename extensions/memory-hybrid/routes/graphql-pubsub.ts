@@ -5,13 +5,24 @@ type FactUpdatedPayload = { fact: unknown; factId?: string; category?: string };
 type FactDeletedPayload = { id: string; category?: string; scope?: string; scopeTarget?: string | null };
 type LinkCreatedPayload = { link: unknown; sourceId?: string; targetId?: string };
 type StatsUpdatedPayload = { stats: unknown };
+type RecallHit = { factId: string; score: number };
+type RecallOccurredPayload = {
+  query: string | null;
+  source: string;
+  sessionKey: string | null;
+  agentId: string | null;
+  occurredAt: number;
+  hits: RecallHit[];
+};
 
 export const graphqlPubSub = createPubSub<{
   factCreated: [FactSubscriptionPayload];
   factUpdated: [FactUpdatedPayload];
   factDeleted: [FactDeletedPayload];
   linkCreated: [LinkCreatedPayload];
+  linkUpdated: [LinkCreatedPayload];
   statsUpdated: [StatsUpdatedPayload];
+  recallOccurred: [RecallOccurredPayload];
 }>();
 
 function recordValue(value: unknown, key: string): unknown {
@@ -64,6 +75,18 @@ export function notifyGraphqlLinkCreated(link: unknown): void {
   });
 }
 
+export function notifyGraphqlLinkUpdated(link: unknown): void {
+  graphqlPubSub.publish("linkUpdated", {
+    link,
+    sourceId: linkEndpoint(link, "sourceId"),
+    targetId: linkEndpoint(link, "targetId"),
+  });
+}
+
 export function notifyGraphqlStatsUpdated(stats: unknown): void {
   graphqlPubSub.publish("statsUpdated", { stats });
+}
+
+export function notifyGraphqlRecallOccurred(payload: RecallOccurredPayload): void {
+  graphqlPubSub.publish("recallOccurred", payload);
 }
