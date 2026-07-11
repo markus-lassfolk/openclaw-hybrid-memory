@@ -25,6 +25,7 @@ export function GapsPanel({ onClose }: { onClose: () => void }) {
 
   const loadInsights = useCallback(() => {
     setLoading(true);
+    setError(null);
     fetchInsights(25)
       .then(setInsights)
       .catch((e) => setError(String(e)))
@@ -37,6 +38,7 @@ export function GapsPanel({ onClose }: { onClose: () => void }) {
 
   const loadSuggested = useCallback(() => {
     setLoading(true);
+    setError(null);
     fetchSuggestedLinks(0.8, 20)
       .then(setSuggested)
       .catch((e) => setError(String(e)))
@@ -59,7 +61,12 @@ export function GapsPanel({ onClose }: { onClose: () => void }) {
       </div>
       <div className="gaps-tabs">
         {TABS.map((t) => (
-          <button type="button" key={t.key} className={`gaps-tab ${tab === t.key ? "active" : ""}`} onClick={() => setTab(t.key)}>
+          <button
+            type="button"
+            key={t.key}
+            className={`gaps-tab ${tab === t.key ? "active" : ""}`}
+            onClick={() => setTab(t.key)}
+          >
             {t.label}
           </button>
         ))}
@@ -69,11 +76,15 @@ export function GapsPanel({ onClose }: { onClose: () => void }) {
       {loading ? <p className="muted">Loading…</p> : null}
 
       <div className="gaps-body">
-        {tab === "orphans" ? <OrphanList facts={insights?.orphanFacts ?? []} onJump={jump} onReload={loadInsights} /> : null}
+        {tab === "orphans" ? (
+          <OrphanList facts={insights?.orphanFacts ?? []} onJump={jump} onReload={loadInsights} />
+        ) : null}
         {tab === "suggested" ? <SuggestedList items={suggested ?? []} onJump={jump} onReload={loadSuggested} /> : null}
         {tab === "contradictions" ? <ContradictionList items={insights?.contradictions ?? []} onJump={jump} /> : null}
         {tab === "weak" ? <WeakList links={insights?.weakLinks ?? []} onJump={jump} onReload={loadInsights} /> : null}
-        {tab === "stale" ? <FactList facts={insights?.staleImportantFacts ?? []} onJump={jump} empty="No stale important memories." /> : null}
+        {tab === "stale" ? (
+          <FactList facts={insights?.staleImportantFacts ?? []} onJump={jump} empty="No stale important memories." />
+        ) : null}
       </div>
     </div>
   );
@@ -93,7 +104,15 @@ function FactList({ facts, onJump, empty }: { facts: FactDetail[]; onJump: (id: 
   );
 }
 
-function OrphanList({ facts, onJump, onReload }: { facts: FactDetail[]; onJump: (id: string) => void; onReload: () => void }) {
+function OrphanList({
+  facts,
+  onJump,
+  onReload,
+}: {
+  facts: FactDetail[];
+  onJump: (id: string) => void;
+  onReload: () => void;
+}) {
   if (facts.length === 0) return <p className="muted">No orphaned memories — everything is connected.</p>;
   return (
     <div className="gaps-list">
@@ -122,8 +141,17 @@ function OrphanList({ facts, onJump, onReload }: { facts: FactDetail[]; onJump: 
   );
 }
 
-function SuggestedList({ items, onJump, onReload }: { items: SuggestedLink[]; onJump: (id: string) => void; onReload: () => void }) {
-  if (items.length === 0) return <p className="muted">No suggested links (needs embeddings + similar unlinked facts).</p>;
+function SuggestedList({
+  items,
+  onJump,
+  onReload,
+}: {
+  items: SuggestedLink[];
+  onJump: (id: string) => void;
+  onReload: () => void;
+}) {
+  if (items.length === 0)
+    return <p className="muted">No suggested links (needs embeddings + similar unlinked facts).</p>;
   return (
     <div className="gaps-list">
       {items.map((s) => (
@@ -176,7 +204,15 @@ function ContradictionList({ items, onJump }: { items: ContradictionPair[]; onJu
   );
 }
 
-function WeakList({ links, onJump, onReload }: { links: LinkRecord[]; onJump: (id: string) => void; onReload: () => void }) {
+function WeakList({
+  links,
+  onJump,
+  onReload,
+}: {
+  links: LinkRecord[];
+  onJump: (id: string) => void;
+  onReload: () => void;
+}) {
   const nodeIndex = useGraphStore((s) => s.nodeIndex);
   if (links.length === 0) return <p className="muted">No weak links below the threshold.</p>;
   return (

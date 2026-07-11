@@ -11,7 +11,7 @@ import { DECAY_CLASSES, type DecayClass } from "../config.js";
 import { isPromptArtifactOrReasoningTrace } from "../services/capture-utils.js";
 import type { EmbeddingProvider } from "../services/embeddings/types.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { computeNodeStrength } from "../services/graph-node-metrics.js";
+import { computeNodeStrength, lastAccessSec } from "../services/graph-node-metrics.js";
 import { detectSuggestedLinks } from "../services/knowledge-gaps.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
 import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
@@ -221,9 +221,7 @@ function getAllLinks(factsDb: FactsDB): GraphQLLink[] {
 
 // Indexed by-id lookup for the single-link call sites (link(), createLink(), deleteLink()) --
 // these don't need to scan/materialize the whole table just to find one row by its primary key.
-// Exported so the memory-events → pubsub bridge can republish a canonical, GraphQL-ready link
-// (correct `weight`/`createdAt` shape) rather than the minimal backend event payload.
-export function getLinkById(factsDb: FactsDB, id: string): GraphQLLink | null {
+function getLinkById(factsDb: FactsDB, id: string): GraphQLLink | null {
   const row = factsDb
     .getRawDb()
     .prepare(
@@ -321,21 +319,14 @@ function isMemoryLinkType(value: string): value is MemoryLinkType {
 // ---------------------------------------------------------------------------
 
 const DAY_SEC = 86_400;
+// Bound the unresolved-contradiction scan so a large backlog can't force an unbounded synchronous
+// full-table read on the shared process (mirrors ALL_LINKS_SCAN_CAP for the link table).
+const CONTRADICTION_SCAN_CAP = 5_000;
 
-/** Epoch seconds of a fact's most recent access, falling back to creation time. */
-function factLastAccessSec(fact: MemoryEntry): number {
-  if (typeof fact.lastAccessed === "number" && fact.lastAccessed > 0) return fact.lastAccessed;
-  if (fact.lastAccessedAt) {
-    const parsed = Date.parse(fact.lastAccessedAt);
-    if (Number.isFinite(parsed)) return Math.floor(parsed / 1000);
-  }
-  return fact.createdAt;
-}
-
-/** In+out degree per fact id across the (capped) full link set. */
-function buildDegreeMap(factsDb: FactsDB): Map<string, number> {
+/** In+out degree per fact id from a pre-fetched link list (shared by the graph resolver + orphans). */
+function degreeMapFromLinks(links: GraphQLLink[]): Map<string, number> {
   const map = new Map<string, number>();
-  for (const link of getAllLinks(factsDb)) {
+  for (const link of links) {
     map.set(link.sourceId, (map.get(link.sourceId) ?? 0) + 1);
     map.set(link.targetId, (map.get(link.targetId) ?? 0) + 1);
   }
@@ -343,17 +334,26 @@ function buildDegreeMap(factsDb: FactsDB): Map<string, number> {
 }
 
 /** Orphans: in-scope, non-superseded facts with zero links and never recalled — likely gaps. */
-function collectOrphanFacts(context: GraphQLContext, limit: number): MemoryEntry[] {
-  const degree = buildDegreeMap(context.factsDb);
-  return allFacts(context)
+function collectOrphanFacts(
+  context: GraphQLContext,
+  limit: number,
+  prefetch?: { links?: GraphQLLink[]; facts?: MemoryEntry[] },
+): MemoryEntry[] {
+  const degree = degreeMapFromLinks(prefetch?.links ?? getAllLinks(context.factsDb));
+  return (prefetch?.facts ?? allFacts(context))
     .filter((fact) => (degree.get(fact.id) ?? 0) === 0 && (fact.recallCount ?? 0) === 0)
     .sort((a, b) => a.createdAt - b.createdAt)
     .slice(0, limit);
 }
 
 /** Weak links: visible edges at or below a strength threshold — candidates for pruning/review. */
-function collectWeakLinks(context: GraphQLContext, maxStrength: number, limit: number): GraphQLLink[] {
-  return getAllLinks(context.factsDb)
+function collectWeakLinks(
+  context: GraphQLContext,
+  maxStrength: number,
+  limit: number,
+  prefetch?: { links?: GraphQLLink[] },
+): GraphQLLink[] {
+  return (prefetch?.links ?? getAllLinks(context.factsDb))
     .filter((link) => link.weight <= maxStrength && isLinkVisible(context.factsDb, link, context.scopeFilter))
     .sort((a, b) => a.weight - b.weight)
     .slice(0, limit);
@@ -370,7 +370,7 @@ type ContradictionPairResult = {
 /** Unresolved contradictions where BOTH facts are in scope (fail-closed to avoid id leakage). */
 function collectContradictionPairs(context: GraphQLContext, limit: number): ContradictionPairResult[] {
   const out: ContradictionPairResult[] = [];
-  for (const c of getContradictions(context.factsDb.getRawDb())) {
+  for (const c of getContradictions(context.factsDb.getRawDb(), undefined, CONTRADICTION_SCAN_CAP)) {
     if (out.length >= limit) break;
     const factNew = context.factsDb.getById(c.factIdNew, { scopeFilter: context.scopeFilter });
     const factOld = context.factsDb.getById(c.factIdOld, { scopeFilter: context.scopeFilter });
@@ -386,12 +386,13 @@ function collectStaleImportantFacts(
   minImportance: number,
   staleDays: number,
   limit: number,
+  prefetch?: { facts?: MemoryEntry[] },
 ): MemoryEntry[] {
   const nowSec = Math.floor(Date.now() / 1000);
   const cutoff = nowSec - staleDays * DAY_SEC;
-  return allFacts(context)
-    .filter((fact) => fact.importance >= minImportance && factLastAccessSec(fact) < cutoff)
-    .sort((a, b) => b.importance - a.importance || factLastAccessSec(a) - factLastAccessSec(b))
+  return (prefetch?.facts ?? allFacts(context))
+    .filter((fact) => fact.importance >= minImportance && lastAccessSec(fact) < cutoff)
+    .sort((a, b) => b.importance - a.importance || lastAccessSec(a) - lastAccessSec(b))
     .slice(0, limit);
 }
 
@@ -573,11 +574,15 @@ export const resolvers: GraphQLResolvers = {
 
     memoryGraphInsights: (_parent, args, context) => {
       const limit = Math.max(1, Math.min(500, asNumber(asRecord(args).limit) ?? 25));
+      // Scan the (capped) link set and the in-scope fact set ONCE and share them across the four
+      // collectors, instead of each re-running getAllLinks / getAll on the synchronous DB.
+      const links = getAllLinks(context.factsDb);
+      const facts = allFacts(context);
       return {
-        orphanFacts: collectOrphanFacts(context, limit),
-        weakLinks: collectWeakLinks(context, 0.3, limit),
+        orphanFacts: collectOrphanFacts(context, limit, { links, facts }),
+        weakLinks: collectWeakLinks(context, 0.3, limit, { links }),
         contradictions: collectContradictionPairs(context, limit),
-        staleImportantFacts: collectStaleImportantFacts(context, 0.7, 90, limit),
+        staleImportantFacts: collectStaleImportantFacts(context, 0.7, 90, limit, { facts }),
       };
     },
 
@@ -627,7 +632,11 @@ export const resolvers: GraphQLResolvers = {
         (!scope || fact.scope === scope);
       // includeSuperseded=true so supersede lineage (below) can find predecessor facts; the
       // active/non-expired node set itself is still derived via isActiveFact immediately after.
-      const allMatching = allFacts(context, true).filter(matchesFilters);
+      const allInScope = allFacts(context, true);
+      // Every fact id the caller may read — used to keep the exposed `degree` scope-safe (a link to a
+      // fact outside the caller's scope must not be counted, or it discloses a hidden relationship).
+      const inScopeIds = new Set(allInScope.map((fact) => fact.id));
+      const allMatching = allInScope.filter(matchesFilters);
       let candidateFacts = allMatching.filter((fact) => isActiveFact(fact));
       // GraphFilterInput declares linkTypes/maxDepth/startNodeIds, but until now this resolver
       // silently ignored all three and always returned a flat "top-N by recency" node set instead
@@ -647,15 +656,13 @@ export const resolvers: GraphQLResolvers = {
       const facts = candidateFacts.slice(0, maxNodes);
       const factIds = new Set(facts.map((fact) => fact.id));
       const allLinks = getAllLinks(context.factsDb);
-      // Degree across the (capped) full link set — a structural metric that drives node sizing and
-      // orphan detection, independent of which edges are rendered in this subgraph.
-      const degreeMap = new Map<string, number>();
-      for (const link of allLinks) {
-        degreeMap.set(link.sourceId, (degreeMap.get(link.sourceId) ?? 0) + 1);
-        degreeMap.set(link.targetId, (degreeMap.get(link.targetId) ?? 0) + 1);
-      }
+      // Degree = number of links to other facts the caller can see. Counting only in-scope endpoints
+      // keeps the exposed metric from disclosing the count of a fact's hidden cross-scope links.
+      const degreeMap = degreeMapFromLinks(
+        allLinks.filter((link) => inScopeIds.has(link.sourceId) && inScopeIds.has(link.targetId)),
+      );
       const contradictedIds = new Set<string>();
-      for (const c of getContradictions(context.factsDb.getRawDb())) {
+      for (const c of getContradictions(context.factsDb.getRawDb(), undefined, CONTRADICTION_SCAN_CAP)) {
         contradictedIds.add(c.factIdNew);
         contradictedIds.add(c.factIdOld);
       }
@@ -668,6 +675,7 @@ export const resolvers: GraphQLResolvers = {
             (!linkTypes?.length || linkTypes.includes(link.linkType)),
         )
         .map((link) => ({
+          id: link.id,
           source: link.sourceId,
           target: link.targetId,
           linkType: link.linkType,
@@ -681,6 +689,9 @@ export const resolvers: GraphQLResolvers = {
         (fact) => fact.supersededBy && factIds.has(fact.supersededBy) && !factIds.has(fact.id),
       );
       const supersedeEdges = supersedeSourceFacts.map((fact) => ({
+        // Synthetic lineage edge (not a memory_links row) → no id; the client keeps such edges keyed
+        // by endpoints and never tries to mutate/delete them.
+        id: null,
         source: fact.id,
         target: fact.supersededBy as string,
         linkType: "superseded_by",

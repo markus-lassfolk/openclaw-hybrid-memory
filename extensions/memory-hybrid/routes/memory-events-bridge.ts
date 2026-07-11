@@ -12,7 +12,7 @@
  */
 import type { DatabaseSync } from "node:sqlite";
 import type { FactsDB } from "../backends/facts-db.js";
-import { onMemoryEvent } from "../services/memory-events.js";
+import { type MemoryLinkEventPayload, onMemoryEvent } from "../services/memory-events.js";
 import {
   notifyGraphqlFactCreated,
   notifyGraphqlFactDeleted,
@@ -22,13 +22,13 @@ import {
   notifyGraphqlRecallOccurred,
   notifyGraphqlStatsUpdated,
 } from "./graphql-pubsub.js";
-import { getLinkById } from "./graphql-resolvers.js";
 
 const STATS_DEBOUNCE_MS = 2000;
 
 let wired = false;
 let statsFactsDb: FactsDB | null = null;
 let statsTimer: ReturnType<typeof setTimeout> | null = null;
+const registeredListeners: Array<() => void> = [];
 
 /**
  * Lightweight, global (scope-less) stats snapshot for the `statsUpdated` subscription. Uses cheap
@@ -118,55 +118,57 @@ export function wireMemoryEventsToPubSub(factsDb: FactsDB): void {
     if (typeof statsTimer.unref === "function") statsTimer.unref();
   };
 
-  onMemoryEvent("factStored", ({ entry }) => {
-    notifyGraphqlFactCreated(entry, entry.category, entry.scope);
-    scheduleStats();
-  });
-  onMemoryEvent("factUpdated", ({ entry }) => {
-    notifyGraphqlFactUpdated(entry);
-    scheduleStats();
-  });
-  onMemoryEvent("factDeleted", (e) => {
-    notifyGraphqlFactDeleted(e.id, e.category, e.scope, e.scopeTarget);
-    scheduleStats();
-  });
-  onMemoryEvent("linkCreated", ({ link }) => {
-    // Republish the canonical, GraphQL-ready link (correct weight/createdAt); fall back to the
-    // event payload if the row was already deleted by the time this microtask runs.
-    const canonical = statsFactsDb ? getLinkById(statsFactsDb, link.id) : null;
-    notifyGraphqlLinkCreated(canonical ?? normalizeEventLink(link));
-    scheduleStats();
-  });
-  onMemoryEvent("linkUpdated", ({ link }) => {
-    const canonical = statsFactsDb ? getLinkById(statsFactsDb, link.id) : null;
-    notifyGraphqlLinkUpdated(canonical ?? normalizeEventLink(link));
-  });
-  onMemoryEvent("recallOccurred", (payload) => {
-    // Scope filtering of hits happens per-subscriber in the subscription resolver.
-    notifyGraphqlRecallOccurred(payload);
-  });
+  registeredListeners.push(
+    onMemoryEvent("factStored", ({ entry }) => {
+      notifyGraphqlFactCreated(entry, entry.category, entry.scope);
+      scheduleStats();
+    }),
+    onMemoryEvent("factUpdated", ({ entry }) => {
+      notifyGraphqlFactUpdated(entry);
+      scheduleStats();
+    }),
+    onMemoryEvent("factDeleted", (e) => {
+      notifyGraphqlFactDeleted(e.id, e.category, e.scope, e.scopeTarget);
+      scheduleStats();
+    }),
+    // Link events are self-contained (carry createdAt), so republish directly from the payload — no
+    // DB re-query. A lookup here would use the process-global statsFactsDb, which in a multi-vault
+    // process is whichever FactsDB wired last, not the vault the write came from.
+    onMemoryEvent("linkCreated", ({ link }) => {
+      notifyGraphqlLinkCreated(eventLinkToGraphql(link));
+      scheduleStats();
+    }),
+    onMemoryEvent("linkUpdated", ({ link }) => {
+      notifyGraphqlLinkUpdated(eventLinkToGraphql(link));
+    }),
+    onMemoryEvent("recallOccurred", (payload) => {
+      // Scope filtering of hits happens per-subscriber in the subscription resolver.
+      notifyGraphqlRecallOccurred(payload);
+    }),
+  );
 }
 
-/** Map a minimal backend link event payload onto the GraphQL `Link` shape (weight/createdAt). */
-function normalizeEventLink(link: {
-  id: string;
-  sourceId: string;
-  targetId: string;
-  linkType: string;
-  strength: number;
-}): Record<string, unknown> {
+/** Map a self-contained link event payload onto the GraphQL `Link` shape (strength→weight). */
+function eventLinkToGraphql(link: MemoryLinkEventPayload): Record<string, unknown> {
   return {
     id: link.id,
     sourceId: link.sourceId,
     targetId: link.targetId,
     linkType: link.linkType,
     weight: link.strength,
-    createdAt: Math.floor(Date.now() / 1000),
+    createdAt: link.createdAt,
   };
 }
 
-/** Test hygiene: reset the module-global wiring state. */
+/** Test hygiene: fully reset the module-global wiring state, including removing bus listeners. */
 export function resetMemoryEventsBridgeForTests(): void {
+  for (const off of registeredListeners.splice(0)) {
+    try {
+      off();
+    } catch {
+      // ignore
+    }
+  }
   wired = false;
   statsFactsDb = null;
   if (statsTimer) {

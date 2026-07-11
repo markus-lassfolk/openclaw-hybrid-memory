@@ -3,7 +3,7 @@ import { factToNode } from "./api/subscriptions";
 import { estimateStrength } from "./api/strength";
 import type { GraphEdge, GraphNode } from "./api/types";
 import { detectClusters } from "./graph/clustering";
-import { edgeKey, selectVisibleNodes, useGraphStore } from "./store/graphStore";
+import { edgeId, selectVisibleNodes, useGraphStore } from "./store/graphStore";
 
 function node(id: string, over: Partial<GraphNode> = {}): GraphNode {
   return {
@@ -100,7 +100,12 @@ describe("graphStore live deltas", () => {
     expect(after?.label).toBe("updated");
 
     store.upsertNode(node("b"));
-    expect(useGraphStore.getState().nodes.map((n) => n.id).sort()).toEqual(["a", "b"]);
+    expect(
+      useGraphStore
+        .getState()
+        .nodes.map((n) => n.id)
+        .sort(),
+    ).toEqual(["a", "b"]);
   });
 
   it("removeNode drops the node, its incident edges, and clears selection", () => {
@@ -121,18 +126,34 @@ describe("graphStore live deltas", () => {
     expect(s.selectedId).toBeNull();
   });
 
-  it("upsertEdge only renders when both endpoints exist; updates weight otherwise", () => {
+  it("upsertEdge only renders when both endpoints exist; updates in place by id", () => {
     const store = useGraphStore.getState();
     store.setGraph([node("a"), node("b")], [], null);
-    store.upsertEdge({ source: "a", target: "z", linkType: "RELATED_TO", weight: 0.5 }); // z missing
+    store.upsertEdge({ id: "L1", source: "a", target: "z", linkType: "RELATED_TO", weight: 0.5 }); // z missing
     expect(useGraphStore.getState().edges).toHaveLength(0);
-    store.upsertEdge({ source: "a", target: "b", linkType: "RELATED_TO", weight: 0.5 });
+    store.upsertEdge({ id: "L1", source: "a", target: "b", linkType: "RELATED_TO", weight: 0.5 });
     expect(useGraphStore.getState().edges).toHaveLength(1);
-    store.upsertEdge({ source: "a", target: "b", linkType: "RELATED_TO", weight: 0.9 });
+    // Same id → updates weight in place (no duplicate).
+    store.upsertEdge({ id: "L1", source: "a", target: "b", linkType: "RELATED_TO", weight: 0.9 });
+    // A link-type change on the same id also updates in place, NOT a second edge.
+    store.upsertEdge({ id: "L1", source: "a", target: "b", linkType: "CAUSED_BY", weight: 0.9 });
     const edges = useGraphStore.getState().edges;
     expect(edges).toHaveLength(1);
     expect(edges[0].weight).toBe(0.9);
-    expect(edgeKey(edges[0])).toBe("a|b|RELATED_TO");
+    expect(edges[0].linkType).toBe("CAUSED_BY");
+    expect(edgeId(edges[0])).toBe("L1");
+  });
+
+  it("removeEdgeById removes a graph-loaded edge (carries a real id)", () => {
+    const store = useGraphStore.getState();
+    store.setGraph(
+      [node("a"), node("b")],
+      [{ id: "L9", source: "a", target: "b", linkType: "RELATED_TO", weight: 0.5 }],
+      null,
+    );
+    expect(useGraphStore.getState().edges).toHaveLength(1);
+    store.removeEdgeById("L9");
+    expect(useGraphStore.getState().edges).toHaveLength(0);
   });
 
   it("pulse then prune expires rings", () => {
@@ -148,15 +169,17 @@ describe("selectVisibleNodes", () => {
   beforeEach(resetStore);
 
   it("filters by category, minStrength, superseded, and search", () => {
-    useGraphStore.getState().setGraph(
-      [
-        node("a", { category: "fact", strength: 0.8, label: "alpha memory" }),
-        node("b", { category: "decision", strength: 0.2, label: "beta" }),
-        node("c", { category: "fact", strength: 0.9, superseded: true, label: "gamma" }),
-      ],
-      [],
-      null,
-    );
+    useGraphStore
+      .getState()
+      .setGraph(
+        [
+          node("a", { category: "fact", strength: 0.8, label: "alpha memory" }),
+          node("b", { category: "decision", strength: 0.2, label: "beta" }),
+          node("c", { category: "fact", strength: 0.9, superseded: true, label: "gamma" }),
+        ],
+        [],
+        null,
+      );
     useGraphStore.getState().setFilters({ minStrength: 0.5 });
     expect(selectVisibleNodes(useGraphStore.getState()).map((n) => n.id)).toEqual(["a"]);
 

@@ -22,6 +22,8 @@ export interface GraphNode {
 }
 
 export interface GraphEdge {
+  /** memory_links row id; null/absent for synthetic lineage edges (e.g. superseded_by). */
+  id?: string | null;
   source: string;
   target: string;
   linkType: string;

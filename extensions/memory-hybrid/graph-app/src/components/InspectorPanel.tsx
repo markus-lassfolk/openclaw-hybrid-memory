@@ -10,6 +10,9 @@ export function InspectorPanel() {
   const selectedId = useGraphStore((s) => s.selectedId);
   const setSelected = useGraphStore((s) => s.setSelected);
   const nodeIndex = useGraphStore((s) => s.nodeIndex);
+  // Subscribe to `nodes` (a fresh array on every upsert) so the panel re-renders — and re-reads the
+  // in-place-mutated selected node — when a live event updates the fact currently being inspected.
+  useGraphStore((s) => s.nodes);
   const linkingFrom = useGraphStore((s) => s.linkingFrom);
   const setLinkingFrom = useGraphStore((s) => s.setLinkingFrom);
 
@@ -84,7 +87,12 @@ export function InspectorPanel() {
                   type="button"
                   className="accent"
                   disabled={busy || !draft.trim()}
-                  onClick={() => run(() => editFactText(selectedId, draft.trim()), () => setEditing(false))}
+                  onClick={() =>
+                    run(
+                      () => editFactText(selectedId, draft.trim()),
+                      () => setEditing(false),
+                    )
+                  }
                 >
                   Save
                 </button>
@@ -129,7 +137,10 @@ export function InspectorPanel() {
                 disabled={busy}
                 onClick={() => {
                   if (confirm("Delete this memory? This cannot be undone.")) {
-                    void run(() => removeFact(selectedId), () => setSelected(null));
+                    void run(
+                      () => removeFact(selectedId),
+                      () => setSelected(null),
+                    );
                   }
                 }}
               >
@@ -153,7 +164,12 @@ export function InspectorPanel() {
                     value={l.linkType}
                     style={{ color: linkColor(l.linkType) }}
                     disabled={busy}
-                    onChange={(e) => run(() => changeLink(l.id, e.target.value), () => setReloadKey((k) => k + 1))}
+                    onChange={(e) =>
+                      run(
+                        () => changeLink(l.id, e.target.value),
+                        () => setReloadKey((k) => k + 1),
+                      )
+                    }
                   >
                     {LINK_TYPES.map((t) => (
                       <option key={t} value={t}>
@@ -166,7 +182,12 @@ export function InspectorPanel() {
                     className="danger mini"
                     title="Remove bond"
                     disabled={busy}
-                    onClick={() => run(() => removeLink(l.id), () => setReloadKey((k) => k + 1))}
+                    onClick={() =>
+                      run(
+                        () => removeLink(l.id),
+                        () => setReloadKey((k) => k + 1),
+                      )
+                    }
                   >
                     ✕
                   </button>

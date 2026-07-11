@@ -68,7 +68,10 @@ describe("GraphQL Query.graph superseded_by edges (loop iteration 126 regression
     expect(nodeIds).toEqual(["fact-a", "fact-b", "fact-c"]);
 
     const supersedeEdges = result.edges.filter((e) => e.linkType === "superseded_by");
-    expect(supersedeEdges).toEqual([{ source: "fact-b", target: "fact-a", linkType: "superseded_by", weight: 1 }]);
+    // Synthetic lineage edges carry id: null (not a memory_links row).
+    expect(supersedeEdges).toEqual([
+      { id: null, source: "fact-b", target: "fact-a", linkType: "superseded_by", weight: 1 },
+    ]);
   });
 
   it("omits the superseded_by edge and predecessor node when the replacement is filtered out", () => {

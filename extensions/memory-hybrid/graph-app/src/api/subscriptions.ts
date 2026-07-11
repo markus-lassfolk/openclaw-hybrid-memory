@@ -39,6 +39,11 @@ const FACT_FIELDS = `
 const LINK_FIELDS = `id sourceId targetId linkType weight`;
 
 export function factToNode(f: SubFact): GraphNode {
+  // NOTE: a Fact subscription payload does NOT carry the server-computed degree / contradicted /
+  // clusterId. Those are deliberately OMITTED here so that upsertNode's Object.assign onto an
+  // existing node preserves the values from the last full graph load instead of resetting them
+  // (degree→0, contradicted→false, clusterId→null) on every live update. A brand-new node simply
+  // starts without them, which the canvas + inspector already treat as sensible defaults.
   return {
     id: f.id,
     label: f.text.length > 50 ? `${f.text.slice(0, 50)}…` : f.text,
@@ -60,10 +65,7 @@ export function factToNode(f: SubFact): GraphNode {
     lastAccessedAt: f.lastAccessedAt ?? null,
     reinforcedCount: f.reinforcedCount ?? 0,
     pinned: Boolean(f.pinned),
-    degree: 0,
     superseded: Boolean(f.supersededBy),
-    contradicted: false,
-    clusterId: null,
     tags: f.tags ?? [],
     entity: f.entity ?? null,
   };

@@ -12,9 +12,10 @@ import { createSchema, createYoga, type YogaInitialContext } from "graphql-yoga"
 import { scopedRowMatchesFilter } from "../backends/facts-db/scope-sql.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
+import type { RecallHitPayload, RecallOccurredPayload } from "../services/memory-events.js";
 import type { MemoryScope, ScopeFilter } from "../types/memory.js";
 import { pluginLogger } from "../utils/logger.js";
-import { scopeFilterFromIdentityHeaders } from "../utils/scope-filter.js";
+import { GLOBAL_ONLY_SCOPE_SENTINEL, scopeFilterFromIdentityHeaders } from "../utils/scope-filter.js";
 import { graphqlPubSub } from "./graphql-pubsub.js";
 import { type GraphQLContext, isLinkVisible, resolvers } from "./graphql-resolvers.js";
 import { graphqlSchema } from "./graphql-schema.js";
@@ -25,15 +26,6 @@ type FactUpdatedPayload = { fact: unknown; factId?: string; category?: string };
 type FactDeletedPayload = { id: string; category?: string; scope?: string; scopeTarget?: string | null };
 type LinkCreatedPayload = { link: unknown; sourceId?: string; targetId?: string };
 type StatsUpdatedPayload = { stats: unknown };
-type RecallHitPayload = { factId: string; score: number };
-type RecallOccurredPayload = {
-  query: string | null;
-  source: string;
-  sessionKey: string | null;
-  agentId: string | null;
-  occurredAt: number;
-  hits: RecallHitPayload[];
-};
 
 const pubSub = graphqlPubSub;
 
@@ -128,6 +120,22 @@ function visibleRecallHits(context: GraphQLContext, hits: RecallHitPayload[]): R
 }
 
 /**
+ * May this subscriber receive a recall event's metadata (query/session/agent)? A caller with no
+ * real identity — the header-less local operator, represented by the global-only sentinel agentId —
+ * owns all activity on the box; an identity-scoped caller (multi-tenant) may only see recalls
+ * originating from their own agent or session, never another tenant's.
+ */
+export function subscriberOwnsRecall(scopeFilter: ScopeFilter, payload: RecallOccurredPayload): boolean {
+  const realAgentId =
+    scopeFilter.agentId && scopeFilter.agentId !== GLOBAL_ONLY_SCOPE_SENTINEL ? scopeFilter.agentId : null;
+  const identityScoped = Boolean(scopeFilter.userId || realAgentId || scopeFilter.sessionId);
+  if (!identityScoped) return true;
+  if (realAgentId && payload.agentId && realAgentId === payload.agentId) return true;
+  if (scopeFilter.sessionId && payload.sessionKey && scopeFilter.sessionId === payload.sessionKey) return true;
+  return false;
+}
+
+/**
  * Create GraphQL Yoga server instance
  */
 export function createGraphQLServer(
@@ -208,14 +216,19 @@ export function createGraphQLServer(
             resolve: (payload: LinkCreatedPayload) => payload.link,
           },
           recallOccurred: {
-            // SECURITY: recall hits reference facts across the whole store. Only pass through a
-            // recall the caller can see at least one hit of, and trim the returned hits to exactly
-            // the facts in their scope — mirrors the per-fact scope gate every read resolver applies.
+            // SECURITY: a recall event carries not just fact hits but the raw query text plus the
+            // originating session/agent — sensitive metadata. Hits are always trimmed to the
+            // caller's scope, but the metadata must only reach the recall's OWNER: an unscoped
+            // local operator (no identity headers) owns all activity on the box, whereas a scoped
+            // subscriber (multi-tenant, identity headers present) may only see recalls from their
+            // own agent/session. Otherwise tenant B could harvest tenant A's query text whenever
+            // A's recall happens to touch a globally-visible fact.
             subscribe: (_parent: unknown, args: { sessionKey?: string }, context: GraphQLContext) =>
               filterAsyncIterator(
                 pubSub.subscribe("recallOccurred"),
                 (payload) =>
                   optionalMatches(args.sessionKey, payload.sessionKey) &&
+                  subscriberOwnsRecall(context.scopeFilter, payload) &&
                   visibleRecallHits(context, payload.hits).length > 0,
               ),
             resolve: (payload: RecallOccurredPayload, _args: unknown, context: GraphQLContext) => ({

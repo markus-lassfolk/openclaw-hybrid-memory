@@ -33,9 +33,10 @@ export function setToken(token: string): void {
   } catch {
     // ignore storage failures (private mode, etc.)
   }
-  // A changed token invalidates the SSE client's auth header.
-  sseClient?.dispose();
-  sseClient = null;
+  // Deliberately do NOT dispose the SSE client here. Subscriptions are unauthenticated reads, so a
+  // token change doesn't affect them — but disposing would tear down the already-registered live
+  // subscriptions with nothing to re-create them, silently killing the live overlay for the rest of
+  // the session. Mutations pick up the new token per-request via authHeaders() in gqlRequest.
 }
 
 function authHeaders(): Record<string, string> {
@@ -51,7 +52,15 @@ export async function gqlRequest<T>(query: string, variables?: Record<string, un
     body: JSON.stringify({ query, variables }),
   });
   if (res.status === 401) throw new GraphQLAuthError();
-  const json = (await res.json()) as { data?: T; errors?: Array<{ message: string }> };
+  // A non-2xx that isn't 401 is usually a server/proxy error page (HTML), so don't try to parse it
+  // as GraphQL JSON — that would surface a cryptic "Unexpected token <" instead of the real status.
+  if (!res.ok) throw new Error(`Server error (${res.status} ${res.statusText})`);
+  let json: { data?: T; errors?: Array<{ message: string }> };
+  try {
+    json = (await res.json()) as { data?: T; errors?: Array<{ message: string }> };
+  } catch {
+    throw new Error("Server returned a non-JSON response");
+  }
   if (json.errors?.length) throw new Error(json.errors.map((e) => e.message).join("; "));
   if (!json.data) throw new Error("Empty GraphQL response");
   return json.data;

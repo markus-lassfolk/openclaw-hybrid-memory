@@ -92,7 +92,11 @@ export function logRecallEvent(db: DatabaseSync, input: RecallEventInput): boole
 export function recordRecallEvent(db: DatabaseSync, input: RecallEventInput): boolean {
   const inserted = insertRecallEvent(db, input);
   const occurredAt = input.occurredAtSec ?? Math.floor(Date.now() / 1000);
-  const hits = [...input.factIds].slice(0, 100).map((factId) => ({
+  // Build the pulsed hit set from the SAME sorted+capped id list insertRecallEvent persists, so
+  // when a recall returns >100 facts the overlay pulses exactly the facts whose scores were stored
+  // (not a different subset).
+  const cappedIds = [...input.factIds].sort().slice(0, 100);
+  const hits = cappedIds.map((factId) => ({
     factId,
     score: input.scores?.[factId] ?? 1,
   }));

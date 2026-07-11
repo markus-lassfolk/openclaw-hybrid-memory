@@ -17,13 +17,20 @@
 import { EventEmitter } from "node:events";
 import type { MemoryEntry } from "../types/memory.js";
 
-/** Minimal link shape carried on link events (enough for scope re-checking + rendering). */
+/**
+ * Self-contained link shape carried on link events. Includes `createdAt` so the pubsub bridge can
+ * republish a canonical GraphQL link WITHOUT re-querying the database — a DB lookup there would
+ * resolve against whichever FactsDB wired the (process-global) bridge last, not the vault the write
+ * actually came from, in a multi-vault process.
+ */
 export type MemoryLinkEventPayload = {
   id: string;
   sourceId: string;
   targetId: string;
   linkType: string;
   strength: number;
+  /** Epoch seconds the link row was created (stable across strengthen/type updates). */
+  createdAt: number;
 };
 
 /** One recalled fact and the score it was ranked with. */

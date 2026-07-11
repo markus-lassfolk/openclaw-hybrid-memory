@@ -1,19 +1,13 @@
 import { createPubSub } from "graphql-yoga";
+// Canonical recall payload shape lives with the event bus that produces it — import rather than
+// redeclare so a new field can't silently diverge between the emitter and the pubsub transport.
+import type { RecallOccurredPayload } from "../services/memory-events.js";
 
 type FactSubscriptionPayload = { fact: unknown; category?: string; scope?: string };
 type FactUpdatedPayload = { fact: unknown; factId?: string; category?: string };
 type FactDeletedPayload = { id: string; category?: string; scope?: string; scopeTarget?: string | null };
 type LinkCreatedPayload = { link: unknown; sourceId?: string; targetId?: string };
 type StatsUpdatedPayload = { stats: unknown };
-type RecallHit = { factId: string; score: number };
-type RecallOccurredPayload = {
-  query: string | null;
-  source: string;
-  sessionKey: string | null;
-  agentId: string | null;
-  occurredAt: number;
-  hits: RecallHit[];
-};
 
 export const graphqlPubSub = createPubSub<{
   factCreated: [FactSubscriptionPayload];

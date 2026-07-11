@@ -511,16 +511,20 @@ export class FactsDBLayer1 extends BaseSqliteStore {
   }
 
   delete(id: string): boolean {
-    // Capture scope/category BEFORE the row is gone so the live overlay's factDeleted event can
-    // be scope-filtered by subscribers (the fact is unqueryable afterwards).
-    const existing = getByIdImpl(this.liveDb, id);
+    // Capture scope/category BEFORE the row is gone so the live overlay's factDeleted event can be
+    // scope-filtered by subscribers (the fact is unqueryable afterwards). Use a narrow 3-column
+    // read, NOT a full getById hydration — delete() runs one-per-fact in tight prune/reflection
+    // loops, so a full-row parse here would ~double the per-delete query cost.
+    const meta = this.liveDb.prepare("SELECT category, scope, scope_target FROM facts WHERE id = ?").get(id) as
+      | { category?: string; scope?: string; scope_target?: string | null }
+      | undefined;
     const deleted = deleteFact(this.liveDb, id);
     if (deleted) {
       emitMemoryEvent("factDeleted", {
         id,
-        category: existing?.category,
-        scope: existing?.scope,
-        scopeTarget: existing?.scopeTarget ?? null,
+        category: meta?.category,
+        scope: meta?.scope,
+        scopeTarget: meta?.scope_target ?? null,
       });
     }
     return deleted;

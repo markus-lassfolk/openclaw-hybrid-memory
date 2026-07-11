@@ -35,9 +35,11 @@ export function GraphCanvas() {
   const selectedId = useGraphStore((s) => s.selectedId);
   const pulses = useGraphStore((s) => s.pulses);
   const colorByCluster = useGraphStore((s) => s.colorByCluster);
+  const clusters = useGraphStore((s) => s.clusters);
   const linkingFrom = useGraphStore((s) => s.linkingFrom);
   const setSelected = useGraphStore((s) => s.setSelected);
   const setLinkingFrom = useGraphStore((s) => s.setLinkingFrom);
+  const addActivity = useGraphStore((s) => s.addActivity);
   const prunePulses = useGraphStore((s) => s.prunePulses);
 
   const [size, setSize] = useState({ width: window.innerWidth, height: window.innerHeight });
@@ -80,23 +82,28 @@ export function GraphCanvas() {
 
   // While recall pulses are active, keep the canvas repainting so the rings animate/fade. Once the
   // simulation has cooled react-force-graph pauses its render loop; resumeAnimation() restarts it
-  // (at ~zero alpha the nodes don't move — only the pulse rings redraw). When the last pulse expires
-  // we prune it and pause again to return to idle.
+  // (at ~zero alpha the nodes barely move — only the pulse rings redraw). We deliberately do NOT
+  // pauseAnimation() when the pulses end: pausing can freeze a still-settling layout into a central
+  // blob if a pulse arrives during the initial cooldown. react-force-graph pauses itself once its
+  // own cooldown completes, so the loop returns to idle without our help.
   useEffect(() => {
     if (pulses.size === 0) return;
     fgRef.current?.resumeAnimation();
     let raf = 0;
     const tick = () => {
       prunePulses();
-      if (useGraphStore.getState().pulses.size > 0) {
-        raf = requestAnimationFrame(tick);
-      } else {
-        fgRef.current?.pauseAnimation();
-      }
+      if (useGraphStore.getState().pulses.size > 0) raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [pulses.size, prunePulses]);
+
+  // When community detection finishes (400ms after a topology change) it mutates node.clusterId in
+  // place, which triggers no repaint on its own. If we're coloring by cluster, nudge the render loop
+  // so the new colors actually show without waiting for an unrelated interaction.
+  useEffect(() => {
+    if (colorByCluster) fgRef.current?.resumeAnimation();
+  }, [clusters, colorByCluster]);
 
   const nodeFill = (node: FGNode): string =>
     colorByCluster ? clusterColor(node.clusterId) : categoryColor(node.category);
@@ -185,9 +192,13 @@ export function GraphCanvas() {
       onNodeClick={(node) => {
         const id = (node as FGNode).id;
         if (linkingFrom && linkingFrom !== id) {
-          // Complete a click-to-bond: create a RELATED_TO link from the pending source.
-          void addLink(linkingFrom, id, "RELATED_TO", 0.7);
+          // Complete a click-to-bond: create a RELATED_TO link from the pending source. Surface a
+          // failure (e.g. missing dashboard token) in the activity feed rather than swallowing it.
+          const from = linkingFrom;
           setLinkingFrom(null);
+          addLink(from, id, "RELATED_TO", 0.7).then((res) => {
+            if (!res.ok) addActivity("update", `bond failed — ${res.error ?? "unknown error"}`);
+          });
         } else {
           setSelected(id);
         }

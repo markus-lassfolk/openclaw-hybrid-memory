@@ -78,17 +78,16 @@ export async function setPinned(id: string, pinned: boolean): Promise<Result> {
   }
 }
 
-export async function addLink(
-  sourceId: string,
-  targetId: string,
-  linkType: string,
-  weight: number,
-): Promise<Result> {
+export async function addLink(sourceId: string, targetId: string, linkType: string, weight: number): Promise<Result> {
   try {
     const link = await q.createLink(sourceId, targetId, linkType, weight);
-    useGraphStore
-      .getState()
-      .upsertEdge({ source: link.sourceId, target: link.targetId, linkType: link.linkType, weight: link.weight });
+    useGraphStore.getState().upsertEdge({
+      id: link.id,
+      source: link.sourceId,
+      target: link.targetId,
+      linkType: link.linkType,
+      weight: link.weight,
+    });
     return { ok: true };
   } catch (e) {
     return { ok: false, error: toError(e) };
@@ -117,9 +116,13 @@ export async function removeLink(id: string): Promise<Result> {
 export async function acceptSuggested(sourceId: string, targetId: string): Promise<Result> {
   try {
     const link = await q.acceptSuggestedLink(sourceId, targetId);
-    useGraphStore
-      .getState()
-      .upsertEdge({ source: link.sourceId, target: link.targetId, linkType: link.linkType, weight: link.weight });
+    useGraphStore.getState().upsertEdge({
+      id: link.id,
+      source: link.sourceId,
+      target: link.targetId,
+      linkType: link.linkType,
+      weight: link.weight,
+    });
     return { ok: true };
   } catch (e) {
     return { ok: false, error: toError(e) };

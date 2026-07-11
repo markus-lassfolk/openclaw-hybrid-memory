@@ -156,6 +156,9 @@ export const graphqlSchema = `#graphql
   }
 
   type GraphEdge {
+    # Link row id (null for synthetic lineage edges like superseded_by). Lets the client update or
+    # remove a specific bond without a full reload.
+    id: ID
     source: ID!
     target: ID!
     linkType: String!

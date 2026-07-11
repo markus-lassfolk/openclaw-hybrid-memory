@@ -20,7 +20,7 @@ const GRAPH_QUERY = `
   query Graph($filter: GraphFilterInput) {
     graph(filter: $filter) {
       nodes { ${GRAPH_NODE_FIELDS} }
-      edges { source target linkType weight }
+      edges { id source target linkType weight }
     }
     stats {
       totalFacts activeFactsCount supersededFactsCount totalLinks

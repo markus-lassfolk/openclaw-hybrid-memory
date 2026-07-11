@@ -1043,7 +1043,11 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         // for buffered query/mutation responses too (their stream simply closes immediately).
         if (response.body) {
           const reader = response.body.getReader();
-          const cancel = () => void reader.cancel().catch(() => {});
+          let closed = false;
+          const cancel = () => {
+            closed = true;
+            void reader.cancel().catch(() => {});
+          };
           // If the client (SSE subscriber) disconnects, cancel the reader so Yoga tears the
           // subscription down instead of leaking it on the pubsub.
           req.on("close", cancel);
@@ -1051,8 +1055,24 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           try {
             for (;;) {
               const { done, value } = await reader.read();
-              if (done) break;
-              if (value) res.write(Buffer.from(value));
+              if (done || closed) break;
+              if (value) {
+                // Respect backpressure: if the socket buffer is full, wait for 'drain' before
+                // reading more. Otherwise a slow-but-connected SSE client would let Yoga produce
+                // events faster than they drain, growing the process heap without bound.
+                const ok = res.write(Buffer.from(value));
+                if (!ok && !closed) {
+                  await new Promise<void>((resolve) => {
+                    const done = () => {
+                      res.off("drain", done);
+                      res.off("close", done);
+                      resolve();
+                    };
+                    res.once("drain", done);
+                    res.once("close", done);
+                  });
+                }
+              }
             }
           } finally {
             res.end();

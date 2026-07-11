@@ -35,7 +35,7 @@ describe("memory-events bus", () => {
     // Must not throw synchronously (the emit is deferred + wrapped).
     expect(() =>
       emitMemoryEvent("linkCreated", {
-        link: { id: "l1", sourceId: "a", targetId: "b", linkType: "RELATED_TO", strength: 1 },
+        link: { id: "l1", sourceId: "a", targetId: "b", linkType: "RELATED_TO", strength: 1, createdAt: 1 },
       }),
     ).not.toThrow();
 

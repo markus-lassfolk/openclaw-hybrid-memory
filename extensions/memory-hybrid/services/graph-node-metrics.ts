@@ -24,7 +24,7 @@ const NODE_STRENGTH_CONFIG: CompositeScoreConfig = {
 };
 
 /** Epoch seconds of the fact's most recent access, falling back to creation time. */
-function lastAccessSec(fact: MemoryEntry): number {
+export function lastAccessSec(fact: MemoryEntry): number {
   if (typeof fact.lastAccessed === "number" && fact.lastAccessed > 0) return fact.lastAccessed;
   if (fact.lastAccessedAt) {
     const parsed = Date.parse(fact.lastAccessedAt);

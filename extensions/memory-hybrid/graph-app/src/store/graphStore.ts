@@ -27,8 +27,13 @@ export interface ActivityItem {
   at: number;
 }
 
-export function edgeKey(e: Pick<GraphEdge, "source" | "target" | "linkType">): string {
-  return `${e.source}|${e.target}|${e.linkType}`;
+/**
+ * Stable key for an edge in the store index. Real links are keyed by their row `id` so a link-type
+ * change (same id, new type) updates the existing edge in place instead of adding a duplicate, and a
+ * delete can find it. Synthetic edges without an id (e.g. superseded_by) fall back to endpoints.
+ */
+export function edgeId(e: Pick<GraphEdge, "id" | "source" | "target" | "linkType">): string {
+  return e.id ?? `${e.source}|${e.target}|${e.linkType}`;
 }
 
 interface GraphState {
@@ -92,7 +97,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
 
   setGraph: (nodes, edges, stats) => {
     const nodeIndex = new Map(nodes.map((n) => [n.id, n]));
-    const edgeIndex = new Map(edges.map((e) => [edgeKey(e), e]));
+    const edgeIndex = new Map(edges.map((e) => [edgeId(e), e]));
     set({ nodes: [...nodes], edges: [...edges], nodeIndex, edgeIndex, stats, loading: false, error: null });
   },
 
@@ -130,10 +135,14 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     const { edgeIndex, edges, nodeIndex } = get();
     // Only render an edge when both endpoints are present in the current view.
     if (!nodeIndex.has(edge.source) || !nodeIndex.has(edge.target)) return;
-    const key = edgeKey(edge);
+    const key = edgeId(edge);
     const existing = edgeIndex.get(key);
     if (existing) {
+      // Update in place (a type change carries the same id, so this replaces rather than duplicates)
+      // and copy the id from a live echo onto an optimistic edge that lacked it.
       existing.weight = edge.weight;
+      existing.linkType = edge.linkType;
+      if (edge.id) existing.id = edge.id;
       set({ edges: [...edges] });
     } else {
       edgeIndex.set(key, edge);
@@ -143,9 +152,9 @@ export const useGraphStore = create<GraphState>((set, get) => ({
 
   removeEdgeById: (id) => {
     set((s) => {
-      const edges = s.edges.filter((e) => (e as GraphEdge & { id?: string }).id !== id);
+      const edges = s.edges.filter((e) => e.id !== id);
       if (edges.length === s.edges.length) return s;
-      const edgeIndex = new Map(edges.map((e) => [edgeKey(e), e]));
+      const edgeIndex = new Map(edges.map((e) => [edgeId(e), e]));
       return { ...s, edges, edgeIndex };
     });
   },
