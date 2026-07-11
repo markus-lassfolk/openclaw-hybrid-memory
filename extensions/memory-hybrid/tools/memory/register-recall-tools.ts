@@ -1253,6 +1253,23 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
     }
 
     logRecall(true);
+
+    // "Strengthens when recalled": the tool returns each result's FULL text, so this is a genuine
+    // full-content exposure — bump recall/access counters and renew decay TTL for every ranked
+    // result (same doctrine as the fetch-by-id path above; index-only exposures use
+    // refreshIndexedFacts instead). Skipped for time-travel reads (asOf) — auditing the past is
+    // not organic recall — and for superseded rows surfaced via includeSuperseded.
+    if (asOfSec == null && results.length > 0) {
+      try {
+        const accessedIds = results
+          .filter((r) => !(r.entry.supersededAt != null || r.entry.supersededBy != null))
+          .map((r) => r.entry.id);
+        if (accessedIds.length > 0) recallFactsDb.refreshAccessedFacts(accessedIds);
+      } catch {
+        /* reinforcement is best-effort — never fails the recall */
+      }
+    }
+
     const text = results
       .map((r, i) => {
         const contradicted = contradictionStatus.get(r.entry.id) ?? false;

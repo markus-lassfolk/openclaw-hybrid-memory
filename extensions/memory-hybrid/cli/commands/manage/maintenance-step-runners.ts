@@ -29,6 +29,7 @@ import {
 } from "../../../services/maintenance-job-run/index.js";
 import type { MaintenanceStepRunner } from "../../../services/maintenance-orchestrator.js";
 import { runPassiveObserver } from "../../../services/passive-observer.js";
+import { runFactsPruneStep } from "../../../services/prune-step.js";
 import { runPendingDigestAutopilotCron } from "../../../services/pending-digest-autopilot-cron.js";
 import { buildPendingReviewDigestReport } from "../../../services/pending-review-digest.js";
 import { sweepAll } from "../../../services/sensor-sweep.js";
@@ -305,11 +306,14 @@ export function buildCliMaintenanceRunners(
 
   // --- Cycle ---
   set("prune", async () => {
-    const pending = b.factsDb.listExpiredFactIdsPendingPrune();
-    const n = b.factsDb.prune();
-    const cleanup = await deleteVectorsForFactIds(b.vectorDb, pending, { operation: "orchestrator-prune" });
-    const summary = `pruned=${n} vectors=${cleanup.deleted}/${cleanup.attempted} failures=${cleanup.failed} semantic=${cleanup.failed > 0 ? "partial" : "success"}`;
-    assertVectorCleanupNotPartial("prune", [cleanup], summary);
+    // Shared with the plugin-cycle runner so CLI-triggered maintenance applies the SAME decay
+    // semantics (this variant used to skip decayConfidence entirely).
+    const outcome = await runFactsPruneStep(b.factsDb, b.vectorDb, { operationPrefix: "orchestrator" });
+    const [expiredCleanup, decayCleanup] = outcome.cleanups;
+    const deleted = expiredCleanup.deleted + decayCleanup.deleted;
+    const attempted = expiredCleanup.attempted + decayCleanup.attempted;
+    const summary = `pruned=${outcome.expired} decayed=${outcome.decayed} vectors=${deleted}/${attempted} failures=${outcome.vectorFailures} semantic=${outcome.vectorFailures > 0 ? "partial" : "success"}`;
+    assertVectorCleanupNotPartial("prune", outcome.cleanups, summary);
     return summary;
   });
 
@@ -896,17 +900,10 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
   const discoveredPath = join(dirname(deps.resolvedSqlitePath), ".discovered-categories.json");
 
   runners.set("prune", async () => {
-    const decayNowSec = Math.floor(Date.now() / 1000);
-    const expiredIds = deps.factsDb.listExpiredFactIdsPendingPrune();
-    const decayDeleteIds = deps.factsDb.listFactIdsToBeDeletedByDecayRun(decayNowSec);
-    const hardPruned = deps.factsDb.pruneExpired();
-    const softPruned = deps.factsDb.decayConfidence(decayNowSec);
-    const expiredCleanup = await deleteVectorsForFactIds(deps.vectorDb, expiredIds, {
-      operation: "orchestrator-cycle-prune",
-    });
-    const decayCleanup = await deleteVectorsForFactIds(deps.vectorDb, decayDeleteIds, {
-      operation: "orchestrator-cycle-decay",
-    });
+    const outcome = await runFactsPruneStep(deps.factsDb, deps.vectorDb, { operationPrefix: "orchestrator-cycle" });
+    const hardPruned = outcome.expired;
+    const softPruned = outcome.decayed;
+    const [expiredCleanup, decayCleanup] = outcome.cleanups;
     const edicts = deps.edictStore.pruneExpired();
     let audit = 0;
     let health = 0;

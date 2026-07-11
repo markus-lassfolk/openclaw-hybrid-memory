@@ -319,6 +319,45 @@ describe("Memory journey e2e — full register() stack", () => {
     expect(toolRecall.details?.memories?.some((m) => m.text.includes(QUERY_ANCHOR_PHRASE))).toBe(true);
   }, 60_000);
 
+  it("memory_recall query path reinforces results (recall_count + TTL renewal) but never asOf reads", async () => {
+    await registerJourney({ retrieval: { strategies: ["fts5"] } });
+    const store = api.getTool("memory_store")!;
+    const recall = api.getTool("memory_recall")!;
+
+    const stored = (await store.execute("c1", {
+      text: `AcmeCorp ${QUERY_ANCHOR_PHRASE} ${DEPLOY_MARKER}`,
+      category: "project",
+      entity: "AcmeCorp",
+      importance: 0.9,
+    })) as { details?: { id?: string } };
+    const factId = stored.details?.id as string;
+    expect(factId).toBeDefined();
+
+    const raw = runtimeRef.value!.factsDb.getRawDb();
+    const rowOf = () =>
+      raw.prepare("SELECT recall_count, access_count, expires_at FROM facts WHERE id = ?").get(factId) as {
+        recall_count: number | null;
+        access_count: number | null;
+        expires_at: number | null;
+      };
+
+    const before = rowOf();
+    // Shrink the TTL so the recall's renewal (expires_at = now + class TTL) is unmistakable.
+    const nowSec = Math.floor(Date.now() / 1000);
+    raw.prepare("UPDATE facts SET expires_at = ? WHERE id = ?").run(nowSec + 10, factId);
+
+    await recall.execute("c2", { query: "zephyr port", limit: 5 });
+
+    const after = rowOf();
+    expect(after.recall_count).toBe((before.recall_count ?? 0) + 1);
+    expect(after.access_count).toBe((before.access_count ?? 0) + 1);
+    expect(after.expires_at ?? 0).toBeGreaterThan(nowSec + 10);
+
+    // Time-travel reads (asOf) audit the past — they must not count as organic recall.
+    await recall.execute("c3", { query: "zephyr port", limit: 5, asOf: "2030-01-01" });
+    expect(rowOf().recall_count).toBe(after.recall_count);
+  }, 60_000);
+
   it("memory_recall expands graph-linked neighbors when graph.useInRecall is enabled", async () => {
     await registerJourney({ retrieval: { strategies: ["fts5"] } });
     const store = api.getTool("memory_store")!;

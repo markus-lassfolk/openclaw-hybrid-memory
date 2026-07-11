@@ -620,6 +620,7 @@ export function listExpiredFactIdsPendingPrune(db: DatabaseSync): string[] {
   const rows = db
     .prepare(
       `SELECT id FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
+         AND pinned_at IS NULL
          AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
          AND id NOT IN (SELECT fact_id FROM verified_facts)`,
     )
@@ -634,6 +635,7 @@ export function listLowConfidenceFactIdsPendingPrune(db: DatabaseSync): string[]
     .prepare(
       `SELECT id FROM facts
          WHERE confidence < 0.1
+           AND pinned_at IS NULL
            AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
            AND id NOT IN (SELECT fact_id FROM verified_facts)`,
     )
@@ -658,6 +660,7 @@ export function listFactIdsToBeDeletedByDecayRun(db: DatabaseSync, nowSec = Math
     .prepare(
       `SELECT id FROM facts
          WHERE confidence < 0.1
+           AND pinned_at IS NULL
            AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
            AND id NOT IN (SELECT fact_id FROM verified_facts)`,
     )
@@ -673,6 +676,7 @@ export function listFactIdsToBeDeletedByDecayRun(db: DatabaseSync, nowSec = Math
            AND expires_at > @now
            AND last_confirmed_at IS NOT NULL
            AND (@now - last_confirmed_at) > (expires_at - last_confirmed_at) * 0.75
+           AND pinned_at IS NULL
            AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
            AND id NOT IN (SELECT fact_id FROM verified_facts)`,
     )
@@ -687,9 +691,12 @@ export function pruneExpiredWithDetails(
   const tx = createTransaction(
     db,
     () => {
+      // pinned_at exempts user-pinned facts: pinning promises "stays central and decay-frozen",
+      // so TTL expiry must never hard-delete a pinned fact (quota of 10 bounds the exemption).
       const rows = db
         .prepare(
           `SELECT id FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
+           AND pinned_at IS NULL
            AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
            AND id NOT IN (SELECT fact_id FROM verified_facts)`,
         )
@@ -789,6 +796,7 @@ export function decayConfidenceWithDetails(
              AND last_confirmed_at IS NOT NULL
              AND (@now - last_confirmed_at) > (expires_at - last_confirmed_at) * 0.75
              AND confidence > 0.1
+             AND pinned_at IS NULL
              AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
              AND id NOT IN (SELECT fact_id FROM verified_facts)`,
       )
@@ -796,6 +804,7 @@ export function decayConfidenceWithDetails(
     const rows = db
       .prepare(
         `SELECT id FROM facts WHERE confidence < 0.1
+           AND pinned_at IS NULL
            AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
            AND id NOT IN (SELECT fact_id FROM verified_facts)`,
       )
