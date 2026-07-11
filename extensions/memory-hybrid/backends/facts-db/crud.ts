@@ -252,10 +252,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
       entry: createSkippedStorePlaceholder(entry),
     };
   }
-  if (
-    !ctx.allowPreStoreGuardBypass &&
-    (BLOCKED_CATEGORIES.has(entryCategory) || BLOCKED_SOURCES.has(entrySource))
-  ) {
+  if (!ctx.allowPreStoreGuardBypass && (BLOCKED_CATEGORIES.has(entryCategory) || BLOCKED_SOURCES.has(entrySource))) {
     return {
       skipped: true,
       rejected: true,
@@ -646,8 +643,14 @@ export function refreshAccessedFacts(db: DatabaseSync, ids: string[]): void {
         ...batch,
       );
 
+      // Confidence rises with use (asymptotic toward 0.95 — 1.0 stays reserved for verified /
+      // confirmFact): each genuine full-content recall closes 5% of the remaining gap. The CASE
+      // guard keeps already-high confidence untouched (the bump formula would otherwise LOWER a
+      // 1.0-confidence fact). Counterpart to graded decay: unused facts fade, used facts firm up.
       db.prepare(
-        `UPDATE facts SET recall_count = recall_count + 1, last_accessed = ?, access_count = access_count + 1, last_accessed_at = ? WHERE id IN (${placeholders})`,
+        `UPDATE facts SET recall_count = recall_count + 1, last_accessed = ?, access_count = access_count + 1, last_accessed_at = ?,
+           confidence = CASE WHEN confidence < 0.95 THEN confidence + (0.95 - confidence) * 0.05 ELSE confidence END
+         WHERE id IN (${placeholders})`,
       ).run(nowSec, nowIsoAt, ...batch);
     }
   });

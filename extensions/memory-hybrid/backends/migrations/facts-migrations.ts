@@ -1,9 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
-import { backfillFactsDbTextTimestamps } from "../../utils/timestamp-migration.js";
 import { normalizedHash } from "../../utils/tags.js";
+import { backfillFactsDbTextTimestamps } from "../../utils/timestamp-migration.js";
 import { migrateEntityLayerTables } from "../facts-db/entity-layer.js";
 import { runProcedureMigrations } from "./procedures.js";
+
 /**
  * Procedure feedback loop — version tracking and failure logging (#782).
  * procedure_versions: per-version success/failure counts and avoidance notes.
@@ -202,6 +203,14 @@ function migrateMemoryLinksTable(db: DatabaseSync): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_links_target ON memory_links(target_fact_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_links_type ON memory_links(link_type)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_links_source_type ON memory_links(source_fact_id, link_type)");
+
+  // Link-decay anchor: epoch seconds of the last strength write (strengthen OR decay re-anchor).
+  // Backfill = created_at so pre-existing links start their decay clock at creation, not at 1970.
+  const linkCols = db.prepare("PRAGMA table_info(memory_links)").all() as Array<{ name: string }>;
+  if (!linkCols.some((c) => c.name === "strength_updated_at")) {
+    db.exec("ALTER TABLE memory_links ADD COLUMN strength_updated_at INTEGER");
+    db.exec("UPDATE memory_links SET strength_updated_at = created_at WHERE strength_updated_at IS NULL");
+  }
 }
 
 /** Add tier column; default 'warm' for existing rows. */
@@ -909,6 +918,12 @@ function migrateRecallEventsTable(db: DatabaseSync): void {
     ON recall_events(session_key, occurred_at, query, fact_ids)
     WHERE source = 'backfill'
   `);
+  // Per-fact recall scores as JSON ({ factId: score }) for the live Memory Graph overlay's
+  // recall pulses. Additive column on pre-existing tables; NULL on legacy/backfill rows.
+  const recallCols = db.prepare("PRAGMA table_info(recall_events)").all() as Array<{ name: string }>;
+  if (!recallCols.some((c) => c.name === "scores")) {
+    db.exec("ALTER TABLE recall_events ADD COLUMN scores TEXT");
+  }
 }
 
 /** Per-turn injection attribution for recall feedback (#1916). */
@@ -1548,6 +1563,17 @@ function migrateFactsLifecycleColumns(db: DatabaseSync): void {
   add("mine_batch_id", "ALTER TABLE facts ADD COLUMN mine_batch_id TEXT");
   add("parent_fact_id", "ALTER TABLE facts ADD COLUMN parent_fact_id TEXT");
   db.exec("CREATE INDEX IF NOT EXISTS idx_facts_parent_fact_id ON facts(parent_fact_id)");
+  // Half-life decay anchor (living-memory P1.3): backfilled to NOW so pre-existing facts start
+  // their decay clock at migration, never retroactively (a year-old fact must not lose a year of
+  // confidence on upgrade). New facts fall back to created_at via COALESCE in the decay run.
+  if (!cols.some((c) => c.name === "last_decay_at")) {
+    db.exec("ALTER TABLE facts ADD COLUMN last_decay_at INTEGER");
+    db.exec("UPDATE facts SET last_decay_at = strftime('%s','now') WHERE last_decay_at IS NULL");
+  }
+  add("decay_second_chance_at", "ALTER TABLE facts ADD COLUMN decay_second_chance_at INTEGER");
+  // Affect stamping (living-memory P4.1): emotional context at formation, −1..1.
+  add("valence", "ALTER TABLE facts ADD COLUMN valence REAL");
+  add("affect_source", "ALTER TABLE facts ADD COLUMN affect_source TEXT");
 }
 
 function migrateMaintenanceRunsTable(db: DatabaseSync): void {

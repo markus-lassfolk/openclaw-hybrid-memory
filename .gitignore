@@ -36,6 +36,10 @@ Thumbs.db
 .claude/worktrees/
 extensions/memory-hybrid/dist/
 
+# Memory Graph SPA — built at prepack/CI time and shipped via package.json "files".
+extensions/memory-hybrid/graph-app/node_modules/
+extensions/memory-hybrid/graph-app/dist/
+
 # Accidental workspace writes under extension dir (invalid OPENCLAW_WORKSPACE path)
 extensions/memory-hybrid/undefined/
 

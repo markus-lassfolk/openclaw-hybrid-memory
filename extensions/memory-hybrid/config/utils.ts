@@ -18,6 +18,10 @@ export const DEFAULT_MEMORY_CATEGORIES = [
   "coding_task",
   "quality_loop",
   "topic_labels",
+  /** Living-memory + proactive-research categories: mined routines, synthesized insights about the user, overnight research briefings. */
+  "routine",
+  "insight",
+  "briefing",
 ] as const;
 
 /** Runtime categories: starts as defaults, extended by config */
@@ -75,7 +79,7 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
     },
     autoClassify: { enabled: true, suggestCategories: true },
     store: { fuzzyDedupe: false, classifyBeforeWrite: false },
-    graph: { enabled: true, autoLink: false, useInRecall: true, strengthenOnRecall: false, hubDegreeCap: 500 },
+    graph: { enabled: true, autoLink: true, useInRecall: true, strengthenOnRecall: true, hubDegreeCap: 500 },
     procedures: { enabled: true, requireApprovalForPromote: true },
     reflection: { enabled: false },
     wal: { enabled: true },
@@ -105,7 +109,7 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
       autoLinkSimilarityThreshold: 0.7,
       coOccurrenceWeight: 0.2,
       useInRecall: false,
-      strengthenOnRecall: false,
+      strengthenOnRecall: true,
       hubDegreeCap: 400,
       hubScorePenalty: 0.2,
     },
@@ -160,7 +164,7 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
       autoLinkSimilarityThreshold: 0.7,
       coOccurrenceWeight: 0.2,
       useInRecall: false,
-      strengthenOnRecall: false,
+      strengthenOnRecall: true,
       hubDegreeCap: 400,
       hubScorePenalty: 0.2,
     },

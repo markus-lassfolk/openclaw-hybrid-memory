@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ConfigMode } from "../config.js";
 import {
   CREDENTIAL_TYPES,
   DECAY_CLASSES,
   DEFAULT_MEMORY_CATEGORIES,
-  TTL_DEFAULTS,
   effectiveDistillMainModelTier,
   getCronModelConfig,
   getDefaultCronModel,
@@ -13,12 +13,12 @@ import {
   getProvidersWithKeys,
   hybridConfigSchema,
   isValidCategory,
-  resolveVerificationModel,
   resolveReflectionModelAndFallbacks,
+  resolveVerificationModel,
   setMemoryCategories,
+  TTL_DEFAULTS,
   vectorDimsForModel,
 } from "../config.js";
-import type { ConfigMode } from "../config.js";
 import { setEnv } from "../utils/env-manager.js";
 import { pluginLogger } from "../utils/logger.js";
 
@@ -47,8 +47,8 @@ describe("TTL_DEFAULTS", () => {
     expect(TTL_DEFAULTS.permanent).toBeNull();
   });
 
-  it("durable is ~3 months in seconds", () => {
-    expect(TTL_DEFAULTS.durable).toBe(90 * 24 * 3600);
+  it("durable is ~6 months in seconds (living-memory: 90d was indistinguishable from normal)", () => {
+    expect(TTL_DEFAULTS.durable).toBe(180 * 24 * 3600);
   });
 
   it("normal is 90 days in seconds (#1186/#1189: aligned with trajectory TTL)", () => {
@@ -2240,7 +2240,8 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.procedures.enabled).toBe(true);
       expect(result.reflection.enabled).toBe(false);
       expect(result.credentials.enabled).toBe(true);
-      expect(result.graph.autoLink).toBe(false);
+      // living-memory: autoLink is baseline-on in every mode (universal post-store enrichment)
+      expect(result.graph.autoLink).toBe(true);
       expect(result.store.classifyBeforeWrite).toBe(false);
       expect(result.distill?.extractionModelTier).toBe("nano");
       expect(result.ingest?.paths).toEqual(["skills/**/*.md", "TOOLS.md", "AGENTS.md"]);

@@ -11,42 +11,42 @@ import { getCronModelConfig, getDefaultCronModel } from "../../config/index.js";
 import type { MemoryCategory } from "../../config.js";
 import "../../config.js";
 import { detectCredentialPatterns, isStructuredCredentialCandidate } from "../../services/auto-capture.js";
-import { runCaptureStoreWithDedupWindow, peekCaptureDedupWindow } from "../../services/capture-dedup.js";
-import {
-  abortCredentialVaultWriteOnPointerDedupe,
-  buildCredentialPointerText,
-  ensureCredentialVaultPointer,
-  rollbackVaultCredentialWrite,
-} from "../../services/credential-vault-pointer.js";
+import { peekCaptureDedupWindow, runCaptureStoreWithDedupWindow } from "../../services/capture-dedup.js";
 import {
   getAutoCaptureExtractionConfidence,
   getAutoCaptureExtractionMethod,
   resolveCaptureProvenance,
 } from "../../services/capture-provenance.js";
+import { isHighPriorityCapture } from "../../services/capture-utils.js";
 import {
   classifyMemoryOperation,
   classifyMemoryOperationsBatch,
   type MemoryClassification,
 } from "../../services/classification.js";
 import { validateScopedClassificationTarget } from "../../services/classification-scope.js";
-import { resolveDefaultStoreScope } from "../../services/default-store-scope.js";
 import { extractCredentialsFromToolCalls } from "../../services/credential-scanner.js";
+import {
+  abortCredentialVaultWriteOnPointerDedupe,
+  buildCredentialPointerText,
+  ensureCredentialVaultPointer,
+  rollbackVaultCredentialWrite,
+} from "../../services/credential-vault-pointer.js";
+import { resolveDefaultStoreScope } from "../../services/default-store-scope.js";
 import { isOllamaCircuitBreakerOpen } from "../../services/embeddings.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { extractStructuredFields } from "../../services/fact-extraction.js";
 import { formatQualityLoopEntry, runHumanizerScore } from "../../services/humanizer-score.js";
+import { isSubstantiveMemoryText, prepareMemoryTextForStorage } from "../../services/recalled-context-assembler.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../../services/vector-maintenance.js";
 import { isWalWriteFailure } from "../../services/wal-helpers.js";
 import type { MemoryEntry } from "../../types/memory.js";
 import { atomicWriteFile } from "../../utils/atomic-write.js";
-import { nowIso } from "../../utils/dates.js";
 import { CLI_STORE_IMPORTANCE } from "../../utils/constants.js";
+import { nowIso } from "../../utils/dates.js";
 import { persistCanonicalFactEmbedding } from "../../utils/fact-embeddings.js";
 import { isStaleLifecycleGeneration } from "../../utils/lifecycle-generation.js";
 import { isRecallContextSuperseded, shouldSuppressStaleLifecycleError } from "../../utils/registration-superseded.js";
 import { extractTags } from "../../utils/tags.js";
-import { isSubstantiveMemoryText, prepareMemoryTextForStorage } from "../../services/recalled-context-assembler.js";
-import { isHighPriorityCapture } from "../../services/capture-utils.js";
 import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
 import { pendingCredentialPath } from "../stage-credential-hint.js";
 import type { LifecycleContext, SessionState } from "../types.js";
@@ -766,8 +766,7 @@ export async function runCapture(
             scope: autoCaptureScope,
             scopeTarget: autoCaptureScopeTarget,
           };
-          const rawDbForDedup =
-            typeof ctx.factsDb.getRawDb === "function" ? ctx.factsDb.getRawDb() : null;
+          const rawDbForDedup = typeof ctx.factsDb.getRawDb === "function" ? ctx.factsDb.getRawDb() : null;
           if (rawDbForDedup && dedupWindow > 0) {
             const peek = peekCaptureDedupWindow(rawDbForDedup, dedupInput, dedupWindow);
             if (peek.skip) {
@@ -811,28 +810,24 @@ export async function runCapture(
             continue;
           }
 
-          const txResult = runCaptureStoreWithDedupWindow(
-            ctx.factsDb,
-            dedupWindow,
-            dedupInput,
-            () =>
-              ctx.factsDb.storeWithResult({
-                text: textToStore,
-                category,
-                importance: CLI_STORE_IMPORTANCE,
-                entity: extracted.entity,
-                key: extracted.key,
-                value: extracted.value,
-                source: "auto-capture",
-                summary,
-                tags: extractTags(textToStore, extracted.entity),
-                provenanceSession: captureProvenance.sessionId,
-                sourceTurn: candidate.sourceTurn,
-                extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
-                extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
-                scope: autoCaptureScope,
-                scopeTarget: autoCaptureScopeTarget,
-              }),
+          const txResult = runCaptureStoreWithDedupWindow(ctx.factsDb, dedupWindow, dedupInput, () =>
+            ctx.factsDb.storeWithResult({
+              text: textToStore,
+              category,
+              importance: CLI_STORE_IMPORTANCE,
+              entity: extracted.entity,
+              key: extracted.key,
+              value: extracted.value,
+              source: "auto-capture",
+              summary,
+              tags: extractTags(textToStore, extracted.entity),
+              provenanceSession: captureProvenance.sessionId,
+              sourceTurn: candidate.sourceTurn,
+              extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
+              extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
+              scope: autoCaptureScope,
+              scopeTarget: autoCaptureScopeTarget,
+            }),
           );
           if (txResult.skipped) {
             if (walEntryId) await ctx.walRemove(walEntryId, api.logger);

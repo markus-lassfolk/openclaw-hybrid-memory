@@ -115,6 +115,23 @@ export type AutoRecallConfig = {
    * - **full** — When `queryExpansion.enabled`, runs HyDE on interactive turns regardless of `skipForInteractiveTurns`; allows ambient multi-query when `autoRecall.enabled` and ambient is configured.
    */
   interactiveEnrichment?: "fast" | "balanced" | "full";
+  /**
+   * Serendipity slot (LIVING-MEMORY.md, default ON): once per `cooldownPrompts` prompts, one
+   * labeled `[serendipity]` headline joins ambient injection — weighted-random from
+   * strong-but-never-recalled graph neighbors of this recall's top results, falling back to
+   * stale-important facts. Index-only exposure.
+   */
+  serendipity: {
+    enabled: boolean;
+    /** Fire at most once per this many prompts per session (default 10). */
+    cooldownPrompts: number;
+    /** Minimum link strength for a neighbor to qualify (default 0.4). */
+    minLinkStrength: number;
+    /** Fallback pool: importance floor for stale-important facts (default 0.7). */
+    staleImportanceMin: number;
+    /** Fallback pool: minimum days unaccessed (default 30). */
+    staleDays: number;
+  };
 };
 
 /** Multi-strategy retrieval pipeline configuration (Issue #152: RRF scoring pipeline). */
@@ -228,6 +245,10 @@ export type CompositeScoreConfig = {
 export type RetrievalDiversityConfig = {
   enabled: boolean;
   maxSimilarity: number;
+  /** "mmr" = greedy Maximal Marginal Relevance selection; "bigram" (default) = legacy demotion. */
+  mode?: "bigram" | "mmr";
+  /** MMR relevance↔novelty trade-off λ (default 0.7 = mostly relevance). */
+  mmrLambda?: number;
 };
 
 /** Strong-signal BM25 bypass (Issue #1910). */

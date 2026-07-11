@@ -1974,6 +1974,22 @@ Requires `graph.enabled: true` (contact profile enrichment runs alongside the NE
 
 ---
 
+## Living memory & proactive research
+
+Config for the living-memory dynamics and the proactive research loop is documented with the
+features themselves (each page carries its full key/default table):
+
+| Area | Keys | Reference |
+|------|------|-----------|
+| Decay, strengthening, links | `maintenance.decay`, `graph.linkDecay`, `graph.strengthenOnRecall`, `graph.autoLink`, `graph.temporalEdges`, `graphRetrieval.autoRecallExpand` | [LIVING-MEMORY.md](LIVING-MEMORY.md) |
+| Routines & affect | `maintenance.routineMining`, `frustrationDetection.enabled` (gates affect-stamp) | [LIVING-MEMORY.md](LIVING-MEMORY.md) |
+| Free-text contradictions | `maintenance.contradictions { freeText, similarityFloor, maxPairsPerRun, minConfidence, model }` | [LIVING-MEMORY.md](LIVING-MEMORY.md) |
+| Serendipity slot | `autoRecall.serendipity { enabled, cooldownPrompts, minLinkStrength, staleImportanceMin, staleDays }` | [LIVING-MEMORY.md](LIVING-MEMORY.md) |
+| Ranking (staged OFF, measured) | `retrieval.compositeScore.v`, `retrieval.diversity { enabled, mode, mmrLambda }` | [LIVING-MEMORY.md](LIVING-MEMORY.md) |
+| Proactive research loop | `research { enabled, schedule, insights, trigger, executor, delivery }` | [PROACTIVE-RESEARCH.md](PROACTIVE-RESEARCH.md) |
+
+---
+
 ## Version metadata
 
 | Source | Meaning |

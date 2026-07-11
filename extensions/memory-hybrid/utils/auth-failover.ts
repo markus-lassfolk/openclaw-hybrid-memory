@@ -10,16 +10,22 @@ import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync, writeF
 const DEFAULT_BACKOFF_MINUTES = [5, 30, 60, 120, 240];
 const DEFAULT_RESET_AFTER_HOURS = 24;
 
-// SECURITY/CORRECTNESS: load-mutate-save on statePath has no cross-process synchronization on
-// its own -- two processes racing a read-modify-write can lose one process's update (e.g. two
-// concurrent OAuth failures on the same provider only advance the backoff level once instead of
-// twice). This is a brief, millisecond-scale critical section, so the lock below is deliberately
-// lightweight: a handful of quick retries, a short staleness window, and fail-open (proceed
-// without the lock) rather than block a hot LLM-failure-handling path -- losing the lock race
-// occasionally under contention just means an occasional under-applied backoff, which is already
-// the accepted (non-security) failure mode this file documents.
+// CORRECTNESS: load-mutate-save on statePath has no cross-process synchronization on its own --
+// two processes racing a read-modify-write can lose one process's update (e.g. two concurrent
+// OAuth failures on the same provider would only advance the backoff level once instead of twice).
+// The lockfile below serializes them. The critical section is a millisecond-scale file read+write,
+// so under normal use the very first acquire succeeds with zero added latency; the retry budget is
+// only ever consumed under genuine contention. The window is sized to EXCEED STATE_LOCK_STALE_MS so
+// that within a single call a waiter either (a) acquires when the live holder releases, or (b)
+// reclaims a crashed holder's stale lock (after the staleness window) and then acquires -- rather
+// than giving up early and writing UNLOCKED, which is what dropped concurrent updates under load.
+// The fail-open path at the end of withStateLockSync is kept only as a last-ditch net so a
+// pathologically stuck lock can never hang a caller forever; it is effectively unreachable under
+// normal contention. STALE_MS stays comfortably above the worst-case (heavily CPU-starved) hold so
+// a live-but-slow holder is never mistaken for a crash (which would itself re-introduce a race).
 const STATE_LOCK_STALE_MS = 2_000;
-const STATE_LOCK_RETRY_ATTEMPTS = 5;
+// 500 * 5ms = 2.5s acquire window, > STATE_LOCK_STALE_MS. Only consumed under contention/crash.
+const STATE_LOCK_RETRY_ATTEMPTS = 500;
 const STATE_LOCK_RETRY_SLEEP_MS = 5;
 const STATE_LOCK_SLEEP_BUFFER = new Int32Array(new SharedArrayBuffer(4));
 

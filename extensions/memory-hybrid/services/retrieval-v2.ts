@@ -6,7 +6,7 @@
 import type OpenAI from "openai";
 import type { SearchResult } from "../types/memory.js";
 import type { MemoryEntry } from "../types/memory.js";
-import { applyDiversityDemotion, type DiversityConfig } from "./diversity.js";
+import { applyDiversityDemotion, applyMMR, type DiversityConfig } from "./diversity.js";
 import {
   computeCompositeScore,
   computeFrequencyBoost,
@@ -21,6 +21,7 @@ import {
 } from "./intent-classifier.js";
 import { emitRecallVerboseLog, isHmVerbose } from "./recall-verbose-log.js";
 import { recordRecallStageTiming, recordBypassDecision } from "./recall-timing-stats.js";
+import { countCoRecalls } from "./recall-events.js";
 import { computeCrossDomainBoost, aggregateRecallStats } from "./recall-signals.js";
 
 export type BypassConfig = {
@@ -127,6 +128,10 @@ export async function applyRetrievalV2(opts: ApplyRetrievalV2Opts): Promise<Retr
   const compositeCfg = opts.config.compositeScore;
   const recallStats =
     opts.factsDb && compositeCfg.version === 2 ? aggregateRecallStats(opts.factsDb.getRawDb(), 30) : null;
+  // Co-activation from real recall history: candidates that past recalls surfaced TOGETHER boost
+  // each other (was hardcoded to 1 — the signal existed in recall_events but was never computed).
+  const coRecallCounts =
+    opts.factsDb && compositeCfg.version === 2 ? countCoRecalls(opts.factsDb.getRawDb(), v1Order, 30) : null;
   let finalResults: SearchResult[];
   let demotedCount = 0;
 
@@ -139,7 +144,7 @@ export async function applyRetrievalV2(opts: ApplyRetrievalV2Opts): Promise<Retr
       confidence: entry.confidence ?? 1,
       bodyLength: entry.text.length,
       qualityScore: (entry as MemoryEntry & { qualityScore?: number }).qualityScore,
-      coActivationBoost: 1,
+      coActivationBoost: 1 + Math.min(0.15, 0.03 * (coRecallCounts?.get(r.entry.id) ?? 0)),
       pinBoost: entry.pinnedAt != null ? compositeCfg.pinBoostDefault : 0,
       freqBoost: computeFrequencyBoost(
         (entry as MemoryEntry & { revisionCount?: number }).revisionCount ?? 0,
@@ -160,10 +165,19 @@ export async function applyRetrievalV2(opts: ApplyRetrievalV2Opts): Promise<Retr
 
   scored.sort((a, b) => b.score - a.score);
   const diversityStarted = Date.now();
-  const { items: diverseItems, demotedCount: dmCount } = applyDiversityDemotion(
-    scored.map((s) => ({ ...s, text: s.text })),
-    opts.config.diversity,
-  );
+  // mode "mmr" = greedy embedding-aware Maximal Marginal Relevance selection (living-memory P3.2,
+  // staged flip — default stays the legacy bigram demotion until the eval harness compares them).
+  const { items: diverseItems, demotedCount: dmCount } =
+    opts.config.diversity.enabled && opts.config.diversity.mode === "mmr"
+      ? applyMMR(
+          scored.map((s) => ({ ...s, text: s.text })),
+          () => null, // candidate vectors aren't threaded here yet — bigram-novelty fallback
+          opts.config.diversity.mmrLambda ?? 0.7,
+        )
+      : applyDiversityDemotion(
+          scored.map((s) => ({ ...s, text: s.text })),
+          opts.config.diversity,
+        );
   recordRecallStageTiming("mmr", Date.now() - diversityStarted);
   demotedCount = dmCount;
 

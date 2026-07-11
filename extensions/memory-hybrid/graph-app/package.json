@@ -1,0 +1,33 @@
+{
+  "name": "openclaw-memory-graph-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Interactive real-time Memory Graph visualization for OpenClaw Hybrid Memory.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "d3-force": "^3.0.0",
+    "graphology": "^0.26.0",
+    "graphology-communities-louvain": "^2.0.2",
+    "graphql-sse": "^2.5.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-force-graph-2d": "^1.27.1",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@types/d3-force": "^3.0.10",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.9.3",
+    "vite": "^6.0.7",
+    "vitest": "^2.1.8"
+  }
+}

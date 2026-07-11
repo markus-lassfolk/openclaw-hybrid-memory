@@ -1,10 +1,11 @@
 {
   "name": "openclaw-hybrid-memory",
-  "version": "2026.7.211",
+  "version": "2026.7.212",
   "type": "module",
   "description": "Give your OpenClaw agent lasting memory: structured facts, semantic search, auto-capture & recall, decay, optional credential vault. Part of Hybrid Memory v3.",
   "files": [
     "dist",
+    "graph-app/dist",
     "index.ts",
     "index-help.ts",
     "index-credentials-cli.ts",
@@ -74,6 +75,7 @@
   },
   "scripts": {
     "build": "node ../../scripts/run-with-supported-node.mjs tsdown",
+    "build:graph-app": "cd graph-app && npm ci --no-audit --no-fund && npm run build",
     "build:check": "node ../../scripts/run-with-supported-node.mjs tsdown && node ../../scripts/run-with-supported-node.mjs node scripts/verify-publish.cjs",
     "test": "node ../../scripts/run-with-supported-node.mjs vitest run",
     "test:watch": "node ../../scripts/run-with-supported-node.mjs vitest",
@@ -102,7 +104,7 @@
     "test:schema-gate": "node ../../scripts/run-with-supported-node.mjs vitest run tests/plugin-graph-schema-parity.test.ts tests/agent-tool-contracts.test.ts",
     "verify:gate": "npm run typecheck:gate && npm run test:maintenance-gate && npm run test:schema-gate",
     "postinstall": "node scripts/postinstall-rebuild.cjs",
-    "prepack": "npm run build && node scripts/manage-shrinkwrap.cjs create",
+    "prepack": "npm run build:graph-app && npm run build && node scripts/manage-shrinkwrap.cjs create",
     "postpack": "node scripts/manage-shrinkwrap.cjs clean",
     "verify:publish": "node scripts/verify-publish.cjs",
     "release:publish": "npm run verify:publish && npm publish --otp=$OTP"
@@ -111,6 +113,7 @@
     "@biomejs/biome": "^2.4.15",
     "@vitest/coverage-v8": "^4.0.18",
     "knip": "^5.0.0",
+    "playwright-core": "^1.61.1",
     "tsdown": "^0.22.0",
     "typescript": "^5.9.3",
     "unrun": "0.3.1",

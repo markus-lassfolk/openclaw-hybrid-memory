@@ -1,7 +1,7 @@
 import { pluginLogger } from "../../utils/logger.js";
-import { parseVaultsConfig } from "../vaults.js";
 import type { ConfigMode, EmbeddingModelConfig, HybridMemoryConfig } from "../types/index.js";
-import { PRESET_OVERRIDES, getMemoryCategories, setMemoryCategories } from "../utils.js";
+import { getMemoryCategories, PRESET_OVERRIDES, setMemoryCategories } from "../utils.js";
+import { parseVaultsConfig } from "../vaults.js";
 import {
   parseExtractionConfig,
   parseIdentityPromotionConfig,
@@ -15,8 +15,8 @@ import {
   DEFAULT_MODEL,
   DEFAULT_SQLITE_PATH,
   EMBEDDING_DIMENSIONS,
-  OPENAI_MODELS,
   isEmbeddingApiKeyExecSecretRef,
+  OPENAI_MODELS,
   parseActiveTaskConfig,
   parseAuthConfig,
   parseCredentialsConfig,
@@ -40,14 +40,13 @@ import {
   parseApiTapConfig,
   parseClosedLoopConfig,
   parseClustersConfig,
+  parseContactsConfig,
   parseCostTrackingConfig,
   parseCrossAgentLearningConfig,
   parseCrystallizationConfig,
   parseDashboardConfig,
   parseDigestConfig,
-  parseLiveChangeFeedConfig,
   parseDocumentsConfig,
-  parseContactsConfig,
   parseEntityExtractionConfig,
   parseErrorReportingConfig,
   parseFrequencyCaptureConfig,
@@ -60,16 +59,17 @@ import {
   parseImplicitFeedbackConfig,
   parseIngestConfig,
   parseLifecycleConfig,
+  parseLiveChangeFeedConfig,
   parseMemoryTieringConfig,
   parseMultiAgentConfig,
   parsePersonaProposalsConfig,
-  parseWorkshopConfig,
   parseReinforcementConfig,
   parseSelfExtensionConfig,
   parseToolEffectivenessConfig,
-  parseWorkflowTrackingConfig,
   parseWikiIntegrationConfig,
   parseWorkboardConfig,
+  parseWorkflowTrackingConfig,
+  parseWorkshopConfig,
 } from "./features.js";
 import {
   parseHealthConfig,
@@ -78,6 +78,7 @@ import {
   parseProvenanceConfig,
   parseVerificationConfig,
 } from "./maintenance.js";
+import { parseResearchConfig } from "./research.js";
 import {
   parseAutoClassifyConfig,
   parseAutoRecallConfig,
@@ -821,6 +822,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     graphRetrieval: parseGraphRetrievalConfig(cfg),
     futureDateProtection: parseFutureDateProtectionConfig(cfg),
     maintenance: parseMaintenanceConfig(cfg),
+    research: parseResearchConfig(cfg),
     nightlyCycle: parseNightlyCycleConfig(cfg),
     reinforcement: parseReinforcementConfig(cfg),
     clusters: parseClustersConfig(cfg),

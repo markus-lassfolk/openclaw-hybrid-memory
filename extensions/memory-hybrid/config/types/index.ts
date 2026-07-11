@@ -1,28 +1,19 @@
-export * from "./core.js";
-export * from "./bootstrap.js";
-export * from "./retrieval.js";
-export * from "./capture.js";
-export * from "./maintenance.js";
-export * from "./features.js";
 export * from "./agents.js";
+export * from "./bootstrap.js";
+export * from "./capture.js";
+export * from "./core.js";
+export * from "./features.js";
+export * from "./maintenance.js";
+export * from "./research.js";
+export * from "./retrieval.js";
 export * from "./sensors.js";
 export * from "./wiki-integration.js";
 export * from "./workboard.js";
 
 // Re-export all types from domain files and define HybridMemoryConfig and other shared types
 
-import type {
-  AutoClassifyConfig,
-  AutoRecallConfig,
-  ContextualVariantsConfig,
-  DocumentGradingConfig,
-  QueryExpansionConfig,
-  RerankingConfig,
-  RetrievalConfig,
-  SearchConfig,
-} from "./retrieval.js";
-
-import type { DiagnosticsConfig, EventLogConfig, PathConfig, StoreConfig, WALConfig } from "./core.js";
+import type { VaultsConfig } from "../vaults.js";
+import type { MultiAgentConfig, PersonaProposalsConfig, WorkshopConfig } from "./agents.js";
 
 import type {
   ExtractionConfig,
@@ -32,14 +23,7 @@ import type {
   ProceduresConfig,
   ReflectionConfig,
 } from "./capture.js";
-
-import type {
-  HealthConfig,
-  MaintenanceConfig,
-  NightlyCycleConfig,
-  ProvenanceConfig,
-  VerificationConfig,
-} from "./maintenance.js";
+import type { DiagnosticsConfig, EventLogConfig, PathConfig, StoreConfig, WALConfig } from "./core.js";
 
 import type {
   AliasesConfig,
@@ -53,7 +37,6 @@ import type {
   CrystallizationConfig,
   DashboardConfig,
   DigestConfig,
-  LiveChangeFeedConfig,
   DocumentsConfig,
   EntityExtractionConfig,
   FrequencyCaptureConfig,
@@ -66,19 +49,34 @@ import type {
   ImplicitFeedbackConfig,
   IngestConfig,
   LifecycleAdaptersConfig,
+  LiveChangeFeedConfig,
   MemoryTieringConfig,
   ReinforcementConfig,
   SelfExtensionConfig,
   ToolEffectivenessConfig,
   WorkflowTrackingConfig,
 } from "./features.js";
-
-import type { MultiAgentConfig, PersonaProposalsConfig, WorkshopConfig } from "./agents.js";
-
+import type {
+  HealthConfig,
+  MaintenanceConfig,
+  NightlyCycleConfig,
+  ProvenanceConfig,
+  VerificationConfig,
+} from "./maintenance.js";
+import type { ResearchConfig } from "./research.js";
+import type {
+  AutoClassifyConfig,
+  AutoRecallConfig,
+  ContextualVariantsConfig,
+  DocumentGradingConfig,
+  QueryExpansionConfig,
+  RerankingConfig,
+  RetrievalConfig,
+  SearchConfig,
+} from "./retrieval.js";
 import type { SensorSweepConfig } from "./sensors.js";
 import type { WikiIntegrationConfig } from "./wiki-integration.js";
 import type { WorkboardConfig } from "./workboard.js";
-import type { VaultsConfig } from "../vaults.js";
 
 /** Tier for cron job model selection: "default" = standard, "heavy" = larger context/reasoning. */
 /** "nano" = ultra-cheap for high-frequency ops (autoClassify, HyDE, classifyBeforeWrite, summarize); falls back to "default" when unset. */
@@ -761,6 +759,8 @@ export type HybridMemoryConfig = {
   futureDateProtection: FutureDateProtectionConfig;
   /** Maintenance tasks: monthly review, consolidation, etc. */
   maintenance: MaintenanceConfig;
+  /** Proactive research loop: insight synthesis → trigger → overnight research agent → briefing (default: enabled). */
+  research: ResearchConfig;
   /** Nightly dream cycle: automated prune → consolidate → reflect (Issue #143, default: disabled). */
   nightlyCycle: NightlyCycleConfig;
   /** Confidence reinforcement on repeated mentions (Issue #147, default: enabled). */

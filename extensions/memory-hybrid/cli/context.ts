@@ -130,12 +130,20 @@ export type ManageContext = {
     metaStored: number;
     diagnostics?: import("../services/reflection.js").ReflectionMetaDiagnostics;
   }>;
-  runReflectIdentity?: (opts: {
+  runReflectIdentity?: (opts: { dryRun: boolean; model?: string; verbose?: boolean; window?: number }) => Promise<{
+    insightsExtracted: number;
+    insightsStored: number;
+    questionsAsked: number;
+    semanticOutcome?: string;
+  }>;
+  runInsightSynthesis?: (opts: {
     dryRun: boolean;
-    model?: string;
     verbose?: boolean;
-    window?: number;
-  }) => Promise<{ insightsExtracted: number; insightsStored: number; questionsAsked: number; semanticOutcome?: string }>;
+  }) => Promise<import("../services/insight-synthesis.js").InsightSynthesisResult>;
+  runContradictionCandidates?: (opts: {
+    dryRun: boolean;
+    verbose?: boolean;
+  }) => Promise<import("../services/contradiction-candidates.js").ContradictionCandidatesResult>;
   reflectionConfig: { enabled: boolean; defaultWindow: number; minObservations: number; model: string };
   runClassify: (opts: { dryRun: boolean; limit: number; model?: string }) => Promise<{
     reclassified: number;
@@ -303,22 +311,14 @@ export type ManageContext = {
     opts: { days: number; dryRun: boolean; verbose?: boolean; force?: boolean; full?: boolean },
     sink: { log: (s: string) => void; warn: (s: string) => void },
   ) => Promise<{ stored?: number; totalStored?: number; totalExtracted?: number; daysBack?: number; dryRun?: boolean }>;
-  runExtractDirectives?: (opts: {
-    days?: number;
-    verbose?: boolean;
-    dryRun?: boolean;
-  }) => Promise<{
+  runExtractDirectives?: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{
     sessionsScanned: number;
     stored?: number;
     partial?: boolean;
     dedupeDegraded?: boolean;
     cursorBlockedReason?: string;
   }>;
-  runExtractReinforcement?: (opts: {
-    days?: number;
-    verbose?: boolean;
-    dryRun?: boolean;
-  }) => Promise<{
+  runExtractReinforcement?: (opts: { days?: number; verbose?: boolean; dryRun?: boolean }) => Promise<{
     sessionsScanned: number;
     jobRunId?: string;
     semanticOutcome?: string;
@@ -350,11 +350,7 @@ export type ManageContext = {
     closedLoopReport?: string;
     skipped?: boolean;
   }>;
-  runGenerateAutoSkills?: (opts: {
-    dryRun: boolean;
-    verbose?: boolean;
-    apply?: boolean;
-  }) => Promise<{
+  runGenerateAutoSkills?: (opts: { dryRun: boolean; verbose?: boolean; apply?: boolean }) => Promise<{
     generated: number;
     skipped?: number;
     paths?: string[];

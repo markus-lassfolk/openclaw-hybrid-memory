@@ -29,6 +29,14 @@ export const graphqlSchema = `#graphql
     key: String
     value: String
 
+    # Salience fields — mirror GraphNode so live subscription payloads can update the constellation.
+    recallCount: Int
+    accessCount: Int
+    lastAccessedAt: DateTime
+    reinforcedCount: Float
+    pinned: Boolean
+    why: String
+
     # Relationships
     links: [Link!]!
     linkedFrom: [Link!]!
@@ -100,6 +108,22 @@ export const graphqlSchema = `#graphql
     count: Int!
   }
 
+  # A single recalled fact and the score it was ranked with (live overlay recall pulses).
+  type RecallHit {
+    factId: ID!
+    score: Float!
+  }
+
+  # A recall that just happened — auto-recall injection or an explicit memory_recall.
+  type RecallEvent {
+    query: String
+    source: String!
+    sessionKey: String
+    agentId: String
+    occurredAt: DateTime!
+    hits: [RecallHit!]!
+  }
+
   # Graph structure for visualization
   type GraphData {
     nodes: [GraphNode!]!
@@ -114,13 +138,69 @@ export const graphqlSchema = `#graphql
     confidence: Float!
     decayClass: String!
     factCount: Int
+
+    # Constellation metrics (Memory Graph app). "strength" drives the radial layout radius +
+    # node size; the rest support filtering, coloring, and gap/anomaly highlighting.
+    strength: Float!
+    recallCount: Int
+    accessCount: Int
+    lastAccessedAt: DateTime
+    reinforcedCount: Float
+    pinned: Boolean
+    degree: Int
+    superseded: Boolean
+    contradicted: Boolean
+    clusterId: String
+    tags: [String!]
+    entity: String
+    # Epoch seconds this fact expires (null = no scheduled expiry) — drives the decay lens.
+    expiresAt: DateTime
+    createdAt: DateTime
   }
 
   type GraphEdge {
+    # Link row id (null for synthetic lineage edges like superseded_by). Lets the client update or
+    # remove a specific bond without a full reload.
+    id: ID
     source: ID!
     target: ID!
     linkType: String!
     weight: Float!
+  }
+
+  # A labeled topic cluster (connected component of the link graph), for naming hulls in the UI.
+  type TopicCluster {
+    id: ID!
+    label: String!
+    factCount: Int!
+    factIds: [ID!]!
+  }
+
+  # A pair of facts that are semantically similar but not yet linked (embedding-based suggestion).
+  type SuggestedLink {
+    sourceId: ID!
+    targetId: ID!
+    sourceText: String!
+    targetText: String!
+    similarity: Float!
+  }
+
+  # An unresolved contradiction between two facts.
+  type ContradictionPair {
+    id: ID!
+    factNew: Fact
+    factOld: Fact
+    detectedAt: DateTime
+    resolution: String
+  }
+
+  # Curation dashboard bundle: cheap gap/anomaly views in one round-trip. Suggested links are a
+  # separate query (embedding-backed, on-demand only).
+  type GraphInsights {
+    orphanFacts: [Fact!]!
+    weakLinks: [Link!]!
+    contradictions: [ContradictionPair!]!
+    staleImportantFacts: [Fact!]!
   }
 
   # Input types for mutations
@@ -213,6 +293,23 @@ export const graphqlSchema = `#graphql
 
     # Entity lookup
     entityFacts(entity: String!, key: String, limit: Int): [Fact!]!
+
+    # Curation / gap analysis (Memory Graph app). All scope-filtered and capped.
+    memoryGraphInsights(limit: Int): GraphInsights!
+    orphanFacts(limit: Int): [Fact!]!
+    weakLinks(maxStrength: Float, limit: Int): [Link!]!
+    contradictionPairs(limit: Int): [ContradictionPair!]!
+    staleImportantFacts(minImportance: Float, staleDays: Int, limit: Int): [Fact!]!
+    # Embedding-backed similar-but-unlinked suggestions — on-demand only (never in base graph load).
+    suggestedLinks(threshold: Float, limit: Int): [SuggestedLink!]!
+
+    # Recent recall history (newest first) for ActivityFeed hydration. Ownership-gated exactly like
+    # the recallOccurred subscription: identity-scoped callers only see their own agent/session
+    # recalls; hits are additionally trimmed per-fact to the caller's scope.
+    recentRecallEvents(limit: Int): [RecallEvent!]!
+
+    # Labeled topic clusters (scope-filtered connected components) for naming cluster hulls.
+    topicClusters(minSize: Int): [TopicCluster!]!
   }
 
   # Mutations
@@ -226,6 +323,17 @@ export const graphqlSchema = `#graphql
     # Link operations
     createLink(sourceId: ID!, targetId: ID!, linkType: String!, weight: Float): Link!
     deleteLink(id: ID!): Boolean!
+    updateLink(id: ID!, linkType: String, weight: Float): Link!
+    # Convenience: accept an embedding-suggested link (thin wrapper over createLink).
+    acceptSuggestedLink(sourceId: ID!, targetId: ID!, linkType: String, weight: Float): Link!
+
+    # Curation: pin / unpin a fact so it stays central and decay-frozen.
+    pinFact(id: ID!, reason: String): Fact!
+    unpinFact(id: ID!): Fact!
+
+    # Curation: resolve a contradiction. With keepFactId, the OTHER fact is superseded by it
+    # (resolution "superseded"); without, both facts stand and the pair is marked "kept".
+    resolveContradiction(id: ID!, keepFactId: ID): ContradictionPair!
 
     # Bulk operations
     importFacts(facts: [CreateFactInput!]!): [Fact!]!
@@ -245,6 +353,11 @@ export const graphqlSchema = `#graphql
 
     # Real-time link changes
     linkCreated(sourceId: ID, targetId: ID): Link!
+    linkUpdated(sourceId: ID, targetId: ID): Link!
+
+    # Real-time recall activity — which memories were just called upon (with per-fact scores).
+    # Hits are scope-filtered per subscriber before delivery.
+    recallOccurred(sessionKey: String): RecallEvent!
 
     # Statistics updates
     statsUpdated: MemoryStats!

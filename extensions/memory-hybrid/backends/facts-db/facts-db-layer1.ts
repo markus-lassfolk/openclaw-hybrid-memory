@@ -7,13 +7,13 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import type { StoreConfig } from "../../config.js";
+import { emitMemoryEvent } from "../../services/memory-events.js";
 import type { MemoryEntry, MemoryScope, MemoryTier, ScopeFilter, SearchResult } from "../../types/memory.js";
-import { normalizedHash } from "../../utils/tags.js";
 import { tryRestrictSqliteDbFileMode } from "../../utils/sqlite-file-perms.js";
+import { normalizedHash } from "../../utils/tags.js";
 import { BaseSqliteStore } from "../base-sqlite-store.js";
 import { runFactsMigrations } from "../migrations/facts-migrations.js";
 import { SupersededTextsCache } from "./cache-manager.js";
-import { resolveFactsDbPragmas } from "./resolve-facts-db-pragmas.js";
 import {
   deleteFact,
   hasDuplicateText,
@@ -41,7 +41,9 @@ import {
   getLinksFrom as getLinksFromHelper,
   getLinksTo as getLinksToHelper,
   refreshFactDegrees as refreshFactDegreesHelper,
+  decayLinkStrengths as decayLinkStrengthsHelper,
   strengthenRelatedLinksBatch as strengthenRelatedLinksBatchHelper,
+  updateLink as updateLinkHelper,
 } from "./links.js";
 import {
   logRecall as logRecallImpl,
@@ -55,6 +57,7 @@ import {
   type TieringOptions,
   trimToBudget as trimToBudgetImpl,
 } from "./maintenance.js";
+import { resolveFactsDbPragmas } from "./resolve-facts-db-pragmas.js";
 import { getScanCursor as getScanCursorHelper, updateScanCursor as updateScanCursorHelper } from "./scan-cursors.js";
 import { bootstrapFactsCoreSchema } from "./schema-bootstrap.js";
 import {
@@ -267,7 +270,7 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       process.stderr.write(`${message}
 `);
     };
-    return storeFact(
+    const result = storeFact(
       {
         db: this.liveDb,
         fuzzyDedupe: this.fuzzyDedupe,
@@ -284,6 +287,13 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       },
       entry,
     );
+    // Live Memory Graph overlay: a genuinely new fact node appeared. Guard on newlyStored so
+    // dedupe/skip/no-op paths (which carry a placeholder or an existing row) don't emit. This is
+    // the single choke point for every store path — tools, auto-capture, CLI, GraphQL, maintenance.
+    if (!result.skipped && result.newlyStored && result.entry.id) {
+      emitMemoryEvent("factStored", { entry: result.entry });
+    }
+    return result;
   }
 
   statsDailyWrites(): Array<{ source: string; day: string; count: number; dropped: number; evicted: number }> {
@@ -502,7 +512,23 @@ export class FactsDBLayer1 extends BaseSqliteStore {
   }
 
   delete(id: string): boolean {
-    return deleteFact(this.liveDb, id);
+    // Capture scope/category BEFORE the row is gone so the live overlay's factDeleted event can be
+    // scope-filtered by subscribers (the fact is unqueryable afterwards). Use a narrow 3-column
+    // read, NOT a full getById hydration — delete() runs one-per-fact in tight prune/reflection
+    // loops, so a full-row parse here would ~double the per-delete query cost.
+    const meta = this.liveDb.prepare("SELECT category, scope, scope_target FROM facts WHERE id = ?").get(id) as
+      | { category?: string; scope?: string; scope_target?: string | null }
+      | undefined;
+    const deleted = deleteFact(this.liveDb, id);
+    if (deleted) {
+      emitMemoryEvent("factDeleted", {
+        id,
+        category: meta?.category,
+        scope: meta?.scope,
+        scopeTarget: meta?.scope_target ?? null,
+      });
+    }
+    return deleted;
   }
 
   /** Exact match or dedupe policy would block a new insert (per-source if `source` set; global probe if omitted, #1202). */
@@ -535,6 +561,10 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       .run(nowSec, newId, nowSec, oldId);
     if (result.changes > 0) {
       this.invalidateSupersededCache();
+      // Live overlay: the old fact just became superseded — re-read it so the node updates
+      // (dims / gains its superseded marker). The replacing fact surfaces via its own store event.
+      const updated = getByIdImpl(this.liveDb, oldId);
+      if (updated) emitMemoryEvent("factUpdated", { entry: updated });
     }
     return result.changes > 0;
   }
@@ -592,6 +622,34 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     return createLinkHelper(this.liveDb, sourceFactId, targetFactId, linkType, strength);
   }
 
+  /** Update a link's type and/or strength by id (curation). Emits linkUpdated. */
+  updateLink(id: string, changes: { linkType?: MemoryLinkType; strength?: number }): boolean {
+    return updateLinkHelper(this.liveDb, id, changes);
+  }
+
+  /** Pin a fact so it stays central and decay-frozen (curation). Emits factUpdated. */
+  pinFact(id: string, reason: string | null = null): boolean {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const result = this.liveDb
+      .prepare("UPDATE facts SET pinned_at = ?, pinned_reason = ? WHERE id = ?")
+      .run(nowSec, reason, id);
+    if (result.changes > 0) {
+      const updated = getByIdImpl(this.liveDb, id);
+      if (updated) emitMemoryEvent("factUpdated", { entry: updated });
+    }
+    return result.changes > 0;
+  }
+
+  /** Unpin a fact (curation). Emits factUpdated. */
+  unpinFact(id: string): boolean {
+    const result = this.liveDb.prepare("UPDATE facts SET pinned_at = NULL, pinned_reason = NULL WHERE id = ?").run(id);
+    if (result.changes > 0) {
+      const updated = getByIdImpl(this.liveDb, id);
+      if (updated) emitMemoryEvent("factUpdated", { entry: updated });
+    }
+    return result.changes > 0;
+  }
+
   /** Hebbian: Create or strengthen RELATED_TO link between two facts recalled together. */
   createOrStrengthenRelatedLink(factIdA: string, factIdB: string, deltaStrength = 0.1): void {
     createOrStrengthenRelatedLinkHelper(this.liveDb, factIdA, factIdB, deltaStrength);
@@ -603,6 +661,14 @@ export class FactsDBLayer1 extends BaseSqliteStore {
    */
   strengthenRelatedLinksBatch(pairs: [string, string][], deltaStrength = 0.1): void {
     strengthenRelatedLinksBatchHelper(this.liveDb, pairs, deltaStrength);
+  }
+
+  /** Hebbian counterpart: exponentially decay unused RELATED_TO links; prune below the floor. */
+  decayLinkStrengths(opts: { halfLifeDays: number; floor: number; nowSec?: number }): {
+    decayed: number;
+    pruned: number;
+  } {
+    return decayLinkStrengthsHelper(this.liveDb, opts);
   }
 
   /** Get links from a fact (outgoing). */

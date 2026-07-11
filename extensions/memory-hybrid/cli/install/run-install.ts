@@ -1,16 +1,16 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { parseDigestWeeklyDeliveryOnly } from "../../config/parsers/features.js";
+import { parseResearchConfig } from "../../config/parsers/research.js";
+import { type CronModelConfig, getCronModelConfig } from "../../config.js";
+import { capturePluginError } from "../../services/error-reporter.js";
+import { redactCredentialStringsOnly } from "../../services/pending-autopilot/redaction.js";
+import { ensureWorkspaceBootstrap } from "../../setup/workspace-bootstrap.js";
 import { atomicWriteFile } from "../../utils/atomic-write.js";
+import { PLUGIN_ID } from "../../utils/constants.js";
 import { getEnv } from "../../utils/env-manager.js";
 import { findPluginRoot } from "../../utils/plugin-root.js";
-import { redactCredentialStringsOnly } from "../../services/pending-autopilot/redaction.js";
-
-import { type CronModelConfig, getCronModelConfig } from "../../config.js";
-import { parseDigestWeeklyDeliveryOnly } from "../../config/parsers/features.js";
-import { capturePluginError } from "../../services/error-reporter.js";
-import { ensureWorkspaceBootstrap } from "../../setup/workspace-bootstrap.js";
-import { PLUGIN_ID } from "../../utils/constants.js";
 import type { HandlerContext } from "../handlers.js";
 import type { InstallCliResult, UninstallCliResult, UpgradeCliResult } from "../types.js";
 import {
@@ -20,41 +20,42 @@ import {
   inspectExistingEmbeddingSetup,
   stripInvalidOpenClawCoreKeys,
 } from "./config-merge.js";
-import { applyDetectedEmbeddingSetup, detectRecommendedEmbeddingSetup, getDashboardUrl } from "./embedding-detect.js";
 import {
   buildMaintenanceCronFeatureGates,
   ensureMaintenanceCronJobs,
+  RESEARCH_OVERNIGHT_JOB_ID,
   readConsolidatedCronJobsFlag,
 } from "./cron-jobs.js";
+import { applyDetectedEmbeddingSetup, detectRecommendedEmbeddingSetup, getDashboardUrl } from "./embedding-detect.js";
 import {
-  applyHybridMemoryToolsMd,
-  assertSafeRequestedVersionArg,
-  installHybridMemoryWorkspaceSkill,
-  isPathInsideDir,
-  npxExecutable,
-  NPM_INSTALL_TIMEOUT_MS,
-  PLUGIN_JOB_ID_PREFIX,
-  resolveAgentWorkspaceRoot,
-  resolveUpgradeExtensionsParentDir,
-  resolveInstalledPluginDir,
-  readPluginPackageVersion,
-  verifyUpgradePluginBundle,
-  resolveNpmProjectRootForPlugin,
-  verifyNpmProjectDependencyPin,
-  snapshotNpmProjectPinBeforeUpgrade,
-  rollbackNpmProjectPinAfterUpgradeFailure,
-  syncKnownNpmProjectPinWhenExtensionsCanonical,
-  type NpmProjectPinBackup,
-} from "./workspace.js";
+  removeRedundantNpmProjectTreeWhenExtensionsCanonical,
+  runInstallIndexReconcileForPlugin,
+} from "./install-index-reconcile.js";
 import {
   formatManualUpgradeFallback,
   preflightUpgradePluginConfig,
   runStandaloneUpgradeInstall,
 } from "./upgrade-config-preflight.js";
 import {
-  runInstallIndexReconcileForPlugin,
-  removeRedundantNpmProjectTreeWhenExtensionsCanonical,
-} from "./install-index-reconcile.js";
+  applyHybridMemoryToolsMd,
+  assertSafeRequestedVersionArg,
+  installHybridMemoryWorkspaceSkill,
+  isPathInsideDir,
+  NPM_INSTALL_TIMEOUT_MS,
+  type NpmProjectPinBackup,
+  npxExecutable,
+  PLUGIN_JOB_ID_PREFIX,
+  readPluginPackageVersion,
+  resolveAgentWorkspaceRoot,
+  resolveInstalledPluginDir,
+  resolveNpmProjectRootForPlugin,
+  resolveUpgradeExtensionsParentDir,
+  rollbackNpmProjectPinAfterUpgradeFailure,
+  snapshotNpmProjectPinBeforeUpgrade,
+  syncKnownNpmProjectPinWhenExtensionsCanonical,
+  verifyNpmProjectDependencyPin,
+  verifyUpgradePluginBundle,
+} from "./workspace.js";
 
 export type RunUpgradeForCliOptions = {
   /** Skip cron normalization when config was not fully parsed (upgrade-only fast path). */
@@ -245,10 +246,16 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
         typeof sensorSweepRaw?.schedule === "string" && (sensorSweepRaw.schedule as string).trim().length > 0
           ? (sensorSweepRaw.schedule as string).trim()
           : undefined;
+      const researchCfg = parseResearchConfig(getPluginEntryConfig(config) ?? {});
       const installScheduleOverrides: Record<string, string> = {};
       if (dreamCycleSchedule)
         installScheduleOverrides[`${PLUGIN_JOB_ID_PREFIX}nightly-dream-cycle`] = dreamCycleSchedule;
       if (sensorSweepSchedule) installScheduleOverrides[`${PLUGIN_JOB_ID_PREFIX}sensor-sweep`] = sensorSweepSchedule;
+      // Fresh installs must honor a pre-configured research.schedule too — this was previously
+      // wired only into the upgrade path (below) and verify --fix (reconcile.ts), so a schedule
+      // set before the very first `install` silently fell back to the hardcoded default until the
+      // user later ran upgrade/verify.
+      installScheduleOverrides[RESEARCH_OVERNIGHT_JOB_ID] = researchCfg.schedule;
       cronSummary = ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
         normalizeExisting: false,
         reEnableDisabled: false,
@@ -256,8 +263,11 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
           pluginCfg as { maintenance?: { orchestrator?: { consolidatedCronJobs?: boolean } } },
         ),
         scheduleOverrides: Object.keys(installScheduleOverrides).length > 0 ? installScheduleOverrides : undefined,
-        featureGates: buildMaintenanceCronFeatureGates(pluginCfg as Parameters<typeof buildMaintenanceCronFeatureGates>[0]),
+        featureGates: buildMaintenanceCronFeatureGates(
+          pluginCfg as Parameters<typeof buildMaintenanceCronFeatureGates>[0],
+        ),
         digestWeeklyDelivery: parseDigestWeeklyDeliveryOnly(getPluginEntryConfig(config) ?? {}),
+        researchDelivery: researchCfg.delivery,
       });
     } catch (err) {
       capturePluginError(err as Error, { subsystem: "cli", operation: "runInstallForCli:cron-setup" });
@@ -301,9 +311,7 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
       }
     } catch (e) {
       capturePluginError(e as Error, { subsystem: "cli", operation: "runInstallForCli:install-index-reconcile" });
-      remaining.push(
-        `Install-index reconciliation skipped: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      remaining.push(`Install-index reconciliation skipped: ${e instanceof Error ? e.message : String(e)}`);
     }
     if (detectedEmbedding.provider === "openai" && !existingEmbedding.hasUsableApiKey && !detectedEmbedding.envKey) {
       remaining.push('Set plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey to a real key.');
@@ -432,7 +440,11 @@ function rollbackUpgradePluginDir(pluginDir: string, backupDir: string): boolean
 function removeInstalledPluginDirIfDistinct(installedPluginDir: string, preUpgradePluginDir: string): void {
   if (installedPluginDir === preUpgradePluginDir) return;
   try {
-    if (existsSync(installedPluginDir) && existsSync(preUpgradePluginDir) && realpathSync(installedPluginDir) === realpathSync(preUpgradePluginDir)) {
+    if (
+      existsSync(installedPluginDir) &&
+      existsSync(preUpgradePluginDir) &&
+      realpathSync(installedPluginDir) === realpathSync(preUpgradePluginDir)
+    ) {
       return;
     }
   } catch {
@@ -712,9 +724,7 @@ export async function runUpgradeForCli(
         version: installedVersion,
       });
       if (staleSync.updated) {
-        logger?.info?.(
-          `memory-hybrid: upgrade — reconciled stale npm-project pin to ${installedVersion} (#2008)`,
-        );
+        logger?.info?.(`memory-hybrid: upgrade — reconciled stale npm-project pin to ${installedVersion} (#2008)`);
       } else if (staleSync.attempted && staleSync.error) {
         logger?.warn?.(
           `memory-hybrid: upgrade — could not reconcile npm-project pin: ${staleSync.error}${staleSync.guidance ? ` (${staleSync.guidance})` : ""}`,
@@ -739,6 +749,7 @@ export async function runUpgradeForCli(
       if (typeof cfg.sensorSweep?.schedule === "string" && cfg.sensorSweep.schedule.trim().length > 0) {
         scheduleOverrides[`${PLUGIN_JOB_ID_PREFIX}sensor-sweep`] = cfg.sensorSweep.schedule;
       }
+      scheduleOverrides[RESEARCH_OVERNIGHT_JOB_ID] = cfg.research.schedule;
       const { added, normalized } = ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
         normalizeExisting: true,
         reEnableDisabled: false,
@@ -746,6 +757,7 @@ export async function runUpgradeForCli(
         scheduleOverrides: Object.keys(scheduleOverrides).length > 0 ? scheduleOverrides : undefined,
         featureGates: buildMaintenanceCronFeatureGates(cfg),
         digestWeeklyDelivery: cfg.digest.weekly.delivery,
+        researchDelivery: cfg.research.delivery,
       });
       if (added.length > 0 || normalized.length > 0) {
         logger?.info?.(

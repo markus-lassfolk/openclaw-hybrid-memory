@@ -204,7 +204,9 @@ describe("CLI grouped namespaces", () => {
     });
     vi.spyOn(console, "error").mockImplementation(() => {});
 
-    await mem.parseAsync(["maintenance", "backfill", "--all", "--days", "0"], { from: "user" });
+    // --days must be a positive integer (parseDaysFlag rejects 0); use 1 to exercise the --all
+    // parent action's summary print without tripping the validation guard.
+    await mem.parseAsync(["maintenance", "backfill", "--all", "--days", "1"], { from: "user" });
     expect(lines.some((l) => l.includes("maintenance backfill --all"))).toBe(true);
   });
 });

@@ -193,6 +193,36 @@ export type MaintenanceConfig = {
   council: CouncilConfig;
   /** Hybrid maintenance orchestrator settings. */
   orchestrator?: MaintenanceOrchestratorConfig;
+  /** Confidence-decay behavior for the prune step (living-memory plan P1.3). */
+  decay: {
+    /**
+     * "half-life" (default): confidence decays continuously per content-type half-life
+     * (services/semantic-lifecycle.ts), extended by recall. "cliff": legacy one-shot 0.5×
+     * halving past 75% of the TTL window — the escape hatch if the curve misbehaves.
+     */
+    mode: "half-life" | "cliff";
+    /** Give important/frequently-recalled facts ONE TTL/2 reprieve instead of deletion at expiry. */
+    secondChance: boolean;
+  };
+  /** Routine mining from recall cadence (living-memory P4.3). */
+  routineMining: {
+    enabled: boolean;
+    /** Max routine facts stored per run (default 2). */
+    maxPerRun: number;
+  };
+  /** Free-text contradiction candidates: nightly vector-neighbor + NLI pass (living-memory B1). */
+  contradictions: {
+    /** Default true — catches free-text pairs the structured entity+key detector cannot see. */
+    freeText: boolean;
+    /** Cosine similarity floor for candidate pairs (default 0.85). */
+    similarityFloor: number;
+    /** Hard cap on NLI LLM calls per run (default 40). */
+    maxPairsPerRun: number;
+    /** Minimum NLI confidence to record a contradiction (default 0.7). */
+    minConfidence: number;
+    /** Model override for the NLI verdict (default: nano tier). */
+    model?: string;
+  };
 };
 
 /**

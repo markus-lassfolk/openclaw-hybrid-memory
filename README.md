@@ -112,9 +112,13 @@ Track progress and shipped product milestones in:
 Track the coordinating product roadmap in [docs/PRODUCTISATION-TRACK.md](docs/PRODUCTISATION-TRACK.md).
 
 Current snapshot:
-- **Shipped:** Memory Viewer / Mission Control, README/onboarding overhaul, public API/export surface
+- **Shipped:** Memory Viewer / Mission Control, **Memory Graph app** (live constellation at `/graph`), README/onboarding overhaul, public API/export surface
 - **Open lanes:** session observability, messaging/demo package, explicit filter → rank → hydrate retrieval mode
 - **Important:** Epic #1029 is the coordination layer; implementation lands through the child issues
+
+**New — [Memory Graph app](docs/MEMORY-GRAPH-APP.md):** an interactive, real-time constellation of your
+memory at `http://127.0.0.1:7700/graph` — strongest memories in the center, live pulses as memories are
+recalled, topic clustering, and in-place curation (add/edit/remove/link + gap & contradiction views).
 
 ## Fast path docs
 
@@ -125,6 +129,7 @@ Current snapshot:
 - [docs/OPERATIONS.md](docs/OPERATIONS.md): maintenance, backup, restore, troubleshooting
 - [docs/OPERATOR-ARCHITECTURE-MAP.md](docs/OPERATOR-ARCHITECTURE-MAP.md): minimal operator map (components, flows, storage, health/incident surfaces)
 - [docs/advanced-capabilities.md](docs/advanced-capabilities.md): graph, workflows, procedures, crystallization
+- [docs/MEMORY-GRAPH-APP.md](docs/MEMORY-GRAPH-APP.md): interactive real-time memory graph visualization at `/graph`
 - [docs/PRODUCTISATION-TRACK.md](docs/PRODUCTISATION-TRACK.md): shipped productisation milestones and open lanes
 - [docs/SYNC-REPLICATION.md](docs/SYNC-REPLICATION.md): optional encrypted sync/replication workflow
 - [docs/ADDON-ECOSYSTEM.md](docs/ADDON-ECOSYSTEM.md): modular add-on ecosystem direction

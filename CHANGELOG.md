@@ -25,6 +25,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.212] - 2026-07-11
+
+### Added — Proactive research loop ([PROACTIVE-RESEARCH.md](docs/PROACTIVE-RESEARCH.md))
+
+The living-memory observation layer now feeds initiative: notice → decide → research overnight → brief in the morning, every step auditable back to the memories that triggered it.
+
+- **Insight synthesis** (`insight-synthesis`, nightly LLM step): reads 7 days of person-signals (negative-valence facts, routines, frustration signals, patterns) and writes ≤2 evidence-linked `insight` facts. The model cites numbered evidence refs mapped back to real ids — hallucinated evidence chains are structurally impossible. Gated by `research.enabled` (default on).
+- **Research trigger** (`research-trigger`, nightly, no LLM): deterministic policy graduating ≤1 insight/night to research — importance ≥0.74, evidence gate, topic blocklist + sensitive-text regex, 14-day per-slug cooldown via `research:<slug>` queue facts (which double as the audit trail).
+- **Overnight research agent** (`hybrid-mem:research-overnight` cron job, default 03:30, isolated heavy-model session): `research pick --json` → web research → `research store`. The CLI is the single writer for `briefing` facts (validates topic state, caps length/sources, records provenance incl. URLs). No web tools ⇒ `TOOLING_BLOCKED`, no briefing from prior knowledge. Announce delivery only with explicit `research.delivery.channel` + `to` (#2056 rule).
+- **Morning delivery**: unread briefings inject once per session as a budget-capped "🔎 Overnight research briefing" block (index-only exposure; injection-sanitized headlines), independent of the opt-in sessionStart directive.
+- New CLI group `research pick|store|status`; new categories `routine` (was missing from the registry), `insight`, `briefing`; maintenance steps 53 → 56.
+
+### Added — Living-memory completion ([LIVING-MEMORY.md](docs/LIVING-MEMORY.md))
+
+- **Free-text contradiction candidates** (`contradiction-candidates`, nightly, default on): recent facts → vector top-k in-scope neighbors at cosine ≥0.85 (converted to the store's 1/(1+L2) score space) → NLI verdict (nano tier) → `recordContradiction` with the `nli_free_text` audit marker + `CONTRADICTS` link. Near-dups and structured entity+key pairs excluded; 40-call cap; config `maintenance.contradictions`.
+- **Serendipity slot** (`autoRecall.serendipity`, default **on**): once per N prompts, one `[serendipity]` headline from strong-but-never-recalled graph neighbors (fallback: stale-important), index-only exposure. (Shipped staged-off; flipped to default-on after review.)
+- **Composite-v2 + MMR measured A/B**: `retrieval.diversity.mode`/`mmrLambda` now actually parse (previously dropped). The owner's flip criterion (B ≥ A on nDCG@10 AND P@5) was measured and **failed** — armA(v1) nDCG 1.000 vs armB(v2+mmr) 0.996, equal P@5 — so both stay opt-in; `tests/retrieval-ab-composite.test.ts` re-measures every CI run and guards against >0.02 nDCG regressions.
+
+### Fixed
+
+Full-diff code review of the proactive research loop and living-memory completion work above (10-angle finder pass + verify + gap sweep, then two independent verification rounds on the fixes themselves):
+
+- **`tools/memory/register-store-tools.ts`** (correctness): claim inline-enrichment synchronously right after `storeWithResult()`, before any `await`. The claim was previously made several awaits later, always losing the race against the `factStored` microtask queued by `storeWithResult()` itself, so `post-store-enrichment.ts` always double-linked every newly stored fact. Corroborated independently by six separate review passes.
+- **`routes/graphql-resolvers.ts`** (correctness): derive `isMemoryLinkType()` from the canonical `MEMORY_LINK_TYPES` registry instead of a hand-copied allowlist that had drifted (missing `PRECEDED_BY`), which made every link mutation on that type throw "Unsupported link type" even though the graph UI already offered it.
+- **`services/serendipity.ts`** (correctness): extend the real `GraphFactLookup` contract instead of a hand-copied subset that was missing `getByIds` and had the wrong link-array types, which had forced an `as never` cast into `expandGraph`. The cast was hiding a genuine structural mismatch, not just noise.
+- **`setup/cli-context/cli-services.ts`** (correctness): thread a real resolved fallback-model chain into `contradiction-candidates`' nightly NLI pass (mirroring every sibling maintenance LLM step) instead of hardcoding `fallbackModels: []`.
+- **`cli/install/run-install.ts`** (correctness): honor a pre-configured `research.schedule` on fresh installs, not just upgrade/verify --fix, so a schedule set before the first install no longer silently falls back to the hardcoded default.
+- **`config/parsers/research.ts`, `features.ts`, `maintenance.ts`** (correctness): fix three falsy-zero config parser bugs (`trigger.cooldownDays`, link-decay `floor`, contradictions `maxPairsPerRun`/`similarityFloor`) that substituted the default whenever a caller explicitly configured `0`, a meaningful value in each case.
+- **`cli/commands/register-research-group.ts`** (correctness): match the `unread` tag exactly instead of by substring, so a future tag like `previously-unread` can't be misreported.
+- **`services/contradiction-candidates.ts`** (correctness): stop silently swallowing repeated embedding failures (now capped and reported like the existing LLM-failure path), replace a dead deadline check with the actual loop-break flag, and fix a raw NUL-byte corrupting the source file's pair-dedupe key (see `routine-miner.ts`'s identical fix a round earlier — both made `git diff`/blame silently show "Binary files differ").
+- **`services/briefing-delivery.ts`, `routes/graphql-resolvers.ts`** (security): `buildBriefingBlock` now requires `source = 'research-executor'`, not just `category = 'briefing'` — `category` is a caller-chosen value any `memory_store` call (or a prompt-injected web page asking the agent to "store a briefing") can set. Closing the write side took two follow-up rounds: `createFact`/`importFacts` (GraphQL, unauthenticated by default) let a caller set `source` to any string including `research-executor`, and the same gap applied more severely to `source: 'conversation'`/`'cli'`, which gate `isAutoResolvableContradiction`'s "is this fact user-authored" check — a forged fact could have auto-superseded a legitimate one via nightly contradiction detection. `RESERVED_INTERNAL_SOURCES` now covers all three; `updateFact` was already safe (`source` always re-derived from the stored row).
+- **`lifecycle/stage-recall/run-recall.ts`, `services/briefing-delivery.ts`** (crash-safety): revert a briefing's delivered-flip if anything later in the same recall call throws before the block reaches a return. Delivery is marked at build time (deliberately, to survive the empty/aborted/superseded early-return paths), but an unrelated exception anywhere in the remaining recall/ranking/budget logic was previously losing the already-marked-delivered briefing for good — the DB said delivered, the user never saw it.
+- **`services/recall-events.ts`** (correctness): key the co-recall cache by `(db, windowDays)` instead of just `db` — latent today since the one caller always passes the same window, but it would have silently served one window's rows to a future caller asking for a different one.
+- **`routes/graphql-resolvers.ts`** (documented, not changed): `subscriberOwnsRecall` denies all recall-event visibility to a userId-only scoped caller, since `RecallOccurredPayload` carries no userId to check against — fail-closed is correct here (granting instead would leak every tenant's recall activity), left as a documented known limitation rather than "fixed" into a leak.
+
+Verified via three full-suite runs (709 files / ~9,350 tests each), tsc clean, biome clean throughout.
+
 ## [2026.7.211] - 2026-07-11
 
 ### Fixed

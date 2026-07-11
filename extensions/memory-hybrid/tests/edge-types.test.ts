@@ -107,9 +107,14 @@ describe("MEMORY_LINK_TYPES", () => {
     expect(MEMORY_LINK_TYPES).not.toContain("DERIVED_FROM");
   });
 
-  it("has exactly 7 semantic graph types", async () => {
+  it("includes PRECEDED_BY (temporal session chaining)", async () => {
     const { MEMORY_LINK_TYPES } = await import("../backends/facts-db.js");
-    expect(MEMORY_LINK_TYPES).toHaveLength(7);
+    expect(MEMORY_LINK_TYPES).toContain("PRECEDED_BY");
+  });
+
+  it("has exactly 8 semantic graph types", async () => {
+    const { MEMORY_LINK_TYPES } = await import("../backends/facts-db.js");
+    expect(MEMORY_LINK_TYPES).toHaveLength(8);
   });
 });
 

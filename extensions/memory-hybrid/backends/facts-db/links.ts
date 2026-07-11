@@ -1,11 +1,27 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 
+import { emitMemoryEvent, type MemoryLinkEventPayload } from "../../services/memory-events.js";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 import type { ScopeFilter } from "../../types/memory.js";
 
 import { scopeFilterClauseForAlias } from "./scope-sql.js";
 import type { MemoryLinkType } from "./types.js";
+
+/** Insert a link row WITHOUT emitting an event. Callers emit after their transaction commits. */
+function insertLinkRow(
+  db: DatabaseSync,
+  id: string,
+  sourceFactId: string,
+  targetFactId: string,
+  linkType: MemoryLinkType,
+  clampedStrength: number,
+  createdAt: number,
+): void {
+  db.prepare(
+    "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at, strength_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run(id, sourceFactId, targetFactId, linkType, clampedStrength, createdAt, createdAt);
+}
 
 export function createLink(
   db: DatabaseSync,
@@ -19,9 +35,12 @@ export function createLink(
   }
   const id = randomUUID();
   const now = Math.floor(Date.now() / 1000);
-  db.prepare(
-    "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-  ).run(id, sourceFactId, targetFactId, linkType, Math.max(0, Math.min(1, strength)), now);
+  const clampedStrength = Math.max(0, Math.min(1, strength));
+  insertLinkRow(db, id, sourceFactId, targetFactId, linkType, clampedStrength, now);
+  // Live Memory Graph overlay: a new edge appeared (deferred + isolated, never breaks the write).
+  emitMemoryEvent("linkCreated", {
+    link: { id, sourceId: sourceFactId, targetId: targetFactId, linkType, strength: clampedStrength, createdAt: now },
+  });
   return id;
 }
 
@@ -34,6 +53,12 @@ export function createOrStrengthenRelatedLink(
   if (factIdA === factIdB) return;
   const [source, target] = factIdA < factIdB ? [factIdA, factIdB] : [factIdB, factIdA];
 
+  // Captured inside the transaction, emitted only AFTER it commits — so a rolled-back INSERT/UPDATE
+  // never broadcasts a phantom edge to the overlay. Both branches now defer (the create branch used
+  // to call createLink() which emitted mid-transaction; that was rollback-unsafe). Held on an object
+  // (not a bare `let`) so the `tx()` call resets narrowing and TS keeps the declared type.
+  const box: { value: { event: MemoryLinkEventPayload; kind: "linkCreated" | "linkUpdated" } | null } = { value: null };
+
   // memory_links has no UNIQUE constraint on (source_fact_id, target_fact_id, link_type), so the
   // read-then-write below must be atomic — otherwise two concurrent writers (e.g. an interactive
   // store racing a background consolidation/enrichment pass) can both see "no existing row" and
@@ -43,20 +68,109 @@ export function createOrStrengthenRelatedLink(
     () => {
       const existing = db
         .prepare(
-          `SELECT id, strength FROM memory_links WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'RELATED_TO'`,
+          `SELECT id, strength, created_at FROM memory_links WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'RELATED_TO'`,
         )
-        .get(source, target) as { id: string; strength: number } | undefined;
+        .get(source, target) as { id: string; strength: number; created_at: number } | undefined;
 
       const newStrength = Math.min(1, (existing?.strength ?? 0) + deltaStrength);
       if (existing) {
-        db.prepare("UPDATE memory_links SET strength = ? WHERE id = ?").run(newStrength, existing.id);
+        db.prepare("UPDATE memory_links SET strength = ?, strength_updated_at = ? WHERE id = ?").run(
+          newStrength,
+          Math.floor(Date.now() / 1000),
+          existing.id,
+        );
+        box.value = {
+          kind: "linkUpdated",
+          event: {
+            id: existing.id,
+            sourceId: source,
+            targetId: target,
+            linkType: "RELATED_TO",
+            strength: newStrength,
+            createdAt: existing.created_at,
+          },
+        };
       } else {
-        createLink(db, source, target, "RELATED_TO", newStrength);
+        const id = randomUUID();
+        const now = Math.floor(Date.now() / 1000);
+        insertLinkRow(db, id, source, target, "RELATED_TO", newStrength, now);
+        box.value = {
+          kind: "linkCreated",
+          event: {
+            id,
+            sourceId: source,
+            targetId: target,
+            linkType: "RELATED_TO",
+            strength: newStrength,
+            createdAt: now,
+          },
+        };
       }
     },
     "IMMEDIATE",
   );
   tx();
+  if (box.value) {
+    emitMemoryEvent(box.value.kind, { link: box.value.event });
+  }
+}
+
+/**
+ * Update a link's type and/or strength by id (curation). Emits `linkUpdated` for the live overlay.
+ * Returns true when a row changed.
+ */
+export function updateLink(
+  db: DatabaseSync,
+  id: string,
+  changes: { linkType?: MemoryLinkType; strength?: number },
+): boolean {
+  const sets: string[] = [];
+  const params: Array<string | number> = [];
+  if (changes.linkType !== undefined) {
+    if ((changes.linkType as string) === "DERIVED_FROM") {
+      throw new Error("DERIVED_FROM provenance is stored on facts.provenance_json, not memory_links");
+    }
+    sets.push("link_type = ?");
+    params.push(changes.linkType);
+  }
+  if (changes.strength !== undefined) {
+    sets.push("strength = ?");
+    params.push(Math.max(0, Math.min(1, changes.strength)));
+    sets.push("strength_updated_at = ?");
+    params.push(Math.floor(Date.now() / 1000));
+  }
+  if (sets.length === 0) return false;
+  params.push(id);
+  const result = db.prepare(`UPDATE memory_links SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+  if (result.changes > 0) {
+    const row = db
+      .prepare(
+        "SELECT id, source_fact_id, target_fact_id, link_type, strength, created_at FROM memory_links WHERE id = ?",
+      )
+      .get(id) as
+      | {
+          id: string;
+          source_fact_id: string;
+          target_fact_id: string;
+          link_type: string;
+          strength: number;
+          created_at: number;
+        }
+      | undefined;
+    if (row) {
+      emitMemoryEvent("linkUpdated", {
+        link: {
+          id: row.id,
+          sourceId: row.source_fact_id,
+          targetId: row.target_fact_id,
+          linkType: row.link_type,
+          strength: row.strength,
+          createdAt: row.created_at,
+        },
+      });
+    }
+  }
+  return result.changes > 0;
 }
 
 export function strengthenRelatedLinksBatch(db: DatabaseSync, pairs: [string, string][], deltaStrength = 0.1): void {
@@ -64,9 +178,9 @@ export function strengthenRelatedLinksBatch(db: DatabaseSync, pairs: [string, st
   const selectStmt = db.prepare(
     `SELECT id, strength FROM memory_links WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'RELATED_TO'`,
   );
-  const updateStmt = db.prepare("UPDATE memory_links SET strength = ? WHERE id = ?");
+  const updateStmt = db.prepare("UPDATE memory_links SET strength = ?, strength_updated_at = ? WHERE id = ?");
   const insertStmt = db.prepare(
-    `INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?, ?, ?, 'RELATED_TO', ?, ?)`,
+    `INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at, strength_updated_at) VALUES (?, ?, ?, 'RELATED_TO', ?, ?, ?)`,
   );
   const now = Math.floor(Date.now() / 1000);
   const tx = createTransaction(db, () => {
@@ -76,13 +190,60 @@ export function strengthenRelatedLinksBatch(db: DatabaseSync, pairs: [string, st
       const existing = selectStmt.get(source, target) as { id: string; strength: number } | undefined;
       const newStrength = Math.max(0, Math.min(1, (existing?.strength ?? 0) + deltaStrength));
       if (existing) {
-        updateStmt.run(newStrength, existing.id);
+        updateStmt.run(newStrength, now, existing.id);
       } else {
-        insertStmt.run(randomUUID(), source, target, newStrength, now);
+        insertStmt.run(randomUUID(), source, target, newStrength, now, now);
       }
     }
   });
   tx();
+}
+
+/**
+ * "Use it or lose it" for Hebbian edges: exponentially decay RELATED_TO link strength by the time
+ * since its last strength write, then hard-prune links that fell below the floor. Typed/curated
+ * links (SUPERSEDES, CONTRADICTS, PART_OF, ...) never decay — they encode structure, not usage.
+ *
+ * Each decayed row re-anchors strength_updated_at = now, so repeated runs compose to exactly
+ * 0.5^(totalDays/halfLifeDays) regardless of run cadence.
+ */
+export function decayLinkStrengths(
+  db: DatabaseSync,
+  opts: { halfLifeDays: number; floor: number; nowSec?: number },
+): { decayed: number; pruned: number } {
+  const nowSec = opts.nowSec ?? Math.floor(Date.now() / 1000);
+  const halfLifeSec = Math.max(1, opts.halfLifeDays) * 86_400;
+  // Skip sub-hour deltas: repeated cycle runs shouldn't churn rows for negligible decay.
+  const minDeltaSec = 3_600;
+  const rows = db
+    .prepare(
+      `SELECT id, strength, COALESCE(strength_updated_at, created_at) AS anchored_at
+         FROM memory_links WHERE link_type = 'RELATED_TO'`,
+    )
+    .all() as Array<{ id: string; strength: number; anchored_at: number }>;
+
+  const updateStmt = db.prepare("UPDATE memory_links SET strength = ?, strength_updated_at = ? WHERE id = ?");
+  const toPrune: string[] = [];
+  let decayed = 0;
+  const tx = createTransaction(db, () => {
+    for (const row of rows) {
+      const deltaSec = nowSec - (row.anchored_at ?? nowSec);
+      if (deltaSec < minDeltaSec) continue;
+      const next = row.strength * 0.5 ** (deltaSec / halfLifeSec);
+      if (next < opts.floor) {
+        toPrune.push(row.id);
+      } else {
+        updateStmt.run(next, nowSec, row.id);
+        decayed++;
+      }
+    }
+    if (toPrune.length > 0) {
+      const placeholders = toPrune.map(() => "?").join(",");
+      db.prepare(`DELETE FROM memory_links WHERE id IN (${placeholders})`).run(...toPrune);
+    }
+  });
+  tx();
+  return { decayed, pruned: toPrune.length };
 }
 
 export function getLinksFrom(

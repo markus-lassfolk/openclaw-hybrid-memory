@@ -10,24 +10,27 @@
 
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { atomicWriteFile } from "../../../utils/atomic-write.js";
-
 import { getCronModelConfig } from "../../../config.js";
 import { reconcileAllCronRunLedgers } from "../../../services/cron-maintenance-reconciler.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { HYBRID_MEM_CRON_DEFAULT_JOB_STEPS } from "../../../services/hybrid-mem-cron-default-job-steps.js";
+import { describeCronStoreLocation } from "../../../services/openclaw-cron-store.js";
+import { collectStorageSyncSnapshot, formatStorageSyncSummary } from "../../../services/storage-sync-diagnostics.js";
 import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
 import {
   findOrphanVectorIds,
   reconcileOrphanVectors,
   storeCanonicalVectorForFact,
 } from "../../../services/vector-maintenance.js";
-import { collectStorageSyncSnapshot, formatStorageSyncSummary } from "../../../services/storage-sync-diagnostics.js";
+import { atomicWriteFile } from "../../../utils/atomic-write.js";
 import { PLUGIN_ID } from "../../../utils/constants.js";
-import { nowIso, formatTimestampUtcFromMs } from "../../../utils/dates.js";
-import { describeCronStoreLocation } from "../../../services/openclaw-cron-store.js";
+import { formatTimestampUtcFromMs, nowIso } from "../../../utils/dates.js";
 import { ensureGoalStewardshipHeartbeatCronJob, ensureMaintenanceCronJobs } from "../../cmd-install.js";
-import { buildMaintenanceCronFeatureGates, readConsolidatedCronJobsFlag } from "../../install/cron-jobs.js";
+import {
+  buildMaintenanceCronFeatureGates,
+  RESEARCH_OVERNIGHT_JOB_ID,
+  readConsolidatedCronJobsFlag,
+} from "../../install/cron-jobs.js";
 
 import type { VerifyRunState } from "../verify-run-state.js";
 
@@ -88,156 +91,162 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
           log(`${FAIL} Reconciliation skipped — LanceDB unavailable.`);
           state.allOk = false;
         } else {
-        const { vectorOrphans, sqliteOrphans } = snapshot;
+          const { vectorOrphans, sqliteOrphans } = snapshot;
 
-        if (vectorOrphans.length === 0 && sqliteOrphans.length === 0 && !snapshot.hasStructuralDrift) {
-          log(`${OK} Reconciliation: ID sets aligned (${formatStorageSyncSummary(snapshot)})`);
-        } else if (vectorOrphans.length === 0 && sqliteOrphans.length === 0 && snapshot.hasStructuralDrift) {
-          state.allOk = false;
-          log(`${WARN_LINE} Reconciliation: ID sets aligned but row-count drift remains (${formatStorageSyncSummary(snapshot)})`);
-          if (opts.fix) {
-            log(`  → Run storage structural repair via unified --fix (see Storage sync metrics below).`);
-          } else {
-            log(`  → Run with --fix to compact/repair Lance storage, or \`openclaw hybrid-mem storage repair\`.`);
-          }
-        } else {
-          state.allOk = false;
-          if (vectorOrphans.length > 0) {
-            log(`${FAIL} Vector orphans (in LanceDB but not SQLite): ${vectorOrphans.length}`);
-            vectorOrphans.slice(0, 10).forEach((id) => {
-              log(`  - ${id}`);
-            });
-            if (vectorOrphans.length > 10) log(`  … and ${vectorOrphans.length - 10} more`);
+          if (vectorOrphans.length === 0 && sqliteOrphans.length === 0 && !snapshot.hasStructuralDrift) {
+            log(`${OK} Reconciliation: ID sets aligned (${formatStorageSyncSummary(snapshot)})`);
+          } else if (vectorOrphans.length === 0 && sqliteOrphans.length === 0 && snapshot.hasStructuralDrift) {
+            state.allOk = false;
+            log(
+              `${WARN_LINE} Reconciliation: ID sets aligned but row-count drift remains (${formatStorageSyncSummary(snapshot)})`,
+            );
             if (opts.fix) {
-              const reconcileResult = await reconcileOrphanVectors(factsDb, vectorDb, {
-                operation: "verify-reconcile",
+              log("  → Run storage structural repair via unified --fix (see Storage sync metrics below).");
+            } else {
+              log("  → Run with --fix to compact/repair Lance storage, or `openclaw hybrid-mem storage repair`.");
+            }
+          } else {
+            state.allOk = false;
+            if (vectorOrphans.length > 0) {
+              log(`${FAIL} Vector orphans (in LanceDB but not SQLite): ${vectorOrphans.length}`);
+              vectorOrphans.slice(0, 10).forEach((id) => {
+                log(`  - ${id}`);
               });
-              log(
-                `  → Delete attempted for ${reconcileResult.orphansFound} orphan vector(s): ` +
-                  `deleted=${reconcileResult.orphanVectorsRemoved}, failed=${reconcileResult.failed}.`,
-              );
-
-              let unresolvedAfterDelete = [...vectorOrphans];
-              let recheckFailed = false;
-              try {
-                unresolvedAfterDelete = await findOrphanVectorIds(factsDb, vectorDb);
-              } catch (recheckErr) {
-                log(`${FAIL} Could not re-query LanceDB after delete attempt: ${String(recheckErr)}`);
-                recheckFailed = true;
-              }
-
-              if (recheckFailed) {
+              if (vectorOrphans.length > 10) log(`  … and ${vectorOrphans.length - 10} more`);
+              if (opts.fix) {
+                const reconcileResult = await reconcileOrphanVectors(factsDb, vectorDb, {
+                  operation: "verify-reconcile",
+                });
                 log(
-                  `${FAIL} Reconciliation verification failed — cannot confirm whether ${vectorOrphans.length} orphan vector(s) were removed.`,
+                  `  → Delete attempted for ${reconcileResult.orphansFound} orphan vector(s): ` +
+                    `deleted=${reconcileResult.orphanVectorsRemoved}, failed=${reconcileResult.failed}.`,
                 );
-                state.issues.push(
-                  `${vectorOrphans.length} orphan vector(s) deletion could not be verified due to LanceDB re-query failure`,
-                );
-                state.allOk = false;
-              } else {
-                const verifiedRemoved = vectorOrphans.length - unresolvedAfterDelete.length;
-                if (unresolvedAfterDelete.length === 0) {
-                  log(`  → Verified removal: ${verifiedRemoved}/${vectorOrphans.length} orphan vector(s) are gone.`);
-                  fixes.push(`Verified removal of ${verifiedRemoved} LanceDB orphan vector(s)`);
-                } else {
+
+                let unresolvedAfterDelete = [...vectorOrphans];
+                let recheckFailed = false;
+                try {
+                  unresolvedAfterDelete = await findOrphanVectorIds(factsDb, vectorDb);
+                } catch (recheckErr) {
+                  log(`${FAIL} Could not re-query LanceDB after delete attempt: ${String(recheckErr)}`);
+                  recheckFailed = true;
+                }
+
+                if (recheckFailed) {
                   log(
-                    `${FAIL} Reconciliation incomplete — ${unresolvedAfterDelete.length}/${vectorOrphans.length} orphan vector(s) remain after delete attempt.`,
+                    `${FAIL} Reconciliation verification failed — cannot confirm whether ${vectorOrphans.length} orphan vector(s) were removed.`,
                   );
-                  for (const id of unresolvedAfterDelete.slice(0, 10)) {
-                    log(`  - unresolved: ${id}`);
-                  }
-                  if (unresolvedAfterDelete.length > 10) {
-                    log(`  … and ${unresolvedAfterDelete.length - 10} more unresolved orphan vectors`);
-                  }
-                  const failReason =
-                    typeof vectorDb.getLastSearchFailReason === "function" ? vectorDb.getLastSearchFailReason() : null;
-                  if (failReason) {
-                    log(`  → LanceDB degraded hint: lastSearchFailReason=${failReason}`);
-                  }
                   state.issues.push(
-                    `${unresolvedAfterDelete.length} orphan vector(s) still present after --reconcile --fix delete attempts`,
+                    `${vectorOrphans.length} orphan vector(s) deletion could not be verified due to LanceDB re-query failure`,
                   );
                   state.allOk = false;
-                }
-              }
-            } else {
-              log("  → Run with --fix to delete these orphan vectors from LanceDB.");
-              state.issues.push(`${vectorOrphans.length} orphan vector(s) in LanceDB with no matching SQLite fact`);
-              state.allOk = false;
-            }
-          }
-          if (sqliteOrphans.length > 0) {
-            const WARN = noEmoji ? "[WARN]" : "⚠️";
-            log(`${WARN} SQLite orphans (facts in SQLite with no vector): ${sqliteOrphans.length}`);
-            sqliteOrphans.slice(0, 10).forEach((id) => {
-              log(`  - ${id}`);
-            });
-            if (sqliteOrphans.length > 10) log(`  … and ${sqliteOrphans.length - 10} more`);
-            let sqliteOrphansFullyRebuilt = false;
-            if (opts.fix && sqliteOrphanRebuildBudget > 0) {
-              let rebuilt = 0;
-              let failed = 0;
-              for (const id of sqliteOrphans.slice(0, sqliteOrphanRebuildBudget)) {
-                try {
-                  const fact = factsDb.getById(id);
-                  if (!fact) {
-                    failed++;
-                    continue;
+                } else {
+                  const verifiedRemoved = vectorOrphans.length - unresolvedAfterDelete.length;
+                  if (unresolvedAfterDelete.length === 0) {
+                    log(`  → Verified removal: ${verifiedRemoved}/${vectorOrphans.length} orphan vector(s) are gone.`);
+                    fixes.push(`Verified removal of ${verifiedRemoved} LanceDB orphan vector(s)`);
+                  } else {
+                    log(
+                      `${FAIL} Reconciliation incomplete — ${unresolvedAfterDelete.length}/${vectorOrphans.length} orphan vector(s) remain after delete attempt.`,
+                    );
+                    for (const id of unresolvedAfterDelete.slice(0, 10)) {
+                      log(`  - unresolved: ${id}`);
+                    }
+                    if (unresolvedAfterDelete.length > 10) {
+                      log(`  … and ${unresolvedAfterDelete.length - 10} more unresolved orphan vectors`);
+                    }
+                    const failReason =
+                      typeof vectorDb.getLastSearchFailReason === "function"
+                        ? vectorDb.getLastSearchFailReason()
+                        : null;
+                    if (failReason) {
+                      log(`  → LanceDB degraded hint: lastSearchFailReason=${failReason}`);
+                    }
+                    state.issues.push(
+                      `${unresolvedAfterDelete.length} orphan vector(s) still present after --reconcile --fix delete attempts`,
+                    );
+                    state.allOk = false;
                   }
-                  const vec = await embeddings.embed(fact.text);
-                  await storeCanonicalVectorForFact({
-                    vectorDb,
-                    factsDb,
-                    factId: fact.id,
-                    text: fact.text,
-                    vector: vec,
-                    importance: fact.importance ?? 0.5,
-                    category: fact.category,
-                    embeddingModel: embeddings.modelName,
-                  });
-                  rebuilt++;
-                } catch {
-                  failed++;
                 }
+              } else {
+                log("  → Run with --fix to delete these orphan vectors from LanceDB.");
+                state.issues.push(`${vectorOrphans.length} orphan vector(s) in LanceDB with no matching SQLite fact`);
+                state.allOk = false;
               }
-              log(
-                `  → Rebuild policy=${reconcilePolicy}: rebuilt ${rebuilt}/${Math.min(sqliteOrphans.length, sqliteOrphanRebuildBudget)} SQLite orphan vector(s)${failed > 0 ? ` (${failed} failed)` : ""}.`,
-              );
-              if (sqliteOrphans.length > sqliteOrphanRebuildBudget) {
-                log(
-                  `  → Skipped ${sqliteOrphans.length - sqliteOrphanRebuildBudget} SQLite orphan(s) due to --reconcile-max-fixes budget.`,
-                );
-              }
-              sqliteOrphansFullyRebuilt = failed === 0 && sqliteOrphans.length <= sqliteOrphanRebuildBudget;
-            } else if (opts.fix && sqliteOrphanRebuildBudget === 0) {
-              log(
-                `  → Policy=${reconcilePolicy}: SQLite-orphan auto-rebuild disabled; use re-index for full recovery.`,
-              );
-            } else {
-              log("  → Re-run the plugin or use the re-index command to rebuild missing vectors.");
             }
-            if (sqliteOrphansFullyRebuilt) {
-              log(`  → Verified rebuild: ${sqliteOrphans.length}/${sqliteOrphans.length} SQLite orphan vector(s) rebuilt.`);
-              fixes.push(`Rebuilt ${sqliteOrphans.length} SQLite orphan vector(s)`);
-            } else {
-              state.issues.push(`${sqliteOrphans.length} SQLite fact(s) without corresponding vectors in LanceDB`);
-              state.allOk = false;
+            if (sqliteOrphans.length > 0) {
+              const WARN = noEmoji ? "[WARN]" : "⚠️";
+              log(`${WARN} SQLite orphans (facts in SQLite with no vector): ${sqliteOrphans.length}`);
+              sqliteOrphans.slice(0, 10).forEach((id) => {
+                log(`  - ${id}`);
+              });
+              if (sqliteOrphans.length > 10) log(`  … and ${sqliteOrphans.length - 10} more`);
+              let sqliteOrphansFullyRebuilt = false;
+              if (opts.fix && sqliteOrphanRebuildBudget > 0) {
+                let rebuilt = 0;
+                let failed = 0;
+                for (const id of sqliteOrphans.slice(0, sqliteOrphanRebuildBudget)) {
+                  try {
+                    const fact = factsDb.getById(id);
+                    if (!fact) {
+                      failed++;
+                      continue;
+                    }
+                    const vec = await embeddings.embed(fact.text);
+                    await storeCanonicalVectorForFact({
+                      vectorDb,
+                      factsDb,
+                      factId: fact.id,
+                      text: fact.text,
+                      vector: vec,
+                      importance: fact.importance ?? 0.5,
+                      category: fact.category,
+                      embeddingModel: embeddings.modelName,
+                    });
+                    rebuilt++;
+                  } catch {
+                    failed++;
+                  }
+                }
+                log(
+                  `  → Rebuild policy=${reconcilePolicy}: rebuilt ${rebuilt}/${Math.min(sqliteOrphans.length, sqliteOrphanRebuildBudget)} SQLite orphan vector(s)${failed > 0 ? ` (${failed} failed)` : ""}.`,
+                );
+                if (sqliteOrphans.length > sqliteOrphanRebuildBudget) {
+                  log(
+                    `  → Skipped ${sqliteOrphans.length - sqliteOrphanRebuildBudget} SQLite orphan(s) due to --reconcile-max-fixes budget.`,
+                  );
+                }
+                sqliteOrphansFullyRebuilt = failed === 0 && sqliteOrphans.length <= sqliteOrphanRebuildBudget;
+              } else if (opts.fix && sqliteOrphanRebuildBudget === 0) {
+                log(
+                  `  → Policy=${reconcilePolicy}: SQLite-orphan auto-rebuild disabled; use re-index for full recovery.`,
+                );
+              } else {
+                log("  → Re-run the plugin or use the re-index command to rebuild missing vectors.");
+              }
+              if (sqliteOrphansFullyRebuilt) {
+                log(
+                  `  → Verified rebuild: ${sqliteOrphans.length}/${sqliteOrphans.length} SQLite orphan vector(s) rebuilt.`,
+                );
+                fixes.push(`Rebuilt ${sqliteOrphans.length} SQLite orphan vector(s)`);
+              } else {
+                state.issues.push(`${sqliteOrphans.length} SQLite fact(s) without corresponding vectors in LanceDB`);
+                state.allOk = false;
+              }
             }
           }
-        }
-        if (resolvedSqlitePath) {
-          appendVectorLifecycleAuditEvent(resolvedSqlitePath, {
-            event: "reconcile_completed",
-            ts: nowIso(),
-            details: {
-              fix: opts.fix,
-              reconcilePolicy,
-              reconcileMaxFixes,
-              vectorOrphans: snapshot.vectorOrphans.length,
-              sqliteOrphans: snapshot.sqliteOrphans.length,
-            },
-          });
-        }
+          if (resolvedSqlitePath) {
+            appendVectorLifecycleAuditEvent(resolvedSqlitePath, {
+              event: "reconcile_completed",
+              ts: nowIso(),
+              details: {
+                fix: opts.fix,
+                reconcilePolicy,
+                reconcileMaxFixes,
+                vectorOrphans: snapshot.vectorOrphans.length,
+                sqliteOrphans: snapshot.sqliteOrphans.length,
+              },
+            });
+          }
         }
       } catch (e) {
         log(`${FAIL} Reconciliation: FAIL — ${String(e)}`);
@@ -367,6 +376,7 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
           if (typeof cfg.sensorSweep?.schedule === "string" && cfg.sensorSweep.schedule.trim().length > 0) {
             scheduleOverrides["hybrid-mem:sensor-sweep"] = cfg.sensorSweep.schedule;
           }
+          scheduleOverrides[RESEARCH_OVERNIGHT_JOB_ID] = cfg.research.schedule;
           const { added, normalized } = ensureMaintenanceCronJobs(openclawDir, getCronModelConfig(cfg), {
             normalizeExisting: true,
             reEnableDisabled: false,
@@ -374,6 +384,7 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
             scheduleOverrides: Object.keys(scheduleOverrides).length > 0 ? scheduleOverrides : undefined,
             featureGates: buildMaintenanceCronFeatureGates(cfg),
             digestWeeklyDelivery: cfg.digest.weekly.delivery,
+            researchDelivery: cfg.research.delivery,
           });
           added.forEach((name) => {
             applied.push(`Added ${name} job to ${cronStorePath}`);

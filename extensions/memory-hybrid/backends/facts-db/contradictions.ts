@@ -390,15 +390,24 @@ export function repairUndetectedContradictions(
   return { groupsScanned: groups.length, pairsRepaired, pairsFallback, pairsFailed };
 }
 
-export function getContradictions(db: DatabaseSync, factId?: string): ContradictionRecord[] {
+export function getContradictions(db: DatabaseSync, factId?: string, limit?: number): ContradictionRecord[] {
+  // Optional cap so callers on the shared HTTP path (e.g. the Memory Graph resolver) can't be forced
+  // into an unbounded synchronous full-table scan by a large unresolved-contradiction backlog.
+  const limitClause = typeof limit === "number" && limit > 0 ? ` LIMIT ${Math.floor(limit)}` : "";
   const rows = factId
     ? (db
-        .prepare("SELECT * FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ? ORDER BY detected_at DESC")
+        .prepare(
+          `SELECT * FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ? ORDER BY detected_at DESC${limitClause}`,
+        )
         .all(factId, factId) as Array<Record<string, unknown>>)
-    : (db.prepare("SELECT * FROM contradictions WHERE resolved = 0 ORDER BY detected_at DESC").all() as Array<
-        Record<string, unknown>
-      >);
-  return rows.map((r) => ({
+    : (db
+        .prepare(`SELECT * FROM contradictions WHERE resolved = 0 ORDER BY detected_at DESC${limitClause}`)
+        .all() as Array<Record<string, unknown>>);
+  return rows.map(rowToContradictionRecord);
+}
+
+function rowToContradictionRecord(r: Record<string, unknown>): ContradictionRecord {
+  return {
     id: r.id as string,
     factIdNew: r.fact_id_new as string,
     factIdOld: r.fact_id_old as string,
@@ -407,7 +416,12 @@ export function getContradictions(db: DatabaseSync, factId?: string): Contradict
     resolution: (r.resolution as "superseded" | "kept" | "merged" | null) ?? null,
     oldFactOriginalConfidence:
       r.old_fact_original_confidence == null ? undefined : (r.old_fact_original_confidence as number),
-  }));
+  };
+}
+
+export function getContradictionById(db: DatabaseSync, id: string): ContradictionRecord | null {
+  const row = db.prepare("SELECT * FROM contradictions WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+  return row ? rowToContradictionRecord(row) : null;
 }
 
 export function resolveContradiction(

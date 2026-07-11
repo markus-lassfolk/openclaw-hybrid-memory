@@ -120,6 +120,15 @@ export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
   { name: "prune", tier: "cycle", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h1, llmTier: "none" },
   { name: "compact", tier: "cycle", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20, llmTier: "none" },
   {
+    // Use-it-or-lose-it for Hebbian RELATED_TO links: the counterpart to graph.strengthenOnRecall,
+    // so co-recall bonding shapes the graph without saturating every edge at 1.0.
+    name: "link-decay",
+    tier: "cycle",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20,
+    llmTier: "none",
+    featureGate: (cfg) => cfg.graph?.enabled !== false && cfg.graph?.linkDecay?.enabled !== false,
+  },
+  {
     name: "auto-classify",
     tier: "cycle",
     guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20,
@@ -189,6 +198,16 @@ export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
     featureGate: (cfg) => (cfg.distill as { enabled?: boolean } | undefined)?.enabled !== false,
   },
   {
+    // Free-text contradiction candidates (living-memory B1): vector neighbors + NLI verdict for
+    // pairs the structured entity+key detector cannot see. Runs before resolve-contradictions so
+    // recorded pairs can resolve the same night.
+    name: "contradiction-candidates",
+    tier: "nightly",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h44,
+    llmTier: "local",
+    featureGate: (cfg) => cfg.maintenance?.contradictions?.freeText !== false,
+  },
+  {
     name: "resolve-contradictions",
     tier: "nightly",
     guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h44,
@@ -200,6 +219,43 @@ export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
     guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h44,
     llmTier: "nano",
     featureGate: (cfg) => cfg.graph?.enabled !== false,
+  },
+  {
+    // Routine mining: recurring (day-of-week, hour-band, topic) recall patterns become ordinary
+    // decayable `routine` facts — routines that stop recurring decay out (living-memory P4.3).
+    name: "routine-mining",
+    tier: "nightly",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h68,
+    llmTier: "none",
+    featureGate: (cfg) => cfg.maintenance?.routineMining?.enabled !== false,
+  },
+  {
+    // Affect back-stamping: correlate persisted frustration signals with same-session facts
+    // (living-memory P4.1). Pure SQL — no LLM.
+    name: "affect-stamp",
+    tier: "nightly",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20,
+    llmTier: "none",
+    featureGate: (cfg) => cfg.frustrationDetection?.enabled === true,
+  },
+  {
+    // Insight synthesis (proactive research loop A1): one LLM pass over person-signals
+    // (negative valence, routines, frustration, patterns) writes evidence-linked `insight` facts.
+    name: "insight-synthesis",
+    tier: "nightly",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20,
+    llmTier: "maintenance",
+    featureGate: (cfg) => cfg.research?.enabled !== false,
+  },
+  {
+    // Research trigger (proactive research loop A2): deterministic policy graduating at most one
+    // eligible insight per night into the overnight research queue. No LLM.
+    name: "research-trigger",
+    tier: "nightly",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20,
+    llmTier: "none",
+    dependsOn: ["insight-synthesis"],
+    featureGate: (cfg) => cfg.research?.enabled !== false,
   },
   {
     name: "extract-implicit",
@@ -343,7 +399,14 @@ export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
   },
 
   // --- Nightly tier — monthly cadence (25d guards) (4) ---
-  { name: "consolidate", tier: "nightly", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.d25, llmTier: "default" },
+  {
+    // d5 (was d25): normal/durable facts expire at 90/180d — a monthly cadence gave similar facts
+    // only ~3 merge opportunities before TTL deletion ("expires before it can consolidate").
+    name: "consolidate",
+    tier: "nightly",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.d5,
+    llmTier: "default",
+  },
   {
     name: "backfill-decay",
     tier: "nightly",

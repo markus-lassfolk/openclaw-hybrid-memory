@@ -2,25 +2,29 @@
 // Keep this module conservative: it must compile against the real FactsDB API and
 // return safe placeholders for schema areas that are not implemented yet.
 
-import type { FactsDB } from "../backends/facts-db.js";
+import {
+  getContradictionById,
+  getContradictions,
+  resolveContradiction as resolveContradictionRow,
+} from "../backends/facts-db/contradictions.js";
 import { isPreStoreGuardBlocked } from "../backends/facts-db/crud.js";
+import { MEMORY_LINK_TYPES, type MemoryLinkType } from "../backends/facts-db/types.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import { DECAY_CLASSES, type DecayClass } from "../config.js";
-import type { MemoryLinkType } from "../backends/facts-db/types.js";
 import { isPromptArtifactOrReasoningTrace } from "../services/capture-utils.js";
-import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import type { EmbeddingProvider } from "../services/embeddings/types.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { computeNodeStrength, lastAccessSec } from "../services/graph-node-metrics.js";
+import { detectSuggestedLinks } from "../services/knowledge-gaps.js";
+import type { RecallOccurredPayload } from "../services/memory-events.js";
+import { listRecentRecallEvents } from "../services/recall-events.js";
+import { detectClusters as detectTopicClusters } from "../services/topic-clusters.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
+import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
 import { pluginLogger } from "../utils/logger.js";
-import { scopeFieldsFromFilter } from "../utils/scope-filter.js";
-import {
-  notifyGraphqlFactCreated,
-  notifyGraphqlFactDeleted,
-  notifyGraphqlFactUpdated,
-  notifyGraphqlLinkCreated,
-} from "./graphql-pubsub.js";
+import { GLOBAL_ONLY_SCOPE_SENTINEL, scopeFieldsFromFilter } from "../utils/scope-filter.js";
 
 export type GraphQLContext = {
   factsDb: FactsDB;
@@ -312,9 +316,93 @@ function scopedConnectedFactIds(
 }
 
 function isMemoryLinkType(value: string): value is MemoryLinkType {
-  return ["SUPERSEDES", "CAUSED_BY", "PART_OF", "RELATED_TO", "DEPENDS_ON", "CONTRADICTS", "INSTANCE_OF"].includes(
-    value,
-  );
+  // Derive from the canonical registry instead of a parallel hardcoded list — a hardcoded copy
+  // silently rejected PRECEDED_BY when it was added to MEMORY_LINK_TYPES elsewhere in this same
+  // diff, so every createLink/updateLink/acceptSuggestedLink mutation threw "Unsupported link
+  // type" for a link type the graph-app's own UI already offered.
+  return (MEMORY_LINK_TYPES as readonly string[]).includes(value);
+}
+
+// ---------------------------------------------------------------------------
+// Curation / gap-analysis collectors (Memory Graph app). All scope-filtered + capped.
+// ---------------------------------------------------------------------------
+
+const DAY_SEC = 86_400;
+// Bound the unresolved-contradiction scan so a large backlog can't force an unbounded synchronous
+// full-table read on the shared process (mirrors ALL_LINKS_SCAN_CAP for the link table).
+const CONTRADICTION_SCAN_CAP = 5_000;
+
+/** In+out degree per fact id from a pre-fetched link list (shared by the graph resolver + orphans). */
+function degreeMapFromLinks(links: GraphQLLink[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const link of links) {
+    map.set(link.sourceId, (map.get(link.sourceId) ?? 0) + 1);
+    map.set(link.targetId, (map.get(link.targetId) ?? 0) + 1);
+  }
+  return map;
+}
+
+/** Orphans: in-scope, non-superseded facts with zero links and never recalled — likely gaps. */
+function collectOrphanFacts(
+  context: GraphQLContext,
+  limit: number,
+  prefetch?: { links?: GraphQLLink[]; facts?: MemoryEntry[] },
+): MemoryEntry[] {
+  const degree = degreeMapFromLinks(prefetch?.links ?? getAllLinks(context.factsDb));
+  return (prefetch?.facts ?? allFacts(context))
+    .filter((fact) => (degree.get(fact.id) ?? 0) === 0 && (fact.recallCount ?? 0) === 0)
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .slice(0, limit);
+}
+
+/** Weak links: visible edges at or below a strength threshold — candidates for pruning/review. */
+function collectWeakLinks(
+  context: GraphQLContext,
+  maxStrength: number,
+  limit: number,
+  prefetch?: { links?: GraphQLLink[] },
+): GraphQLLink[] {
+  return (prefetch?.links ?? getAllLinks(context.factsDb))
+    .filter((link) => link.weight <= maxStrength && isLinkVisible(context.factsDb, link, context.scopeFilter))
+    .sort((a, b) => a.weight - b.weight)
+    .slice(0, limit);
+}
+
+type ContradictionPairResult = {
+  id: string;
+  factNew: MemoryEntry;
+  factOld: MemoryEntry;
+  detectedAt: string;
+  resolution: string | null;
+};
+
+/** Unresolved contradictions where BOTH facts are in scope (fail-closed to avoid id leakage). */
+function collectContradictionPairs(context: GraphQLContext, limit: number): ContradictionPairResult[] {
+  const out: ContradictionPairResult[] = [];
+  for (const c of getContradictions(context.factsDb.getRawDb(), undefined, CONTRADICTION_SCAN_CAP)) {
+    if (out.length >= limit) break;
+    const factNew = context.factsDb.getById(c.factIdNew, { scopeFilter: context.scopeFilter });
+    const factOld = context.factsDb.getById(c.factIdOld, { scopeFilter: context.scopeFilter });
+    if (!factNew || !factOld) continue;
+    out.push({ id: c.id, factNew, factOld, detectedAt: c.detectedAt, resolution: c.resolution });
+  }
+  return out;
+}
+
+/** High-importance facts that have not been accessed in a while — "should we still trust this?" */
+function collectStaleImportantFacts(
+  context: GraphQLContext,
+  minImportance: number,
+  staleDays: number,
+  limit: number,
+  prefetch?: { facts?: MemoryEntry[] },
+): MemoryEntry[] {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const cutoff = nowSec - staleDays * DAY_SEC;
+  return (prefetch?.facts ?? allFacts(context))
+    .filter((fact) => fact.importance >= minImportance && lastAccessSec(fact) < cutoff)
+    .sort((a, b) => b.importance - a.importance || lastAccessSec(a) - lastAccessSec(b))
+    .slice(0, limit);
 }
 
 function asDecayClass(value: unknown): DecayClass {
@@ -324,21 +412,43 @@ function asDecayClass(value: unknown): DecayClass {
 }
 
 /**
+ * Source values reserved for internal write paths that downstream consumers gate trust on:
+ *  - "research-executor": buildBriefingBlock (briefing-delivery.ts) only surfaces facts with this
+ *    exact source, since memory_store always stamps "conversation" and can't forge it.
+ *  - "conversation" / "cli": isAutoResolvableContradiction (backends/facts-db/contradictions.ts)
+ *    treats a contradiction's newer fact as user-authored — eligible to auto-supersede the older
+ *    fact — only when its source is one of these two (docs/contradiction-detection.md's "explicit
+ *    user store" rule). A forged fact created with this source, once picked up by nightly
+ *    contradiction detection (structured entity+key match, or contradiction-candidates' free-text
+ *    NLI pass, which scans all recent facts regardless of source), could auto-supersede a
+ *    legitimate fact it happens to contradict.
+ * createFact/importFacts sit behind dashboard.token, which is unset (open) by default, so a caller
+ * claiming one of these values here would defeat the corresponding trust check entirely. Not the
+ * same list as crud.ts's BLOCKED_SOURCES (which rejects the fact outright); this only strips the
+ * reserved identity and lets the store proceed, same as any other unrecognized source.
+ */
+const RESERVED_INTERNAL_SOURCES = new Set(["research-executor", "conversation", "cli"]);
+
+/**
  * SECURITY: scope/scopeTarget are derived from the caller's own resolved identity
  * (context.scopeFilter), never trusted from client input. Otherwise any caller could set
  * scope="user"/scopeTarget="<victim>" and inject a fact that later surfaces in the victim's
  * own legitimately-scoped reads — worse than a read leak, since it lets one tenant plant
- * data in another tenant's memory.
+ * data in another tenant's memory. requestedSource is deliberately still passed through below
+ * (unlike scope/scopeTarget) when it isn't one of the reserved values above: importFacts relies
+ * on seeing the caller's claimed source to reject known-bad ones via isPreStoreGuardBlocked
+ * (crud.ts's BLOCKED_SOURCES) — discarding it unconditionally would silently defeat that guard.
  */
 function createStoreInput(input: Record<string, unknown>, context: GraphQLContext) {
   const { scope, scopeTarget } = scopeFieldsFromFilter(context.scopeFilter);
+  const requestedSource = asString(input.source);
   return {
     text: asString(input.text) ?? "",
     category: asString(input.category) ?? "other",
     importance: asNumber(input.importance) ?? 0.5,
     confidence: asNumber(input.confidence) ?? 1,
     decayClass: asDecayClass(input.decayClass),
-    source: asString(input.source) ?? "graphql",
+    source: requestedSource && !RESERVED_INTERNAL_SOURCES.has(requestedSource) ? requestedSource : "graphql",
     tags: asStringArray(input.tags) ?? [],
     entity: asString(input.entity) ?? null,
     key: asString(input.key) ?? null,
@@ -347,6 +457,30 @@ function createStoreInput(input: Record<string, unknown>, context: GraphQLContex
     scopeTarget: scopeTarget ?? null,
     expiresAt: asNumber(input.expiresAt) ?? null,
   };
+}
+
+/**
+ * May this subscriber/reader receive a recall event's metadata (query/session/agent)? A caller
+ * with no real identity — the header-less local operator, represented by the global-only sentinel
+ * agentId — owns all activity on the box; an identity-scoped caller (multi-tenant) may only see
+ * recalls originating from their own agent or session, never another tenant's. Shared by the
+ * recallOccurred subscription gate and the recentRecallEvents history query.
+ */
+export function subscriberOwnsRecall(scopeFilter: ScopeFilter, payload: RecallOccurredPayload): boolean {
+  const realAgentId =
+    scopeFilter.agentId && scopeFilter.agentId !== GLOBAL_ONLY_SCOPE_SENTINEL ? scopeFilter.agentId : null;
+  // scopeFilter.userId counts toward identityScoped but is deliberately NOT one of the match
+  // checks below: RecallOccurredPayload (and the recall_events table it's read from) carries no
+  // userId, only sessionKey/agentId, so there is no payload field to compare it against. A caller
+  // scoped by userId alone (no agentId/sessionId) therefore always falls through to `return
+  // false` — fails closed rather than granting them every tenant's recall events. Do not "fix"
+  // this by dropping userId from identityScoped; that would flip a userId-only caller to
+  // unscoped (true) and leak every other tenant's recall activity to them.
+  const identityScoped = Boolean(scopeFilter.userId || realAgentId || scopeFilter.sessionId);
+  if (!identityScoped) return true;
+  if (realAgentId && payload.agentId && realAgentId === payload.agentId) return true;
+  if (scopeFilter.sessionId && payload.sessionKey && scopeFilter.sessionId === payload.sessionKey) return true;
+  return false;
 }
 
 async function cleanupGraphqlEviction(context: GraphQLContext, evictedFactId: string | null | undefined) {
@@ -468,6 +602,105 @@ export const resolvers: GraphQLResolvers = {
         .slice(0, limit);
     },
 
+    orphanFacts: (_parent, args, context) => {
+      const limit = Math.max(1, Math.min(500, asNumber(asRecord(args).limit) ?? 50));
+      return collectOrphanFacts(context, limit);
+    },
+
+    weakLinks: (_parent, args, context) => {
+      const input = asRecord(args);
+      const maxStrength = Math.max(0, Math.min(1, asNumber(input.maxStrength) ?? 0.3));
+      const limit = Math.max(1, Math.min(500, asNumber(input.limit) ?? 50));
+      return collectWeakLinks(context, maxStrength, limit);
+    },
+
+    contradictionPairs: (_parent, args, context) => {
+      const limit = Math.max(1, Math.min(500, asNumber(asRecord(args).limit) ?? 50));
+      return collectContradictionPairs(context, limit);
+    },
+
+    staleImportantFacts: (_parent, args, context) => {
+      const input = asRecord(args);
+      const minImportance = Math.max(0, Math.min(1, asNumber(input.minImportance) ?? 0.7));
+      const staleDays = Math.max(1, asNumber(input.staleDays) ?? 90);
+      const limit = Math.max(1, Math.min(500, asNumber(input.limit) ?? 50));
+      return collectStaleImportantFacts(context, minImportance, staleDays, limit);
+    },
+
+    memoryGraphInsights: (_parent, args, context) => {
+      const limit = Math.max(1, Math.min(500, asNumber(asRecord(args).limit) ?? 25));
+      // Scan the (capped) link set and the in-scope fact set ONCE and share them across the four
+      // collectors, instead of each re-running getAllLinks / getAll on the synchronous DB.
+      const links = getAllLinks(context.factsDb);
+      const facts = allFacts(context);
+      return {
+        orphanFacts: collectOrphanFacts(context, limit, { links, facts }),
+        weakLinks: collectWeakLinks(context, 0.3, limit, { links }),
+        contradictions: collectContradictionPairs(context, limit),
+        staleImportantFacts: collectStaleImportantFacts(context, 0.7, 90, limit, { facts }),
+      };
+    },
+
+    suggestedLinks: async (_parent, args, context) => {
+      const input = asRecord(args);
+      const threshold = Math.max(0, Math.min(1, asNumber(input.threshold) ?? 0.8));
+      const limit = Math.max(1, Math.min(100, asNumber(input.limit) ?? 20));
+      const embeddings = getGraphqlEmbeddings(context);
+      // Embedding-backed: no-op when embeddings/vector store aren't configured (keeps it strictly
+      // on-demand and safe to call from the UI without a hard dependency).
+      if (!context.vectorDb || !embeddings) return [];
+      const nowSec = Math.floor(Date.now() / 1000);
+      // Over-fetch, then scope-filter: detectSuggestedLinks scans an unscoped getAll, so a raw
+      // return could surface another tenant's fact ids/text. Only keep pairs the caller may see.
+      const suggestions = await detectSuggestedLinks(
+        context.factsDb,
+        context.vectorDb,
+        embeddings,
+        threshold,
+        limit * 3,
+        nowSec,
+      );
+      return suggestions
+        .filter((s) =>
+          isLinkVisible(context.factsDb, { sourceId: s.sourceId, targetId: s.targetId }, context.scopeFilter),
+        )
+        .slice(0, limit);
+    },
+
+    recentRecallEvents: (_parent, args, context) => {
+      const limit = Math.max(1, Math.min(200, asNumber(asRecord(args).limit) ?? 50));
+      // SECURITY: same two gates as the live recallOccurred subscription. Ownership first — an
+      // identity-scoped tenant only sees recalls from their own agent/session (the query text and
+      // session metadata are sensitive) — then per-hit scope trimming. One in-scope id set is built
+      // up front instead of a getById per hit (a history page of 50 events × 100 hits would
+      // otherwise hydrate up to 5000 rows).
+      const inScopeIds = new Set(allFacts(context, true).map((fact) => fact.id));
+      const events = listRecentRecallEvents(context.factsDb.getRawDb(), 200);
+      const out: RecallOccurredPayload[] = [];
+      for (const event of events) {
+        if (out.length >= limit) break;
+        if (!subscriberOwnsRecall(context.scopeFilter, event)) continue;
+        out.push({ ...event, hits: event.hits.filter((hit) => inScopeIds.has(hit.factId)) });
+      }
+      return out;
+    },
+
+    topicClusters: (_parent, args, context) => {
+      const minSize = Math.max(2, Math.min(50, asNumber(asRecord(args).minSize) ?? 3));
+      // detectClusters scope-checks every member fact before it can enter a cluster, so the
+      // labels/ids below never encode another tenant's facts.
+      const result = detectTopicClusters(context.factsDb, {
+        minClusterSize: minSize,
+        scopeFilter: context.scopeFilter,
+      });
+      return result.clusters.slice(0, 100).map((cluster) => ({
+        id: cluster.id,
+        label: cluster.label,
+        factCount: cluster.factCount,
+        factIds: cluster.factIds,
+      }));
+    },
+
     graph: (_parent, args, context) => {
       const filter = asRecord(asRecord(args).filter);
       const categories = asStringArray(filter.categories);
@@ -488,7 +721,11 @@ export const resolvers: GraphQLResolvers = {
         (!scope || fact.scope === scope);
       // includeSuperseded=true so supersede lineage (below) can find predecessor facts; the
       // active/non-expired node set itself is still derived via isActiveFact immediately after.
-      const allMatching = allFacts(context, true).filter(matchesFilters);
+      const allInScope = allFacts(context, true);
+      // Every fact id the caller may read — used to keep the exposed `degree` scope-safe (a link to a
+      // fact outside the caller's scope must not be counted, or it discloses a hidden relationship).
+      const inScopeIds = new Set(allInScope.map((fact) => fact.id));
+      const allMatching = allInScope.filter(matchesFilters);
       let candidateFacts = allMatching.filter((fact) => isActiveFact(fact));
       // GraphFilterInput declares linkTypes/maxDepth/startNodeIds, but until now this resolver
       // silently ignored all three and always returned a flat "top-N by recency" node set instead
@@ -507,12 +744,27 @@ export const resolvers: GraphQLResolvers = {
       }
       const facts = candidateFacts.slice(0, maxNodes);
       const factIds = new Set(facts.map((fact) => fact.id));
-      const linkEdges = getAllLinks(context.factsDb)
+      const allLinks = getAllLinks(context.factsDb);
+      // Degree = number of links to other facts the caller can see. Counting only in-scope endpoints
+      // keeps the exposed metric from disclosing the count of a fact's hidden cross-scope links.
+      const degreeMap = degreeMapFromLinks(
+        allLinks.filter((link) => inScopeIds.has(link.sourceId) && inScopeIds.has(link.targetId)),
+      );
+      const contradictedIds = new Set<string>();
+      for (const c of getContradictions(context.factsDb.getRawDb(), undefined, CONTRADICTION_SCAN_CAP)) {
+        contradictedIds.add(c.factIdNew);
+        contradictedIds.add(c.factIdOld);
+      }
+      const nowSecForStrength = Math.floor(Date.now() / 1000);
+      const linkEdges = allLinks
         .filter(
           (link) =>
-            factIds.has(link.sourceId) && factIds.has(link.targetId) && (!linkTypes?.length || linkTypes.includes(link.linkType)),
+            factIds.has(link.sourceId) &&
+            factIds.has(link.targetId) &&
+            (!linkTypes?.length || linkTypes.includes(link.linkType)),
         )
         .map((link) => ({
+          id: link.id,
           source: link.sourceId,
           target: link.targetId,
           linkType: link.linkType,
@@ -526,6 +778,9 @@ export const resolvers: GraphQLResolvers = {
         (fact) => fact.supersededBy && factIds.has(fact.supersededBy) && !factIds.has(fact.id),
       );
       const supersedeEdges = supersedeSourceFacts.map((fact) => ({
+        // Synthetic lineage edge (not a memory_links row) → no id; the client keeps such edges keyed
+        // by endpoints and never tries to mutate/delete them.
+        id: null,
         source: fact.id,
         target: fact.supersededBy as string,
         linkType: "superseded_by",
@@ -541,6 +796,21 @@ export const resolvers: GraphQLResolvers = {
           confidence: fact.confidence,
           decayClass: fact.decayClass,
           factCount: 1,
+          // Constellation metrics for the Memory Graph app.
+          strength: computeNodeStrength(fact, nowSecForStrength),
+          recallCount: fact.recallCount ?? 0,
+          accessCount: fact.accessCount ?? 0,
+          lastAccessedAt: fact.lastAccessedAt ?? null,
+          reinforcedCount: fact.reinforcedCount ?? 0,
+          pinned: fact.pinnedAt != null,
+          degree: degreeMap.get(fact.id) ?? 0,
+          superseded: fact.supersededAt != null || fact.supersededBy != null,
+          contradicted: contradictedIds.has(fact.id),
+          clusterId: null,
+          tags: fact.tags ?? [],
+          entity: fact.entity ?? null,
+          expiresAt: fact.expiresAt ?? null,
+          createdAt: fact.createdAt,
         })),
         edges: [...linkEdges, ...supersedeEdges],
       };
@@ -601,7 +871,8 @@ export const resolvers: GraphQLResolvers = {
       await cleanupGraphqlEviction(context, result.evictedFactId);
       if (result.newlyStored) {
         await indexGraphqlFactVector(context, result.entry);
-        notifyGraphqlFactCreated(result.entry, result.entry.category, result.entry.scope);
+        // Real-time publish is handled centrally by FactsDB.storeWithResult → memory-events bridge,
+        // so every store path (tool/auto-capture/CLI/GraphQL/maintenance) fires exactly once.
       }
       return result.entry;
     },
@@ -646,7 +917,8 @@ export const resolvers: GraphQLResolvers = {
           });
         }
         await indexGraphqlFactVector(context, result.entry);
-        notifyGraphqlFactUpdated(result.entry);
+        // factStored (new fact) + factUpdated (old fact now superseded) are published centrally by
+        // FactsDB.storeWithResult/supersede via the memory-events bridge.
       }
       await cleanupGraphqlEviction(context, result.evictedFactId);
       return result.entry;
@@ -668,9 +940,7 @@ export const resolvers: GraphQLResolvers = {
           context: "graphql-delete-fact",
         });
       }
-      if (deleted) {
-        notifyGraphqlFactDeleted(id, existing?.category, existing?.scope, existing?.scopeTarget);
-      }
+      // factDeleted is published centrally by FactsDB.delete via the memory-events bridge.
       return deleted;
     },
 
@@ -693,7 +963,7 @@ export const resolvers: GraphQLResolvers = {
           context: "graphql-supersede",
         });
       }
-      notifyGraphqlFactUpdated(newFact);
+      // factUpdated (old fact now superseded) is published centrally by FactsDB.supersede.
       return newFact;
     },
 
@@ -713,7 +983,7 @@ export const resolvers: GraphQLResolvers = {
       }
       const id = context.factsDb.createLink(sourceId, targetId, linkType, weight);
       const link = getLinkById(context.factsDb, id) ?? undefined;
-      if (link) notifyGraphqlLinkCreated(link);
+      // linkCreated is published centrally by createLink (links.ts) via the memory-events bridge.
       return link;
     },
     deleteLink: (_parent, args, context) => {
@@ -725,6 +995,108 @@ export const resolvers: GraphQLResolvers = {
       if (!existing || !isLinkVisible(context.factsDb, existing, context.scopeFilter)) return false;
       const result = context.factsDb.getRawDb().prepare("DELETE FROM memory_links WHERE id = ?").run(id);
       return result.changes > 0;
+    },
+
+    updateLink: (_parent, args, context) => {
+      const input = asRecord(args);
+      const id = asString(input.id);
+      if (!id) throw new Error("Missing link id");
+      // SECURITY: scope-check both endpoints before mutating, mirroring createLink/deleteLink.
+      const existing = getLinkById(context.factsDb, id);
+      if (!existing || !isLinkVisible(context.factsDb, existing, context.scopeFilter)) {
+        throw new Error(`Link not found: ${id}`);
+      }
+      const linkType = asString(input.linkType);
+      if (linkType !== undefined && !isMemoryLinkType(linkType)) {
+        throw new Error(`Unsupported link type: ${linkType}`);
+      }
+      const weight = asNumber(input.weight);
+      context.factsDb.updateLink(id, {
+        linkType: linkType as MemoryLinkType | undefined,
+        strength: weight,
+      });
+      // linkUpdated is published centrally by FactsDB.updateLink via the memory-events bridge.
+      return getLinkById(context.factsDb, id) ?? undefined;
+    },
+
+    acceptSuggestedLink: (_parent, args, context) => {
+      const input = asRecord(args);
+      const sourceId = asString(input.sourceId);
+      const targetId = asString(input.targetId);
+      const linkType = asString(input.linkType) ?? "RELATED_TO";
+      const weight = asNumber(input.weight) ?? 0.7;
+      if (!sourceId || !targetId) throw new Error("Missing link endpoint");
+      if (!isMemoryLinkType(linkType)) throw new Error(`Unsupported link type: ${linkType}`);
+      // SECURITY: both endpoints must be in scope (same guard as createLink).
+      if (!isLinkVisible(context.factsDb, { sourceId, targetId }, context.scopeFilter)) {
+        throw new Error(`Fact not found: ${sourceId}`);
+      }
+      const id = context.factsDb.createLink(sourceId, targetId, linkType, weight);
+      // linkCreated is published centrally by createLink via the memory-events bridge.
+      return getLinkById(context.factsDb, id) ?? undefined;
+    },
+
+    pinFact: (_parent, args, context) => {
+      const input = asRecord(args);
+      const id = asString(input.id);
+      if (!id) throw new Error("Missing fact id");
+      // SECURITY: scope-check before mutating so a caller can't pin another tenant's fact.
+      const existing = context.factsDb.getById(id, { scopeFilter: context.scopeFilter });
+      if (!existing) throw new Error(`Fact not found: ${id}`);
+      context.factsDb.pinFact(id, asString(input.reason) ?? null);
+      return context.factsDb.getById(id, { scopeFilter: context.scopeFilter });
+    },
+
+    unpinFact: (_parent, args, context) => {
+      const id = asString(asRecord(args).id);
+      if (!id) throw new Error("Missing fact id");
+      const existing = context.factsDb.getById(id, { scopeFilter: context.scopeFilter });
+      if (!existing) throw new Error(`Fact not found: ${id}`);
+      context.factsDb.unpinFact(id);
+      return context.factsDb.getById(id, { scopeFilter: context.scopeFilter });
+    },
+
+    resolveContradiction: async (_parent, args, context) => {
+      const input = asRecord(args);
+      const id = asString(input.id);
+      const keepFactId = asString(input.keepFactId);
+      if (!id) throw new Error("Missing contradiction id");
+      const db = context.factsDb.getRawDb();
+      const record = getContradictionById(db, id);
+      // SECURITY: fail-closed — both facts must be in the caller's scope (mirrors
+      // collectContradictionPairs), and the same "not found" is thrown whether the row is missing
+      // or merely out of scope, so the id space can't be probed as an existence oracle.
+      const factNew = record && context.factsDb.getById(record.factIdNew, { scopeFilter: context.scopeFilter });
+      const factOld = record && context.factsDb.getById(record.factIdOld, { scopeFilter: context.scopeFilter });
+      if (!record || !factNew || !factOld) throw new Error(`Contradiction not found: ${id}`);
+      if (record.resolved) throw new Error(`Contradiction already resolved: ${id}`);
+
+      let resolution: "superseded" | "kept" = "kept";
+      if (keepFactId) {
+        if (keepFactId !== record.factIdNew && keepFactId !== record.factIdOld) {
+          throw new Error("keepFactId must be one of the contradicting facts");
+        }
+        const loserId = keepFactId === record.factIdNew ? record.factIdOld : record.factIdNew;
+        const applied = context.factsDb.supersede(loserId, keepFactId);
+        if (!applied) throw new Error(`Fact supersede did not apply: ${loserId}`);
+        if (context.vectorDb) {
+          await deleteVectorForFactId({
+            vectorDb: context.vectorDb,
+            factId: loserId,
+            logger: pluginLogger,
+            context: "graphql-resolve-contradiction",
+          });
+        }
+        resolution = "superseded";
+      }
+      resolveContradictionRow(db, id, resolution);
+      return {
+        id: record.id,
+        factNew: context.factsDb.getById(record.factIdNew, { scopeFilter: context.scopeFilter }),
+        factOld: context.factsDb.getById(record.factIdOld, { scopeFilter: context.scopeFilter }),
+        detectedAt: record.detectedAt,
+        resolution,
+      };
     },
 
     importFacts: async (_parent, args, context) => {
@@ -744,7 +1116,7 @@ export const resolvers: GraphQLResolvers = {
         if (result.entry.id !== "" && result.newlyStored) {
           stored.push(result.entry);
           await indexGraphqlFactVector(context, result.entry);
-          notifyGraphqlFactCreated(result.entry, result.entry.category, result.entry.scope);
+          // factStored published centrally by FactsDB.storeWithResult via the memory-events bridge.
         }
         await cleanupGraphqlEviction(context, result.evictedFactId);
       }
@@ -765,7 +1137,7 @@ export const resolvers: GraphQLResolvers = {
       for (const fact of toDelete) {
         if (context.factsDb.delete(fact.id)) {
           deleted++;
-          notifyGraphqlFactDeleted(fact.id, fact.category, fact.scope, fact.scopeTarget);
+          // factDeleted published centrally by FactsDB.delete via the memory-events bridge.
           if (context.vectorDb) {
             await deleteVectorForFactId({
               vectorDb: context.vectorDb,
@@ -788,6 +1160,11 @@ export const resolvers: GraphQLResolvers = {
   },
 
   Fact: {
+    // Derived from pinnedAt (the other salience fields resolve directly off the MemoryEntry parent).
+    pinned: (parent) => {
+      const at = asRecord(parent).pinnedAt;
+      return typeof at === "number" && at > 0;
+    },
     links: (parent, _args, context) => {
       const fact = asRecord(parent) as Partial<MemoryEntry>;
       return fact.id

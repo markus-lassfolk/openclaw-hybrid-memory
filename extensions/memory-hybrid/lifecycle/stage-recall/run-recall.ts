@@ -8,20 +8,33 @@
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import {
-  SessionSeenFacts,
   deduplicateResultsById,
   detectTopicShift,
   generateAmbientQueries,
+  SessionSeenFacts,
   searchAmbientIssues,
 } from "../../services/ambient-retrieval.js";
+import {
+  buildBriefingBlock,
+  markBriefingsDelivered,
+  revertBriefingsDelivered,
+} from "../../services/briefing-delivery.js";
 import { loadKnownEntitySurfaces, matchEntitySurfacesInText } from "../../services/entity-retrieval.js";
 import { capturePluginError } from "../../services/error-reporter.js";
-import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
-import { type RecallPipelineDeps, runRecallPipelineQuery } from "../../services/recall-pipeline.js";
-import { mergeSearchResultsByBestScore } from "../../services/merge-results.js";
-import { createRecallSpan, createRecallTimingLogger } from "../../services/recall-timing.js";
+import { getFocusTopic } from "../../services/focus-topic.js";
+import { applyFragmentRecallPostProcess } from "../../services/fragment-recall.js";
+import { expandGraph } from "../../services/graph-retrieval.js";
 import { filterCandidatesByInteractiveGrading } from "../../services/interactive-recall-grader.js";
-import { consumePrependBudget, getRemainingPrependTokens, initPrependBudgetWithInjectorReserve } from "../../services/prepend-budget.js";
+import { mergeSearchResultsByBestScore } from "../../services/merge-results.js";
+import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
+import {
+  consumePrependBudget,
+  getRemainingPrependTokens,
+  initPrependBudgetWithInjectorReserve,
+} from "../../services/prepend-budget.js";
+import { type RecallPipelineDeps, runRecallPipelineQuery } from "../../services/recall-pipeline.js";
+import { createRecallSpan, createRecallTimingLogger } from "../../services/recall-timing.js";
+import { recordIntentDistribution } from "../../services/recall-timing-stats.js";
 import {
   assembleRecallPrependContext,
   edictMaxTokensForBudget,
@@ -31,22 +44,19 @@ import {
 } from "../../services/recalled-context-assembler.js";
 import { resolveInteractiveRecallPolicy } from "../../services/retrieval-mode-policy.js";
 import { applyRetrievalV2, DEFAULT_RETRIEVAL_V2_CONFIG } from "../../services/retrieval-v2.js";
-import { applyFragmentRecallPostProcess } from "../../services/fragment-recall.js";
-import { recordIntentDistribution } from "../../services/recall-timing-stats.js";
-import { getFocusTopic } from "../../services/focus-topic.js";
+import { pickSerendipityFact } from "../../services/serendipity.js";
 import { sanitizePromptInjection } from "../../services/skill-prompt-injection.js";
-import type { ScopeFilter } from "../../types/memory.js";
-import type { SearchResult } from "../../types/memory.js";
+import type { ScopeFilter, SearchResult } from "../../types/memory.js";
 import { isConsolidatedDerivedFact } from "../../utils/consolidation-controls.js";
-import { isTierAllowedForWarmSearch } from "../../utils/tier-filter.js";
 import { resolveEntityLookupNames } from "../../utils/entity-lookup-resolve.js";
-import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
-import { raceWithAbortSignal } from "../../utils/signal-race.js";
 import { yieldEventLoop } from "../../utils/event-loop-yield.js";
-import { isRecallContextSuperseded, suppressStaleLifecycleDbError } from "../../utils/registration-superseded.js";
-import { estimateTokens, sanitizeRecallFactText } from "../../utils/text.js";
-import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "../types.js";
 import { isStaleLifecycleGeneration } from "../../utils/lifecycle-generation.js";
+import { isRecallContextSuperseded, suppressStaleLifecycleDbError } from "../../utils/registration-superseded.js";
+import { raceWithAbortSignal } from "../../utils/signal-race.js";
+import { estimateTokens, sanitizeRecallFactText } from "../../utils/text.js";
+import { isTierAllowedForWarmSearch } from "../../utils/tier-filter.js";
+import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
+import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "../types.js";
 import {
   buildDegradedFtsHotRecallStage,
   buildFixedBlocksRecallStage,
@@ -276,6 +286,10 @@ export async function runRecall(
   const recallStageStartedAt = recallTiming.phaseStarted("recall_stage_run", { prompt_chars: e.prompt.length });
   let recallStageCompleted = false;
   let recallStageFields: Record<string, string | number | boolean> | undefined;
+  // Hoisted above the try block (unlike briefingBlock itself) so the catch handler below can
+  // revert a delivered-flip that was already committed to the DB if anything later in this same
+  // call throws before the block reaches a return.
+  let deliveredBriefingFactIds: string[] = [];
   const completeStage = (result: RecallStageResult): RecallStageResult => {
     setRecallProbePhase(`complete:${result.kind}`);
     recallStageFields = {
@@ -338,7 +352,7 @@ export async function runRecall(
     const limit = searchLimit;
     const tierFilter: "warm" | "all" = ctx.cfg.memoryTiering.enabled ? "warm" : "all";
 
-    let scopeFilter: ScopeFilter | undefined = resolveRecallScopeFilter(ctx);
+    const scopeFilter: ScopeFilter | undefined = resolveRecallScopeFilter(ctx);
 
     const interactivePolicy = resolveInteractiveRecallPolicy(
       ctx.cfg.autoRecall,
@@ -590,6 +604,42 @@ export async function runRecall(
       }
       if (candidates.length > 0) {
         skipPostMainRecallEnrichment = true;
+      }
+    }
+
+    // Associative recall on the hot path (living-memory P3.1): pull 1-hop graph neighbors of the
+    // strongest matches into the candidate set (hop-decayed scores), so injected context includes
+    // what the memory ASSOCIATES with the topic — not just what embeds like the prompt. Pure
+    // SQLite hops, bounded by maxAdds + hubDegreeCap; failures never affect the recall.
+    const autoExpandCfg = ctx.cfg.graphRetrieval?.autoRecallExpand;
+    if (
+      !skipPostMainRecallEnrichment &&
+      candidates.length > 0 &&
+      ctx.cfg.graph.enabled &&
+      ctx.cfg.graphRetrieval?.enabled !== false &&
+      autoExpandCfg?.enabled !== false
+    ) {
+      try {
+        const seenIds = new Set(candidates.map((c) => c.entry.id));
+        const seeds = candidates.slice(0, 3).map((c) => ({ factId: c.entry.id, score: c.score, entry: c.entry }));
+        const { results: expanded } = expandGraph(ctx.factsDb, seeds, {
+          maxDepth: 1,
+          maxExpandedResults: autoExpandCfg?.maxAdds ?? 5,
+          scopeFilter,
+          hubDegreeCap: ctx.cfg.graph.hubDegreeCap,
+          hubScorePenalty: ctx.cfg.graph.hubScorePenalty,
+        });
+        for (const ex of expanded) {
+          if (ex.expansionSource !== "graph" || seenIds.has(ex.entry.id)) continue;
+          // Ambient association follows STRONG meaning-edges only: temporal adjacency
+          // (PRECEDED_BY) and weak bonds (< 0.4, e.g. 0.3 session co-occurrence links) would
+          // inject whatever happened nearby, not what the memory associates with the topic.
+          if (ex.linkPath.some((step) => step.linkType === "PRECEDED_BY" || step.strength < 0.4)) continue;
+          seenIds.add(ex.entry.id);
+          candidates.push({ entry: ex.entry, score: ex.score, backend: "sqlite" });
+        }
+      } catch (err) {
+        api.logger.warn(`memory-hybrid: auto-recall graph expansion failed: ${err}`);
       }
     }
     if (
@@ -967,6 +1017,28 @@ export async function runRecall(
             });
             directiveCalls += 1;
             addDirectiveResults(results, "sessionStart");
+            // Living-memory P3.4: the session-start briefing also resurfaces stale-important
+            // memories — high-importance facts nothing has touched in 30+ days — so what matters
+            // doesn't silently fade just because no prompt happened to embed near it.
+            try {
+              const staleCutoff = Math.floor(Date.now() / 1000) - 30 * 86_400;
+              const staleRows = ctx.factsDb
+                .getRawDb()
+                .prepare(
+                  `SELECT id FROM facts
+                    WHERE importance >= 0.7 AND superseded_at IS NULL
+                      AND COALESCE(last_accessed, created_at) < ?
+                    ORDER BY importance DESC LIMIT 3`,
+                )
+                .all(staleCutoff) as Array<{ id: string }>;
+              const staleResults = staleRows
+                .map((row) => ctx.factsDb.getById(row.id, { scopeFilter }))
+                .filter((entry): entry is NonNullable<typeof entry> => entry != null)
+                .map((entry) => ({ entry, score: 0.5, backend: "sqlite" as const }));
+              if (staleResults.length > 0) addDirectiveResults(staleResults, "sessionStart:stale-important");
+            } catch {
+              /* briefing extras are best-effort */
+            }
             sessionStartSeen.add(sessionKey);
           }
         }
@@ -1008,6 +1080,38 @@ export async function runRecall(
         return db - da;
       });
       candidates = candidates.slice(0, limit);
+    }
+
+    // Overnight-research briefing (proactive research loop A4): surface unread briefings once per
+    // chat session, independent of the opt-in sessionStart directive. Briefings are marked
+    // delivered at build time (under-delivery beats repeat-injection loops) and exposed
+    // index-only via briefingFactIds → refreshIndexedFacts.
+    let briefingBlock = "";
+    const researchDeliveryCfg = ctx.cfg.research;
+    if (
+      researchDeliveryCfg?.enabled !== false &&
+      (researchDeliveryCfg?.delivery.injectDays ?? 0) > 0 &&
+      !recallAborted(signal) &&
+      !sessionState.briefingSeenSessions.has(sessionKey)
+    ) {
+      try {
+        const built = buildBriefingBlock(ctx.factsDb.getRawDb(), {
+          injectDays: researchDeliveryCfg.delivery.injectDays,
+          maxBriefings: researchDeliveryCfg.delivery.maxBriefings,
+        });
+        if (built.factIds.length > 0) {
+          briefingBlock = built.block;
+          markBriefingsDelivered(ctx.factsDb.getRawDb(), built.factIds);
+          deliveredBriefingFactIds = built.factIds;
+          // Index-only exposure applied at build time: the block reaches the prepend through
+          // every downstream path (full, empty, abort, superseded), most of which never run
+          // stage-injection's side-effect plumbing.
+          ctx.factsDb.refreshIndexedFacts(built.factIds);
+        }
+        sessionState.briefingSeenSessions.add(sessionKey);
+      } catch {
+        /* briefing delivery is best-effort */
+      }
     }
 
     const nowSec = Math.floor(Date.now() / 1000);
@@ -1092,6 +1196,45 @@ export async function runRecall(
       }
     }
 
+    // Serendipity slot (living-memory, staged default-OFF): once per cooldownPrompts prompts,
+    // one index-only [serendipity] headline from strong-but-never-recalled graph neighbors of
+    // the ranked results (falling back to stale-important). Counter persists across turns; a
+    // threshold hit with no viable pick holds the counter and retries next prompt.
+    let serendipity: RecallResult["serendipity"] = null;
+    const serendipityCfg = ctx.cfg.autoRecall.serendipity;
+    if (serendipityCfg?.enabled === true) {
+      try {
+        const count = (sessionState.serendipityPromptCounter.get(sessionKey) ?? 0) + 1;
+        let nextCount = count;
+        if (count >= serendipityCfg.cooldownPrompts && candidates.length > 0) {
+          const excludeIds = new Set<string>([...candidates.map((c) => c.entry.id), ...hotFactIds]);
+          const seeds = candidates.slice(0, 3).map((c) => ({ factId: c.entry.id, score: c.score, entry: c.entry }));
+          const pick = pickSerendipityFact(
+            ctx.factsDb,
+            seeds,
+            {
+              minLinkStrength: serendipityCfg.minLinkStrength,
+              staleImportanceMin: serendipityCfg.staleImportanceMin,
+              staleDays: serendipityCfg.staleDays,
+              hubDegreeCap: ctx.cfg.graph.hubDegreeCap,
+              hubScorePenalty: ctx.cfg.graph.hubScorePenalty,
+            },
+            { scopeFilter, excludeIds },
+          );
+          if (pick) {
+            serendipity = {
+              factId: pick.factId,
+              line: `\n[serendipity] ${pick.category}: ${sanitizePromptInjection(pick.title)} — recall with memory_recall if curious\n`,
+            };
+            nextCount = 0;
+          }
+        }
+        sessionState.serendipityPromptCounter.set(sessionKey, nextCount);
+      } catch {
+        /* serendipity is best-effort */
+      }
+    }
+
     const {
       maxPerMemoryChars,
       useSummaryInInjection,
@@ -1131,6 +1274,13 @@ export async function runRecall(
     narrativeBlock = capAndTrackBlock("narrative", narrativeBlock, narrativeCapTokens, budgetState);
     hotBlock = capAndTrackBlock("hot", hotBlock, hotCapTokens, budgetState);
     procedureBlock = capAndTrackBlock("procedure", procedureBlock, procedureCapTokens, budgetState);
+    const briefingCapTokens =
+      briefingBlock.length > 0
+        ? totalBudget < 80
+          ? Math.max(0, Math.floor(totalBudget * 0.15))
+          : Math.max(80, Math.floor(totalBudget * 0.15))
+        : 0;
+    briefingBlock = capAndTrackBlock("briefing", briefingBlock, briefingCapTokens, budgetState);
 
     const activeTaskReserveCap = ctx.cfg.activeTask.enabled
       ? (activeTaskBlockCapCfg ??
@@ -1191,11 +1341,11 @@ export async function runRecall(
           fixedBlocks: budgetState.audit,
         },
       });
-      const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
+      const combinedContext = issueBlock + narrativeBlock + hotBlock + briefingBlock + procedureBlock;
       return completeStage(finishEmptyRecallPrepend(ctx, combinedContext));
     }
     if (shouldAbortRecall()) {
-      const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
+      const combinedContext = issueBlock + narrativeBlock + hotBlock + briefingBlock + procedureBlock;
       if (candidates.length > 0 && !isRecallContextSuperseded(ctx)) {
         // Abort after main pipeline: keep partial recall, skip ambient/enrichment only.
       } else {
@@ -1209,7 +1359,7 @@ export async function runRecall(
     const pinnedRecallThreshold = progressivePinnedRecallCount ?? 3;
 
     if (isRecallContextSuperseded(ctx)) {
-      const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
+      const combinedContext = issueBlock + narrativeBlock + hotBlock + briefingBlock + procedureBlock;
       return completeStage(finishEmptyRecallPrepend(ctx, combinedContext));
     }
 
@@ -1238,9 +1388,21 @@ export async function runRecall(
       ambientSeenFacts: ambientCfg.enabled && ambientCfg.multiQuery ? ambientSeenFacts : null,
       semanticDegraded: pipelineStatusRef.semanticDegraded,
       totalBudget,
+      briefingBlock,
+      serendipity,
     };
     return completeStage({ kind: "full", result });
   } catch (err) {
+    if (deliveredBriefingFactIds.length > 0) {
+      // The delivered-flip already committed but every catch branch below drops briefingBlock
+      // (emptyRecallStage() carries no prepend text, and the final fallthrough re-throws) — revert
+      // so the same briefing is offered again next session instead of being silently lost.
+      try {
+        revertBriefingsDelivered(ctx.factsDb.getRawDb(), deliveredBriefingFactIds);
+      } catch {
+        /* best-effort revert; the original error still propagates below */
+      }
+    }
     if (isRecallContextSuperseded(ctx)) {
       setRecallProbePhase("skip:superseded");
       api.logger.debug?.(

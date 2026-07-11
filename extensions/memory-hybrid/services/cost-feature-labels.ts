@@ -37,6 +37,8 @@ export const CostFeature = {
   crossAgentLearning: "cross-agent-learning",
   intentRouter: "intent-router",
   compositeScoreEval: "composite-score-eval",
+  insightSynthesis: "insight-synthesis",
+  contradictionNli: "contradiction-nli",
   evolutionPass: "evolution-pass",
   contaminationGuard: "contamination-guard",
   mineSynthesize: "mine-synthesize",

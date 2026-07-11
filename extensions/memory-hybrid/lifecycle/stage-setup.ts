@@ -6,16 +6,16 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import { capturePluginError } from "../services/error-reporter.js";
-import { getRestartPendingPath } from "../utils/constants.js";
-import { nowIso } from "../utils/dates.js";
-import { pluginLogger } from "../utils/logger.js";
-import { withTimeout } from "../utils/timeout.js";
-import { clearSessionInjectionDedup } from "../services/session-injection-dedup.js";
 import {
   markBeforeAgentStartTurn,
   resolveBeforeAgentStartStageTimeoutMs,
 } from "../services/before-agent-start-budget.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { clearSessionInjectionDedup } from "../services/session-injection-dedup.js";
+import { getRestartPendingPath } from "../utils/constants.js";
+import { nowIso } from "../utils/dates.js";
+import { pluginLogger } from "../utils/logger.js";
+import { withTimeout } from "../utils/timeout.js";
 import { formatSessionKeyTruncated, resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 

@@ -10,6 +10,7 @@ import type { FactsDB } from "../../../backends/facts-db.js";
 import type { VectorDB } from "../../../backends/vector-db.js";
 import type { HybridMemoryConfig } from "../../../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../../../config.js";
+import { runAffectStamp } from "../../../services/affect-stamping.js";
 import { runAutoClassify } from "../../../services/auto-classifier.js";
 import {
   DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD,
@@ -31,6 +32,9 @@ import type { MaintenanceStepRunner } from "../../../services/maintenance-orches
 import { runPassiveObserver } from "../../../services/passive-observer.js";
 import { runPendingDigestAutopilotCron } from "../../../services/pending-digest-autopilot-cron.js";
 import { buildPendingReviewDigestReport } from "../../../services/pending-review-digest.js";
+import { runFactsPruneStep } from "../../../services/prune-step.js";
+import { runResearchTrigger } from "../../../services/research-trigger.js";
+import { runRoutineMining } from "../../../services/routine-miner.js";
 import { sweepAll } from "../../../services/sensor-sweep.js";
 import { deleteVectorsForFactIds, reconcileOrphanVectors } from "../../../services/vector-maintenance.js";
 import { nowIso } from "../../../utils/dates.js";
@@ -305,17 +309,60 @@ export function buildCliMaintenanceRunners(
 
   // --- Cycle ---
   set("prune", async () => {
-    const pending = b.factsDb.listExpiredFactIdsPendingPrune();
-    const n = b.factsDb.prune();
-    const cleanup = await deleteVectorsForFactIds(b.vectorDb, pending, { operation: "orchestrator-prune" });
-    const summary = `pruned=${n} vectors=${cleanup.deleted}/${cleanup.attempted} failures=${cleanup.failed} semantic=${cleanup.failed > 0 ? "partial" : "success"}`;
-    assertVectorCleanupNotPartial("prune", [cleanup], summary);
+    // Shared with the plugin-cycle runner so CLI-triggered maintenance applies the SAME decay
+    // semantics (this variant used to skip decayConfidence entirely).
+    const outcome = await runFactsPruneStep(b.factsDb, b.vectorDb, {
+      operationPrefix: "orchestrator",
+      decayMode: b.cfg.maintenance?.decay?.mode ?? "half-life",
+      secondChance: b.cfg.maintenance?.decay?.secondChance !== false,
+    });
+    const [expiredCleanup, decayCleanup] = outcome.cleanups;
+    const deleted = expiredCleanup.deleted + decayCleanup.deleted;
+    const attempted = expiredCleanup.attempted + decayCleanup.attempted;
+    const summary = `pruned=${outcome.expired} decayed=${outcome.decayed} reprieved=${outcome.secondChances} vectors=${deleted}/${attempted} failures=${outcome.vectorFailures} semantic=${outcome.vectorFailures > 0 ? "partial" : "success"}`;
+    assertVectorCleanupNotPartial("prune", outcome.cleanups, summary);
     return summary;
   });
 
   set("compact", async () => {
     const c = await b.runCompaction({ apply: true });
     return `hot=${c.hot} warm=${c.warm} cold=${c.cold} semantic=success`;
+  });
+
+  set("link-decay", async () => {
+    const { halfLifeDays, floor } = b.cfg.graph.linkDecay;
+    const r = b.factsDb.decayLinkStrengths({ halfLifeDays, floor });
+    return `decayed=${r.decayed} pruned=${r.pruned} halfLifeDays=${halfLifeDays} semantic=success`;
+  });
+
+  set("affect-stamp", async () => {
+    const r = runAffectStamp(b.factsDb.getRawDb());
+    return `sessions=${r.sessionsSeen} stamped=${r.factsStamped} semantic=success`;
+  });
+
+  set("routine-mining", async () => {
+    const r = runRoutineMining(b.factsDb, { maxPerRun: b.cfg.maintenance?.routineMining?.maxPerRun ?? 2 });
+    return `candidates=${r.candidates} stored=${r.stored} semantic=success`;
+  });
+
+  set("insight-synthesis", async () => {
+    if (!b.runInsightSynthesis) return "skipped (insight synthesis unavailable) semantic=success";
+    const r = await b.runInsightSynthesis({ dryRun: false, verbose });
+    const summary = `stored=${r.stored} candidates=${r.candidates} evidence=${r.evidenceItems} dedupe=${r.skippedDedupe} semantic=${r.semanticOutcome}`;
+    if (r.semanticOutcome === "failed") throw new Error(`insight-synthesis LLM failure (${summary})`);
+    assertSemanticOutcomeDoesNotBlockStep("insight-synthesis", r.semanticOutcome, summary);
+    return summary;
+  });
+
+  set("research-trigger", async () => {
+    const r = runResearchTrigger(b.factsDb, b.cfg.research.trigger);
+    return `picked=${r.picked} eligible=${r.eligible} cooldown=${r.skippedCooldown} blocklist=${r.skippedBlocklist} evidence=${r.skippedEvidence} semantic=success`;
+  });
+
+  set("contradiction-candidates", async () => {
+    if (!b.runContradictionCandidates) return "skipped (contradiction candidates unavailable) semantic=success";
+    const r = await b.runContradictionCandidates({ dryRun: false, verbose });
+    return `recorded=${r.recorded} pairs=${r.pairsConsidered} llm=${r.llmCalls} scanned=${r.scanned} existing=${r.skippedExisting} structured=${r.skippedStructured} semantic=${r.semanticOutcome}`;
   });
 
   set("auto-classify", async () => {
@@ -896,17 +943,14 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
   const discoveredPath = join(dirname(deps.resolvedSqlitePath), ".discovered-categories.json");
 
   runners.set("prune", async () => {
-    const decayNowSec = Math.floor(Date.now() / 1000);
-    const expiredIds = deps.factsDb.listExpiredFactIdsPendingPrune();
-    const decayDeleteIds = deps.factsDb.listFactIdsToBeDeletedByDecayRun(decayNowSec);
-    const hardPruned = deps.factsDb.pruneExpired();
-    const softPruned = deps.factsDb.decayConfidence(decayNowSec);
-    const expiredCleanup = await deleteVectorsForFactIds(deps.vectorDb, expiredIds, {
-      operation: "orchestrator-cycle-prune",
+    const outcome = await runFactsPruneStep(deps.factsDb, deps.vectorDb, {
+      operationPrefix: "orchestrator-cycle",
+      decayMode: deps.cfg.maintenance?.decay?.mode ?? "half-life",
+      secondChance: deps.cfg.maintenance?.decay?.secondChance !== false,
     });
-    const decayCleanup = await deleteVectorsForFactIds(deps.vectorDb, decayDeleteIds, {
-      operation: "orchestrator-cycle-decay",
-    });
+    const hardPruned = outcome.expired;
+    const softPruned = outcome.decayed;
+    const [expiredCleanup, decayCleanup] = outcome.cleanups;
     const edicts = deps.edictStore.pruneExpired();
     let audit = 0;
     let health = 0;
@@ -935,6 +979,22 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
       return `hot=${c.hot} warm=${c.warm} cold=${c.cold} semantic=success`;
     });
   }
+
+  runners.set("link-decay", async () => {
+    const { halfLifeDays, floor } = deps.cfg.graph.linkDecay;
+    const r = deps.factsDb.decayLinkStrengths({ halfLifeDays, floor });
+    return `decayed=${r.decayed} pruned=${r.pruned} halfLifeDays=${halfLifeDays} semantic=success`;
+  });
+
+  runners.set("affect-stamp", async () => {
+    const r = runAffectStamp(deps.factsDb.getRawDb());
+    return `sessions=${r.sessionsSeen} stamped=${r.factsStamped} semantic=success`;
+  });
+
+  runners.set("routine-mining", async () => {
+    const r = runRoutineMining(deps.factsDb, { maxPerRun: deps.cfg.maintenance?.routineMining?.maxPerRun ?? 2 });
+    return `candidates=${r.candidates} stored=${r.stored} semantic=success`;
+  });
 
   if (deps.cfg.autoClassify?.enabled) {
     runners.set("auto-classify", async () => {

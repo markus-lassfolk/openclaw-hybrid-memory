@@ -105,7 +105,8 @@ describe("facts-db links module", () => {
         target_fact_id TEXT NOT NULL,
         link_type TEXT NOT NULL,
         strength REAL NOT NULL,
-        created_at INTEGER NOT NULL
+        created_at INTEGER NOT NULL,
+        strength_updated_at INTEGER
       )
     `);
 
@@ -130,7 +131,8 @@ describe("facts-db links module", () => {
         target_fact_id TEXT NOT NULL,
         link_type TEXT NOT NULL,
         strength REAL NOT NULL,
-        created_at INTEGER NOT NULL
+        created_at INTEGER NOT NULL,
+        strength_updated_at INTEGER
       )
     `);
 
@@ -150,7 +152,8 @@ describe("facts-db links module", () => {
         target_fact_id TEXT NOT NULL,
         link_type TEXT NOT NULL,
         strength REAL NOT NULL,
-        created_at INTEGER NOT NULL
+        created_at INTEGER NOT NULL,
+        strength_updated_at INTEGER
       )
     `);
 
@@ -181,7 +184,8 @@ describe("facts-db links module", () => {
         target_fact_id TEXT NOT NULL,
         link_type TEXT NOT NULL,
         strength REAL NOT NULL,
-        created_at INTEGER NOT NULL
+        created_at INTEGER NOT NULL,
+        strength_updated_at INTEGER
       );
     `);
     db.prepare(`INSERT INTO facts (id, out_degree, in_degree) VALUES ('s', 0, 0), ('hub', 1, 1)`).run();
@@ -206,7 +210,8 @@ describe("facts-db links module", () => {
         target_fact_id TEXT NOT NULL,
         link_type TEXT NOT NULL,
         strength REAL NOT NULL,
-        created_at INTEGER NOT NULL
+        created_at INTEGER NOT NULL,
+        strength_updated_at INTEGER
       );
     `);
     // "corrected" was superseded by "correction"; "seed" links to the now-stale "corrected" fact.

@@ -7,13 +7,16 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import {
+  logSlowBeforeAgentStartIfNeeded,
+  resolveBeforeAgentStartStageTimeoutMs,
+} from "../services/before-agent-start-budget.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { INTERACTIVE_RECALL_STAGE_TIMEOUT_MS } from "../services/retrieval-mode-policy.js";
-import { logSlowBeforeAgentStartIfNeeded, resolveBeforeAgentStartStageTimeoutMs } from "../services/before-agent-start-budget.js";
 import { isRecallContextSuperseded } from "../utils/registration-superseded.js";
-import type { LifecycleContext, RecallStageResult, SessionState } from "./types.js";
 import { buildDegradedFtsHotRecallStage } from "./stage-recall/degraded-recall.js";
 import { runRecall } from "./stage-recall/run-recall.js";
+import type { LifecycleContext, RecallStageResult, SessionState } from "./types.js";
 
 const RECALL_STAGE_TIMEOUT_MS = INTERACTIVE_RECALL_STAGE_TIMEOUT_MS;
 
@@ -26,10 +29,7 @@ export async function runRecallStage(
   if (isRecallContextSuperseded(ctx)) {
     return { kind: "empty", prependContext: undefined };
   }
-  const stageTimeoutMs = resolveBeforeAgentStartStageTimeoutMs(
-    ctx.beforeAgentStartTurnRef,
-    RECALL_STAGE_TIMEOUT_MS,
-  );
+  const stageTimeoutMs = resolveBeforeAgentStartStageTimeoutMs(ctx.beforeAgentStartTurnRef, RECALL_STAGE_TIMEOUT_MS);
   const ac = new AbortController();
   const { signal } = ac;
   let timer: ReturnType<typeof setTimeout> | undefined;

@@ -38,8 +38,20 @@ export type GraphConfig = {
   coOccurrenceWeight: number;
   /** When true, auto-create SUPERSEDES edge + supersede old fact when entity+key conflict detected (default true) */
   autoSupersede: boolean;
-  /** When true, strengthen RELATED_TO links between facts recalled together (Hebbian). Default false to avoid read-path mutation. */
+  /** When true, strengthen RELATED_TO links between facts recalled together (Hebbian). Default true — bounded by linkDecay + hubDegreeCap. */
   strengthenOnRecall: boolean;
+  /** Chain PRECEDED_BY edges between consecutive facts of a session (default true). */
+  temporalEdges: boolean;
+  /** Max facts/minute enriched by the universal post-store auto-linker (default 30). */
+  autoLinkBudgetPerMin: number;
+  /** Use-it-or-lose-it decay for Hebbian RELATED_TO links (typed/curated links never decay). */
+  linkDecay: {
+    enabled: boolean;
+    /** Days for an untouched link's strength to halve (default 30). */
+    halfLifeDays: number;
+    /** Links decayed below this strength are pruned (default 0.05). */
+    floor: number;
+  };
   /**
    * Graph hub guard threshold (default 500):
    * - SQLite / CTE expansion skips traversing nodes whose total degree (in+out, excluding CONTRADICTS/DERIVED_FROM) exceeds this value.
@@ -67,6 +79,12 @@ export type GraphRetrievalConfig = {
   maxExpandDepth: number;
   /** Maximum number of graph-expanded results appended to direct matches (default: 20). */
   maxExpandedResults: number;
+  /** Associative expansion on the AUTO-recall hot path: 1-hop neighbors of top seeds (default on). */
+  autoRecallExpand: {
+    enabled: boolean;
+    /** Max expanded facts appended to the ambient candidate set (default 5). */
+    maxAdds: number;
+  };
 };
 
 /** Topic cluster detection configuration (Issue #146). */

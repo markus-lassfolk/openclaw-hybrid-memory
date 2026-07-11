@@ -3,8 +3,8 @@ import type {
   CouncilProvenanceMode,
   CronReliabilityConfig,
   HealthConfig,
-  MaintenanceFailureReportingConfig,
   MaintenanceConfig,
+  MaintenanceFailureReportingConfig,
   MaintenancePrivacyRedactionConfig,
   MonthlyReviewConfig,
   NightlyCycleConfig,
@@ -267,6 +267,7 @@ export function parseMaintenanceConfig(cfg: Record<string, unknown>): Maintenanc
         ? Math.min(31, Math.max(1, Math.floor(monthlyReviewRaw.dayOfMonth)))
         : 1,
   };
+  const decayRaw = maintenanceRaw?.decay as Record<string, unknown> | undefined;
   return {
     monthlyReview,
     cronReliability: parseCronReliabilityConfig(cfg),
@@ -274,5 +275,39 @@ export function parseMaintenanceConfig(cfg: Record<string, unknown>): Maintenanc
     privacyRedaction: parseMaintenancePrivacyRedactionConfig(cfg),
     council: parseCouncilConfig(cfg),
     orchestrator: parseMaintenanceOrchestratorConfig(cfg),
+    decay: {
+      mode: decayRaw?.mode === "cliff" ? "cliff" : "half-life",
+      secondChance: decayRaw?.secondChance !== false,
+    },
+    routineMining: {
+      enabled: (maintenanceRaw?.routineMining as Record<string, unknown> | undefined)?.enabled !== false,
+      maxPerRun:
+        typeof (maintenanceRaw?.routineMining as Record<string, unknown> | undefined)?.maxPerRun === "number" &&
+        ((maintenanceRaw?.routineMining as Record<string, unknown>).maxPerRun as number) > 0
+          ? Math.floor((maintenanceRaw?.routineMining as Record<string, unknown>).maxPerRun as number)
+          : 2,
+    },
+    contradictions: parseContradictionsConfig(maintenanceRaw?.contradictions as Record<string, unknown> | undefined),
+  };
+}
+
+function parseContradictionsConfig(raw: Record<string, unknown> | undefined): MaintenanceConfig["contradictions"] {
+  // >= 0, not > 0: similarityFloor: 0 is a meaningful choice (consider every vector neighbor,
+  // no cosine floor) — a `> 0` guard silently discarded that explicit choice for the default.
+  const similarityFloor =
+    typeof raw?.similarityFloor === "number" && raw.similarityFloor >= 0 && raw.similarityFloor <= 1
+      ? raw.similarityFloor
+      : 0.85;
+  const minConfidence =
+    typeof raw?.minConfidence === "number" && raw.minConfidence >= 0 && raw.minConfidence <= 1
+      ? raw.minConfidence
+      : 0.7;
+  return {
+    freeText: raw?.freeText !== false,
+    similarityFloor,
+    maxPairsPerRun:
+      typeof raw?.maxPairsPerRun === "number" && raw.maxPairsPerRun >= 0 ? Math.floor(raw.maxPairsPerRun) : 40,
+    minConfidence,
+    model: typeof raw?.model === "string" && raw.model.trim().length > 0 ? raw.model.trim() : undefined,
   };
 }

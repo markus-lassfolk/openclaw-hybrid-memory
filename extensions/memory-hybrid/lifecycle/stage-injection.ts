@@ -8,74 +8,39 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { getCronModelConfig, getDefaultCronModel } from "../config/index.js";
 import "../config.js";
-import { capturePluginError } from "../services/error-reporter.js";
 import { trimBlockToBudget } from "../services/context-block-trim.js";
-import { consumePrependBudget } from "../services/prepend-budget.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { resolveFactsDbForEntry, resolveRecallInjectionText } from "../services/fragment-recall.js";
+import { strengthenHebbianLinks } from "../services/hebbian.js";
+import { recordInjectionAttribution } from "../services/injection-attribution-store.js";
+import { type InjectionFilterMode, scanInjectionFilter } from "../services/injection-filter.js";
+import { attributeInjectionToTurn, segmentTranscriptIntoTurns } from "../services/per-turn-attribution.js";
 import { shouldPinFactForInjection } from "../services/pinned-recall-policy.js";
+import { consumePrependBudget } from "../services/prepend-budget.js";
+import { recordRecallEvent } from "../services/recall-events.js";
+import { createRecallSpan, createRecallTimingLogger } from "../services/recall-timing.js";
+import { emitRecallVerboseLog } from "../services/recall-verbose-log.js";
 import {
   assembleRecallPrependContext,
   buildEdictBlock,
   DEFAULT_EDICT_BUDGET_FRACTION,
   finalizeInjectionMemoryContent,
 } from "../services/recalled-context-assembler.js";
-import { logRecallEvent } from "../services/recall-events.js";
-import { recordInjectionAttribution } from "../services/injection-attribution-store.js";
-import { attributeInjectionToTurn, segmentTranscriptIntoTurns } from "../services/per-turn-attribution.js";
-import { scanInjectionFilter, type InjectionFilterMode } from "../services/injection-filter.js";
-import { emitRecallVerboseLog } from "../services/recall-verbose-log.js";
-import { createRecallSpan, createRecallTimingLogger } from "../services/recall-timing.js";
-import { resolveRecallInjectionText, resolveFactsDbForEntry } from "../services/fragment-recall.js";
+import { markFactsInjectedForSession } from "../services/session-injection-dedup.js";
 import { sanitizePromptInjection } from "../services/skill-prompt-injection.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
+import { setProgressiveIndexIds } from "../utils/progressive-index-session.js";
 import {
   estimateTokens,
   estimateTokensForDisplay,
   formatProgressiveIndexLine,
   sanitizeRecallFactText,
 } from "../utils/text.js";
-import { markFactsInjectedForSession } from "../services/session-injection-dedup.js";
-import { setProgressiveIndexIds } from "../utils/progressive-index-session.js";
-import type { LifecycleContext, RecallResult } from "./types.js";
 import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
 import { resolveRecallScopeFilter } from "./stage-recall/degraded-recall.js";
+import type { LifecycleContext, RecallResult } from "./types.js";
 
 const INJECTION_STAGE_TIMEOUT_MS = 10_000;
-const HEBBIAN_MAX_K = 8;
-
-/** Collect top-K pairs and batch-strengthen in a single transaction, fire-and-forget. */
-function strengthenHebbianLinks(
-  ids: string[],
-  factsDb: LifecycleContext["factsDb"],
-  logger: { warn: (msg: string) => void },
-): void {
-  const topK = Array.from(new Set(ids)).slice(0, HEBBIAN_MAX_K);
-  const pairs: [string, string][] = [];
-  for (let i = 0; i < topK.length; i++) {
-    for (let j = i + 1; j < topK.length; j++) {
-      pairs.push([topK[i], topK[j]]);
-    }
-  }
-  if (pairs.length === 0) return;
-  setImmediate(() => {
-    try {
-      // Check database connection before deferred operation to prevent race condition during shutdown (#1288)
-      if (typeof factsDb.isOpen === "function" && !factsDb.isOpen()) {
-        return;
-      }
-      factsDb.strengthenRelatedLinksBatch(pairs);
-    } catch (err) {
-      const e = err instanceof Error ? err : new Error(String(err));
-      // Expected when the plugin is shutting down or the database closed mid-operation
-      if (!/database connection is not open/i.test(e.message)) {
-        capturePluginError(e, {
-          operation: "hebbian-strengthen",
-          subsystem: "stage-injection",
-        });
-        logger.warn(`memory-hybrid: hebbian link strengthening failed: ${err}`);
-      }
-    }
-  });
-}
 
 type InjectionSideEffects = {
   accessedIds?: string[];
@@ -205,7 +170,10 @@ async function runInjection(
     ambientCfg: _ambientCfg,
     ambientSeenFacts,
   } = r;
-  const recalledAmbient = issueBlock + narrativeBlock + hotBlock;
+  // Briefing (proactive research A4) and serendipity (living-memory) ride along with the fixed
+  // ambient blocks; both are index-only exposures (ids merged into indexedIds in finishPrepend).
+  const recalledAmbient =
+    issueBlock + narrativeBlock + hotBlock + (r.briefingBlock ?? "") + (r.serendipity?.line ?? "");
 
   const injectionFilterMode: InjectionFilterMode = ctx.cfg.retrieval?.contextBoundary?.injectionFilter ?? "audit";
   let injectionFilteredCount = 0;
@@ -271,6 +239,14 @@ async function runInjection(
     if (!prepend) return undefined;
     if (options.emitGate) options.emitGate.emitted = true;
     consumePrependBudget(ctx.prependBudgetRef, prepend);
+    // The serendipity fact was shown headline-only — index-only exposure keeps its recall_count
+    // untouched (crud.ts doctrine) while still marking it ambient-seen. (Briefing ids get their
+    // index-only bump at build time in run-recall, since briefings also ship on paths that never
+    // reach this side-effect plumbing.)
+    if (r.serendipity) {
+      sideEffects = sideEffects ?? {};
+      sideEffects.indexedIds = [...new Set([...(sideEffects.indexedIds ?? []), r.serendipity.factId])];
+    }
     if (sideEffects) applyInjectionSideEffects(ctx, api, ambientSeenFacts, progressiveIndexSessionKey, sideEffects);
     if (injectionFilteredCount > 0) {
       emitRecallVerboseLog({
@@ -311,7 +287,9 @@ async function runInjection(
             attribution: vaultAttr,
           });
           const queryText = extractLastUserMessageText(event) ?? "";
-          logRecallEvent(db, {
+          // recordRecallEvent persists the row AND broadcasts a `recallOccurred` event so the live
+          // Memory Graph overlay pulses the injected facts as the agent recalls them each turn.
+          recordRecallEvent(db, {
             sessionKey: api.context?.sessionKey ?? api.context?.sessionId ?? null,
             agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? null,
             query: queryText.slice(0, 500) || null,

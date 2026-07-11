@@ -93,7 +93,9 @@ export function parseGraphConfig(cfg: Record<string, unknown>): GraphConfig {
   }
   return {
     enabled: graphRaw?.enabled !== false,
-    autoLink: graphRaw?.autoLink === true,
+    // Default ON: neighbors at formation for EVERY write path (post-store enrichment) — a fact
+    // without edges can never be found associatively.
+    autoLink: graphRaw?.autoLink !== false,
     autoLinkStrength,
     autoLinkSimilarityThreshold,
     autoLinkMinScore: autoLinkStrength,
@@ -113,7 +115,15 @@ export function parseGraphConfig(cfg: Record<string, unknown>): GraphConfig {
         ? graphRaw.coOccurrenceWeight
         : 0.3,
     autoSupersede: graphRaw?.autoSupersede !== false,
-    strengthenOnRecall: graphRaw?.strengthenOnRecall === true,
+    // Default ON: co-recalled memories bond (Hebbian). Bounded by linkDecay below + hubDegreeCap,
+    // so the graph learns from use without saturating.
+    strengthenOnRecall: graphRaw?.strengthenOnRecall !== false,
+    temporalEdges: graphRaw?.temporalEdges !== false,
+    autoLinkBudgetPerMin:
+      typeof graphRaw?.autoLinkBudgetPerMin === "number" && graphRaw.autoLinkBudgetPerMin > 0
+        ? Math.floor(graphRaw.autoLinkBudgetPerMin)
+        : 30,
+    linkDecay: parseLinkDecayConfig(graphRaw?.linkDecay),
     hubDegreeCap:
       graphRaw?.hubDegreeCap === null
         ? null
@@ -124,6 +134,18 @@ export function parseGraphConfig(cfg: Record<string, unknown>): GraphConfig {
       typeof graphRaw?.hubScorePenalty === "number" && graphRaw.hubScorePenalty > 0 && graphRaw.hubScorePenalty < 1
         ? graphRaw.hubScorePenalty
         : null,
+  };
+}
+
+/** Use-it-or-lose-it decay for Hebbian RELATED_TO links — the safety valve for strengthenOnRecall. */
+function parseLinkDecayConfig(raw: unknown): GraphConfig["linkDecay"] {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  return {
+    enabled: r.enabled !== false,
+    halfLifeDays: typeof r.halfLifeDays === "number" && r.halfLifeDays > 0 ? r.halfLifeDays : 30,
+    // >= 0, not > 0: floor: 0 is a meaningful choice (links decay in strength but are never
+    // pruned) — a `> 0` guard silently discarded that explicit choice for the default instead.
+    floor: typeof r.floor === "number" && r.floor >= 0 && r.floor < 1 ? r.floor : 0.05,
   };
 }
 
@@ -140,6 +162,14 @@ export function parseGraphRetrievalConfig(cfg: Record<string, unknown>): GraphRe
       typeof graphRetrievalRaw?.maxExpandedResults === "number" && graphRetrievalRaw.maxExpandedResults >= 0
         ? Math.min(50, Math.floor(graphRetrievalRaw.maxExpandedResults))
         : 20,
+    autoRecallExpand: {
+      enabled: (graphRetrievalRaw?.autoRecallExpand as Record<string, unknown> | undefined)?.enabled !== false,
+      maxAdds:
+        typeof (graphRetrievalRaw?.autoRecallExpand as Record<string, unknown> | undefined)?.maxAdds === "number" &&
+        ((graphRetrievalRaw?.autoRecallExpand as Record<string, unknown>).maxAdds as number) > 0
+          ? Math.floor((graphRetrievalRaw?.autoRecallExpand as Record<string, unknown>).maxAdds as number)
+          : 5,
+    },
   };
 }
 
@@ -1103,9 +1133,7 @@ export function parseDigestWeeklyDeliveryOnly(cfg: Record<string, unknown>): Dig
   const chatId =
     typeof delivery?.chatId === "string" && delivery.chatId.trim().length > 0 ? delivery.chatId.trim() : undefined;
   if (mode === "telegram" && !chatId) {
-    pluginLogger.warn(
-      `memory-hybrid: digest.weekly.delivery.mode is "telegram" but chatId is missing; using "none".`,
-    );
+    pluginLogger.warn(`memory-hybrid: digest.weekly.delivery.mode is "telegram" but chatId is missing; using "none".`);
     return { mode: "none" };
   }
   if (mode === "system") {

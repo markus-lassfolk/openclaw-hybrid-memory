@@ -6,39 +6,43 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import { stringEnum } from "../../utils/typebox.js";
-
 import { categoryToEventType } from "../../backends/event-log.js";
+import { resolveWriteVectorCandidates } from "../../cli/vector-dedupe-helpers.js";
 import {
   DECAY_CLASSES,
   type DecayClass,
-  type MemoryCategory,
   getCronModelConfig,
   getDefaultCronModel,
   getMemoryCategories,
   isCompactVerbosity,
+  type MemoryCategory,
 } from "../../config.js";
-import { tryParseCredentialForVault, isStructuredCredentialCandidate } from "../../services/auto-capture.js";
+import { isStructuredCredentialCandidate, tryParseCredentialForVault } from "../../services/auto-capture.js";
+import { classifyMemoryOperation } from "../../services/classification.js";
+import { matchesExactScope, validateScopedClassificationTarget } from "../../services/classification-scope.js";
 import {
+  abortCredentialVaultWriteOnPointerDedupe,
   buildCredentialPointerText,
   ensureCredentialVaultPointer,
-  abortCredentialVaultWriteOnPointerDedupe,
   rollbackVaultCredentialWrite,
 } from "../../services/credential-vault-pointer.js";
-import { autoLinkSemanticallySimilarFacts } from "../../services/graph-autolink.js";
 import { AllEmbeddingProvidersFailed, shouldSuppressEmbeddingError } from "../../services/embeddings.js";
 import { extractEntityMentionsWithLlm } from "../../services/entity-enrichment.js";
 import { addOperationBreadcrumb, capturePluginError } from "../../services/error-reporter.js";
-import { guardAgainstWrapperArgsDropped } from "../../services/tool-args-guard.js";
-import { emitFeatureTelemetry } from "../../services/feature-telemetry.js";
 import { extractStructuredFields } from "../../services/fact-extraction.js";
-import { isSystemSenderEmail } from "../../utils/system-sender-email.js";
+import { emitFeatureTelemetry } from "../../services/feature-telemetry.js";
+import { autoLinkSemanticallySimilarFacts } from "../../services/graph-autolink.js";
+import { claimInlineEnrichment } from "../../services/post-store-enrichment.js";
+import {
+  isSubstantiveMemoryText,
+  prepareMemoryMetadataForStorage,
+  prepareMemoryTextForStorage,
+} from "../../services/recalled-context-assembler.js";
 import { storeAliases } from "../../services/retrieval-aliases.js";
-import { classifyMemoryOperation } from "../../services/classification.js";
-import { matchesExactScope, validateScopedClassificationTarget } from "../../services/classification-scope.js";
-import { shouldAutoVerify } from "../../services/verification-store.js";
-import { cleanupEvictedVector, deleteVectorForFactId } from "../../services/vector-maintenance.js";
 import { mirrorMemoryStoreToActiveTaskLedger } from "../../services/task-ledger-facts.js";
+import { guardAgainstWrapperArgsDropped } from "../../services/tool-args-guard.js";
+import { cleanupEvictedVector, deleteVectorForFactId } from "../../services/vector-maintenance.js";
+import { shouldAutoVerify } from "../../services/verification-store.js";
 import {
   isWalWriteFailure,
   walRemove as walRemoveEntry,
@@ -49,15 +53,11 @@ import { MEMORY_SCOPES } from "../../types/memory.js";
 import { detectFutureDate } from "../../utils/date-detector.js";
 import { nowIso } from "../../utils/dates.js";
 import { embedCallWithTimeoutAndRetry } from "../../utils/embed-call.js";
-import {
-  isSubstantiveMemoryText,
-  prepareMemoryMetadataForStorage,
-  prepareMemoryTextForStorage,
-} from "../../services/recalled-context-assembler.js";
+import { isSystemSenderEmail } from "../../utils/system-sender-email.js";
 import { extractTags } from "../../utils/tags.js";
+import { stringEnum } from "../../utils/typebox.js";
 import type { MemoryToolRuntime } from "./runtime.js";
 import { resolveToolVaultBackends, resolveToolVaultWal } from "./vault-resolve.js";
-import { resolveWriteVectorCandidates } from "../../cli/vector-dedupe-helpers.js";
 
 export function registerStoreTools(runtime: MemoryToolRuntime): void {
   const {
@@ -432,7 +432,9 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
           // must never be shared across scopes, or an agent/user-scoped store can be wrongly
           // rejected as "duplicate" against an unrelated global fact with the same text (or vice
           // versa) — see the scope guard in services/dedupe-policy.ts's applyDedupe().
-          if (storeFactsDb.hasDuplicate(textToStore, "conversation", { category, entity, key, value }, scope, scopeTarget)) {
+          if (
+            storeFactsDb.hasDuplicate(textToStore, "conversation", { category, entity, key, value }, scope, scopeTarget)
+          ) {
             return {
               content: [
                 {
@@ -734,7 +736,14 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               });
             }
             if (similarFacts.length === 0) {
-              similarFacts = storeFactsDb.findSimilarForClassification(textToStore, entity ?? null, key ?? null, 5, scope, scopeTarget);
+              similarFacts = storeFactsDb.findSimilarForClassification(
+                textToStore,
+                entity ?? null,
+                key ?? null,
+                5,
+                scope,
+                scopeTarget,
+              );
             }
             if (similarFacts.length > 0) {
               const classification = await classifyMemoryOperation(
@@ -1043,27 +1052,23 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
 
           // Scope was resolved above (before classify-before-write) for WAL and classification consistency.
 
-          const walEntryId = await writeStoreWal(
-            storeWal,
-            "store",
-            {
-              text: textToStore,
-              why: whyStored,
-              category,
-              importance,
-              entity,
-              key,
-              value,
-              source: "conversation",
-              decayClass: paramDecayClass,
-              summary,
-              tags,
-              vector,
-              embeddingModelName: vector ? embeddings.modelName : undefined,
-              scope,
-              scopeTarget,
-            },
-          );
+          const walEntryId = await writeStoreWal(storeWal, "store", {
+            text: textToStore,
+            why: whyStored,
+            category,
+            importance,
+            entity,
+            key,
+            value,
+            source: "conversation",
+            decayClass: paramDecayClass,
+            summary,
+            tags,
+            vector,
+            embeddingModelName: vector ? embeddings.modelName : undefined,
+            scope,
+            scopeTarget,
+          });
           if (storeWalWriteFailed(storeWal, walEntryId)) {
             return walWriteFailedResponse();
           }
@@ -1122,6 +1127,17 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             { vectorCandidates: storeVectorCandidates, warnContext: "memory-store" },
           );
           const entry = storeResult.entry;
+          // Claim the id with the universal post-store enricher SYNCHRONOUSLY, before any await:
+          // storeWithResult() above already queued a "factStored" microtask (memory-events.ts's
+          // emitMemoryEvent uses queueMicrotask), which runs at the very next await/yield point —
+          // claiming later (e.g. right before the inline auto-link call below, past several
+          // intervening awaits) always loses that race, so post-store-enrichment.ts's subscriber
+          // never sees the claim and double-links every newly stored fact. Mirror the exact guard
+          // emitMemoryEvent uses (facts-db-layer1.ts) so we only ever claim ids that actually get
+          // a factStored event.
+          if (!storeResult.skipped && storeResult.newlyStored && cfg.graph.enabled && cfg.graph.autoLink) {
+            claimInlineEnrichment(entry.id);
+          }
           if (!storeResult.skipped && storeResult.newlyStored === false && !storeResult.embeddingStale) {
             if (walEntryId) await removeStoreWal(storeWal, walEntryId);
             return {
@@ -1383,7 +1399,9 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               }
             }
 
-            // Auto-link to similar facts when enabled (embedding-gated when vector available)
+            // Auto-link to similar facts when enabled (embedding-gated when vector available).
+            // This path owns the freshly computed vector, so it links inline and the subscriber
+            // must not repeat it — claimed synchronously above, right after storeWithResult().
             let autoLinked = 0;
             if (cfg.graph.enabled && cfg.graph.autoLink) {
               const entryScope = entry.scope ?? "global";

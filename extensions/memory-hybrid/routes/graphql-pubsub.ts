@@ -1,4 +1,7 @@
 import { createPubSub } from "graphql-yoga";
+// Canonical recall payload shape lives with the event bus that produces it — import rather than
+// redeclare so a new field can't silently diverge between the emitter and the pubsub transport.
+import type { RecallOccurredPayload } from "../services/memory-events.js";
 
 type FactSubscriptionPayload = { fact: unknown; category?: string; scope?: string };
 type FactUpdatedPayload = { fact: unknown; factId?: string; category?: string };
@@ -11,7 +14,9 @@ export const graphqlPubSub = createPubSub<{
   factUpdated: [FactUpdatedPayload];
   factDeleted: [FactDeletedPayload];
   linkCreated: [LinkCreatedPayload];
+  linkUpdated: [LinkCreatedPayload];
   statsUpdated: [StatsUpdatedPayload];
+  recallOccurred: [RecallOccurredPayload];
 }>();
 
 function recordValue(value: unknown, key: string): unknown {
@@ -64,6 +69,18 @@ export function notifyGraphqlLinkCreated(link: unknown): void {
   });
 }
 
+export function notifyGraphqlLinkUpdated(link: unknown): void {
+  graphqlPubSub.publish("linkUpdated", {
+    link,
+    sourceId: linkEndpoint(link, "sourceId"),
+    targetId: linkEndpoint(link, "targetId"),
+  });
+}
+
 export function notifyGraphqlStatsUpdated(stats: unknown): void {
   graphqlPubSub.publish("statsUpdated", { stats });
+}
+
+export function notifyGraphqlRecallOccurred(payload: RecallOccurredPayload): void {
+  graphqlPubSub.publish("recallOccurred", payload);
 }
