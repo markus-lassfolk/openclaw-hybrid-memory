@@ -193,6 +193,23 @@ export async function runConsolidate(
     }
   }
 
+  // "Same thought, different words" (living-memory P2.2): facts asserting the SAME structured
+  // claim — identical non-empty (entity, key), same scope — belong in one cluster even when their
+  // phrasing lands below the cosine threshold. Cosine alone was the exact "just embeddings"
+  // failure mode: paraphrases drifted apart and expired before ever merging.
+  const byClaim = new Map<string, string[]>();
+  for (const id of ids) {
+    const fact = idToFact.get(id);
+    if (!fact?.entity || !fact.key) continue;
+    const claimKey = `${fact.scope ?? "global"}\u0000${fact.scopeTarget ?? ""}\u0000${fact.entity.toLowerCase()}\u0000${fact.key.toLowerCase()}`;
+    const group = byClaim.get(claimKey) ?? [];
+    group.push(id);
+    byClaim.set(claimKey, group);
+  }
+  for (const group of byClaim.values()) {
+    for (let i = 1; i < group.length; i++) edges.push([group[0], group[i]]);
+  }
+
   const parent = unionFind(ids, edges);
   const rootToCluster = new Map<string, string[]>();
   for (const id of ids) {
@@ -214,8 +231,7 @@ export async function runConsolidate(
   let clusterIndex = 0;
   for (const clusterIds of clusters) {
     clusterIndex++;
-    const emitClusterProgress = () =>
-      opts.onProgress?.({ clusterIndex, totalClusters: clusters.length, merged });
+    const emitClusterProgress = () => opts.onProgress?.({ clusterIndex, totalClusters: clusters.length, merged });
     if (maintenanceRunDeadlineReached()) {
       logger.warn("memory-hybrid: consolidate stopped — maintenance run deadline reached");
       emitClusterProgress();

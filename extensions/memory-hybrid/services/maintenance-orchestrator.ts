@@ -352,7 +352,14 @@ export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
   },
 
   // --- Nightly tier — monthly cadence (25d guards) (4) ---
-  { name: "consolidate", tier: "nightly", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.d25, llmTier: "default" },
+  {
+    // d5 (was d25): normal/durable facts expire at 90/180d — a monthly cadence gave similar facts
+    // only ~3 merge opportunities before TTL deletion ("expires before it can consolidate").
+    name: "consolidate",
+    tier: "nightly",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.d5,
+    llmTier: "default",
+  },
   {
     name: "backfill-decay",
     tier: "nightly",
