@@ -25,6 +25,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.210] - 2026-07-11
+
+### Fixed
+
+`/code-review` pass over PR #2074's own diff (v2026.7.209), run via 7 parallel finder agents covering all 10 review angles. The diff was small and already stash-verified per-fix, so this round mostly confirmed correctness — two real bugs surfaced, both variants of the exact falsy-zero pattern the PR itself had just fixed in `row-mapper.ts`:
+
+- **`backends/facts-db/search.ts`** (correctness): `searchFacts()`'s composite ranking score and `lookupFacts()`'s salience base score both independently read `(row.confidence as number) || 1.0` from the raw row — the same falsy-zero bug just fixed in `row-mapper.ts`, but in a second, un-fixed location reading the same row. This diff's own `row-mapper.ts` fix created a fresh inconsistency: a fact stored with `confidence: 0` now correctly reports `entry.confidence === 0` (the intended fix), but `search.ts` still silently scored it as if confidence were 1.0 — the returned entry and the score that ranked it disagreed. Fixed both sites to `??`.
+- **`backends/facts-db/row-mapper.ts`** (correctness, mostly latent): three more numeric fields — `expiresAt`, `lastAccessed`, `lastIndexed`, `supersededAt` — used the same `|| null` falsy-zero pattern as the just-fixed `confidence` field. `expiresAt` is reachable via the public `StoreFactInput.expiresAt` field (preserved unclamped by `crud.ts`'s `entry.expiresAt ?? calculateExpiry(...)`), so an explicit `expiresAt: 0` ("already expired") was silently coerced to `null` ("never expires") — the opposite of the caller's intent. The other three are currently unreachable (always internally computed from `Date.now()`), fixed for consistency with the same bug class. All four switched to `??`.
+
+Two additional findings were investigated and deliberately left unfixed, both pure architecture/cleanup with zero behavioral impact:
+- `services/reflection.ts`'s five `getByCategory("pattern"|"rule", true).filter(...)` call sites now re-check a `supersededAt`/`expiresAt` condition that v2026.7.209's `getByCategory()` fix already guarantees at the SQL level, making the JS-side filter dead code. Left in place — deleting it is a no-op at runtime, and touching five call sites in a complex file for zero functional gain isn't worth the review/regression surface.
+- `tools/graph-tools.ts`'s and `routes/graphql-resolvers.ts`'s hand-rolled `scopedConnectedFactIds()` BFS wrappers (from earlier rounds) were never migrated onto the newly scope-aware `getConnectedFactIds()` primitive added in v2026.7.209. This re-raises a decision already made deliberately in that round: both wrappers already carry the security-critical scope check; migrating shared BFS logic into already-tested, already-shipped code for marginal consolidation benefit is a regression risk this sweep continues to decline to take on unprompted.
+
+Each real fix verified via a stash-based regression proof. tsc clean, biome clean, full test suite passing (9206 passed; same 4 pre-existing unrelated failures as v2026.7.209, reconfirmed).
+
 ## [2026.7.209] - 2026-07-11
 
 ### Fixed

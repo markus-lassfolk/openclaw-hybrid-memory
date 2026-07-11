@@ -2789,6 +2789,45 @@ describe("FactsDB.getByCategory", () => {
   });
 });
 
+describe("rowToMemoryEntry falsy-zero timestamp fields (#2074-followup)", () => {
+  it("preserves an explicit expiresAt of 0 instead of coercing it to null", () => {
+    const fact = db.store({
+      text: "Immediately-expired fact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      expiresAt: 0,
+    });
+
+    expect(fact.expiresAt).toBe(0);
+    const reread = db.getById(fact.id);
+    expect(reread?.expiresAt).toBe(0);
+  });
+
+  it("preserves a raw 0 for lastAccessed/lastIndexed/supersededAt instead of coercing to null", () => {
+    const fact = db.store({
+      text: "Fact with zeroed timestamp columns",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.getRawDb()
+      .prepare("UPDATE facts SET last_accessed = 0, last_indexed = 0, superseded_at = 0 WHERE id = ?")
+      .run(fact.id);
+
+    const reread = db.getById(fact.id, { scopeFilter: null });
+    expect(reread?.lastAccessed).toBe(0);
+    expect(reread?.lastIndexed).toBe(0);
+    expect(reread?.supersededAt).toBe(0);
+  });
+});
+
 describe("FactsDB.getRecentFacts", () => {
   it("returns facts from window and excludes pattern/rule by default", () => {
     db.store({
