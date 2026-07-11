@@ -245,6 +245,10 @@ export type CompositeScoreConfig = {
 export type RetrievalDiversityConfig = {
   enabled: boolean;
   maxSimilarity: number;
+  /** "mmr" = greedy Maximal Marginal Relevance selection; "bigram" (default) = legacy demotion. */
+  mode?: "bigram" | "mmr";
+  /** MMR relevance↔novelty trade-off λ (default 0.7 = mostly relevance). */
+  mmrLambda?: number;
 };
 
 /** Strong-signal BM25 bypass (Issue #1910). */

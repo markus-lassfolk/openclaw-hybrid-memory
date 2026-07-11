@@ -55,6 +55,10 @@ function parseRetrievalDiversityConfig(
   return {
     enabled: raw?.enabled === true,
     maxSimilarity: typeof raw?.maxSimilarity === "number" ? raw.maxSimilarity : 0.6,
+    // Previously dropped by the parser (living-memory B3): "mmr" was unreachable via config.
+    mode: raw?.mode === "mmr" ? "mmr" : raw?.mode === "bigram" ? "bigram" : undefined,
+    mmrLambda:
+      typeof raw?.mmrLambda === "number" && raw.mmrLambda >= 0 && raw.mmrLambda <= 1 ? raw.mmrLambda : undefined,
   };
 }
 
