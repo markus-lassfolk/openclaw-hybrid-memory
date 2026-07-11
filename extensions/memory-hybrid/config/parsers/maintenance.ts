@@ -279,5 +279,13 @@ export function parseMaintenanceConfig(cfg: Record<string, unknown>): Maintenanc
       mode: decayRaw?.mode === "cliff" ? "cliff" : "half-life",
       secondChance: decayRaw?.secondChance !== false,
     },
+    routineMining: {
+      enabled: (maintenanceRaw?.routineMining as Record<string, unknown> | undefined)?.enabled !== false,
+      maxPerRun:
+        typeof (maintenanceRaw?.routineMining as Record<string, unknown> | undefined)?.maxPerRun === "number" &&
+        ((maintenanceRaw?.routineMining as Record<string, unknown>).maxPerRun as number) > 0
+          ? Math.floor((maintenanceRaw?.routineMining as Record<string, unknown>).maxPerRun as number)
+          : 2,
+    },
   };
 }

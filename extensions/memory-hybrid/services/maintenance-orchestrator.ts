@@ -211,6 +211,24 @@ export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
     featureGate: (cfg) => cfg.graph?.enabled !== false,
   },
   {
+    // Routine mining: recurring (day-of-week, hour-band, topic) recall patterns become ordinary
+    // decayable `routine` facts — routines that stop recurring decay out (living-memory P4.3).
+    name: "routine-mining",
+    tier: "nightly",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h68,
+    llmTier: "none",
+    featureGate: (cfg) => cfg.maintenance?.routineMining?.enabled !== false,
+  },
+  {
+    // Affect back-stamping: correlate persisted frustration signals with same-session facts
+    // (living-memory P4.1). Pure SQL — no LLM.
+    name: "affect-stamp",
+    tier: "nightly",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20,
+    llmTier: "none",
+    featureGate: (cfg) => cfg.frustrationDetection?.enabled === true,
+  },
+  {
     name: "extract-implicit",
     tier: "nightly",
     guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h44,

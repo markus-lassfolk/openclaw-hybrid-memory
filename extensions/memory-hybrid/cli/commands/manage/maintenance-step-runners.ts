@@ -29,7 +29,9 @@ import {
 } from "../../../services/maintenance-job-run/index.js";
 import type { MaintenanceStepRunner } from "../../../services/maintenance-orchestrator.js";
 import { runPassiveObserver } from "../../../services/passive-observer.js";
+import { runAffectStamp } from "../../../services/affect-stamping.js";
 import { runFactsPruneStep } from "../../../services/prune-step.js";
+import { runRoutineMining } from "../../../services/routine-miner.js";
 import { runPendingDigestAutopilotCron } from "../../../services/pending-digest-autopilot-cron.js";
 import { buildPendingReviewDigestReport } from "../../../services/pending-review-digest.js";
 import { sweepAll } from "../../../services/sensor-sweep.js";
@@ -330,6 +332,16 @@ export function buildCliMaintenanceRunners(
     const { halfLifeDays, floor } = b.cfg.graph.linkDecay;
     const r = b.factsDb.decayLinkStrengths({ halfLifeDays, floor });
     return `decayed=${r.decayed} pruned=${r.pruned} halfLifeDays=${halfLifeDays} semantic=success`;
+  });
+
+  set("affect-stamp", async () => {
+    const r = runAffectStamp(b.factsDb.getRawDb());
+    return `sessions=${r.sessionsSeen} stamped=${r.factsStamped} semantic=success`;
+  });
+
+  set("routine-mining", async () => {
+    const r = runRoutineMining(b.factsDb, { maxPerRun: b.cfg.maintenance?.routineMining?.maxPerRun ?? 2 });
+    return `candidates=${r.candidates} stored=${r.stored} semantic=success`;
   });
 
   set("auto-classify", async () => {
@@ -951,6 +963,16 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
     const { halfLifeDays, floor } = deps.cfg.graph.linkDecay;
     const r = deps.factsDb.decayLinkStrengths({ halfLifeDays, floor });
     return `decayed=${r.decayed} pruned=${r.pruned} halfLifeDays=${halfLifeDays} semantic=success`;
+  });
+
+  runners.set("affect-stamp", async () => {
+    const r = runAffectStamp(deps.factsDb.getRawDb());
+    return `sessions=${r.sessionsSeen} stamped=${r.factsStamped} semantic=success`;
+  });
+
+  runners.set("routine-mining", async () => {
+    const r = runRoutineMining(deps.factsDb, { maxPerRun: deps.cfg.maintenance?.routineMining?.maxPerRun ?? 2 });
+    return `candidates=${r.candidates} stored=${r.stored} semantic=success`;
   });
 
   if (deps.cfg.autoClassify?.enabled) {

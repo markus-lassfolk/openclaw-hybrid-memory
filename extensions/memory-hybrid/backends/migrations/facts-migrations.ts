@@ -1571,6 +1571,9 @@ function migrateFactsLifecycleColumns(db: DatabaseSync): void {
     db.exec("UPDATE facts SET last_decay_at = strftime('%s','now') WHERE last_decay_at IS NULL");
   }
   add("decay_second_chance_at", "ALTER TABLE facts ADD COLUMN decay_second_chance_at INTEGER");
+  // Affect stamping (living-memory P4.1): emotional context at formation, −1..1.
+  add("valence", "ALTER TABLE facts ADD COLUMN valence REAL");
+  add("affect_source", "ALTER TABLE facts ADD COLUMN affect_source TEXT");
 }
 
 function migrateMaintenanceRunsTable(db: DatabaseSync): void {

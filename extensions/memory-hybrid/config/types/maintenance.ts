@@ -204,6 +204,12 @@ export type MaintenanceConfig = {
     /** Give important/frequently-recalled facts ONE TTL/2 reprieve instead of deletion at expiry. */
     secondChance: boolean;
   };
+  /** Routine mining from recall cadence (living-memory P4.3). */
+  routineMining: {
+    enabled: boolean;
+    /** Max routine facts stored per run (default 2). */
+    maxPerRun: number;
+  };
 };
 
 /**
