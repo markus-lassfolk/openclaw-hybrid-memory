@@ -28,7 +28,7 @@
  * - Marks proposal as rejected on success.
  */
 
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -362,8 +362,13 @@ describe("CrystallizationProposer.approveProposal", () => {
   });
   it("reverts approval when disk write fails so the proposal stays installable", () => {
     const outputDir = join(tmpDir, "readonly-out");
-    mkdirSync(outputDir, { recursive: true });
-    chmodSync(outputDir, 0o444);
+    // Force the skill write to fail in a way root cannot bypass. A chmod'd read-only directory does
+    // NOT stop root (DAC checks are skipped for uid 0), so instead pre-create a *directory* at the
+    // exact SKILL.md output path. computeOutputPath() resolves to <outputDir>/<slug>/SKILL.md and the
+    // slug of "write-fail-skill" is unchanged by sanitizeApprovedSkillSlug(), so the atomic write's
+    // final rename onto that path throws EISDIR and reverts the approval. (Same EISDIR idiom as
+    // config-set-restart-pending-failure.test.ts.)
+    mkdirSync(join(outputDir, "write-fail-skill", "SKILL.md"), { recursive: true });
 
     const proposal = cStore.create({
       patternId: "p-write-fail",
@@ -382,13 +387,11 @@ describe("CrystallizationProposer.approveProposal", () => {
       result = proposer.approveProposal(proposal.id, { overrideWarnings: true });
     }
     if (result.success) {
-      chmodSync(outputDir, 0o755);
-      throw new Error("expected write failure in read-only output directory");
+      throw new Error("expected write failure when SKILL.md output path is a directory");
     }
 
     expect(result.message).toMatch(/reverted/i);
     expect(cStore.getById(proposal.id)?.status).toBe("validated");
-    chmodSync(outputDir, 0o755);
   });
 
   it("falls back to auto-generated-skill when rename slug is empty", () => {
