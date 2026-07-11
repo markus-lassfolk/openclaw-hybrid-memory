@@ -130,6 +130,21 @@ export const graphqlSchema = `#graphql
     confidence: Float!
     decayClass: String!
     factCount: Int
+
+    # Constellation metrics (Memory Graph app). "strength" drives the radial layout radius +
+    # node size; the rest support filtering, coloring, and gap/anomaly highlighting.
+    strength: Float!
+    recallCount: Int
+    accessCount: Int
+    lastAccessedAt: DateTime
+    reinforcedCount: Float
+    pinned: Boolean
+    degree: Int
+    superseded: Boolean
+    contradicted: Boolean
+    clusterId: String
+    tags: [String!]
+    entity: String
   }
 
   type GraphEdge {
@@ -137,6 +152,33 @@ export const graphqlSchema = `#graphql
     target: ID!
     linkType: String!
     weight: Float!
+  }
+
+  # A pair of facts that are semantically similar but not yet linked (embedding-based suggestion).
+  type SuggestedLink {
+    sourceId: ID!
+    targetId: ID!
+    sourceText: String!
+    targetText: String!
+    similarity: Float!
+  }
+
+  # An unresolved contradiction between two facts.
+  type ContradictionPair {
+    id: ID!
+    factNew: Fact
+    factOld: Fact
+    detectedAt: DateTime
+    resolution: String
+  }
+
+  # Curation dashboard bundle: cheap gap/anomaly views in one round-trip. Suggested links are a
+  # separate query (embedding-backed, on-demand only).
+  type GraphInsights {
+    orphanFacts: [Fact!]!
+    weakLinks: [Link!]!
+    contradictions: [ContradictionPair!]!
+    staleImportantFacts: [Fact!]!
   }
 
   # Input types for mutations
@@ -229,6 +271,15 @@ export const graphqlSchema = `#graphql
 
     # Entity lookup
     entityFacts(entity: String!, key: String, limit: Int): [Fact!]!
+
+    # Curation / gap analysis (Memory Graph app). All scope-filtered and capped.
+    memoryGraphInsights(limit: Int): GraphInsights!
+    orphanFacts(limit: Int): [Fact!]!
+    weakLinks(maxStrength: Float, limit: Int): [Link!]!
+    contradictionPairs(limit: Int): [ContradictionPair!]!
+    staleImportantFacts(minImportance: Float, staleDays: Int, limit: Int): [Fact!]!
+    # Embedding-backed similar-but-unlinked suggestions — on-demand only (never in base graph load).
+    suggestedLinks(threshold: Float, limit: Int): [SuggestedLink!]!
   }
 
   # Mutations
@@ -242,6 +293,13 @@ export const graphqlSchema = `#graphql
     # Link operations
     createLink(sourceId: ID!, targetId: ID!, linkType: String!, weight: Float): Link!
     deleteLink(id: ID!): Boolean!
+    updateLink(id: ID!, linkType: String, weight: Float): Link!
+    # Convenience: accept an embedding-suggested link (thin wrapper over createLink).
+    acceptSuggestedLink(sourceId: ID!, targetId: ID!, linkType: String, weight: Float): Link!
+
+    # Curation: pin / unpin a fact so it stays central and decay-frozen.
+    pinFact(id: ID!, reason: String): Fact!
+    unpinFact(id: ID!): Fact!
 
     # Bulk operations
     importFacts(facts: [CreateFactInput!]!): [Fact!]!

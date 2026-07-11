@@ -42,6 +42,7 @@ import {
   getLinksTo as getLinksToHelper,
   refreshFactDegrees as refreshFactDegreesHelper,
   strengthenRelatedLinksBatch as strengthenRelatedLinksBatchHelper,
+  updateLink as updateLinkHelper,
 } from "./links.js";
 import {
   logRecall as logRecallImpl,
@@ -614,6 +615,34 @@ export class FactsDBLayer1 extends BaseSqliteStore {
   /** Create a typed link between two facts. Returns link id. */
   createLink(sourceFactId: string, targetFactId: string, linkType: MemoryLinkType, strength = 1.0): string {
     return createLinkHelper(this.liveDb, sourceFactId, targetFactId, linkType, strength);
+  }
+
+  /** Update a link's type and/or strength by id (curation). Emits linkUpdated. */
+  updateLink(id: string, changes: { linkType?: MemoryLinkType; strength?: number }): boolean {
+    return updateLinkHelper(this.liveDb, id, changes);
+  }
+
+  /** Pin a fact so it stays central and decay-frozen (curation). Emits factUpdated. */
+  pinFact(id: string, reason: string | null = null): boolean {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const result = this.liveDb
+      .prepare("UPDATE facts SET pinned_at = ?, pinned_reason = ? WHERE id = ?")
+      .run(nowSec, reason, id);
+    if (result.changes > 0) {
+      const updated = getByIdImpl(this.liveDb, id);
+      if (updated) emitMemoryEvent("factUpdated", { entry: updated });
+    }
+    return result.changes > 0;
+  }
+
+  /** Unpin a fact (curation). Emits factUpdated. */
+  unpinFact(id: string): boolean {
+    const result = this.liveDb.prepare("UPDATE facts SET pinned_at = NULL, pinned_reason = NULL WHERE id = ?").run(id);
+    if (result.changes > 0) {
+      const updated = getByIdImpl(this.liveDb, id);
+      if (updated) emitMemoryEvent("factUpdated", { entry: updated });
+    }
+    return result.changes > 0;
   }
 
   /** Hebbian: Create or strengthen RELATED_TO link between two facts recalled together. */

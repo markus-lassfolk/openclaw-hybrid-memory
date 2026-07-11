@@ -82,6 +82,52 @@ export function createOrStrengthenRelatedLink(
   }
 }
 
+/**
+ * Update a link's type and/or strength by id (curation). Emits `linkUpdated` for the live overlay.
+ * Returns true when a row changed.
+ */
+export function updateLink(
+  db: DatabaseSync,
+  id: string,
+  changes: { linkType?: MemoryLinkType; strength?: number },
+): boolean {
+  const sets: string[] = [];
+  const params: Array<string | number> = [];
+  if (changes.linkType !== undefined) {
+    if ((changes.linkType as string) === "DERIVED_FROM") {
+      throw new Error("DERIVED_FROM provenance is stored on facts.provenance_json, not memory_links");
+    }
+    sets.push("link_type = ?");
+    params.push(changes.linkType);
+  }
+  if (changes.strength !== undefined) {
+    sets.push("strength = ?");
+    params.push(Math.max(0, Math.min(1, changes.strength)));
+  }
+  if (sets.length === 0) return false;
+  params.push(id);
+  const result = db.prepare(`UPDATE memory_links SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+  if (result.changes > 0) {
+    const row = db
+      .prepare("SELECT id, source_fact_id, target_fact_id, link_type, strength FROM memory_links WHERE id = ?")
+      .get(id) as
+      | { id: string; source_fact_id: string; target_fact_id: string; link_type: string; strength: number }
+      | undefined;
+    if (row) {
+      emitMemoryEvent("linkUpdated", {
+        link: {
+          id: row.id,
+          sourceId: row.source_fact_id,
+          targetId: row.target_fact_id,
+          linkType: row.link_type,
+          strength: row.strength,
+        },
+      });
+    }
+  }
+  return result.changes > 0;
+}
+
 export function strengthenRelatedLinksBatch(db: DatabaseSync, pairs: [string, string][], deltaStrength = 0.1): void {
   if (pairs.length === 0) return;
   const selectStmt = db.prepare(

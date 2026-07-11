@@ -2,6 +2,7 @@
 // Keep this module conservative: it must compile against the real FactsDB API and
 // return safe placeholders for schema areas that are not implemented yet.
 
+import { getContradictions } from "../backends/facts-db/contradictions.js";
 import { isPreStoreGuardBlocked } from "../backends/facts-db/crud.js";
 import type { MemoryLinkType } from "../backends/facts-db/types.js";
 import type { FactsDB } from "../backends/facts-db.js";
@@ -10,6 +11,8 @@ import { DECAY_CLASSES, type DecayClass } from "../config.js";
 import { isPromptArtifactOrReasoningTrace } from "../services/capture-utils.js";
 import type { EmbeddingProvider } from "../services/embeddings/types.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { computeNodeStrength } from "../services/graph-node-metrics.js";
+import { detectSuggestedLinks } from "../services/knowledge-gaps.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
 import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
@@ -313,6 +316,85 @@ function isMemoryLinkType(value: string): value is MemoryLinkType {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Curation / gap-analysis collectors (Memory Graph app). All scope-filtered + capped.
+// ---------------------------------------------------------------------------
+
+const DAY_SEC = 86_400;
+
+/** Epoch seconds of a fact's most recent access, falling back to creation time. */
+function factLastAccessSec(fact: MemoryEntry): number {
+  if (typeof fact.lastAccessed === "number" && fact.lastAccessed > 0) return fact.lastAccessed;
+  if (fact.lastAccessedAt) {
+    const parsed = Date.parse(fact.lastAccessedAt);
+    if (Number.isFinite(parsed)) return Math.floor(parsed / 1000);
+  }
+  return fact.createdAt;
+}
+
+/** In+out degree per fact id across the (capped) full link set. */
+function buildDegreeMap(factsDb: FactsDB): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const link of getAllLinks(factsDb)) {
+    map.set(link.sourceId, (map.get(link.sourceId) ?? 0) + 1);
+    map.set(link.targetId, (map.get(link.targetId) ?? 0) + 1);
+  }
+  return map;
+}
+
+/** Orphans: in-scope, non-superseded facts with zero links and never recalled — likely gaps. */
+function collectOrphanFacts(context: GraphQLContext, limit: number): MemoryEntry[] {
+  const degree = buildDegreeMap(context.factsDb);
+  return allFacts(context)
+    .filter((fact) => (degree.get(fact.id) ?? 0) === 0 && (fact.recallCount ?? 0) === 0)
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .slice(0, limit);
+}
+
+/** Weak links: visible edges at or below a strength threshold — candidates for pruning/review. */
+function collectWeakLinks(context: GraphQLContext, maxStrength: number, limit: number): GraphQLLink[] {
+  return getAllLinks(context.factsDb)
+    .filter((link) => link.weight <= maxStrength && isLinkVisible(context.factsDb, link, context.scopeFilter))
+    .sort((a, b) => a.weight - b.weight)
+    .slice(0, limit);
+}
+
+type ContradictionPairResult = {
+  id: string;
+  factNew: MemoryEntry;
+  factOld: MemoryEntry;
+  detectedAt: string;
+  resolution: string | null;
+};
+
+/** Unresolved contradictions where BOTH facts are in scope (fail-closed to avoid id leakage). */
+function collectContradictionPairs(context: GraphQLContext, limit: number): ContradictionPairResult[] {
+  const out: ContradictionPairResult[] = [];
+  for (const c of getContradictions(context.factsDb.getRawDb())) {
+    if (out.length >= limit) break;
+    const factNew = context.factsDb.getById(c.factIdNew, { scopeFilter: context.scopeFilter });
+    const factOld = context.factsDb.getById(c.factIdOld, { scopeFilter: context.scopeFilter });
+    if (!factNew || !factOld) continue;
+    out.push({ id: c.id, factNew, factOld, detectedAt: c.detectedAt, resolution: c.resolution });
+  }
+  return out;
+}
+
+/** High-importance facts that have not been accessed in a while — "should we still trust this?" */
+function collectStaleImportantFacts(
+  context: GraphQLContext,
+  minImportance: number,
+  staleDays: number,
+  limit: number,
+): MemoryEntry[] {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const cutoff = nowSec - staleDays * DAY_SEC;
+  return allFacts(context)
+    .filter((fact) => fact.importance >= minImportance && factLastAccessSec(fact) < cutoff)
+    .sort((a, b) => b.importance - a.importance || factLastAccessSec(a) - factLastAccessSec(b))
+    .slice(0, limit);
+}
+
 function asDecayClass(value: unknown): DecayClass {
   return typeof value === "string" && (DECAY_CLASSES as readonly string[]).includes(value)
     ? (value as DecayClass)
@@ -464,6 +546,67 @@ export const resolvers: GraphQLResolvers = {
         .slice(0, limit);
     },
 
+    orphanFacts: (_parent, args, context) => {
+      const limit = Math.max(1, Math.min(500, asNumber(asRecord(args).limit) ?? 50));
+      return collectOrphanFacts(context, limit);
+    },
+
+    weakLinks: (_parent, args, context) => {
+      const input = asRecord(args);
+      const maxStrength = Math.max(0, Math.min(1, asNumber(input.maxStrength) ?? 0.3));
+      const limit = Math.max(1, Math.min(500, asNumber(input.limit) ?? 50));
+      return collectWeakLinks(context, maxStrength, limit);
+    },
+
+    contradictionPairs: (_parent, args, context) => {
+      const limit = Math.max(1, Math.min(500, asNumber(asRecord(args).limit) ?? 50));
+      return collectContradictionPairs(context, limit);
+    },
+
+    staleImportantFacts: (_parent, args, context) => {
+      const input = asRecord(args);
+      const minImportance = Math.max(0, Math.min(1, asNumber(input.minImportance) ?? 0.7));
+      const staleDays = Math.max(1, asNumber(input.staleDays) ?? 90);
+      const limit = Math.max(1, Math.min(500, asNumber(input.limit) ?? 50));
+      return collectStaleImportantFacts(context, minImportance, staleDays, limit);
+    },
+
+    memoryGraphInsights: (_parent, args, context) => {
+      const limit = Math.max(1, Math.min(500, asNumber(asRecord(args).limit) ?? 25));
+      return {
+        orphanFacts: collectOrphanFacts(context, limit),
+        weakLinks: collectWeakLinks(context, 0.3, limit),
+        contradictions: collectContradictionPairs(context, limit),
+        staleImportantFacts: collectStaleImportantFacts(context, 0.7, 90, limit),
+      };
+    },
+
+    suggestedLinks: async (_parent, args, context) => {
+      const input = asRecord(args);
+      const threshold = Math.max(0, Math.min(1, asNumber(input.threshold) ?? 0.8));
+      const limit = Math.max(1, Math.min(100, asNumber(input.limit) ?? 20));
+      const embeddings = getGraphqlEmbeddings(context);
+      // Embedding-backed: no-op when embeddings/vector store aren't configured (keeps it strictly
+      // on-demand and safe to call from the UI without a hard dependency).
+      if (!context.vectorDb || !embeddings) return [];
+      const nowSec = Math.floor(Date.now() / 1000);
+      // Over-fetch, then scope-filter: detectSuggestedLinks scans an unscoped getAll, so a raw
+      // return could surface another tenant's fact ids/text. Only keep pairs the caller may see.
+      const suggestions = await detectSuggestedLinks(
+        context.factsDb,
+        context.vectorDb,
+        embeddings,
+        threshold,
+        limit * 3,
+        nowSec,
+      );
+      return suggestions
+        .filter((s) =>
+          isLinkVisible(context.factsDb, { sourceId: s.sourceId, targetId: s.targetId }, context.scopeFilter),
+        )
+        .slice(0, limit);
+    },
+
     graph: (_parent, args, context) => {
       const filter = asRecord(asRecord(args).filter);
       const categories = asStringArray(filter.categories);
@@ -503,7 +646,21 @@ export const resolvers: GraphQLResolvers = {
       }
       const facts = candidateFacts.slice(0, maxNodes);
       const factIds = new Set(facts.map((fact) => fact.id));
-      const linkEdges = getAllLinks(context.factsDb)
+      const allLinks = getAllLinks(context.factsDb);
+      // Degree across the (capped) full link set — a structural metric that drives node sizing and
+      // orphan detection, independent of which edges are rendered in this subgraph.
+      const degreeMap = new Map<string, number>();
+      for (const link of allLinks) {
+        degreeMap.set(link.sourceId, (degreeMap.get(link.sourceId) ?? 0) + 1);
+        degreeMap.set(link.targetId, (degreeMap.get(link.targetId) ?? 0) + 1);
+      }
+      const contradictedIds = new Set<string>();
+      for (const c of getContradictions(context.factsDb.getRawDb())) {
+        contradictedIds.add(c.factIdNew);
+        contradictedIds.add(c.factIdOld);
+      }
+      const nowSecForStrength = Math.floor(Date.now() / 1000);
+      const linkEdges = allLinks
         .filter(
           (link) =>
             factIds.has(link.sourceId) &&
@@ -539,6 +696,19 @@ export const resolvers: GraphQLResolvers = {
           confidence: fact.confidence,
           decayClass: fact.decayClass,
           factCount: 1,
+          // Constellation metrics for the Memory Graph app.
+          strength: computeNodeStrength(fact, nowSecForStrength),
+          recallCount: fact.recallCount ?? 0,
+          accessCount: fact.accessCount ?? 0,
+          lastAccessedAt: fact.lastAccessedAt ?? null,
+          reinforcedCount: fact.reinforcedCount ?? 0,
+          pinned: fact.pinnedAt != null,
+          degree: degreeMap.get(fact.id) ?? 0,
+          superseded: fact.supersededAt != null || fact.supersededBy != null,
+          contradicted: contradictedIds.has(fact.id),
+          clusterId: null,
+          tags: fact.tags ?? [],
+          entity: fact.entity ?? null,
         })),
         edges: [...linkEdges, ...supersedeEdges],
       };
@@ -723,6 +893,65 @@ export const resolvers: GraphQLResolvers = {
       if (!existing || !isLinkVisible(context.factsDb, existing, context.scopeFilter)) return false;
       const result = context.factsDb.getRawDb().prepare("DELETE FROM memory_links WHERE id = ?").run(id);
       return result.changes > 0;
+    },
+
+    updateLink: (_parent, args, context) => {
+      const input = asRecord(args);
+      const id = asString(input.id);
+      if (!id) throw new Error("Missing link id");
+      // SECURITY: scope-check both endpoints before mutating, mirroring createLink/deleteLink.
+      const existing = getLinkById(context.factsDb, id);
+      if (!existing || !isLinkVisible(context.factsDb, existing, context.scopeFilter)) {
+        throw new Error(`Link not found: ${id}`);
+      }
+      const linkType = asString(input.linkType);
+      if (linkType !== undefined && !isMemoryLinkType(linkType)) {
+        throw new Error(`Unsupported link type: ${linkType}`);
+      }
+      const weight = asNumber(input.weight);
+      context.factsDb.updateLink(id, {
+        linkType: linkType as MemoryLinkType | undefined,
+        strength: weight,
+      });
+      // linkUpdated is published centrally by FactsDB.updateLink via the memory-events bridge.
+      return getLinkById(context.factsDb, id) ?? undefined;
+    },
+
+    acceptSuggestedLink: (_parent, args, context) => {
+      const input = asRecord(args);
+      const sourceId = asString(input.sourceId);
+      const targetId = asString(input.targetId);
+      const linkType = asString(input.linkType) ?? "RELATED_TO";
+      const weight = asNumber(input.weight) ?? 0.7;
+      if (!sourceId || !targetId) throw new Error("Missing link endpoint");
+      if (!isMemoryLinkType(linkType)) throw new Error(`Unsupported link type: ${linkType}`);
+      // SECURITY: both endpoints must be in scope (same guard as createLink).
+      if (!isLinkVisible(context.factsDb, { sourceId, targetId }, context.scopeFilter)) {
+        throw new Error(`Fact not found: ${sourceId}`);
+      }
+      const id = context.factsDb.createLink(sourceId, targetId, linkType, weight);
+      // linkCreated is published centrally by createLink via the memory-events bridge.
+      return getLinkById(context.factsDb, id) ?? undefined;
+    },
+
+    pinFact: (_parent, args, context) => {
+      const input = asRecord(args);
+      const id = asString(input.id);
+      if (!id) throw new Error("Missing fact id");
+      // SECURITY: scope-check before mutating so a caller can't pin another tenant's fact.
+      const existing = context.factsDb.getById(id, { scopeFilter: context.scopeFilter });
+      if (!existing) throw new Error(`Fact not found: ${id}`);
+      context.factsDb.pinFact(id, asString(input.reason) ?? null);
+      return context.factsDb.getById(id, { scopeFilter: context.scopeFilter });
+    },
+
+    unpinFact: (_parent, args, context) => {
+      const id = asString(asRecord(args).id);
+      if (!id) throw new Error("Missing fact id");
+      const existing = context.factsDb.getById(id, { scopeFilter: context.scopeFilter });
+      if (!existing) throw new Error(`Fact not found: ${id}`);
+      context.factsDb.unpinFact(id);
+      return context.factsDb.getById(id, { scopeFilter: context.scopeFilter });
     },
 
     importFacts: async (_parent, args, context) => {
