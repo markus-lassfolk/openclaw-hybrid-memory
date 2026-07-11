@@ -25,6 +25,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added — Proactive research loop ([PROACTIVE-RESEARCH.md](docs/PROACTIVE-RESEARCH.md))
+
+The living-memory observation layer now feeds initiative: notice → decide → research overnight → brief in the morning, every step auditable back to the memories that triggered it.
+
+- **Insight synthesis** (`insight-synthesis`, nightly LLM step): reads 7 days of person-signals (negative-valence facts, routines, frustration signals, patterns) and writes ≤2 evidence-linked `insight` facts. The model cites numbered evidence refs mapped back to real ids — hallucinated evidence chains are structurally impossible. Gated by `research.enabled` (default on).
+- **Research trigger** (`research-trigger`, nightly, no LLM): deterministic policy graduating ≤1 insight/night to research — importance ≥0.74, evidence gate, topic blocklist + sensitive-text regex, 14-day per-slug cooldown via `research:<slug>` queue facts (which double as the audit trail).
+- **Overnight research agent** (`hybrid-mem:research-overnight` cron job, default 03:30, isolated heavy-model session): `research pick --json` → web research → `research store`. The CLI is the single writer for `briefing` facts (validates topic state, caps length/sources, records provenance incl. URLs). No web tools ⇒ `TOOLING_BLOCKED`, no briefing from prior knowledge. Announce delivery only with explicit `research.delivery.channel` + `to` (#2056 rule).
+- **Morning delivery**: unread briefings inject once per session as a budget-capped "🔎 Overnight research briefing" block (index-only exposure; injection-sanitized headlines), independent of the opt-in sessionStart directive.
+- New CLI group `research pick|store|status`; new categories `routine` (was missing from the registry), `insight`, `briefing`; maintenance steps 53 → 56.
+
+### Added — Living-memory completion ([LIVING-MEMORY.md](docs/LIVING-MEMORY.md))
+
+- **Free-text contradiction candidates** (`contradiction-candidates`, nightly, default on): recent facts → vector top-k in-scope neighbors at cosine ≥0.85 (converted to the store's 1/(1+L2) score space) → NLI verdict (nano tier) → `recordContradiction` with the `nli_free_text` audit marker + `CONTRADICTS` link. Near-dups and structured entity+key pairs excluded; 40-call cap; config `maintenance.contradictions`.
+- **Serendipity slot** (`autoRecall.serendipity`, staged default OFF): once per N prompts, one `[serendipity]` headline from strong-but-never-recalled graph neighbors (fallback: stale-important), index-only exposure.
+- **Composite-v2 + MMR measured A/B**: `retrieval.diversity.mode`/`mmrLambda` now actually parse (previously dropped). The owner's flip criterion (B ≥ A on nDCG@10 AND P@5) was measured and **failed** — armA(v1) nDCG 1.000 vs armB(v2+mmr) 0.996, equal P@5 — so both stay opt-in; `tests/retrieval-ab-composite.test.ts` re-measures every CI run and guards against >0.02 nDCG regressions.
+
 ## [2026.7.208] - 2026-07-10
 
 ### Fixed

@@ -1,6 +1,6 @@
 # Maintenance tasks: when they run
 
-This matrix shows **which maintenance tasks run** in each context (installation, update, restart, scheduled jobs, and `run-all`). The **hybrid orchestrator** (48 steps, staggered per-step guards) replaces the previous 18 separate cron jobs.
+This matrix shows **which maintenance tasks run** in each context (installation, update, restart, scheduled jobs, and `run-all`). The **hybrid orchestrator** (56 steps, staggered per-step guards) replaces the previous 18 separate cron jobs.
 
 Use `openclaw hybrid-mem maintenance steps` to inspect guard intervals and eligibility.
 
@@ -36,8 +36,11 @@ For resumable command execution, semantic outcomes, and run artifacts, see [main
 | **Reflect chain** | No | Post-upgrade | No | Yes (5d guards) | Yes |
 | **Self-correction-run** | No | Post-upgrade | No | Yes (44h guard) | Yes |
 | **Backfill-decay** | No | — | No | Yes (once, marker) | Yes (once) |
+| **Insight-synthesis** | No | — | No | Yes (20h, research.enabled) | Yes |
+| **Research-trigger** | No | — | No | Yes (20h, after insight-synthesis) | Yes |
+| **Contradiction-candidates** | No | — | No | Yes (44h, before resolve-contradictions) | Yes |
 
-See `maintenance steps` for the full 48-step registry.
+See `maintenance steps` for the full 56-step registry.
 
 ---
 
@@ -67,6 +70,7 @@ Replaced timers (now in cycle tier): prune, auto-classify, language-keywords, pa
 | Job | Schedule | Command |
 | --- | -------- | ------- |
 | **maintenance-nightly** | Daily 02:00 | `openclaw hybrid-mem maintenance nightly --verbose` |
+| **research-overnight** | Daily 03:30 (`research.schedule`) | agent turn: `research pick` → web research → `research store` ([PROACTIVE-RESEARCH.md](PROACTIVE-RESEARCH.md)) |
 
 The orchestrator runs due steps only (staggered guards: 20h / 44h / 68h / 5d / 25d). Typical night: ~5–7 LLM steps instead of all 14+.
 

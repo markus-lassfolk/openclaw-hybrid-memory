@@ -506,9 +506,20 @@ Steps through pending persona proposals and the latest correction report. For ea
 
 ---
 
+## Research (proactive loop)
+
+The `research` group is the contract between the overnight research cron agent and the memory
+store (see [PROACTIVE-RESEARCH.md](PROACTIVE-RESEARCH.md)):
+
+| Command | Description |
+| ------- | ----------- |
+| `research pick --json` | Agent-facing: fetch tonight's queued topic + evidence chain (`{"status":"none"}` on quiet nights); flips the topic in-progress. |
+| `research store --topic-id <id> (--file <p>\|--stdin) --sources <urls> [--title <t>]` | The **single writer** for briefing facts: validates topic state, caps length/sources, records provenance incl. URLs, marks the topic done. |
+| `research status [--json] [--days <n>]` | Operator audit view: queue, briefings, unread flags, evidence counts. |
+
 ## Maintenance cron jobs
 
-**Install** and **verify --fix** create or repair maintenance cron jobs in `~/.openclaw/cron/jobs.json`. The canonical list is **9 jobs** (see table). **Install/verify** also creates `~/.openclaw/logs/cron-hybrid-mem/` for first-run log paths.
+**Install** and **verify --fix** create or repair maintenance cron jobs in `~/.openclaw/cron/jobs.json`. The canonical list is **10 jobs** (see table). **Install/verify** also creates `~/.openclaw/logs/cron-hybrid-mem/` for first-run log paths.
 
 Default job **messages** embed a **bash harness**: one foreground shell (`set -euo pipefail`, `set -x`), per-step `hm_step` that **tees** to `HM_LOG` and appends `exit=<code>` lines to `HM_EXIT`, plus log headers (`HM_JOB`, `RUN_ID`, `openclaw --version`). Logs default to `~/.openclaw/logs/cron-hybrid-mem/` (fallback: `/tmp/openclaw-cron-hybrid-mem-$USER` if that directory is not writable). The message instructs the agent **not** to update the guard file after a failed step and to paste `HM_EXIT` in the reply.
 
@@ -523,6 +534,7 @@ Default job **messages** embed a **bash harness**: one foreground shell (`set -e
 | `hybrid-mem:weekly-persona-proposals` | Sun 10:00 | **weekly-persona-proposals:** `generate-proposals --verbose`. Requires personaProposals enabled. |
 | `hybrid-mem:monthly-consolidation` | 1st 05:00 | **monthly-consolidation:** consolidate → build-languages → backfill-decay → enrich-entities --limit `${HYBRID_MEM_CLI_JOB_ENRICH_LIMIT:-25}` (default 25; set env var to override). |
 | `hybrid-mem:sensor-sweep` | every 4h (configurable) | **sensor-sweep:** tier 1 + tier 2. Requires sensorSweep.enabled. |
+| `hybrid-mem:research-overnight` | 03:30 daily (`research.schedule`) | **research-overnight:** isolated heavy-model agent — `research pick` → web research → `research store`. Gated by `research.enabled` (default on); announce delivery only with explicit `research.delivery.channel` + `to`. |
 
 - **Install:** Adds any missing jobs (does not change existing jobs or re-enable disabled ones).
 - **Verify --fix:** Adds any missing jobs and can normalize schedule/pluginJobId; does not re-enable disabled jobs by default.

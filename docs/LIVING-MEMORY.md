@@ -72,25 +72,51 @@ config knob added by the living-memory upgrade (all **on by default** unless mar
   ordinary decayable `routine` facts ("Routine: on Tuesday mornings, a recurring focus is …").
   Routines that stop recurring decay out — learned from interaction, not programmed.
 
-## Staged (off by default, flip criteria named)
+## Free-text contradictions (shipped)
 
-- **Composite-score v2** (`retrieval.compositeScore.version: 2`): length-norm + quality +
-  co-activation ranking. Flip after the retrieval-eval harness compares v1/v2.
-- **MMR diversity** (`retrieval` diversity `mode: "mmr"`, `mmrLambda: 0.7`): greedy Maximal
-  Marginal Relevance selection replacing bigram demotion. Same flip criterion.
+- **Contradiction candidates** (`maintenance.contradictions { freeText: true, similarityFloor:
+  0.85, maxPairsPerRun: 40, minConfidence: 0.7 }`, nightly): the structured detector only sees
+  exact entity+key collisions — this pass closes the free-text gap. Recent facts (48h) → vector
+  top-k in-scope neighbors at cosine ≥0.85 → NLI verdict (nano tier, temperature 0) →
+  `recordContradiction` with the `nli_free_text` audit marker and a `CONTRADICTS` link, flowing
+  into the same nightly resolve pass and the Memory Graph conflicts panel. Near-duplicates
+  (consolidation's job) and same-entity+key pairs (the structured detector's job) are excluded.
+
+## Serendipity slot (shipped, staged OFF)
+
+- **`autoRecall.serendipity`** (`{ enabled: false, cooldownPrompts: 10, minLinkStrength: 0.4,
+  staleImportanceMin: 0.7, staleDays: 30 }`): when enabled, once per N prompts one labeled
+  `[serendipity]` headline joins ambient injection — weighted-random from
+  strong-but-never-recalled graph neighbors of the current results (falling back to
+  stale-important facts). Index-only exposure: a 60-char title, never full text, recall_count
+  untouched. The remaining named staged exception (prompt-visible); flip after a subjective trial.
+
+## Staged (off by default — measured)
+
+- **Composite-score v2 + MMR diversity** (`retrieval.compositeScore.v: 2`; `retrieval.diversity
+  { enabled, mode: "mmr", mmrLambda: 0.7 }` — `mode`/`mmrLambda` now actually parse): the flip
+  criterion (arm B ≥ arm A on both nDCG@10 and P@5) was **measured and failed** on the gold set
+  — `armA(v1) nDCG@10=1.000 · armB(v2+mmr) nDCG@10=0.996`, equal P@5 — so both stay opt-in.
+  Caveats recorded honestly: the fts5 fixture's ranking is already saturated (any reorder can
+  only cost) and `applyMMR` runs on its bigram fallback until candidate vectors are threaded
+  through. `tests/retrieval-ab-composite.test.ts` re-measures on every CI run and fails if v2
+  ever regresses nDCG by >0.02; a richer gold set with real embeddings is the path to a flip.
 - **Session-start briefing** (`autoRecall.retrievalDirectives.sessionStart`): when enabled, the
   briefing also resurfaces up to 3 stale-important memories (importance ≥0.7, untouched 30+ days).
+  (Overnight research briefings deliver independently of this flag — see
+  [PROACTIVE-RESEARCH.md](PROACTIVE-RESEARCH.md).)
 
 ## Measurement
 
 `benchmark/retrieval-eval/` + `tests/retrieval-eval-harness.test.ts` pin retrieval quality
 (P@5 / R@10 / nDCG@10 over a deterministic 200-fact fixture, plus an ambient-injection hit-rate
-sample) as CI floors — ranking regressions fail CI. Decay behavior is pinned by fast-forward
+sample) as CI floors — ranking regressions fail CI. `tests/retrieval-ab-composite.test.ts` keeps
+the v1-vs-v2+MMR comparison honest on every run. Decay behavior is pinned by fast-forward
 survival tests in `tests/living-memory-dynamics.test.ts` (curve composition, pinned survival,
 one-shot second chances, recall-extended half-lives).
 
-## Deliberately deferred (tracked in the plan)
+## Built on top of this: the proactive research loop
 
-Free-text contradiction candidates for the nightly NLI pass, and the labeled `[serendipity]`
-injection slot — both involve LLM judgment writing to user memories, and deserve their own
-carefully-tested round rather than a tail-end rush.
+The observation layer documented here (valence, routines, frustration signals, patterns) now
+feeds an initiative loop — nightly insight synthesis → deterministic trigger → overnight web
+research by a cron agent → morning briefing. See [PROACTIVE-RESEARCH.md](PROACTIVE-RESEARCH.md).
