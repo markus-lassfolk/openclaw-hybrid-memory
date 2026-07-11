@@ -53,6 +53,12 @@ config knob added by the living-memory upgrade (all **on by default** unless mar
 - Explicit `memory_recall` keeps its existing GraphRAG expansion; co-activation ranking (facts
   history recalls as a group boost each other) now computes from real `recall_events`
   co-occurrence when composite-score v2 is enabled.
+- **Serendipity slot** (`autoRecall.serendipity`, default **true**; `{ cooldownPrompts: 10,
+  minLinkStrength: 0.4, staleImportanceMin: 0.7, staleDays: 30 }`): once per `cooldownPrompts`
+  prompts, one labeled `[serendipity]` headline joins ambient injection — weighted-random from
+  strong-but-never-recalled graph neighbors of the current results, falling back to
+  stale-important facts. Index-only exposure: a 60-char title, never full text, `recall_count`
+  untouched — a memory that surfaces this way stays eligible until you actually ask about it.
 
 ## Same-thought consolidation
 
@@ -81,15 +87,6 @@ config knob added by the living-memory upgrade (all **on by default** unless mar
   `recordContradiction` with the `nli_free_text` audit marker and a `CONTRADICTS` link, flowing
   into the same nightly resolve pass and the Memory Graph conflicts panel. Near-duplicates
   (consolidation's job) and same-entity+key pairs (the structured detector's job) are excluded.
-
-## Serendipity slot (shipped, staged OFF)
-
-- **`autoRecall.serendipity`** (`{ enabled: false, cooldownPrompts: 10, minLinkStrength: 0.4,
-  staleImportanceMin: 0.7, staleDays: 30 }`): when enabled, once per N prompts one labeled
-  `[serendipity]` headline joins ambient injection — weighted-random from
-  strong-but-never-recalled graph neighbors of the current results (falling back to
-  stale-important facts). Index-only exposure: a 60-char title, never full text, recall_count
-  untouched. The remaining named staged exception (prompt-visible); flip after a subjective trial.
 
 ## Staged (off by default — measured)
 

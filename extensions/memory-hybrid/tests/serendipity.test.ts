@@ -1,5 +1,5 @@
 /**
- * Living-memory B2: the serendipity slot (staged default-OFF). Neighbor pool = strong-but-
+ * Living-memory B2: the serendipity slot (default ON). Neighbor pool = strong-but-
  * never-recalled graph neighbors of the top results (PRECEDED_BY and weak links excluded);
  * fallback pool = stale-important. Injection is one labeled index-only headline, at most once
  * per cooldownPrompts prompts per session.
@@ -133,18 +133,20 @@ describe("pickSerendipityFact", () => {
   });
 });
 
-describe("serendipity config parse (staged default-OFF)", () => {
-  it("defaults off in both parser branches; opt-in with defaults", () => {
+describe("serendipity config parse (default ON)", () => {
+  it("defaults on in both parser branches; opt-out and overrides both work", () => {
     expect(parseAutoRecallConfig({}).serendipity).toEqual({
-      enabled: false,
+      enabled: true,
       cooldownPrompts: 10,
       minLinkStrength: 0.4,
       staleImportanceMin: 0.7,
       staleDays: 30,
     });
-    expect(parseAutoRecallConfig({ autoRecall: { enabled: true } }).serendipity.enabled).toBe(false);
-    const on = parseAutoRecallConfig({ autoRecall: { serendipity: { enabled: true, cooldownPrompts: 2 } } });
-    expect(on.serendipity).toMatchObject({ enabled: true, cooldownPrompts: 2, minLinkStrength: 0.4 });
+    expect(parseAutoRecallConfig({ autoRecall: { enabled: true } }).serendipity.enabled).toBe(true);
+    const off = parseAutoRecallConfig({ autoRecall: { serendipity: { enabled: false } } });
+    expect(off.serendipity.enabled).toBe(false);
+    const overridden = parseAutoRecallConfig({ autoRecall: { serendipity: { cooldownPrompts: 2 } } });
+    expect(overridden.serendipity).toMatchObject({ enabled: true, cooldownPrompts: 2, minLinkStrength: 0.4 });
   });
 });
 

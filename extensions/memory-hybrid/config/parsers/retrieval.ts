@@ -149,8 +149,7 @@ function parseSerendipityConfig(ar: Record<string, unknown> | undefined): AutoRe
   const num = (v: unknown, fallback: number, min: number, max: number): number =>
     typeof v === "number" && Number.isFinite(v) && v >= min && v <= max ? v : fallback;
   return {
-    // Named staged exception (prompt-visible): opt-in, unlike the rest of the living-memory flags.
-    enabled: raw?.enabled === true,
+    enabled: raw?.enabled !== false,
     cooldownPrompts: Math.floor(num(raw?.cooldownPrompts, 10, 1, 1000)),
     minLinkStrength: num(raw?.minLinkStrength, 0.4, 0, 1),
     staleImportanceMin: num(raw?.staleImportanceMin, 0.7, 0, 1),

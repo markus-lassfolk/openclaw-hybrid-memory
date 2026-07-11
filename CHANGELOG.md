@@ -38,7 +38,7 @@ The living-memory observation layer now feeds initiative: notice → decide → 
 ### Added — Living-memory completion ([LIVING-MEMORY.md](docs/LIVING-MEMORY.md))
 
 - **Free-text contradiction candidates** (`contradiction-candidates`, nightly, default on): recent facts → vector top-k in-scope neighbors at cosine ≥0.85 (converted to the store's 1/(1+L2) score space) → NLI verdict (nano tier) → `recordContradiction` with the `nli_free_text` audit marker + `CONTRADICTS` link. Near-dups and structured entity+key pairs excluded; 40-call cap; config `maintenance.contradictions`.
-- **Serendipity slot** (`autoRecall.serendipity`, staged default OFF): once per N prompts, one `[serendipity]` headline from strong-but-never-recalled graph neighbors (fallback: stale-important), index-only exposure.
+- **Serendipity slot** (`autoRecall.serendipity`, default **on**): once per N prompts, one `[serendipity]` headline from strong-but-never-recalled graph neighbors (fallback: stale-important), index-only exposure. (Shipped staged-off; flipped to default-on after review.)
 - **Composite-v2 + MMR measured A/B**: `retrieval.diversity.mode`/`mmrLambda` now actually parse (previously dropped). The owner's flip criterion (B ≥ A on nDCG@10 AND P@5) was measured and **failed** — armA(v1) nDCG 1.000 vs armB(v2+mmr) 0.996, equal P@5 — so both stay opt-in; `tests/retrieval-ab-composite.test.ts` re-measures every CI run and guards against >0.02 nDCG regressions.
 
 ## [2026.7.208] - 2026-07-10

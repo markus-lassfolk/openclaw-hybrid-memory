@@ -116,10 +116,10 @@ export type AutoRecallConfig = {
    */
   interactiveEnrichment?: "fast" | "balanced" | "full";
   /**
-   * Serendipity slot (LIVING-MEMORY.md, default OFF — staged exception): once per
-   * `cooldownPrompts` prompts, one labeled `[serendipity]` headline joins ambient injection —
-   * weighted-random from strong-but-never-recalled graph neighbors of this recall's top results,
-   * falling back to stale-important facts. Index-only exposure.
+   * Serendipity slot (LIVING-MEMORY.md, default ON): once per `cooldownPrompts` prompts, one
+   * labeled `[serendipity]` headline joins ambient injection — weighted-random from
+   * strong-but-never-recalled graph neighbors of this recall's top results, falling back to
+   * stale-important facts. Index-only exposure.
    */
   serendipity: {
     enabled: boolean;
