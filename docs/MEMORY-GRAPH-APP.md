@@ -162,6 +162,7 @@ Two guards keep the app honest in CI:
 
 ## Related docs
 
+- [LIVING-MEMORY.md](LIVING-MEMORY.md) — decay, strengthening, and association dynamics the app makes visible
 - [GRAPH-MEMORY.md](GRAPH-MEMORY.md) — the typed-link graph model the app visualizes
 - [ARCHITECTURE.md](ARCHITECTURE.md) — the four-part memory architecture
 - [CONFIGURATION.md](CONFIGURATION.md) — `dashboard.*` settings

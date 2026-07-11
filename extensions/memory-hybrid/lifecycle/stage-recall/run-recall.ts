@@ -1008,6 +1008,28 @@ export async function runRecall(
             });
             directiveCalls += 1;
             addDirectiveResults(results, "sessionStart");
+            // Living-memory P3.4: the session-start briefing also resurfaces stale-important
+            // memories — high-importance facts nothing has touched in 30+ days — so what matters
+            // doesn't silently fade just because no prompt happened to embed near it.
+            try {
+              const staleCutoff = Math.floor(Date.now() / 1000) - 30 * 86_400;
+              const staleRows = ctx.factsDb
+                .getRawDb()
+                .prepare(
+                  `SELECT id FROM facts
+                    WHERE importance >= 0.7 AND superseded_at IS NULL
+                      AND COALESCE(last_accessed, created_at) < ?
+                    ORDER BY importance DESC LIMIT 3`,
+                )
+                .all(staleCutoff) as Array<{ id: string }>;
+              const staleResults = staleRows
+                .map((row) => ctx.factsDb.getById(row.id, { scopeFilter }))
+                .filter((entry): entry is NonNullable<typeof entry> => entry != null)
+                .map((entry) => ({ entry, score: 0.5, backend: "sqlite" as const }));
+              if (staleResults.length > 0) addDirectiveResults(staleResults, "sessionStart:stale-important");
+            } catch {
+              /* briefing extras are best-effort */
+            }
             sessionStartSeen.add(sessionKey);
           }
         }

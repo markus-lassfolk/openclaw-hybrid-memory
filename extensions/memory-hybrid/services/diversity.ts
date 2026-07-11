@@ -36,12 +36,75 @@ export function jaccardBigramSimilarity(a: string, b: string): number {
 export type DiversityConfig = {
   enabled: boolean;
   maxSimilarity: number;
+  /**
+   * "mmr": embedding-cosine Maximal Marginal Relevance selection (needs candidate vectors; falls
+   * back to bigram demotion for vectorless items). "bigram": legacy surface-form demotion.
+   * Default "bigram" until the eval harness compares the two (living-memory P3.2, staged flip).
+   */
+  mode?: "bigram" | "mmr";
+  /** MMR relevance↔novelty trade-off λ (default 0.7 = mostly relevance). */
+  mmrLambda?: number;
 };
 
 export const DEFAULT_DIVERSITY_CONFIG: DiversityConfig = {
   enabled: false,
   maxSimilarity: 0.6,
 };
+
+function cosine(a: number[], b: number[]): number {
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  const denom = Math.sqrt(na) * Math.sqrt(nb);
+  return denom === 0 ? 0 : dot / denom;
+}
+
+/**
+ * Maximal Marginal Relevance over embedding vectors: greedily pick the item maximizing
+ * λ·relevance − (1−λ)·max-similarity-to-already-selected. Real semantic diversity — paraphrases
+ * that share few bigrams still repel; lexically-similar but semantically distinct items don't.
+ * Items without a vector score novelty via bigram distance so nothing is silently dropped.
+ */
+export function applyMMR<T extends { text: string; score: number }>(
+  ranked: T[],
+  getVector: (item: T) => number[] | null | undefined,
+  lambda = 0.7,
+): DiversityResult<T> {
+  if (ranked.length <= 2) return { items: ranked, demotedCount: 0 };
+  const remaining = [...ranked];
+  const selected: T[] = [remaining.shift() as T];
+  let reordered = 0;
+
+  const similarity = (a: T, b: T): number => {
+    const va = getVector(a);
+    const vb = getVector(b);
+    if (va && vb && va.length > 0 && vb.length > 0) return cosine(va, vb);
+    return jaccardBigramSimilarity(a.text, b.text);
+  };
+
+  while (remaining.length > 0) {
+    let bestIdx = 0;
+    let bestScore = Number.NEGATIVE_INFINITY;
+    for (let i = 0; i < remaining.length; i++) {
+      const item = remaining[i];
+      const maxSim = selected.reduce((m, s) => Math.max(m, similarity(item, s)), 0);
+      const mmr = lambda * item.score - (1 - lambda) * maxSim;
+      if (mmr > bestScore) {
+        bestScore = mmr;
+        bestIdx = i;
+      }
+    }
+    if (bestIdx !== 0) reordered++;
+    selected.push(remaining.splice(bestIdx, 1)[0]);
+  }
+  return { items: selected, demotedCount: reordered };
+}
 
 export type DiversityResult<T> = {
   items: T[];

@@ -6,7 +6,7 @@
 import type OpenAI from "openai";
 import type { SearchResult } from "../types/memory.js";
 import type { MemoryEntry } from "../types/memory.js";
-import { applyDiversityDemotion, type DiversityConfig } from "./diversity.js";
+import { applyDiversityDemotion, applyMMR, type DiversityConfig } from "./diversity.js";
 import {
   computeCompositeScore,
   computeFrequencyBoost,
@@ -165,10 +165,19 @@ export async function applyRetrievalV2(opts: ApplyRetrievalV2Opts): Promise<Retr
 
   scored.sort((a, b) => b.score - a.score);
   const diversityStarted = Date.now();
-  const { items: diverseItems, demotedCount: dmCount } = applyDiversityDemotion(
-    scored.map((s) => ({ ...s, text: s.text })),
-    opts.config.diversity,
-  );
+  // mode "mmr" = greedy embedding-aware Maximal Marginal Relevance selection (living-memory P3.2,
+  // staged flip — default stays the legacy bigram demotion until the eval harness compares them).
+  const { items: diverseItems, demotedCount: dmCount } =
+    opts.config.diversity.enabled && opts.config.diversity.mode === "mmr"
+      ? applyMMR(
+          scored.map((s) => ({ ...s, text: s.text })),
+          () => null, // candidate vectors aren't threaded here yet — bigram-novelty fallback
+          opts.config.diversity.mmrLambda ?? 0.7,
+        )
+      : applyDiversityDemotion(
+          scored.map((s) => ({ ...s, text: s.text })),
+          opts.config.diversity,
+        );
   recordRecallStageTiming("mmr", Date.now() - diversityStarted);
   demotedCount = dmCount;
 

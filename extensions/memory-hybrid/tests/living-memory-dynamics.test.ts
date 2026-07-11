@@ -247,3 +247,19 @@ describe("co-activation from recall history", () => {
     expect(counts.get("z")).toBeUndefined();
   });
 });
+
+describe("MMR diversity (staged, gate off by default)", () => {
+  it("greedy MMR keeps the top result and repels near-duplicates of it", async () => {
+    const { applyMMR } = await import("../services/diversity.js");
+    const items = [
+      { text: "deploy window for acme is tuesday", score: 1.0 },
+      { text: "deploy window for acme is tuesday!!", score: 0.95 }, // near-dupe of #1
+      { text: "the staging mirror runs in vexmoor", score: 0.9 },
+    ];
+    const { items: out } = applyMMR(items, () => null, 0.5);
+    expect(out[0].text).toBe(items[0].text);
+    // The semantically distinct item outranks the near-duplicate under MMR.
+    expect(out[1].text).toBe(items[2].text);
+    expect(out[2].text).toBe(items[1].text);
+  });
+});
