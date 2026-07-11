@@ -1037,7 +1037,29 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         });
 
         res.writeHead(response.status, Object.fromEntries(response.headers));
-        res.end(await response.text());
+        // Stream the body rather than buffering with response.text(): GraphQL subscriptions return a
+        // long-lived text/event-stream (SSE) that never "ends", so awaiting the full text would hang
+        // the request forever and no live events would ever reach the Memory Graph app. Piping works
+        // for buffered query/mutation responses too (their stream simply closes immediately).
+        if (response.body) {
+          const reader = response.body.getReader();
+          const cancel = () => void reader.cancel().catch(() => {});
+          // If the client (SSE subscriber) disconnects, cancel the reader so Yoga tears the
+          // subscription down instead of leaking it on the pubsub.
+          req.on("close", cancel);
+          res.on("close", cancel);
+          try {
+            for (;;) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              if (value) res.write(Buffer.from(value));
+            }
+          } finally {
+            res.end();
+          }
+        } else {
+          res.end();
+        }
       } catch (err) {
         if (err instanceof Error && err.message === "Request body too large") {
           res.writeHead(413, { "Content-Type": "application/json" });
