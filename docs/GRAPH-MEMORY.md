@@ -30,6 +30,11 @@ The system now maintains a **graph of typed relationships** between facts in the
 
 This is **zero-LLM** — no embedding calls are needed for graph traversal, making it extremely fast.
 
+> **See it live.** The [Memory Graph app](MEMORY-GRAPH-APP.md) renders this graph as an interactive
+> constellation at `http://127.0.0.1:7700/graph` — strongest memories in the center, real-time
+> pulses as memories are recalled, community clustering, and in-place curation (add/edit/remove/link,
+> plus gap & contradiction views).
+
 ---
 
 ## Architecture
@@ -525,6 +530,7 @@ Add `valid_at` / `invalid_at` columns to support superseded links without deleti
 ## Related docs
 
 - [README](../README.md) — Project overview and all docs
+- [MEMORY-GRAPH-APP.md](MEMORY-GRAPH-APP.md) — Interactive real-time visualization of this graph
 - [FEATURES.md](FEATURES.md) — Categories, decay, and other fact features
 - [ARCHITECTURE.md](ARCHITECTURE.md) — System architecture overview
 - [CLI-REFERENCE.md](CLI-REFERENCE.md) — All CLI commands
