@@ -8,25 +8,29 @@
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import {
-  SessionSeenFacts,
   deduplicateResultsById,
   detectTopicShift,
   generateAmbientQueries,
+  SessionSeenFacts,
   searchAmbientIssues,
 } from "../../services/ambient-retrieval.js";
+import { buildBriefingBlock, markBriefingsDelivered } from "../../services/briefing-delivery.js";
 import { loadKnownEntitySurfaces, matchEntitySurfacesInText } from "../../services/entity-retrieval.js";
 import { capturePluginError } from "../../services/error-reporter.js";
+import { getFocusTopic } from "../../services/focus-topic.js";
+import { applyFragmentRecallPostProcess } from "../../services/fragment-recall.js";
 import { expandGraph } from "../../services/graph-retrieval.js";
-import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
-import { type RecallPipelineDeps, runRecallPipelineQuery } from "../../services/recall-pipeline.js";
-import { mergeSearchResultsByBestScore } from "../../services/merge-results.js";
-import { createRecallSpan, createRecallTimingLogger } from "../../services/recall-timing.js";
 import { filterCandidatesByInteractiveGrading } from "../../services/interactive-recall-grader.js";
+import { mergeSearchResultsByBestScore } from "../../services/merge-results.js";
+import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
 import {
   consumePrependBudget,
   getRemainingPrependTokens,
   initPrependBudgetWithInjectorReserve,
 } from "../../services/prepend-budget.js";
+import { type RecallPipelineDeps, runRecallPipelineQuery } from "../../services/recall-pipeline.js";
+import { createRecallSpan, createRecallTimingLogger } from "../../services/recall-timing.js";
+import { recordIntentDistribution } from "../../services/recall-timing-stats.js";
 import {
   assembleRecallPrependContext,
   edictMaxTokensForBudget,
@@ -36,22 +40,18 @@ import {
 } from "../../services/recalled-context-assembler.js";
 import { resolveInteractiveRecallPolicy } from "../../services/retrieval-mode-policy.js";
 import { applyRetrievalV2, DEFAULT_RETRIEVAL_V2_CONFIG } from "../../services/retrieval-v2.js";
-import { applyFragmentRecallPostProcess } from "../../services/fragment-recall.js";
-import { recordIntentDistribution } from "../../services/recall-timing-stats.js";
-import { getFocusTopic } from "../../services/focus-topic.js";
 import { sanitizePromptInjection } from "../../services/skill-prompt-injection.js";
-import type { ScopeFilter } from "../../types/memory.js";
-import type { SearchResult } from "../../types/memory.js";
+import type { ScopeFilter, SearchResult } from "../../types/memory.js";
 import { isConsolidatedDerivedFact } from "../../utils/consolidation-controls.js";
-import { isTierAllowedForWarmSearch } from "../../utils/tier-filter.js";
 import { resolveEntityLookupNames } from "../../utils/entity-lookup-resolve.js";
-import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
-import { raceWithAbortSignal } from "../../utils/signal-race.js";
 import { yieldEventLoop } from "../../utils/event-loop-yield.js";
-import { isRecallContextSuperseded, suppressStaleLifecycleDbError } from "../../utils/registration-superseded.js";
-import { estimateTokens, sanitizeRecallFactText } from "../../utils/text.js";
-import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "../types.js";
 import { isStaleLifecycleGeneration } from "../../utils/lifecycle-generation.js";
+import { isRecallContextSuperseded, suppressStaleLifecycleDbError } from "../../utils/registration-superseded.js";
+import { raceWithAbortSignal } from "../../utils/signal-race.js";
+import { estimateTokens, sanitizeRecallFactText } from "../../utils/text.js";
+import { isTierAllowedForWarmSearch } from "../../utils/tier-filter.js";
+import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
+import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "../types.js";
 import {
   buildDegradedFtsHotRecallStage,
   buildFixedBlocksRecallStage,
@@ -343,7 +343,7 @@ export async function runRecall(
     const limit = searchLimit;
     const tierFilter: "warm" | "all" = ctx.cfg.memoryTiering.enabled ? "warm" : "all";
 
-    let scopeFilter: ScopeFilter | undefined = resolveRecallScopeFilter(ctx);
+    const scopeFilter: ScopeFilter | undefined = resolveRecallScopeFilter(ctx);
 
     const interactivePolicy = resolveInteractiveRecallPolicy(
       ctx.cfg.autoRecall,
@@ -1073,6 +1073,37 @@ export async function runRecall(
       candidates = candidates.slice(0, limit);
     }
 
+    // Overnight-research briefing (proactive research loop A4): surface unread briefings once per
+    // chat session, independent of the opt-in sessionStart directive. Briefings are marked
+    // delivered at build time (under-delivery beats repeat-injection loops) and exposed
+    // index-only via briefingFactIds → refreshIndexedFacts.
+    let briefingBlock = "";
+    const researchDeliveryCfg = ctx.cfg.research;
+    if (
+      researchDeliveryCfg?.enabled !== false &&
+      (researchDeliveryCfg?.delivery.injectDays ?? 0) > 0 &&
+      !recallAborted(signal) &&
+      !sessionState.briefingSeenSessions.has(sessionKey)
+    ) {
+      try {
+        const built = buildBriefingBlock(ctx.factsDb.getRawDb(), {
+          injectDays: researchDeliveryCfg.delivery.injectDays,
+          maxBriefings: researchDeliveryCfg.delivery.maxBriefings,
+        });
+        if (built.factIds.length > 0) {
+          briefingBlock = built.block;
+          markBriefingsDelivered(ctx.factsDb.getRawDb(), built.factIds);
+          // Index-only exposure applied at build time: the block reaches the prepend through
+          // every downstream path (full, empty, abort, superseded), most of which never run
+          // stage-injection's side-effect plumbing.
+          ctx.factsDb.refreshIndexedFacts(built.factIds);
+        }
+        sessionState.briefingSeenSessions.add(sessionKey);
+      } catch {
+        /* briefing delivery is best-effort */
+      }
+    }
+
     const nowSec = Math.floor(Date.now() / 1000);
     const NINETY_DAYS_SEC = 90 * 24 * 3600;
     const boosted = candidates.map((r) => {
@@ -1194,6 +1225,13 @@ export async function runRecall(
     narrativeBlock = capAndTrackBlock("narrative", narrativeBlock, narrativeCapTokens, budgetState);
     hotBlock = capAndTrackBlock("hot", hotBlock, hotCapTokens, budgetState);
     procedureBlock = capAndTrackBlock("procedure", procedureBlock, procedureCapTokens, budgetState);
+    const briefingCapTokens =
+      briefingBlock.length > 0
+        ? totalBudget < 80
+          ? Math.max(0, Math.floor(totalBudget * 0.15))
+          : Math.max(80, Math.floor(totalBudget * 0.15))
+        : 0;
+    briefingBlock = capAndTrackBlock("briefing", briefingBlock, briefingCapTokens, budgetState);
 
     const activeTaskReserveCap = ctx.cfg.activeTask.enabled
       ? (activeTaskBlockCapCfg ??
@@ -1254,11 +1292,11 @@ export async function runRecall(
           fixedBlocks: budgetState.audit,
         },
       });
-      const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
+      const combinedContext = issueBlock + narrativeBlock + hotBlock + briefingBlock + procedureBlock;
       return completeStage(finishEmptyRecallPrepend(ctx, combinedContext));
     }
     if (shouldAbortRecall()) {
-      const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
+      const combinedContext = issueBlock + narrativeBlock + hotBlock + briefingBlock + procedureBlock;
       if (candidates.length > 0 && !isRecallContextSuperseded(ctx)) {
         // Abort after main pipeline: keep partial recall, skip ambient/enrichment only.
       } else {
@@ -1272,7 +1310,7 @@ export async function runRecall(
     const pinnedRecallThreshold = progressivePinnedRecallCount ?? 3;
 
     if (isRecallContextSuperseded(ctx)) {
-      const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
+      const combinedContext = issueBlock + narrativeBlock + hotBlock + briefingBlock + procedureBlock;
       return completeStage(finishEmptyRecallPrepend(ctx, combinedContext));
     }
 
@@ -1301,6 +1339,7 @@ export async function runRecall(
       ambientSeenFacts: ambientCfg.enabled && ambientCfg.multiQuery ? ambientSeenFacts : null,
       semanticDegraded: pipelineStatusRef.semanticDegraded,
       totalBudget,
+      briefingBlock,
     };
     return completeStage({ kind: "full", result });
   } catch (err) {

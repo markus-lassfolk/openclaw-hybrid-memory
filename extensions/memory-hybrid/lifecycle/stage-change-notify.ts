@@ -3,12 +3,11 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-
-import { applyPrependBudget } from "../services/prepend-budget.js";
 import { runOptionalBeforeAgentStartStage } from "../services/before-agent-start-budget.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import { BROADCAST_CHANGE_SESSION_KEY, shouldNotifyChangeInChat } from "../services/change-feed-emit.js";
 import type { ChangeEvent } from "../services/change-feed.js";
+import { BROADCAST_CHANGE_SESSION_KEY, shouldNotifyChangeInChat } from "../services/change-feed-emit.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { applyPrependBudget } from "../services/prepend-budget.js";
 import { estimateTokens } from "../utils/text.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
 import type { LifecycleContext, SessionState } from "./types.js";
@@ -130,92 +129,92 @@ export function registerChangeNotifyHandler(
 
   api.on("before_agent_start", async (event: unknown, hookCtx: unknown) =>
     runOptionalBeforeAgentStartStage(ctx.beforeAgentStartTurnRef, "change-notify", api.logger, async () => {
-    const rApi = withHookResolutionApi(api, hookCtx);
-    const sessionKey = resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default";
+      const rApi = withHookResolutionApi(api, hookCtx);
+      const sessionKey = resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default";
 
-    try {
-      const notifyState = changeNotifyStateMap.get(sessionKey) ?? defaultNotifyState();
+      try {
+        const notifyState = changeNotifyStateMap.get(sessionKey) ?? defaultNotifyState();
 
-      const sessionPending = collectPendingChangeEvents(
-        changeFeed,
-        ctx.cfg,
-        sessionKey,
-        notifyState.lastNotifiedOrdinal,
-      );
-      const broadcastPending = collectPendingChangeEvents(
-        changeFeed,
-        ctx.cfg,
-        BROADCAST_CHANGE_SESSION_KEY,
-        notifyState.lastNotifiedBroadcastOrdinal,
-      );
-
-      const notifiable = [...sessionPending.notifiable, ...broadcastPending.notifiable].sort(
-        (a, b) => a.timestamp - b.timestamp || a.ordinal - b.ordinal,
-      );
-
-      const advanceMutedCursors = (): void => {
-        const nextSessionOrdinal = Math.max(notifyState.lastNotifiedOrdinal, sessionPending.maxSeenOrdinal);
-        const nextBroadcastOrdinal = Math.max(
-          notifyState.lastNotifiedBroadcastOrdinal,
-          broadcastPending.maxSeenOrdinal,
+        const sessionPending = collectPendingChangeEvents(
+          changeFeed,
+          ctx.cfg,
+          sessionKey,
+          notifyState.lastNotifiedOrdinal,
         );
-        if (
-          nextSessionOrdinal > notifyState.lastNotifiedOrdinal ||
-          nextBroadcastOrdinal > notifyState.lastNotifiedBroadcastOrdinal
-        ) {
-          changeNotifyStateMap.set(sessionKey, {
-            lastNotifiedOrdinal: nextSessionOrdinal,
-            lastNotifiedBroadcastOrdinal: nextBroadcastOrdinal,
-          });
+        const broadcastPending = collectPendingChangeEvents(
+          changeFeed,
+          ctx.cfg,
+          BROADCAST_CHANGE_SESSION_KEY,
+          notifyState.lastNotifiedBroadcastOrdinal,
+        );
+
+        const notifiable = [...sessionPending.notifiable, ...broadcastPending.notifiable].sort(
+          (a, b) => a.timestamp - b.timestamp || a.ordinal - b.ordinal,
+        );
+
+        const advanceMutedCursors = (): void => {
+          const nextSessionOrdinal = Math.max(notifyState.lastNotifiedOrdinal, sessionPending.maxSeenOrdinal);
+          const nextBroadcastOrdinal = Math.max(
+            notifyState.lastNotifiedBroadcastOrdinal,
+            broadcastPending.maxSeenOrdinal,
+          );
+          if (
+            nextSessionOrdinal > notifyState.lastNotifiedOrdinal ||
+            nextBroadcastOrdinal > notifyState.lastNotifiedBroadcastOrdinal
+          ) {
+            changeNotifyStateMap.set(sessionKey, {
+              lastNotifiedOrdinal: nextSessionOrdinal,
+              lastNotifiedBroadcastOrdinal: nextBroadcastOrdinal,
+            });
+          }
+        };
+
+        if (notifiable.length === 0) {
+          advanceMutedCursors();
+          return undefined;
         }
-      };
 
-      if (notifiable.length === 0) {
-        advanceMutedCursors();
-        return undefined;
+        const maxEvents = lcf?.maxInChatEventsPerTurn ?? 5;
+        const budgetTokens = lcf?.inChatBudgetTokens ?? 150;
+        const trimmed = trimEventsToBudget(notifiable, maxEvents, budgetTokens);
+        if (trimmed.length === 0) {
+          advanceMutedCursors();
+          return undefined;
+        }
+
+        const revertMap = new Map<number, string>();
+        trimmed.forEach((ev, index) => {
+          revertMap.set(index + 1, ev.id);
+        });
+        sessionState.displayRevertMap.set(sessionKey, revertMap);
+
+        const block = buildChangeNoticeBlock(trimmed);
+        const prepend = applyPrependBudget(ctx.prependBudgetRef, `\n${block}\n`);
+        if (!prepend) return undefined;
+
+        changeNotifyStateMap.set(sessionKey, {
+          lastNotifiedOrdinal: Math.max(
+            maxOrdinalForSession(trimmed, sessionKey, notifyState.lastNotifiedOrdinal),
+            sessionPending.maxSeenOrdinal,
+          ),
+          lastNotifiedBroadcastOrdinal: Math.max(
+            maxOrdinalForSession(trimmed, BROADCAST_CHANGE_SESSION_KEY, notifyState.lastNotifiedBroadcastOrdinal),
+            broadcastPending.maxSeenOrdinal,
+          ),
+        });
+
+        api.logger.debug?.(
+          `memory-hybrid: injected change notice for session ${sessionKey} (${trimmed.length} event(s))`,
+        );
+        return { prependContext: prepend };
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "change-notify-prepend",
+          subsystem: "change-feed",
+          severity: "info",
+        });
       }
-
-      const maxEvents = lcf?.maxInChatEventsPerTurn ?? 5;
-      const budgetTokens = lcf?.inChatBudgetTokens ?? 150;
-      const trimmed = trimEventsToBudget(notifiable, maxEvents, budgetTokens);
-      if (trimmed.length === 0) {
-        advanceMutedCursors();
-        return undefined;
-      }
-
-      const revertMap = new Map<number, string>();
-      trimmed.forEach((ev, index) => {
-        revertMap.set(index + 1, ev.id);
-      });
-      sessionState.displayRevertMap.set(sessionKey, revertMap);
-
-      const block = buildChangeNoticeBlock(trimmed);
-      const prepend = applyPrependBudget(ctx.prependBudgetRef, `\n${block}\n`);
-      if (!prepend) return undefined;
-
-      changeNotifyStateMap.set(sessionKey, {
-        lastNotifiedOrdinal: Math.max(
-          maxOrdinalForSession(trimmed, sessionKey, notifyState.lastNotifiedOrdinal),
-          sessionPending.maxSeenOrdinal,
-        ),
-        lastNotifiedBroadcastOrdinal: Math.max(
-          maxOrdinalForSession(trimmed, BROADCAST_CHANGE_SESSION_KEY, notifyState.lastNotifiedBroadcastOrdinal),
-          broadcastPending.maxSeenOrdinal,
-        ),
-      });
-
-      api.logger.debug?.(
-        `memory-hybrid: injected change notice for session ${sessionKey} (${trimmed.length} event(s))`,
-      );
-      return { prependContext: prepend };
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "change-notify-prepend",
-        subsystem: "change-feed",
-        severity: "info",
-      });
-    }
-    return undefined;
-  }),
+      return undefined;
+    }),
   );
 }

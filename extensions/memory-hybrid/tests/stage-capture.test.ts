@@ -122,6 +122,8 @@ function makeSessionState(): SessionState {
     changeNotifyStateMap: new Map(),
     displayRevertMap: new Map(),
     recallInFlightBySession: new Map(),
+    briefingSeenSessions: new Set(),
+    serendipityPromptCounter: new Map(),
     clearInjectedFactIdsForSession: vi.fn(),
     authFailureRecallsThisSession: new Map(),
     sessionLastActivity: new Map(),

@@ -3,13 +3,13 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import { capturePluginError } from "../services/error-reporter.js";
-import { emitFrustrationDetected } from "../services/change-feed-emit.js";
-import { applyPrependBudget } from "../services/prepend-budget.js";
-import { runOptionalBeforeAgentStartStage } from "../services/before-agent-start-budget.js";
-import { buildFrustrationHint, detectFrustration, exportAsImplicitSignals } from "../services/frustration-detector.js";
 import type { FrustrationDetectionConfig } from "../config.js";
-import { ToolEffectivenessStore, generateToolHint } from "../services/tool-effectiveness.js";
+import { runOptionalBeforeAgentStartStage } from "../services/before-agent-start-budget.js";
+import { emitFrustrationDetected } from "../services/change-feed-emit.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { buildFrustrationHint, detectFrustration, exportAsImplicitSignals } from "../services/frustration-detector.js";
+import { applyPrependBudget } from "../services/prepend-budget.js";
+import { generateToolHint, ToolEffectivenessStore } from "../services/tool-effectiveness.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
@@ -72,123 +72,123 @@ export function registerFrustrationHandlers(
   // Must use the two-argument hook signature so cron/embedded identity on hookCtx is visible (#1005).
   api.on("before_agent_start", async (event: unknown, hookCtx: unknown) =>
     runOptionalBeforeAgentStartStage(ctx.beforeAgentStartTurnRef, "frustration-detect", api.logger, async () => {
-    const rApi = withHookResolutionApi(api, hookCtx);
-    const e = event as {
-      prompt?: string;
-      messages?: Array<{ role?: string; content?: unknown }>;
-      agentId?: string;
-      session?: { agentId?: string };
-    };
-    const sessionKey = resolveSessionKey(event, rApi) ?? currentAgentIdRef.value ?? "default";
+      const rApi = withHookResolutionApi(api, hookCtx);
+      const e = event as {
+        prompt?: string;
+        messages?: Array<{ role?: string; content?: unknown }>;
+        agentId?: string;
+        session?: { agentId?: string };
+      };
+      const sessionKey = resolveSessionKey(event, rApi) ?? currentAgentIdRef.value ?? "default";
 
-    try {
-      let userContent: string | undefined;
-      if (typeof e.prompt === "string" && e.prompt.trim().length > 0) {
-        userContent = e.prompt;
-      } else if (Array.isArray(e.messages)) {
-        const userMsgs = e.messages.filter((m) => m && typeof m === "object" && m.role === "user");
-        const lastUser = userMsgs[userMsgs.length - 1];
-        if (lastUser && typeof lastUser.content === "string") userContent = lastUser.content;
-      }
+      try {
+        let userContent: string | undefined;
+        if (typeof e.prompt === "string" && e.prompt.trim().length > 0) {
+          userContent = e.prompt;
+        } else if (Array.isArray(e.messages)) {
+          const userMsgs = e.messages.filter((m) => m && typeof m === "object" && m.role === "user");
+          const lastUser = userMsgs[userMsgs.length - 1];
+          if (lastUser && typeof lastUser.content === "string") userContent = lastUser.content;
+        }
 
-      if (!userContent || userContent.trim().length < 5) return;
+        if (!userContent || userContent.trim().length < 5) return;
 
-      const state = frustrationStateMap.get(sessionKey) ?? { level: 0, turns: [] };
-      state.turns.push({ role: "user", content: userContent });
-      if (state.turns.length > 20) state.turns.splice(0, state.turns.length - 20);
+        const state = frustrationStateMap.get(sessionKey) ?? { level: 0, turns: [] };
+        state.turns.push({ role: "user", content: userContent });
+        if (state.turns.length > 20) state.turns.splice(0, state.turns.length - 20);
 
-      const frustrationResult = detectFrustration(state.turns, fCfg, state.level);
-      state.level = frustrationResult.level;
-      frustrationStateMap.set(sessionKey, state);
+        const frustrationResult = detectFrustration(state.turns, fCfg, state.level);
+        state.level = frustrationResult.level;
+        frustrationStateMap.set(sessionKey, state);
 
-      const newBand = resolveFrustrationBand(frustrationResult.level, fCfg);
-      const prevBand = frustrationThresholdBandMap.get(sessionKey) ?? "none";
-      if (BAND_RANK[newBand] > BAND_RANK[prevBand] && newBand !== "none") {
-        emitFrustrationDetected(ctx.changeFeed, ctx.cfg, {
-          sessionKey,
-          level: frustrationResult.level,
-          trend: frustrationResult.trend,
-          adaptationAction: frustrationResult.suggestedAdaptation.action,
-          adaptationReasoning: frustrationResult.suggestedAdaptation.reasoning,
-        });
-        frustrationThresholdBandMap.set(sessionKey, newBand);
-      } else if (BAND_RANK[newBand] < BAND_RANK[prevBand]) {
-        frustrationThresholdBandMap.set(sessionKey, newBand);
-      }
+        const newBand = resolveFrustrationBand(frustrationResult.level, fCfg);
+        const prevBand = frustrationThresholdBandMap.get(sessionKey) ?? "none";
+        if (BAND_RANK[newBand] > BAND_RANK[prevBand] && newBand !== "none") {
+          emitFrustrationDetected(ctx.changeFeed, ctx.cfg, {
+            sessionKey,
+            level: frustrationResult.level,
+            trend: frustrationResult.trend,
+            adaptationAction: frustrationResult.suggestedAdaptation.action,
+            adaptationReasoning: frustrationResult.suggestedAdaptation.reasoning,
+          });
+          frustrationThresholdBandMap.set(sessionKey, newBand);
+        } else if (BAND_RANK[newBand] < BAND_RANK[prevBand]) {
+          frustrationThresholdBandMap.set(sessionKey, newBand);
+        }
 
-      const implicitSignals = exportAsImplicitSignals(frustrationResult);
-      if (implicitSignals.length > 0 && typeof ctx.factsDb.getRawDb === "function") {
-        try {
-          const rawDb = ctx.factsDb.getRawDb();
-          const insert = rawDb.prepare(`
+        const implicitSignals = exportAsImplicitSignals(frustrationResult);
+        if (implicitSignals.length > 0 && typeof ctx.factsDb.getRawDb === "function") {
+          try {
+            const rawDb = ctx.factsDb.getRawDb();
+            const insert = rawDb.prepare(`
             INSERT OR IGNORE INTO implicit_signals
               (session_file, signal_type, confidence, polarity, user_message, agent_message, preceding_turns, source)
             VALUES (?, ?, ?, ?, ?, ?, ?, 'frustration')
           `);
-          for (const sig of implicitSignals) {
-            insert.run(
-              sessionKey,
-              sig.type,
-              sig.confidence,
-              sig.polarity,
-              userContent.slice(0, 500),
-              "",
-              state.turns.length,
+            for (const sig of implicitSignals) {
+              insert.run(
+                sessionKey,
+                sig.type,
+                sig.confidence,
+                sig.polarity,
+                userContent.slice(0, 500),
+                "",
+                state.turns.length,
+              );
+            }
+            api.logger.debug?.(
+              `memory-hybrid: frustration exported ${implicitSignals.length} implicit signal(s) for session ${sessionKey}`,
             );
+          } catch (fsErr) {
+            capturePluginError(fsErr instanceof Error ? fsErr : new Error(String(fsErr)), {
+              operation: "frustration-export-implicit-signals",
+              subsystem: "frustration",
+              severity: "info",
+            });
           }
-          api.logger.debug?.(
-            `memory-hybrid: frustration exported ${implicitSignals.length} implicit signal(s) for session ${sessionKey}`,
-          );
-        } catch (fsErr) {
-          capturePluginError(fsErr instanceof Error ? fsErr : new Error(String(fsErr)), {
-            operation: "frustration-export-implicit-signals",
-            subsystem: "frustration",
-            severity: "info",
-          });
         }
-      }
 
-      if (ctx.cfg.verbosity === "silent") return;
+        if (ctx.cfg.verbosity === "silent") return;
 
-      const hint = buildFrustrationHint(frustrationResult, fCfg);
-      let toolHintText = "";
-      if (ctx.cfg.toolEffectiveness?.enabled !== false && ctx.cfg.toolEffectiveness?.injectHints !== false) {
-        try {
-          const toolStore = getToolEffectivenessStore(ctx.resolvedSqlitePath);
-          const contextLabel = currentAgentIdRef.value ?? "general";
-          toolHintText = generateToolHint(toolStore, contextLabel);
-        } catch (thErr) {
-          capturePluginError(thErr instanceof Error ? thErr : new Error(String(thErr)), {
-            operation: "generate-tool-hint",
-            subsystem: "tool-effectiveness",
-            severity: "info",
-          });
+        const hint = buildFrustrationHint(frustrationResult, fCfg);
+        let toolHintText = "";
+        if (ctx.cfg.toolEffectiveness?.enabled !== false && ctx.cfg.toolEffectiveness?.injectHints !== false) {
+          try {
+            const toolStore = getToolEffectivenessStore(ctx.resolvedSqlitePath);
+            const contextLabel = currentAgentIdRef.value ?? "general";
+            toolHintText = generateToolHint(toolStore, contextLabel);
+          } catch (thErr) {
+            capturePluginError(thErr instanceof Error ? thErr : new Error(String(thErr)), {
+              operation: "generate-tool-hint",
+              subsystem: "tool-effectiveness",
+              severity: "info",
+            });
+          }
         }
+
+        const adaptation = frustrationResult.suggestedAdaptation;
+        const adaptationLine =
+          adaptation.action !== "none" ? `\nAdaptation: ${adaptation.action} — ${adaptation.reasoning}` : "";
+
+        const combinedPrepend = [
+          hint ? `\n<frustration-signal>${hint}${adaptationLine}</frustration-signal>\n` : "",
+          toolHintText ? `\n<tool-hint>${toolHintText}</tool-hint>\n` : "",
+        ].join("");
+
+        if (combinedPrepend) {
+          if (hint) api.logger.debug?.(`memory-hybrid: ${hint}`);
+          const prepend = applyPrependBudget(ctx.prependBudgetRef, combinedPrepend);
+          if (!prepend) return undefined;
+          return { prependContext: prepend };
+        }
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "frustration-detection",
+          subsystem: "frustration",
+          severity: "info",
+        });
       }
-
-      const adaptation = frustrationResult.suggestedAdaptation;
-      const adaptationLine =
-        adaptation.action !== "none" ? `\nAdaptation: ${adaptation.action} — ${adaptation.reasoning}` : "";
-
-      const combinedPrepend = [
-        hint ? `\n<frustration-signal>${hint}${adaptationLine}</frustration-signal>\n` : "",
-        toolHintText ? `\n<tool-hint>${toolHintText}</tool-hint>\n` : "",
-      ].join("");
-
-      if (combinedPrepend) {
-        if (hint) api.logger.debug?.(`memory-hybrid: ${hint}`);
-        const prepend = applyPrependBudget(ctx.prependBudgetRef, combinedPrepend);
-        if (!prepend) return undefined;
-        return { prependContext: prepend };
-      }
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "frustration-detection",
-        subsystem: "frustration",
-        severity: "info",
-      });
-    }
-    return undefined;
-  }),
+      return undefined;
+    }),
   );
 }

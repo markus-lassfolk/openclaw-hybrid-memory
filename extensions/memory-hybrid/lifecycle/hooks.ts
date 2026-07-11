@@ -10,40 +10,46 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { getCronModelConfig, getDefaultCronModel } from "../config/index.js";
+import {
+  beforeAgentStartRemainingMs,
+  shouldSkipOptionalBeforeAgentStartStage,
+} from "../services/before-agent-start-budget.js";
 import { isAbortOrTransientLlmError } from "../services/chat.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { evaluatePreFinalizationGuard, formatPreFinalizationGuardMessage } from "../services/pre-finalization-guard.js";
+import { recordStartupMemoryCheckpoint } from "../services/startup-memory-attribution.js";
+import { TASK_LEDGER_CATEGORY } from "../services/task-ledger-facts.js";
 import { extractUserWorkflowGoal, isSystemWorkflowGoal } from "../services/workflow-goal-classifier.js";
-import { redactMaintenancePrivateText } from "../utils/maintenance-privacy.js";
 import { currentTurnSlice, extractToolNamesFromMessages } from "../services/workflow-message-utils.js";
 import { buildDailyNarrative } from "../src/worker/narratives.js";
-import { recordStartupMemoryCheckpoint } from "../services/startup-memory-attribution.js";
 import { nowIso } from "../utils/dates.js";
+import { isStaleLifecycleGeneration } from "../utils/lifecycle-generation.js";
+import { redactMaintenancePrivateText } from "../utils/maintenance-privacy.js";
+import { isRecallContextSuperseded, suppressStaleLifecycleDbError } from "../utils/registration-superseded.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
 import { createSessionState } from "./session-state.js";
 import { registerActiveTaskInjection } from "./stage-active-task.js";
 import { registerAuthFailureRecall } from "./stage-auth-failure.js";
 import { runCaptureStage } from "./stage-capture.js";
-import { createStaleSweepTimer, getDispose, registerCleanupHandlers } from "./stage-cleanup.js";
-import { registerCredentialHint } from "./stage-credential-hint.js";
-import { registerFrustrationHandlers } from "./stage-frustration.js";
 import { registerChangeNotifyHandler } from "./stage-change-notify.js";
 import { registerChangeRevertHandler } from "./stage-change-revert.js";
-import { registerCheckpointGuardAdvisoryInjection, queueCheckpointGuardAdvisory } from "./stage-checkpoint-guard-advisory.js";
+import {
+  queueCheckpointGuardAdvisory,
+  registerCheckpointGuardAdvisoryInjection,
+} from "./stage-checkpoint-guard-advisory.js";
+import { createStaleSweepTimer, getDispose, registerCleanupHandlers } from "./stage-cleanup.js";
+import { registerCredentialHint } from "./stage-credential-hint.js";
+import { registerDirectiveStoreNudge } from "./stage-directive-store-nudge.js";
+import { registerFrustrationHandlers } from "./stage-frustration.js";
 import { registerGoalContextInjection } from "./stage-goal-context.js";
 import { registerGoalStewardshipInjection, resolvedGoalsDirForLifecycle } from "./stage-goal-stewardship.js";
 import { registerGoalSubagentHandlers } from "./stage-goal-subagent.js";
-import { registerMemoryNudgeInjection } from "./stage-memory-nudge.js";
-import { registerDirectiveStoreNudge } from "./stage-directive-store-nudge.js";
 import { runInjectionStage } from "./stage-injection.js";
+import { registerMemoryNudgeInjection } from "./stage-memory-nudge.js";
 import { buildDegradedFtsHotRecallStage } from "./stage-recall/degraded-recall.js";
 import { runRecallStage } from "./stage-recall.js";
-import { beforeAgentStartRemainingMs, shouldSkipOptionalBeforeAgentStartStage } from "../services/before-agent-start-budget.js";
 import { runSetupStage } from "./stage-setup.js";
-import { formatPreFinalizationGuardMessage, evaluatePreFinalizationGuard } from "../services/pre-finalization-guard.js";
-import { TASK_LEDGER_CATEGORY } from "../services/task-ledger-facts.js";
-import { isRecallContextSuperseded, suppressStaleLifecycleDbError } from "../utils/registration-superseded.js";
 import type { LifecycleContext } from "./types.js";
-import { isStaleLifecycleGeneration } from "../utils/lifecycle-generation.js";
 
 export type { LifecycleContext } from "./types.js";
 

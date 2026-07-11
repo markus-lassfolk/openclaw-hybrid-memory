@@ -170,7 +170,10 @@ async function runInjection(
     ambientCfg: _ambientCfg,
     ambientSeenFacts,
   } = r;
-  const recalledAmbient = issueBlock + narrativeBlock + hotBlock;
+  // Briefing (proactive research A4) and serendipity (living-memory) ride along with the fixed
+  // ambient blocks; both are index-only exposures (ids merged into indexedIds in finishPrepend).
+  const recalledAmbient =
+    issueBlock + narrativeBlock + hotBlock + (r.briefingBlock ?? "") + (r.serendipity?.line ?? "");
 
   const injectionFilterMode: InjectionFilterMode = ctx.cfg.retrieval?.contextBoundary?.injectionFilter ?? "audit";
   let injectionFilteredCount = 0;
@@ -236,6 +239,14 @@ async function runInjection(
     if (!prepend) return undefined;
     if (options.emitGate) options.emitGate.emitted = true;
     consumePrependBudget(ctx.prependBudgetRef, prepend);
+    // The serendipity fact was shown headline-only — index-only exposure keeps its recall_count
+    // untouched (crud.ts doctrine) while still marking it ambient-seen. (Briefing ids get their
+    // index-only bump at build time in run-recall, since briefings also ship on paths that never
+    // reach this side-effect plumbing.)
+    if (r.serendipity) {
+      sideEffects = sideEffects ?? {};
+      sideEffects.indexedIds = [...new Set([...(sideEffects.indexedIds ?? []), r.serendipity.factId])];
+    }
     if (sideEffects) applyInjectionSideEffects(ctx, api, ambientSeenFacts, progressiveIndexSessionKey, sideEffects);
     if (injectionFilteredCount > 0) {
       emitRecallVerboseLog({

@@ -7,8 +7,8 @@
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { withTimeout } from "../utils/timeout.js";
-import type { LifecycleContext, SessionState } from "./types.js";
 import { runCapture } from "./stage-capture/run-capture.js";
+import type { LifecycleContext, SessionState } from "./types.js";
 
 const CAPTURE_STAGE_TIMEOUT_MS = 60_000;
 

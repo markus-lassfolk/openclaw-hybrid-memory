@@ -87,6 +87,12 @@ export function createSessionState(
   const capabilityHintsSessionsSeen = new Set<string>();
   const recallInFlightBySession = new Map<string, number>();
   const pendingCheckpointGuardBySession = new Map<string, string>();
+  // Once-per-chat-session gate for the overnight-research briefing block (docs/PROACTIVE-RESEARCH.md
+  // A4) — same lifetime rules as sessionStartSeen: never cleared per turn, evicted with the session.
+  const briefingSeenSessions = new Set<string>();
+  // Prompt counter driving the serendipity slot's once-per-N-prompts cooldown (LIVING-MEMORY.md);
+  // persists across turns for the same reason.
+  const serendipityPromptCounter = new Map<string, number>();
 
   function touchSession(sessionKey: string): void {
     sessionLastActivity.set(sessionKey, Date.now());
@@ -180,6 +186,8 @@ export function createSessionState(
         capabilityHintsSessionsSeen.delete(key);
         recallInFlightBySession.delete(key);
         pendingCheckpointGuardBySession.delete(key);
+        briefingSeenSessions.delete(key);
+        serendipityPromptCounter.delete(key);
         const prefix = `${key}:`;
         for (const k of authFailureRecallsThisSession.keys()) {
           if (k.startsWith(prefix)) authFailureRecallsThisSession.delete(k);
@@ -215,6 +223,8 @@ export function createSessionState(
     pruneSetToLimit(capabilityHintsSessionsSeen, MAX_TRACKED_SESSIONS);
     pruneMapToLimit(recallInFlightBySession, MAX_TRACKED_SESSIONS);
     pruneMapToLimit(pendingCheckpointGuardBySession, MAX_TRACKED_SESSIONS);
+    pruneSetToLimit(briefingSeenSessions, MAX_TRACKED_SESSIONS);
+    pruneMapToLimit(serendipityPromptCounter, MAX_TRACKED_SESSIONS);
     if (progressiveIndexBySession) pruneMapToLimit(progressiveIndexBySession, MAX_TRACKED_SESSIONS);
     if (lastAutoRecallPromptBySession) pruneMapToLimit(lastAutoRecallPromptBySession, MAX_TRACKED_SESSIONS);
     if (injectedFactIdsBySession) pruneMapToLimit(injectedFactIdsBySession, MAX_TRACKED_SESSIONS);
@@ -237,6 +247,8 @@ export function createSessionState(
     capabilityHintsSessionsSeen.clear();
     recallInFlightBySession.clear();
     pendingCheckpointGuardBySession.clear();
+    briefingSeenSessions.clear();
+    serendipityPromptCounter.clear();
     progressiveIndexBySession?.clear();
     lastAutoRecallPromptBySession?.clear();
     injectedFactIdsBySession?.clear();
@@ -255,6 +267,8 @@ export function createSessionState(
     capabilityHintsSessionsSeen,
     recallInFlightBySession,
     pendingCheckpointGuardBySession,
+    briefingSeenSessions,
+    serendipityPromptCounter,
     touchSession,
     clearSessionState,
     clearInjectedFactIdsForSession,

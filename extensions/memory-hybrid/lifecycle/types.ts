@@ -6,25 +6,25 @@
 import type OpenAI from "openai";
 import type { AuditStore } from "../backends/audit-store.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
+import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { EdictStore } from "../backends/edict-store.js";
 import type { EventLog } from "../backends/event-log.js";
 import type { FactsDB } from "../backends/facts-db.js";
-import type { CrystallizationStore } from "../backends/crystallization-store.js";
+import type { NarrativesDB } from "../backends/narratives-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
-import type { NarrativesDB } from "../backends/narratives-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
 import type { SessionSeenFacts } from "../services/ambient-retrieval.js";
+import type { BeforeAgentStartTurnRef } from "../services/before-agent-start-budget.js";
+import type { ChangeFeed } from "../services/change-feed.js";
 import type { PendingLLMWarnings } from "../services/chat.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { FrustrationConversationTurn } from "../services/frustration-detector.js";
 import type { PrependBudgetRef } from "../services/prepend-budget.js";
-import type { BeforeAgentStartTurnRef } from "../services/before-agent-start-budget.js";
-import type { ChangeFeed } from "../services/change-feed.js";
 import type { WorkflowTracker } from "../services/workflow-tracker.js";
 import type { MemoryEntry, MemoryScope, SearchResult } from "../types/memory.js";
 
@@ -127,6 +127,10 @@ export interface SessionState {
   recallInFlightBySession: Map<string, number>;
   /** Prepend advisory when pre-finalization guard detected missing checkpoint on prior turn. */
   pendingCheckpointGuardBySession: Map<string, string>;
+  /** Sessions that already received the overnight-research briefing block (once per chat session). */
+  briefingSeenSessions: Set<string>;
+  /** Per-session prompt counter for the serendipity slot's once-per-N-prompts cooldown. */
+  serendipityPromptCounter: Map<string, number>;
   touchSession: (sessionKey: string) => void;
   clearSessionState: (sessionKey: string) => void;
   clearInjectedFactIdsForSession: (
@@ -169,6 +173,11 @@ export interface RecallResult {
   semanticDegraded?: boolean;
   /** Total interactive prepend token ceiling (min of autoRecall.maxTokens and ambientBudgetTokens). */
   totalBudget: number;
+  /** Overnight-research briefing block (once per session; docs/PROACTIVE-RESEARCH.md A4).
+   * Index-only exposure is applied at build time in run-recall (refreshIndexedFacts). */
+  briefingBlock?: string;
+  /** Serendipity slot line + fact (index-only), when the cooldown fired this prompt. */
+  serendipity?: { factId: string; line: string } | null;
 }
 
 /** Result of injection stage. */
