@@ -164,6 +164,31 @@ jobs:
           cd extensions/memory-hybrid
           npm run test
 
+  graph-app:
+    name: Memory Graph App (build)
+    needs: changes
+    if: needs.changes.outputs.ci_required == 'true' || github.event_name == 'workflow_call'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.16'
+      - name: Cache graph-app node_modules
+        uses: actions/cache@v6
+        with:
+          path: extensions/memory-hybrid/graph-app/node_modules
+          key: ${{ runner.os }}-graphapp-${{ hashFiles('extensions/memory-hybrid/graph-app/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-graphapp-
+      - name: Install graph-app dependencies
+        run: cd extensions/memory-hybrid/graph-app && npm install --no-audit --no-fund
+      - name: Typecheck + build SPA
+        run: cd extensions/memory-hybrid/graph-app && npm run build
+      - name: Smoke check build output
+        run: test -f extensions/memory-hybrid/graph-app/dist/index.html
+
   test-coverage:
     name: Test Coverage
     needs: changes

@@ -13,13 +13,14 @@ import { createRequire } from "node:module";
 import { promisify } from "node:util";
 import { parse as parseGraphQL } from "graphql";
 import { capturePluginError } from "../../services/error-reporter.js";
-import { getRecallStatsSnapshot } from "../../services/recall-timing-stats.js";
 import { getRecallSignalsSnapshot } from "../../services/recall-signals.js";
+import { getRecallStatsSnapshot } from "../../services/recall-timing-stats.js";
 import type { VerificationStore } from "../../services/verification-store.js";
 import { pluginLogger } from "../../utils/logger.js";
 import { execFile as execFileCb } from "../../utils/process-runner.js";
 import { parseTags } from "../../utils/tags.js";
-import { collectGraphPayload, collectGraphRecallPayload, getGraphExplorerHtml } from "../dashboard-graph.js";
+import { collectGraphPayload, collectGraphRecallPayload } from "../dashboard-graph.js";
+import { serveGraphApp } from "./graph-app-static.js";
 
 const _execFile = promisify(execFileCb);
 const _require = createRequire(import.meta.url);
@@ -147,9 +148,7 @@ export function graphqlBodyIsMutation(body: unknown): boolean {
   if (typeof query !== "string") return false;
   try {
     const doc = parseGraphQL(query);
-    return doc.definitions.some(
-      (def) => def.kind === "OperationDefinition" && def.operation === "mutation",
-    );
+    return doc.definitions.some((def) => def.kind === "OperationDefinition" && def.operation === "mutation");
   } catch {
     // Malformed/unparseable query — can't prove it's read-only, so require auth.
     return true;
@@ -186,9 +185,18 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
       return;
     }
 
-    if (pathname === "/graph" || pathname === "/graph.html") {
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" });
-      res.end(getGraphExplorerHtml());
+    // Memory Graph SPA (built React app). Serves the app shell + hashed assets under /graph.
+    if (pathname === "/graph" || pathname === "/graph.html" || pathname.startsWith("/graph/")) {
+      const spaPath = pathname === "/graph.html" ? "/graph" : pathname;
+      serveGraphApp(spaPath, res);
+      return;
+    }
+
+    // Tells the SPA whether write mutations require a dashboard token (so it can prompt for one).
+    if (pathname === "/api/graph-app/config") {
+      const requiresToken = Boolean(ctx.hybridCfg?.dashboard?.token?.trim());
+      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+      res.end(JSON.stringify({ requiresToken }));
       return;
     }
 
@@ -593,7 +601,9 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(JSON.stringify(issues));
       } catch (err: unknown) {
-        pluginLogger.error(`[dashboard-server] /api/viewer/issues: ${err instanceof Error ? err.message : String(err)}`);
+        pluginLogger.error(
+          `[dashboard-server] /api/viewer/issues: ${err instanceof Error ? err.message : String(err)}`,
+        );
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "InternalServerError" }));
       }
@@ -624,7 +634,9 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(JSON.stringify(edicts));
       } catch (err: unknown) {
-        pluginLogger.error(`[dashboard-server] /api/viewer/edicts: ${err instanceof Error ? err.message : String(err)}`);
+        pluginLogger.error(
+          `[dashboard-server] /api/viewer/edicts: ${err instanceof Error ? err.message : String(err)}`,
+        );
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "InternalServerError" }));
       }

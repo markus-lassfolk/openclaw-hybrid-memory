@@ -31,8 +31,13 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseDashboardConfig } from "../config/parsers/features.js";
 import { _testing } from "../index.js";
-import { collectStatus, createDashboardServer, graphqlBodyIsMutation, parseLimitParam } from "../routes/dashboard-server.js";
 import * as workshopCollectors from "../routes/dashboard/workshop-collectors.js";
+import {
+  collectStatus,
+  createDashboardServer,
+  graphqlBodyIsMutation,
+  parseLimitParam,
+} from "../routes/dashboard-server.js";
 import * as fsUtils from "../utils/fs.js";
 
 const { FactsDB, VectorDB } = _testing;
@@ -160,9 +165,7 @@ async function httpPostWithHeaders(
         res.on("data", (chunk: Buffer) => {
           responseBody += chunk.toString();
         });
-        res.on("end", () =>
-          resolve({ status: res.statusCode ?? 0, body: responseBody, headers: res.headers }),
-        );
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body: responseBody, headers: res.headers }));
       },
     );
     req.on("error", reject);
@@ -239,8 +242,8 @@ describe("parseDashboardConfig", () => {
 
   it("graphqlBodyIsMutation detects named and anonymous mutations", () => {
     expect(graphqlBodyIsMutation({ query: "{ __typename }" })).toBe(false);
-    expect(graphqlBodyIsMutation({ query: "mutation { deleteFact(id: \"x\") }" })).toBe(true);
-    expect(graphqlBodyIsMutation({ query: "mutation DeleteIt { deleteFact(id: \"x\") }" })).toBe(true);
+    expect(graphqlBodyIsMutation({ query: 'mutation { deleteFact(id: "x") }' })).toBe(true);
+    expect(graphqlBodyIsMutation({ query: 'mutation DeleteIt { deleteFact(id: "x") }' })).toBe(true);
     expect(graphqlBodyIsMutation({ query: "query { facts { id } }" })).toBe(false);
     // Anonymous shorthand `{ ... }` is unambiguously a query-type operation per the GraphQL
     // spec — it can never actually invoke a Mutation-type field regardless of the field's name,
@@ -514,11 +517,21 @@ describeCreateDashboardServer("createDashboardServer", () => {
     expect(status).toBe(404);
   });
 
-  it("GET /graph returns the graph explorer HTML", async () => {
+  it("GET /graph serves the Memory Graph SPA shell (HTML)", async () => {
     if (!server) return;
     const { status, body } = await httpGet(port, "/graph");
     expect(status).toBe(200);
-    expect(body).toContain("Memory Graph");
+    // Serves the built SPA index.html (or a friendly placeholder when the app isn't built yet);
+    // either way it is an HTML document, not a JSON/error response.
+    expect(body.toLowerCase()).toContain("<!doctype html");
+  });
+
+  it("GET /api/graph-app/config reports whether a dashboard token is required", async () => {
+    if (!server) return;
+    const { status, body } = await httpGet(port, "/api/graph-app/config");
+    expect(status).toBe(200);
+    const parsed = JSON.parse(body) as { requiresToken: boolean };
+    expect(typeof parsed.requiresToken).toBe("boolean");
   });
 
   it("POST /graphql returns a valid GraphQL response", async () => {
@@ -585,9 +598,7 @@ describeCreateDashboardServer("createDashboardServer", () => {
     const victim = await httpPostWithHeaders(port, "/graphql", query, {
       "x-openclaw-user-id": "victim-user",
     });
-    expect(JSON.parse(victim.body).data.facts.map((f: { text: string }) => f.text)).toContain(
-      "victim's private note",
-    );
+    expect(JSON.parse(victim.body).data.facts.map((f: { text: string }) => f.text)).toContain("victim's private note");
   });
 
   it("POST /graphql createFact ignores client-supplied scope/scopeTarget and derives it from caller identity (#69)", async () => {
@@ -779,12 +790,7 @@ describe("Memory Viewer API (Issue #1023)", () => {
     });
   }
 
-  async function apiPost(
-    port: number,
-    path: string,
-    body: string,
-    extraHeaders: Record<string, string> = {},
-  ) {
+  async function apiPost(port: number, path: string, body: string, extraHeaders: Record<string, string> = {}) {
     return new Promise<{ status: number; body: string }>((resolve) => {
       const req = request(
         {
@@ -1505,11 +1511,9 @@ describeCreateDashboardServer("Workshop API", () => {
         evidenceSessions: [],
       });
       const key = makeUnifiedKey("persona", proposal.id);
-      const spy = vi
-        .spyOn(workshopCollectors, "collectWorkshopProposalDetail")
-        .mockImplementation(() => {
-          throw new Error("simulated corrupted proposal record");
-        });
+      const spy = vi.spyOn(workshopCollectors, "collectWorkshopProposalDetail").mockImplementation(() => {
+        throw new Error("simulated corrupted proposal record");
+      });
       try {
         const { status, body } = await httpGet(port, `/api/workshop/proposals/${encodeURIComponent(key)}`);
         expect(status).toBe(500);
@@ -1591,11 +1595,7 @@ describeCreateDashboardServer("Workshop API", () => {
       const { makeUnifiedKey } = await import("../services/unified-proposals.js");
       const key = makeUnifiedKey("persona", proposal.id);
       const big = JSON.stringify({ reason: "a".repeat(70 * 1024) });
-      const { status, body } = await httpPost(
-        port,
-        `/api/workshop/proposals/${encodeURIComponent(key)}/reject`,
-        big,
-      );
+      const { status, body } = await httpPost(port, `/api/workshop/proposals/${encodeURIComponent(key)}/reject`, big);
       expect(status).toBe(413);
       expect(JSON.parse(body).error).toBe("PayloadTooLarge");
     });
