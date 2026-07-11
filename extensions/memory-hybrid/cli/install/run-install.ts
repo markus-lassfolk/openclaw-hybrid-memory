@@ -246,10 +246,16 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
         typeof sensorSweepRaw?.schedule === "string" && (sensorSweepRaw.schedule as string).trim().length > 0
           ? (sensorSweepRaw.schedule as string).trim()
           : undefined;
+      const researchCfg = parseResearchConfig(getPluginEntryConfig(config) ?? {});
       const installScheduleOverrides: Record<string, string> = {};
       if (dreamCycleSchedule)
         installScheduleOverrides[`${PLUGIN_JOB_ID_PREFIX}nightly-dream-cycle`] = dreamCycleSchedule;
       if (sensorSweepSchedule) installScheduleOverrides[`${PLUGIN_JOB_ID_PREFIX}sensor-sweep`] = sensorSweepSchedule;
+      // Fresh installs must honor a pre-configured research.schedule too — this was previously
+      // wired only into the upgrade path (below) and verify --fix (reconcile.ts), so a schedule
+      // set before the very first `install` silently fell back to the hardcoded default until the
+      // user later ran upgrade/verify.
+      installScheduleOverrides[RESEARCH_OVERNIGHT_JOB_ID] = researchCfg.schedule;
       cronSummary = ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
         normalizeExisting: false,
         reEnableDisabled: false,
@@ -261,7 +267,7 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
           pluginCfg as Parameters<typeof buildMaintenanceCronFeatureGates>[0],
         ),
         digestWeeklyDelivery: parseDigestWeeklyDeliveryOnly(getPluginEntryConfig(config) ?? {}),
-        researchDelivery: parseResearchConfig(getPluginEntryConfig(config) ?? {}).delivery,
+        researchDelivery: researchCfg.delivery,
       });
     } catch (err) {
       capturePluginError(err as Error, { subsystem: "cli", operation: "runInstallForCli:cron-setup" });

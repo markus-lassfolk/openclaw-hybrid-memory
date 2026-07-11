@@ -8,6 +8,12 @@
  * single-writer storage contract (`research store` is the only allowed write path), and the
  * TOOLING_BLOCKED escape hatches shared with the other hybrid-mem cron jobs. The guard prefix
  * (minIntervalMs re-run protection) is prepended later by resolveCronJob, like every other job.
+ *
+ * The single-writer contract above is a prompt instruction, not a technical restriction — nothing
+ * stops this agent turn from calling memory_store directly instead. The real enforcement is at the
+ * read side: memory_store always stamps source: "conversation" (register-store-tools.ts), and
+ * buildBriefingBlock (briefing-delivery.ts) only surfaces facts with source = "research-executor",
+ * the value only `research store` sets. A briefing written any other way is simply never delivered.
  */
 
 /** Marker sentence tests use to assert the untrusted-content rule is present in installed jobs. */

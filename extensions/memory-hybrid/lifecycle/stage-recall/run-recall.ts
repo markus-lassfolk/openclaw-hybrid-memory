@@ -14,7 +14,11 @@ import {
   SessionSeenFacts,
   searchAmbientIssues,
 } from "../../services/ambient-retrieval.js";
-import { buildBriefingBlock, markBriefingsDelivered } from "../../services/briefing-delivery.js";
+import {
+  buildBriefingBlock,
+  markBriefingsDelivered,
+  revertBriefingsDelivered,
+} from "../../services/briefing-delivery.js";
 import { loadKnownEntitySurfaces, matchEntitySurfacesInText } from "../../services/entity-retrieval.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { getFocusTopic } from "../../services/focus-topic.js";
@@ -282,6 +286,10 @@ export async function runRecall(
   const recallStageStartedAt = recallTiming.phaseStarted("recall_stage_run", { prompt_chars: e.prompt.length });
   let recallStageCompleted = false;
   let recallStageFields: Record<string, string | number | boolean> | undefined;
+  // Hoisted above the try block (unlike briefingBlock itself) so the catch handler below can
+  // revert a delivered-flip that was already committed to the DB if anything later in this same
+  // call throws before the block reaches a return.
+  let deliveredBriefingFactIds: string[] = [];
   const completeStage = (result: RecallStageResult): RecallStageResult => {
     setRecallProbePhase(`complete:${result.kind}`);
     recallStageFields = {
@@ -1094,6 +1102,7 @@ export async function runRecall(
         if (built.factIds.length > 0) {
           briefingBlock = built.block;
           markBriefingsDelivered(ctx.factsDb.getRawDb(), built.factIds);
+          deliveredBriefingFactIds = built.factIds;
           // Index-only exposure applied at build time: the block reaches the prepend through
           // every downstream path (full, empty, abort, superseded), most of which never run
           // stage-injection's side-effect plumbing.
@@ -1384,6 +1393,16 @@ export async function runRecall(
     };
     return completeStage({ kind: "full", result });
   } catch (err) {
+    if (deliveredBriefingFactIds.length > 0) {
+      // The delivered-flip already committed but every catch branch below drops briefingBlock
+      // (emptyRecallStage() carries no prepend text, and the final fallthrough re-throws) — revert
+      // so the same briefing is offered again next session instead of being silently lost.
+      try {
+        revertBriefingsDelivered(ctx.factsDb.getRawDb(), deliveredBriefingFactIds);
+      } catch {
+        /* best-effort revert; the original error still propagates below */
+      }
+    }
     if (isRecallContextSuperseded(ctx)) {
       setRecallProbePhase("skip:superseded");
       api.logger.debug?.(

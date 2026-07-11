@@ -8,11 +8,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
-import { runRecallStage } from "../lifecycle/stage-recall.js";
 import { runRecall } from "../lifecycle/stage-recall/run-recall.js";
+import { runRecallStage } from "../lifecycle/stage-recall.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { INTERACTIVE_RECALL_STAGE_TIMEOUT_MS } from "../services/retrieval-mode-policy.js";
 import * as recallPipeline from "../services/recall-pipeline.js";
+import { INTERACTIVE_RECALL_STAGE_TIMEOUT_MS } from "../services/retrieval-mode-policy.js";
 import { estimateTokens } from "../utils/text.js";
 import {
   buildRecallLifecycleContext,
@@ -270,6 +270,41 @@ describe("runRecallStage", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("reverts a briefing's delivered-flip when a later step in the same recall throws", async () => {
+    const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
+    const briefingId = factsDb.store({
+      text: "Overnight research briefing (2026-07-11): Sleep procrastination\nWhat I found: details here.",
+      entity: "briefing:sleep-procrastination",
+      key: "topic",
+      value: "Sleep procrastination",
+      category: "briefing",
+      importance: 0.75,
+      source: "research-executor",
+      tags: ["briefing", "research", "unread"],
+    } as never).id;
+    // Fault-inject the audit-store call that runs unconditionally right after the briefing block
+    // builds and marks the fact delivered — standing in for any unrelated failure in the many
+    // lines of retrieval/ranking/budget logic between that mark and the function's return.
+    ctx.auditStore = {
+      append: vi.fn(() => {
+        throw new Error("simulated post-briefing failure");
+      }),
+    } as unknown as typeof ctx.auditStore;
+    vi.mocked(recallPipeline.runRecallPipelineQuery).mockResolvedValue([]);
+    const sessionState = makeRecallSessionState();
+    const api = makeMockStageApi();
+
+    await expect(
+      runRecallStage({ prompt: "anything planned this week?" }, api as never, ctx, sessionState),
+    ).rejects.toThrow("simulated post-briefing failure");
+
+    const row = factsDb.getRawDb().prepare("SELECT tags FROM facts WHERE id = ?").get(briefingId) as {
+      tags: string;
+    };
+    expect(row.tags).toContain("unread");
+    expect(row.tags).not.toContain("delivered");
   });
 
   it("returns empty (not timeout null) when registration is superseded before timeout fires", async () => {

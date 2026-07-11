@@ -246,6 +246,29 @@ describe("co-activation from recall history", () => {
     expect(counts.get("b")).toBe(2);
     expect(counts.get("z")).toBeUndefined();
   });
+
+  it("does not serve a different window's cached rows when windowDays changes on the same db", () => {
+    const rawDb = raw();
+    rawDb.exec(`
+      CREATE TABLE IF NOT EXISTS recall_events (
+        id TEXT PRIMARY KEY, occurred_at INTEGER NOT NULL, session_key TEXT, agent_id TEXT,
+        query TEXT, fact_ids TEXT NOT NULL DEFAULT '[]', hit INTEGER NOT NULL DEFAULT 0,
+        source TEXT NOT NULL DEFAULT 'backfill', scores TEXT
+      )
+    `);
+    const now = Math.floor(Date.now() / 1000);
+    // 10 days old: outside a 7-day window, inside a 30-day window.
+    insertRecallEvent(rawDb, { occurredAtSec: now - 10 * 86_400, factIds: ["a", "b"], hit: true, source: "tool" });
+
+    // The 5-minute in-memory cache is keyed per db handle; querying a narrow window first must not
+    // poison the result a wider-window call makes right after on the SAME db.
+    const narrow = countCoRecalls(rawDb, ["a", "b"], 7);
+    expect(narrow.get("a")).toBeUndefined();
+
+    const wide = countCoRecalls(rawDb, ["a", "b"], 30);
+    expect(wide.get("a")).toBe(1);
+    expect(wide.get("b")).toBe(1);
+  });
 });
 
 describe("MMR diversity (staged, gate off by default)", () => {

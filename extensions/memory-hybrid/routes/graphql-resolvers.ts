@@ -8,7 +8,7 @@ import {
   resolveContradiction as resolveContradictionRow,
 } from "../backends/facts-db/contradictions.js";
 import { isPreStoreGuardBlocked } from "../backends/facts-db/crud.js";
-import type { MemoryLinkType } from "../backends/facts-db/types.js";
+import { MEMORY_LINK_TYPES, type MemoryLinkType } from "../backends/facts-db/types.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import { DECAY_CLASSES, type DecayClass } from "../config.js";
@@ -316,9 +316,11 @@ function scopedConnectedFactIds(
 }
 
 function isMemoryLinkType(value: string): value is MemoryLinkType {
-  return ["SUPERSEDES", "CAUSED_BY", "PART_OF", "RELATED_TO", "DEPENDS_ON", "CONTRADICTS", "INSTANCE_OF"].includes(
-    value,
-  );
+  // Derive from the canonical registry instead of a parallel hardcoded list — a hardcoded copy
+  // silently rejected PRECEDED_BY when it was added to MEMORY_LINK_TYPES elsewhere in this same
+  // diff, so every createLink/updateLink/acceptSuggestedLink mutation threw "Unsupported link
+  // type" for a link type the graph-app's own UI already offered.
+  return (MEMORY_LINK_TYPES as readonly string[]).includes(value);
 }
 
 // ---------------------------------------------------------------------------
@@ -445,6 +447,13 @@ function createStoreInput(input: Record<string, unknown>, context: GraphQLContex
 export function subscriberOwnsRecall(scopeFilter: ScopeFilter, payload: RecallOccurredPayload): boolean {
   const realAgentId =
     scopeFilter.agentId && scopeFilter.agentId !== GLOBAL_ONLY_SCOPE_SENTINEL ? scopeFilter.agentId : null;
+  // scopeFilter.userId counts toward identityScoped but is deliberately NOT one of the match
+  // checks below: RecallOccurredPayload (and the recall_events table it's read from) carries no
+  // userId, only sessionKey/agentId, so there is no payload field to compare it against. A caller
+  // scoped by userId alone (no agentId/sessionId) therefore always falls through to `return
+  // false` — fails closed rather than granting them every tenant's recall events. Do not "fix"
+  // this by dropping userId from identityScoped; that would flip a userId-only caller to
+  // unscoped (true) and leak every other tenant's recall activity to them.
   const identityScoped = Boolean(scopeFilter.userId || realAgentId || scopeFilter.sessionId);
   if (!identityScoped) return true;
   if (realAgentId && payload.agentId && realAgentId === payload.agentId) return true;

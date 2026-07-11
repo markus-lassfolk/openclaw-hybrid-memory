@@ -6,8 +6,9 @@
  * (b) stale-important facts. Exposure is index-only (a 60-char title, never full text), so a
  * serendipitous surfacing doesn't consume the fact's "never recalled" eligibility.
  */
+import type { DatabaseSync } from "node:sqlite";
 import type { MemoryEntry } from "../types/memory.js";
-import { expandGraph } from "./graph-retrieval.js";
+import { expandGraph, type GraphFactLookup } from "./graph-retrieval.js";
 
 export interface SerendipityPickConfig {
   minLinkStrength: number;
@@ -24,11 +25,11 @@ export interface SerendipityPick {
   reason: "graph-neighbor" | "stale-important";
 }
 
-interface SerendipityFactsDb {
-  getById(id: string, opts?: unknown): MemoryEntry | null;
-  getRawDb(): import("node:sqlite").DatabaseSync;
-  getLinksFrom(factId: string): unknown[];
-  getLinksTo(factId: string): unknown[];
+// Extends the real expandGraph() contract instead of a hand-copied subset — a prior narrowed
+// copy (unknown[] link arrays, no getByIds) silently drifted from GraphFactLookup and could only
+// be passed to expandGraph via an `as never` cast, which would have hidden a genuine mismatch.
+interface SerendipityFactsDb extends GraphFactLookup {
+  getRawDb(): DatabaseSync;
 }
 
 function titleOf(entry: MemoryEntry, maxChars = 60): string {
@@ -64,7 +65,7 @@ export function pickSerendipityFact(
   // (a) Strong-but-never-recalled graph neighbors of the current results.
   if (topResults.length > 0) {
     try {
-      const { results } = expandGraph(factsDb as never, topResults.slice(0, 3), {
+      const { results } = expandGraph(factsDb, topResults.slice(0, 3), {
         maxDepth: 1,
         maxExpandedResults: 10,
         scopeFilter: opts.scopeFilter,

@@ -292,8 +292,10 @@ export function parseMaintenanceConfig(cfg: Record<string, unknown>): Maintenanc
 }
 
 function parseContradictionsConfig(raw: Record<string, unknown> | undefined): MaintenanceConfig["contradictions"] {
+  // >= 0, not > 0: similarityFloor: 0 is a meaningful choice (consider every vector neighbor,
+  // no cosine floor) — a `> 0` guard silently discarded that explicit choice for the default.
   const similarityFloor =
-    typeof raw?.similarityFloor === "number" && raw.similarityFloor > 0 && raw.similarityFloor <= 1
+    typeof raw?.similarityFloor === "number" && raw.similarityFloor >= 0 && raw.similarityFloor <= 1
       ? raw.similarityFloor
       : 0.85;
   const minConfidence =
@@ -304,7 +306,7 @@ function parseContradictionsConfig(raw: Record<string, unknown> | undefined): Ma
     freeText: raw?.freeText !== false,
     similarityFloor,
     maxPairsPerRun:
-      typeof raw?.maxPairsPerRun === "number" && raw.maxPairsPerRun > 0 ? Math.floor(raw.maxPairsPerRun) : 40,
+      typeof raw?.maxPairsPerRun === "number" && raw.maxPairsPerRun >= 0 ? Math.floor(raw.maxPairsPerRun) : 40,
     minConfidence,
     model: typeof raw?.model === "string" && raw.model.trim().length > 0 ? raw.model.trim() : undefined,
   };

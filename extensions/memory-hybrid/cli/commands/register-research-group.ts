@@ -11,6 +11,7 @@
  */
 import { readFileSync } from "node:fs";
 import { capturePluginError } from "../../services/error-reporter.js";
+import { parseTags } from "../../utils/tags.js";
 import { type Chainable, withExit } from "../shared.js";
 import { createCommandGroup } from "./cli-group-utils.js";
 import type { ManageBindings } from "./manage/bindings.js";
@@ -282,7 +283,9 @@ export function registerResearchGroup(mem: Chainable, b: ManageBindings): void {
               briefings: briefings.map((f) => ({
                 id: f.id,
                 slug: f.entity?.slice("briefing:".length) ?? null,
-                unread: (f.tags ?? "").includes("unread"),
+                // Exact tag membership, not a substring match — a future tag like
+                // "previously-unread" must not be misreported as unread.
+                unread: parseTags(f.tags).includes("unread"),
                 createdAt: f.created_at,
                 title: f.text.split("\n")[0]?.slice(0, 120),
               })),
@@ -298,7 +301,7 @@ export function registerResearchGroup(mem: Chainable, b: ManageBindings): void {
         }
         console.log(`Briefings (last ${days}d): ${briefings.length}`);
         for (const f of briefings) {
-          const unread = (f.tags ?? "").includes("unread") ? " [unread]" : "";
+          const unread = parseTags(f.tags).includes("unread") ? " [unread]" : "";
           console.log(
             `  ${f.entity?.slice("briefing:".length)}${unread} (${new Date(f.created_at * 1000).toISOString()}) — ${f.id}`,
           );

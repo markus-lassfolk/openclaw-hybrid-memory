@@ -66,6 +66,7 @@ export async function adjudicateNliContradiction(
   openai: OpenAI,
   model: string,
   pair: { newerText: string; olderText: string },
+  fallbackModels: string[] = [],
 ): Promise<NliContradictionVerdict> {
   const userPayload = JSON.stringify({
     task: "Can both statements be true?",
@@ -78,6 +79,7 @@ export async function adjudicateNliContradiction(
     temperature: 0,
     maxTokens: 300,
     openai,
+    fallbackModels,
     label: "memory-hybrid: contradiction-nli",
     feature: "contradiction-nli",
     responseFormat: { type: "json_object" },

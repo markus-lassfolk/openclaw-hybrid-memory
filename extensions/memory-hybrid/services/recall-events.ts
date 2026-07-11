@@ -153,17 +153,26 @@ export function listRecentRecallEvents(db: DatabaseSync, limit = 50): RecallOccu
 // on every v2-scored recall, and the underlying rows only change as fast as recalls happen.
 const CO_RECALL_CACHE_TTL_MS = 5 * 60_000;
 const CO_RECALL_ROW_CAP = 2_000;
-const coRecallCache = new WeakMap<object, { ts: number; sets: string[][] }>();
+// Outer WeakMap keyed by db (so cache entries are GC'd with the db handle, same as before); inner
+// Map keyed by windowDays too — the query result depends on both, and today's single caller always
+// passes the same windowDays, but keying on db alone would silently serve one window's rows to a
+// future caller asking for a different window for up to CO_RECALL_CACHE_TTL_MS.
+const coRecallCache = new WeakMap<object, Map<number, { ts: number; sets: string[][] }>>();
 
 function recentRecallIdSets(db: DatabaseSync, windowDays: number): string[][] {
-  const cached = coRecallCache.get(db);
+  let perDb = coRecallCache.get(db);
+  const cached = perDb?.get(windowDays);
   if (cached && Date.now() - cached.ts < CO_RECALL_CACHE_TTL_MS) return cached.sets;
   const sinceSec = Math.floor(Date.now() / 1000) - windowDays * 86_400;
   const rows = db
-    .prepare(`SELECT fact_ids FROM recall_events WHERE occurred_at >= ? ORDER BY occurred_at DESC LIMIT ?`)
+    .prepare("SELECT fact_ids FROM recall_events WHERE occurred_at >= ? ORDER BY occurred_at DESC LIMIT ?")
     .all(sinceSec, CO_RECALL_ROW_CAP) as Array<{ fact_ids: string }>;
   const sets = rows.map((r) => parseFactIdsJson(String(r.fact_ids ?? "[]"))).filter((ids) => ids.length >= 2);
-  coRecallCache.set(db, { ts: Date.now(), sets });
+  if (!perDb) {
+    perDb = new Map();
+    coRecallCache.set(db, perDb);
+  }
+  perDb.set(windowDays, { ts: Date.now(), sets });
   return sets;
 }
 

@@ -403,14 +403,15 @@ export function buildCliContextServices(
     runContradictionCandidates: async (opts) => {
       await guardWalUnlessDryRun("cli_contradiction_candidates", opts.dryRun);
       const c = cfg.maintenance.contradictions;
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "nano", c.model);
       return runContradictionCandidates(
         { factsDb, vectorDb, embeddings, openai },
         {
           similarityFloor: c.similarityFloor,
           maxPairsPerRun: c.maxPairsPerRun,
           minConfidence: c.minConfidence,
-          model: c.model ?? getDefaultCronModel(getCronModelConfig(cfg), "nano"),
-          fallbackModels: [],
+          model: c.model ?? defaultModel,
+          fallbackModels: fallbackModels ?? [],
         },
         opts,
         logSink,

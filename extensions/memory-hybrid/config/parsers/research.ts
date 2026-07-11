@@ -3,7 +3,12 @@ import type { ResearchConfig } from "../types/research.js";
 const DEFAULT_TOPIC_BLOCKLIST = ["credential", "secret", "security"];
 
 function parseCount(value: unknown, fallback: number, max = 100): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.min(max, Math.floor(value)) : fallback;
+  // >= 0, not > 0: several callers treat 0 as a meaningful value (e.g. trigger.cooldownDays: 0
+  // means "no cooldown, may re-queue the same night") — a `> 0` guard silently discarded an
+  // explicit 0 and substituted the fallback instead.
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.min(max, Math.floor(value))
+    : fallback;
 }
 
 function parseUnitInterval(value: unknown, fallback: number): number {

@@ -143,7 +143,9 @@ function parseLinkDecayConfig(raw: unknown): GraphConfig["linkDecay"] {
   return {
     enabled: r.enabled !== false,
     halfLifeDays: typeof r.halfLifeDays === "number" && r.halfLifeDays > 0 ? r.halfLifeDays : 30,
-    floor: typeof r.floor === "number" && r.floor > 0 && r.floor < 1 ? r.floor : 0.05,
+    // >= 0, not > 0: floor: 0 is a meaningful choice (links decay in strength but are never
+    // pruned) — a `> 0` guard silently discarded that explicit choice for the default instead.
+    floor: typeof r.floor === "number" && r.floor >= 0 && r.floor < 1 ? r.floor : 0.05,
   };
 }
 
