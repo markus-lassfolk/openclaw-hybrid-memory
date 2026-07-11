@@ -29,6 +29,14 @@ export const graphqlSchema = `#graphql
     key: String
     value: String
 
+    # Salience fields — mirror GraphNode so live subscription payloads can update the constellation.
+    recallCount: Int
+    accessCount: Int
+    lastAccessedAt: DateTime
+    reinforcedCount: Float
+    pinned: Boolean
+    why: String
+
     # Relationships
     links: [Link!]!
     linkedFrom: [Link!]!

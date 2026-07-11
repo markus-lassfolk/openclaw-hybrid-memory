@@ -1,9 +1,11 @@
 import { useCallback, useEffect } from "react";
 import { fetchGraph } from "./api/queries";
+import { ActivityFeed } from "./components/ActivityFeed";
 import { FiltersSidebar } from "./components/FiltersSidebar";
 import { Header } from "./components/Header";
 import { InspectorPanel } from "./components/InspectorPanel";
 import { GraphCanvas } from "./graph/GraphCanvas";
+import { useClustering, useLiveUpdates } from "./live/useLiveUpdates";
 import { useGraphStore } from "./store/graphStore";
 
 const MAX_NODES = 2000;
@@ -30,12 +32,17 @@ export function App() {
     void load();
   }, [load]);
 
+  // Live overlay + client-side community detection.
+  useLiveUpdates();
+  useClustering();
+
   return (
     <div className="app">
       <GraphCanvas />
       <Header />
       <FiltersSidebar />
       <InspectorPanel />
+      <ActivityFeed />
 
       {loading && !hasNodes ? <div className="overlay">Charting the constellation…</div> : null}
       {error ? (

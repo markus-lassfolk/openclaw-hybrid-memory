@@ -7,6 +7,7 @@ import { forceRadial } from "d3-force";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D, { type ForceGraphMethods } from "react-force-graph-2d";
 import type { GraphNode } from "../api/types";
+import { clusterColor } from "./clustering";
 import { selectVisibleNodes, useGraphStore } from "../store/graphStore";
 import { categoryColor, COLORS, linkColor } from "../theme";
 
@@ -32,7 +33,9 @@ export function GraphCanvas() {
   const filters = useGraphStore((s) => s.filters);
   const selectedId = useGraphStore((s) => s.selectedId);
   const pulses = useGraphStore((s) => s.pulses);
+  const colorByCluster = useGraphStore((s) => s.colorByCluster);
   const setSelected = useGraphStore((s) => s.setSelected);
+  const prunePulses = useGraphStore((s) => s.prunePulses);
 
   const [size, setSize] = useState({ width: window.innerWidth, height: window.innerHeight });
   useEffect(() => {
@@ -72,6 +75,29 @@ export function GraphCanvas() {
     fg.d3ReheatSimulation();
   }, [visibleNodes.length, maxStrength]);
 
+  // While recall pulses are active, keep the canvas repainting so the rings animate/fade. Once the
+  // simulation has cooled react-force-graph pauses its render loop; resumeAnimation() restarts it
+  // (at ~zero alpha the nodes don't move — only the pulse rings redraw). When the last pulse expires
+  // we prune it and pause again to return to idle.
+  useEffect(() => {
+    if (pulses.size === 0) return;
+    fgRef.current?.resumeAnimation();
+    let raf = 0;
+    const tick = () => {
+      prunePulses();
+      if (useGraphStore.getState().pulses.size > 0) {
+        raf = requestAnimationFrame(tick);
+      } else {
+        fgRef.current?.pauseAnimation();
+      }
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [pulses.size, prunePulses]);
+
+  const nodeFill = (node: FGNode): string =>
+    colorByCluster ? clusterColor(node.clusterId) : categoryColor(node.category);
+
   const paintNode = (node: FGNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
     const norm = Math.min(1, (node.strength ?? 0) / maxStrength);
     const r = nodeRadius(norm);
@@ -93,7 +119,7 @@ export function GraphCanvas() {
     ctx.globalAlpha = decayOpacity(node.decayClass);
     ctx.beginPath();
     ctx.arc(x, y, r, 0, 2 * Math.PI);
-    ctx.fillStyle = categoryColor(node.category);
+    ctx.fillStyle = nodeFill(node);
     ctx.fill();
     ctx.globalAlpha = 1;
 

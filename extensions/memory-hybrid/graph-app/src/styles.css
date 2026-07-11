@@ -291,6 +291,58 @@ button:disabled {
   white-space: nowrap;
 }
 
+.activity {
+  position: absolute;
+  bottom: 14px;
+  left: 14px;
+  width: 260px;
+  max-height: 40vh;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  backdrop-filter: blur(6px);
+  z-index: 10;
+  overflow: hidden;
+}
+.activity-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: lowercase;
+  margin-bottom: 8px;
+}
+.activity-empty {
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+.activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: calc(40vh - 40px);
+  overflow: auto;
+}
+.activity-item {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+}
+.activity-icon {
+  width: 12px;
+  text-align: center;
+}
+.activity-label {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .overlay {
   position: absolute;
   inset: 0;

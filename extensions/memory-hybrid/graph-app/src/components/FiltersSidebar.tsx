@@ -7,6 +7,8 @@ export function FiltersSidebar() {
   const nodes = useGraphStore((s) => s.nodes);
   const filters = useGraphStore((s) => s.filters);
   const setFilters = useGraphStore((s) => s.setFilters);
+  const colorByCluster = useGraphStore((s) => s.colorByCluster);
+  const setColorByCluster = useGraphStore((s) => s.setColorByCluster);
 
   const categories = useMemo(() => {
     const set = new Set<string>();
@@ -52,6 +54,11 @@ export function FiltersSidebar() {
           onChange={(e) => setFilters({ showSuperseded: e.target.checked })}
         />
         <span>show superseded</span>
+      </label>
+
+      <label className="control checkbox">
+        <input type="checkbox" checked={colorByCluster} onChange={(e) => setColorByCluster(e.target.checked)} />
+        <span>color by cluster</span>
       </label>
 
       <div className="control">

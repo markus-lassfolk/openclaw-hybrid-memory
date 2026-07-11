@@ -1015,6 +1015,11 @@ export const resolvers: GraphQLResolvers = {
   },
 
   Fact: {
+    // Derived from pinnedAt (the other salience fields resolve directly off the MemoryEntry parent).
+    pinned: (parent) => {
+      const at = asRecord(parent).pinnedAt;
+      return typeof at === "number" && at > 0;
+    },
     links: (parent, _args, context) => {
       const fact = asRecord(parent) as Partial<MemoryEntry>;
       return fact.id

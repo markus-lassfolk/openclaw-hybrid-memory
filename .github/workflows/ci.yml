@@ -184,6 +184,8 @@ jobs:
             ${{ runner.os }}-graphapp-
       - name: Install graph-app dependencies
         run: cd extensions/memory-hybrid/graph-app && npm install --no-audit --no-fund
+      - name: Unit tests (pure logic)
+        run: cd extensions/memory-hybrid/graph-app && npm test
       - name: Typecheck + build SPA
         run: cd extensions/memory-hybrid/graph-app && npm run build
       - name: Smoke check build output
