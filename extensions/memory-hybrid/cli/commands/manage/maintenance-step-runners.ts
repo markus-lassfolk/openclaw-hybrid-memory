@@ -10,6 +10,7 @@ import type { FactsDB } from "../../../backends/facts-db.js";
 import type { VectorDB } from "../../../backends/vector-db.js";
 import type { HybridMemoryConfig } from "../../../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../../../config.js";
+import { runAffectStamp } from "../../../services/affect-stamping.js";
 import { runAutoClassify } from "../../../services/auto-classifier.js";
 import {
   DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD,
@@ -29,11 +30,11 @@ import {
 } from "../../../services/maintenance-job-run/index.js";
 import type { MaintenanceStepRunner } from "../../../services/maintenance-orchestrator.js";
 import { runPassiveObserver } from "../../../services/passive-observer.js";
-import { runAffectStamp } from "../../../services/affect-stamping.js";
-import { runFactsPruneStep } from "../../../services/prune-step.js";
-import { runRoutineMining } from "../../../services/routine-miner.js";
 import { runPendingDigestAutopilotCron } from "../../../services/pending-digest-autopilot-cron.js";
 import { buildPendingReviewDigestReport } from "../../../services/pending-review-digest.js";
+import { runFactsPruneStep } from "../../../services/prune-step.js";
+import { runResearchTrigger } from "../../../services/research-trigger.js";
+import { runRoutineMining } from "../../../services/routine-miner.js";
 import { sweepAll } from "../../../services/sensor-sweep.js";
 import { deleteVectorsForFactIds, reconcileOrphanVectors } from "../../../services/vector-maintenance.js";
 import { nowIso } from "../../../utils/dates.js";
@@ -342,6 +343,20 @@ export function buildCliMaintenanceRunners(
   set("routine-mining", async () => {
     const r = runRoutineMining(b.factsDb, { maxPerRun: b.cfg.maintenance?.routineMining?.maxPerRun ?? 2 });
     return `candidates=${r.candidates} stored=${r.stored} semantic=success`;
+  });
+
+  set("insight-synthesis", async () => {
+    if (!b.runInsightSynthesis) return "skipped (insight synthesis unavailable) semantic=success";
+    const r = await b.runInsightSynthesis({ dryRun: false, verbose });
+    const summary = `stored=${r.stored} candidates=${r.candidates} evidence=${r.evidenceItems} dedupe=${r.skippedDedupe} semantic=${r.semanticOutcome}`;
+    if (r.semanticOutcome === "failed") throw new Error(`insight-synthesis LLM failure (${summary})`);
+    assertSemanticOutcomeDoesNotBlockStep("insight-synthesis", r.semanticOutcome, summary);
+    return summary;
+  });
+
+  set("research-trigger", async () => {
+    const r = runResearchTrigger(b.factsDb, b.cfg.research.trigger);
+    return `picked=${r.picked} eligible=${r.eligible} cooldown=${r.skippedCooldown} blocklist=${r.skippedBlocklist} evidence=${r.skippedEvidence} semantic=success`;
   });
 
   set("auto-classify", async () => {

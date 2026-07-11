@@ -229,6 +229,25 @@ export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
     featureGate: (cfg) => cfg.frustrationDetection?.enabled === true,
   },
   {
+    // Insight synthesis (proactive research loop A1): one LLM pass over person-signals
+    // (negative valence, routines, frustration, patterns) writes evidence-linked `insight` facts.
+    name: "insight-synthesis",
+    tier: "nightly",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20,
+    llmTier: "maintenance",
+    featureGate: (cfg) => cfg.research?.enabled !== false,
+  },
+  {
+    // Research trigger (proactive research loop A2): deterministic policy graduating at most one
+    // eligible insight per night into the overnight research queue. No LLM.
+    name: "research-trigger",
+    tier: "nightly",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20,
+    llmTier: "none",
+    dependsOn: ["insight-synthesis"],
+    featureGate: (cfg) => cfg.research?.enabled !== false,
+  },
+  {
     name: "extract-implicit",
     tier: "nightly",
     guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h44,

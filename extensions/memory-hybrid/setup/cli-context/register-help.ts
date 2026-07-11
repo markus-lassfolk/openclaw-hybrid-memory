@@ -5,7 +5,7 @@ import { getEnv } from "../../utils/env-manager.js";
  * Moves CLI wiring out of index.ts so the plugin entry stays small.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import type { Command } from "commander";
@@ -17,22 +17,21 @@ import * as handlers from "../../cli/handlers.js";
 import { applyApprovedProposal, getProposalExpiryError } from "../../cli/proposals.js";
 import type { HybridMemCliContext } from "../../cli/register.js";
 import { getCronModelConfig, getDefaultCronModel, hybridConfigSchema } from "../../config.js";
-import { readGuardTimestampMs } from "../../services/cron-guard.js";
-import { readOpenClawCronStore } from "../../services/openclaw-cron-store.js";
-import { capturePluginError } from "../../services/error-reporter.js";
-import { runPersonaProposalTriage, validatePersonaPolicy } from "../../services/persona-proposal-triage.js";
 import { syncProposalWithdrawnInChangeFeed } from "../../services/change-feed-emit.js";
 import {
   applyParsedCorrectionRules,
   parseReportProposedSections,
   parseReportRulesForApply,
 } from "../../services/corrections-report.js";
+import { readGuardTimestampMs } from "../../services/cron-guard.js";
+import { capturePluginError } from "../../services/error-reporter.js";
+import { readOpenClawCronStore } from "../../services/openclaw-cron-store.js";
+import { runPersonaProposalTriage, validatePersonaPolicy } from "../../services/persona-proposal-triage.js";
 import { resolveCliWorkspaceRoot } from "../../utils/cli-workspace-root.js";
 import { parseDuration } from "../../utils/duration.js";
 import { resetPluginLogger, restoreDefaultLogger } from "../../utils/logger.js";
-
-import { HYBRID_MEM_CLI_ROOT_DESCRIPTOR } from "./help-text.js";
 import { buildCliContextServices } from "./cli-services.js";
+import { HYBRID_MEM_CLI_ROOT_DESCRIPTOR } from "./help-text.js";
 import { registerCliWithHelp } from "./register-cli-with-help.js";
 /**
  * Help-only CLI wiring for `openclaw hybrid-mem --help` (and subcommand help).
@@ -499,6 +498,7 @@ export function createHybridMemCliContext(
     runReflectionRules: services.runReflectionRules,
     runReflectionMeta: services.runReflectionMeta,
     runReflectIdentity: services.runReflectIdentity,
+    runInsightSynthesis: services.runInsightSynthesis,
     runDreamCycle: services.runDreamCycle,
     runContinuousVerification: services.runContinuousVerification,
     runResolveContradictions: services.runResolveContradictions,

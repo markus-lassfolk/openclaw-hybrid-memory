@@ -18,6 +18,10 @@ export const DEFAULT_MEMORY_CATEGORIES = [
   "coding_task",
   "quality_loop",
   "topic_labels",
+  /** Living-memory + proactive-research categories: mined routines, synthesized insights about the user, overnight research briefings. */
+  "routine",
+  "insight",
+  "briefing",
 ] as const;
 
 /** Runtime categories: starts as defaults, extended by config */

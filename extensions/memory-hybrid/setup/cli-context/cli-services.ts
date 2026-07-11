@@ -1,5 +1,5 @@
-import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { HandlerContext } from "../../cli/handlers.js";
 import type { HybridMemCliContext } from "../../cli/register.js";
@@ -14,17 +14,18 @@ import {
 } from "../../config.js";
 import { runClassifyForCli } from "../../services/auto-classifier.js";
 import { runConsolidate } from "../../services/consolidation.js";
-import { type VerificationCycleResult, runVerificationCycle } from "../../services/continuous-verifier.js";
+import { runVerificationCycle, type VerificationCycleResult } from "../../services/continuous-verifier.js";
+import { adjudicateContradictionWithLlm } from "../../services/contradiction-adjudicator.js";
 import { type DreamCycleResult, makeDreamCycleRunId, runDreamCycle } from "../../services/dream-cycle.js";
 import { runEntityEnrichmentForCli } from "../../services/entity-enrichment-cli.js";
 import { runExport } from "../../services/export-memory.js";
 import { runFindDuplicates } from "../../services/find-duplicates.js";
-import { runBuildLanguageKeywords } from "../../services/language-keywords-build.js";
-import { runPassiveObserver } from "../../services/passive-observer.js";
-import { mergeResults } from "../../services/merge-results.js";
-import { runPreConsolidationFlush, requireWalFlushBeforeMutation } from "../../services/pre-consolidation-flush.js";
-import { adjudicateContradictionWithLlm } from "../../services/contradiction-adjudicator.js";
 import { runIdentityReflection } from "../../services/identity-reflection.js";
+import { runInsightSynthesis } from "../../services/insight-synthesis.js";
+import { runBuildLanguageKeywords } from "../../services/language-keywords-build.js";
+import { mergeResults } from "../../services/merge-results.js";
+import { runPassiveObserver } from "../../services/passive-observer.js";
+import { requireWalFlushBeforeMutation, runPreConsolidationFlush } from "../../services/pre-consolidation-flush.js";
 import { runReflection, runReflectionMeta, runReflectionRules } from "../../services/reflection.js";
 import { parseSourceDate } from "../../utils/dates.js";
 import { getEnv } from "../../utils/env-manager.js";
@@ -83,6 +84,10 @@ interface CliContextServices {
     verbose?: boolean;
     window?: number;
   }) => Promise<{ insightsExtracted: number; insightsStored: number; questionsAsked: number }>;
+  runInsightSynthesis: (opts: {
+    dryRun: boolean;
+    verbose?: boolean;
+  }) => Promise<import("../../services/insight-synthesis.js").InsightSynthesisResult>;
   runClassify: (opts: { dryRun: boolean; limit: number; model?: string }) => Promise<{
     reclassified: number;
     total: number;
@@ -369,6 +374,24 @@ export function buildCliContextServices(
           verbose: opts.verbose,
           window: opts.window,
         },
+        logSink,
+      );
+    },
+    runInsightSynthesis: async (opts) => {
+      await guardWalUnlessDryRun("cli_insight_synthesis", opts.dryRun);
+      const requestedModel = cfg.research.insights.model;
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance", requestedModel);
+      return runInsightSynthesis(
+        factsDb,
+        openai,
+        {
+          maxPerRun: cfg.research.insights.maxPerRun,
+          windowDays: cfg.research.insights.windowDays,
+          minEvidence: cfg.research.insights.minEvidence,
+          model: requestedModel ?? defaultModel,
+          fallbackModels: fallbackModels ?? [],
+        },
+        opts,
         logSink,
       );
     },

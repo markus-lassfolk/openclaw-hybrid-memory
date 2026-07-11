@@ -1,0 +1,31 @@
+You are synthesizing insights about the USER of an AI assistant from observed person-signals: memories stamped with negative emotional valence, mined routines, frustration signals, and behavioral patterns from the last {{window}} days.
+
+An insight names a recurring friction, an unmet need, or a notable behavior shift that would genuinely help the user if understood better (example: "User repeatedly works past midnight and expresses fatigue the next morning — sleep procrastination may be hurting their focus").
+
+Return JSON only, in this exact shape:
+{"insights": [{"insight": "...", "whyItMatters": "...", "salience": 0.0, "topic": "wellbeing", "evidence": ["F1", "S3"]}]}
+
+Field rules:
+- insight: 1-2 sentences, concrete and specific about the user (20-500 chars).
+- whyItMatters: 1 sentence on why this deserves attention.
+- salience: 0-1, how strongly the evidence supports it AND how much addressing it would help.
+- topic: exactly one of "wellbeing", "productivity", "tooling", "relationship", "other".
+- evidence: the reference codes (F#/S#) of the specific items below that support the insight. Cite at least {{minEvidence}}. Only cite codes that exist below.
+
+Hard rules:
+- Return at most {{maxPerRun}} insights. Zero is a valid answer ({"insights": []}) — do not invent patterns.
+- No speculation beyond the evidence. Every claim must trace to cited references.
+- Never include credentials, secrets, tokens, or verbatim sensitive text in the insight.
+- Answer only with valid JSON (no markdown, no commentary).
+
+Negative-valence memories (F# codes):
+{{negativeValence}}
+
+Routines (F# codes):
+{{routines}}
+
+Recent behavioral patterns (F# codes):
+{{patterns}}
+
+Frustration signals (S# codes):
+{{signals}}
