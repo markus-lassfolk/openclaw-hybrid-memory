@@ -1176,6 +1176,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       for (const [vaultFactsDb, ids] of idGroups) {
         const connectedIds = vaultFactsDb.getConnectedFactIds(ids, cfg.graph.maxTraversalDepth, {
           hubDegreeCap: cfg.graph.hubDegreeCap,
+          scopeFilter,
         });
         for (const cid of connectedIds) {
           if (initialIds.has(cid)) continue;

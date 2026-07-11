@@ -2736,6 +2736,57 @@ describe("FactsDB.getByCategory", () => {
     expect(prefs.length).toBe(2);
     expect(prefs.every((e) => e.category === "preference")).toBe(true);
   });
+
+  it("excludes superseded facts (#2067-followup)", () => {
+    const original = db.store({
+      text: "Original rule",
+      category: "rule",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.getRawDb().prepare("UPDATE facts SET superseded_at = ? WHERE id = ?").run(Math.floor(Date.now() / 1000), original.id);
+    db.store({
+      text: "Replacement rule",
+      category: "rule",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    const rules = db.getByCategory("rule");
+    expect(rules.map((r) => r.text)).toEqual(["Replacement rule"]);
+  });
+
+  it("excludes expired facts (#2067-followup)", () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const expired = db.store({
+      text: "Expired preference",
+      category: "preference",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.getRawDb().prepare("UPDATE facts SET expires_at = ? WHERE id = ?").run(nowSec - 100, expired.id);
+    db.store({
+      text: "Live preference",
+      category: "preference",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    const prefs = db.getByCategory("preference");
+    expect(prefs.map((p) => p.text)).toEqual(["Live preference"]);
+  });
 });
 
 describe("FactsDB.getRecentFacts", () => {

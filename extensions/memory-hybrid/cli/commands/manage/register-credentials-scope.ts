@@ -463,11 +463,13 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
 
           if (Number.isNaN(thresholdDays) || thresholdDays < 0) {
             console.error("--threshold-days must be a non-negative number");
-            process.exit(1);
+            process.exitCode = 1;
+            return;
           }
           if (Number.isNaN(minImportance) || minImportance < 0 || minImportance > 1) {
             console.error("--min-importance must be a number between 0 and 1");
-            process.exit(1);
+            process.exitCode = 1;
+            return;
           }
 
           const candidates = factsDb.findSessionFactsForPromotion(thresholdDays, minImportance);

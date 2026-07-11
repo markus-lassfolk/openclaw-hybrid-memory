@@ -34,7 +34,7 @@ export function rowToMemoryEntry(row: Record<string, unknown>): MemoryEntry {
     decayClass: (row.decay_class as DecayClass) || "stable",
     expiresAt: (row.expires_at as number) || null,
     lastConfirmedAt: (row.last_confirmed_at as number) || 0,
-    confidence: (row.confidence as number) || 1.0,
+    confidence: (row.confidence as number) ?? 1.0,
     summary: (row.summary as string) || undefined,
     recallCount: (row.recall_count as number) || 0,
     lastAccessed: (row.last_accessed as number) || null,

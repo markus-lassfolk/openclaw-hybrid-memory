@@ -5,6 +5,8 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
+import { scopeFilterClausePositional } from "../backends/facts-db/scope-sql.js";
+import { globalOnlyScopeFilter } from "../utils/scope-filter.js";
 
 export type PerFolderContextResult = {
   pathsWritten: number;
@@ -29,14 +31,23 @@ export function regeneratePerFolderContext(
   const minFacts = opts?.minFactsPerPath ?? 1;
   const cutoff = Math.floor(Date.now() / 1000) - days * 86_400;
   const db = factsDb.getRawDb();
+  // SECURITY: CONTEXT.md files under memory/projects/ are readable by any agent/session with
+  // folder access, so only globally-visible facts may be written into them -- mirrors
+  // wiki-workspace-export.ts and public-artifacts-provider.ts, which both apply
+  // globalOnlyScopeFilter() before exporting facts to files. Without this, a user/agent/session
+  // -scoped decision or preference fact (category='project' facts routinely carry non-global
+  // scope, per dedupe-policy.ts) would leak into a file every other agent/session can read
+  // (#2067-followup).
+  const scoped = scopeFilterClausePositional(globalOnlyScopeFilter());
   const rows = db
     .prepare(
       `SELECT text, category, key, value, created_at FROM facts
        WHERE superseded_at IS NULL AND category IN ('decision', 'preference', 'milestone', 'project')
          AND created_at >= ?
+         ${scoped.clause}
        ORDER BY created_at DESC LIMIT 500`,
     )
-    .all(cutoff) as Array<{
+    .all(cutoff, ...scoped.params) as Array<{
     text: string;
     category: string;
     key: string | null;
