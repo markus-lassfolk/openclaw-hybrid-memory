@@ -412,21 +412,36 @@ function asDecayClass(value: unknown): DecayClass {
 }
 
 /**
+ * Source values reserved for internal write paths that downstream consumers gate trust on — e.g.
+ * buildBriefingBlock (briefing-delivery.ts) only surfaces facts with source = "research-executor"
+ * because memory_store always stamps "conversation" and can't forge it. createFact/importFacts sit
+ * behind dashboard.token, which is unset (open) by default, so a caller claiming one of these
+ * values here would defeat that trust check entirely. Not the same list as crud.ts's
+ * BLOCKED_SOURCES (which rejects the fact outright); this only strips the reserved identity and
+ * lets the store proceed, same as any other unrecognized source.
+ */
+const RESERVED_INTERNAL_SOURCES = new Set(["research-executor"]);
+
+/**
  * SECURITY: scope/scopeTarget are derived from the caller's own resolved identity
  * (context.scopeFilter), never trusted from client input. Otherwise any caller could set
  * scope="user"/scopeTarget="<victim>" and inject a fact that later surfaces in the victim's
  * own legitimately-scoped reads — worse than a read leak, since it lets one tenant plant
- * data in another tenant's memory.
+ * data in another tenant's memory. requestedSource is deliberately still passed through below
+ * (unlike scope/scopeTarget) when it isn't one of the reserved values above: importFacts relies
+ * on seeing the caller's claimed source to reject known-bad ones via isPreStoreGuardBlocked
+ * (crud.ts's BLOCKED_SOURCES) — discarding it unconditionally would silently defeat that guard.
  */
 function createStoreInput(input: Record<string, unknown>, context: GraphQLContext) {
   const { scope, scopeTarget } = scopeFieldsFromFilter(context.scopeFilter);
+  const requestedSource = asString(input.source);
   return {
     text: asString(input.text) ?? "",
     category: asString(input.category) ?? "other",
     importance: asNumber(input.importance) ?? 0.5,
     confidence: asNumber(input.confidence) ?? 1,
     decayClass: asDecayClass(input.decayClass),
-    source: asString(input.source) ?? "graphql",
+    source: requestedSource && !RESERVED_INTERNAL_SOURCES.has(requestedSource) ? requestedSource : "graphql",
     tags: asStringArray(input.tags) ?? [],
     entity: asString(input.entity) ?? null,
     key: asString(input.key) ?? null,
