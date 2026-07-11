@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { fetchInsights, fetchSuggestedLinks } from "../api/queries";
 import type { ContradictionPair, FactDetail, GraphInsights, LinkRecord, SuggestedLink } from "../api/types";
-import { acceptSuggested, removeFact, removeLink } from "../live/curation";
+import { acceptSuggested, removeFact, removeLink, resolveConflict } from "../live/curation";
 import { useGraphStore } from "../store/graphStore";
 import { linkColor } from "../theme";
 
@@ -80,7 +80,9 @@ export function GapsPanel({ onClose }: { onClose: () => void }) {
           <OrphanList facts={insights?.orphanFacts ?? []} onJump={jump} onReload={loadInsights} />
         ) : null}
         {tab === "suggested" ? <SuggestedList items={suggested ?? []} onJump={jump} onReload={loadSuggested} /> : null}
-        {tab === "contradictions" ? <ContradictionList items={insights?.contradictions ?? []} onJump={jump} /> : null}
+        {tab === "contradictions" ? (
+          <ContradictionList items={insights?.contradictions ?? []} onJump={jump} onReload={loadInsights} />
+        ) : null}
         {tab === "weak" ? <WeakList links={insights?.weakLinks ?? []} onJump={jump} onReload={loadInsights} /> : null}
         {tab === "stale" ? (
           <FactList facts={insights?.staleImportantFacts ?? []} onJump={jump} empty="No stale important memories." />
@@ -181,23 +183,71 @@ function SuggestedList({
   );
 }
 
-function ContradictionList({ items, onJump }: { items: ContradictionPair[]; onJump: (id: string) => void }) {
+function ContradictionList({
+  items,
+  onJump,
+  onReload,
+}: {
+  items: ContradictionPair[];
+  onJump: (id: string) => void;
+  onReload: () => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
   if (items.length === 0) return <p className="muted">No unresolved contradictions.</p>;
+
+  const resolve = async (id: string, keepFactId?: string, loserFactId?: string) => {
+    setError(null);
+    const res = await resolveConflict(id, keepFactId, loserFactId);
+    if (!res.ok) setError(res.error ?? "Could not resolve");
+    else onReload();
+  };
+
   return (
     <div className="gaps-list">
+      {error ? <p className="error">{error}</p> : null}
       {items.map((c) => (
-        <div key={c.id} className="gaps-conflict">
-          {c.factNew ? (
-            <button type="button" className="gaps-mini" onClick={() => c.factNew && onJump(c.factNew.id)}>
-              {c.factNew.text.slice(0, 46)}
+        <div key={c.id} className="gaps-conflict-block">
+          <div className="gaps-conflict">
+            {c.factNew ? (
+              <button type="button" className="gaps-mini" onClick={() => c.factNew && onJump(c.factNew.id)}>
+                {c.factNew.text.slice(0, 46)}
+              </button>
+            ) : null}
+            <span className="gaps-vs">⚔</span>
+            {c.factOld ? (
+              <button type="button" className="gaps-mini" onClick={() => c.factOld && onJump(c.factOld.id)}>
+                {c.factOld.text.slice(0, 46)}
+              </button>
+            ) : null}
+          </div>
+          <div className="gaps-conflict-actions">
+            {c.factNew && c.factOld ? (
+              <>
+                <button
+                  type="button"
+                  className="accent"
+                  title="Keep the newer fact; the older one is superseded by it"
+                  onClick={() => c.factNew && c.factOld && void resolve(c.id, c.factNew.id, c.factOld.id)}
+                >
+                  keep new
+                </button>
+                <button
+                  type="button"
+                  title="Keep the older fact; the newer one is superseded by it"
+                  onClick={() => c.factNew && c.factOld && void resolve(c.id, c.factOld.id, c.factNew.id)}
+                >
+                  keep old
+                </button>
+              </>
+            ) : null}
+            <button
+              type="button"
+              title="Both facts stand — mark the conflict reviewed"
+              onClick={() => void resolve(c.id)}
+            >
+              both fine
             </button>
-          ) : null}
-          <span className="gaps-vs">⚔</span>
-          {c.factOld ? (
-            <button type="button" className="gaps-mini" onClick={() => c.factOld && onJump(c.factOld.id)}>
-              {c.factOld.text.slice(0, 46)}
-            </button>
-          ) : null}
+          </div>
         </div>
       ))}
     </div>

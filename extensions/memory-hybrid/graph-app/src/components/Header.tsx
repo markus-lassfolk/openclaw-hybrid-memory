@@ -1,12 +1,13 @@
 import { selectVisibleNodes, useGraphStore } from "../store/graphStore";
-import { categoryColor, LEGEND_CATEGORIES } from "../theme";
+import { categoryColor, DECAY_LEGEND, decayColor, LEGEND_CATEGORIES } from "../theme";
 
-/** Top-left overlay: title, live counts, connection state, and the category legend. */
+/** Top-left overlay: title, live counts, connection state, and the active-mode legend. */
 export function Header() {
   const stats = useGraphStore((s) => s.stats);
   const nodes = useGraphStore((s) => s.nodes);
   const filters = useGraphStore((s) => s.filters);
   const connected = useGraphStore((s) => s.connected);
+  const colorMode = useGraphStore((s) => s.colorMode);
   const visible = selectVisibleNodes(useGraphStore.getState());
   // touch nodes/filters so the count re-renders on change
   void nodes;
@@ -32,12 +33,21 @@ export function Header() {
         ) : null}
       </div>
       <div className="legend">
-        {LEGEND_CATEGORIES.map((cat) => (
-          <span key={cat} className="legend-item">
-            <span className="legend-dot" style={{ background: categoryColor(cat) }} />
-            {cat}
-          </span>
-        ))}
+        {colorMode === "decay"
+          ? DECAY_LEGEND.map((d) => (
+              <span key={d.label} className="legend-item">
+                <span className="legend-dot" style={{ background: decayColor(d.level) }} />
+                {d.label}
+              </span>
+            ))
+          : colorMode === "category"
+            ? LEGEND_CATEGORIES.map((cat) => (
+                <span key={cat} className="legend-item">
+                  <span className="legend-dot" style={{ background: categoryColor(cat) }} />
+                  {cat}
+                </span>
+              ))
+            : null}
       </div>
     </div>
   );

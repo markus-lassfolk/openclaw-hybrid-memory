@@ -6,7 +6,7 @@ import { readFileSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { timestampFromFilename } from "../utils/text.js";
-import { emitMemoryEvent } from "./memory-events.js";
+import { emitMemoryEvent, type RecallOccurredPayload } from "./memory-events.js";
 import { parseSessionMessagesFromLines } from "./session-signal-context.js";
 import {
   extractFactIdsFromToolResultPayload,
@@ -121,6 +121,49 @@ export type RecallEventRow = {
   hit: boolean;
   source: RecallEventSource;
 };
+
+/**
+ * Most recent recall events (newest first) with per-fact scores, shaped exactly like the live
+ * `recallOccurred` payload so history reads (dashboard ActivityFeed hydration) and the live
+ * subscription share one shape and one ownership gate.
+ */
+export function listRecentRecallEvents(db: DatabaseSync, limit = 50): RecallOccurredPayload[] {
+  const capped = Math.max(1, Math.min(200, Math.floor(limit)));
+  const rows = db
+    .prepare(
+      `SELECT occurred_at, session_key, agent_id, query, fact_ids, source, scores
+       FROM recall_events ORDER BY occurred_at DESC, id DESC LIMIT ?`,
+    )
+    .all(capped) as Array<Record<string, unknown>>;
+  return rows.map((row) => {
+    const factIds = parseFactIdsJson(String(row.fact_ids ?? "[]"));
+    const scores = parseScoresJson(row.scores);
+    return {
+      query: row.query != null ? String(row.query) : null,
+      source: String(row.source),
+      sessionKey: row.session_key != null ? String(row.session_key) : null,
+      agentId: row.agent_id != null ? String(row.agent_id) : null,
+      occurredAt: Number(row.occurred_at),
+      hits: factIds.map((factId) => ({ factId, score: scores?.[factId] ?? 1 })),
+    };
+  });
+}
+
+/** Parse the scores JSON column ({ factId: score }); null on absent/malformed content. */
+function parseScoresJson(raw: unknown): Record<string, number> | null {
+  if (typeof raw !== "string" || raw.length === 0) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const out: Record<string, number> = {};
+    for (const [factId, score] of Object.entries(parsed)) {
+      if (typeof score === "number" && Number.isFinite(score)) out[factId] = score;
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
 
 export function countRecallEventsSince(db: DatabaseSync, sinceSec: number): number {
   const row = db.prepare("SELECT COUNT(*) AS cnt FROM recall_events WHERE occurred_at >= ?").get(sinceSec) as

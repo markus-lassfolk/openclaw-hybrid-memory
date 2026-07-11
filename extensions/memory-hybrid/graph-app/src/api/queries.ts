@@ -1,5 +1,6 @@
-/** GraphQL documents + typed fetch helpers for the Memory Graph app. */
+/** Typed fetch helpers for the Memory Graph app (documents live in ./documents for parity tests). */
 import { gqlRequest } from "./client";
+import * as D from "./documents";
 import type {
   ContradictionPair,
   FactDetail,
@@ -7,41 +8,41 @@ import type {
   GraphInsights,
   LinkRecord,
   MemoryStats,
+  RecallEvent,
+  SearchHit,
   SuggestedLink,
+  TopicCluster,
 } from "./types";
 
-const GRAPH_NODE_FIELDS = `
-  id label category importance confidence decayClass strength
-  recallCount accessCount lastAccessedAt reinforcedCount
-  pinned degree superseded contradicted clusterId tags entity
-`;
-
-const GRAPH_QUERY = `
-  query Graph($filter: GraphFilterInput) {
-    graph(filter: $filter) {
-      nodes { ${GRAPH_NODE_FIELDS} }
-      edges { id source target linkType weight }
-    }
-    stats {
-      totalFacts activeFactsCount supersededFactsCount totalLinks
-      factsByCategory { category count }
-    }
-  }
-`;
-
 export async function fetchGraph(maxNodes: number): Promise<{ graph: GraphData; stats: MemoryStats }> {
-  return gqlRequest<{ graph: GraphData; stats: MemoryStats }>(GRAPH_QUERY, { filter: { maxNodes } });
+  return gqlRequest<{ graph: GraphData; stats: MemoryStats }>(D.GRAPH_QUERY, { filter: { maxNodes } });
 }
 
-const FACT_QUERY = `
-  query Fact($id: ID!) {
-    fact(id: $id) {
-      id text why category importance confidence decayClass source tags entity createdAt
-      links { id sourceId targetId linkType weight }
-      linkedFrom { id sourceId targetId linkType weight }
-    }
-  }
-`;
+/** A node's surroundings (the node itself + linked facts to `depth`), for expansion + find-focus. */
+export async function fetchNeighborhood(startNodeIds: string[], maxDepth = 1, maxNodes = 150): Promise<GraphData> {
+  const data = await gqlRequest<{ graph: GraphData }>(D.NEIGHBORHOOD_QUERY, {
+    filter: { startNodeIds, maxDepth, maxNodes },
+  });
+  return data.graph;
+}
+
+/** Server-side search over the FULL store (not just the loaded top-N). */
+export async function searchMemories(query: string, limit = 8): Promise<SearchHit[]> {
+  const data = await gqlRequest<{ search: SearchHit[] }>(D.SEARCH_QUERY, { input: { query, limit } });
+  return data.search;
+}
+
+/** Recall history for ActivityFeed hydration (newest first; ownership-gated server-side). */
+export async function fetchRecentRecalls(limit = 15): Promise<RecallEvent[]> {
+  const data = await gqlRequest<{ recentRecallEvents: RecallEvent[] }>(D.RECENT_RECALLS_QUERY, { limit });
+  return data.recentRecallEvents;
+}
+
+/** Labeled topic clusters (server-side connected components) for naming Louvain hulls. */
+export async function fetchTopicClusters(minSize = 2): Promise<TopicCluster[]> {
+  const data = await gqlRequest<{ topicClusters: TopicCluster[] }>(D.TOPIC_CLUSTERS_QUERY, { minSize });
+  return data.topicClusters;
+}
 
 export interface FactWithLinks extends FactDetail {
   links: LinkRecord[];
@@ -49,36 +50,17 @@ export interface FactWithLinks extends FactDetail {
 }
 
 export async function fetchFact(id: string): Promise<FactWithLinks | null> {
-  const data = await gqlRequest<{ fact: FactWithLinks | null }>(FACT_QUERY, { id });
+  const data = await gqlRequest<{ fact: FactWithLinks | null }>(D.FACT_QUERY, { id });
   return data.fact;
 }
 
-const INSIGHTS_QUERY = `
-  query Insights($limit: Int) {
-    memoryGraphInsights(limit: $limit) {
-      orphanFacts { id text category importance }
-      weakLinks { id sourceId targetId linkType weight }
-      contradictions { id factNew { id text } factOld { id text } detectedAt }
-      staleImportantFacts { id text category importance }
-    }
-  }
-`;
-
 export async function fetchInsights(limit: number): Promise<GraphInsights> {
-  const data = await gqlRequest<{ memoryGraphInsights: GraphInsights }>(INSIGHTS_QUERY, { limit });
+  const data = await gqlRequest<{ memoryGraphInsights: GraphInsights }>(D.INSIGHTS_QUERY, { limit });
   return data.memoryGraphInsights;
 }
 
-const SUGGESTED_LINKS_QUERY = `
-  query Suggested($threshold: Float, $limit: Int) {
-    suggestedLinks(threshold: $threshold, limit: $limit) {
-      sourceId targetId sourceText targetText similarity
-    }
-  }
-`;
-
 export async function fetchSuggestedLinks(threshold: number, limit: number): Promise<SuggestedLink[]> {
-  const data = await gqlRequest<{ suggestedLinks: SuggestedLink[] }>(SUGGESTED_LINKS_QUERY, { threshold, limit });
+  const data = await gqlRequest<{ suggestedLinks: SuggestedLink[] }>(D.SUGGESTED_LINKS_QUERY, { threshold, limit });
   return data.suggestedLinks;
 }
 
@@ -90,39 +72,27 @@ export async function createFact(input: {
   importance?: number;
   tags?: string[];
 }): Promise<{ id: string }> {
-  const data = await gqlRequest<{ createFact: { id: string } }>(
-    `mutation Create($input: CreateFactInput!) { createFact(input: $input) { id } }`,
-    { input },
-  );
+  const data = await gqlRequest<{ createFact: { id: string } }>(D.CREATE_FACT_MUTATION, { input });
   return data.createFact;
 }
 
 export async function updateFactText(id: string, text: string): Promise<{ id: string }> {
-  const data = await gqlRequest<{ updateFact: { id: string } }>(
-    `mutation Update($input: UpdateFactInput!) { updateFact(input: $input) { id } }`,
-    { input: { id, text } },
-  );
+  const data = await gqlRequest<{ updateFact: { id: string } }>(D.UPDATE_FACT_MUTATION, { input: { id, text } });
   return data.updateFact;
 }
 
 export async function deleteFact(id: string): Promise<boolean> {
-  const data = await gqlRequest<{ deleteFact: boolean }>(`mutation Del($id: ID!) { deleteFact(id: $id) }`, { id });
+  const data = await gqlRequest<{ deleteFact: boolean }>(D.DELETE_FACT_MUTATION, { id });
   return data.deleteFact;
 }
 
 export async function pinFact(id: string, reason?: string): Promise<{ id: string }> {
-  const data = await gqlRequest<{ pinFact: { id: string } }>(
-    `mutation Pin($id: ID!, $reason: String) { pinFact(id: $id, reason: $reason) { id } }`,
-    { id, reason },
-  );
+  const data = await gqlRequest<{ pinFact: { id: string } }>(D.PIN_FACT_MUTATION, { id, reason });
   return data.pinFact;
 }
 
 export async function unpinFact(id: string): Promise<{ id: string }> {
-  const data = await gqlRequest<{ unpinFact: { id: string } }>(
-    `mutation Unpin($id: ID!) { unpinFact(id: $id) { id } }`,
-    { id },
-  );
+  const data = await gqlRequest<{ unpinFact: { id: string } }>(D.UNPIN_FACT_MUTATION, { id });
   return data.unpinFact;
 }
 
@@ -132,29 +102,22 @@ export async function createLink(
   linkType: string,
   weight: number,
 ): Promise<LinkRecord> {
-  const data = await gqlRequest<{ createLink: LinkRecord }>(
-    `mutation Link($sourceId: ID!, $targetId: ID!, $linkType: String!, $weight: Float) {
-       createLink(sourceId: $sourceId, targetId: $targetId, linkType: $linkType, weight: $weight) {
-         id sourceId targetId linkType weight
-       }
-     }`,
-    { sourceId, targetId, linkType, weight },
-  );
+  const data = await gqlRequest<{ createLink: LinkRecord }>(D.CREATE_LINK_MUTATION, {
+    sourceId,
+    targetId,
+    linkType,
+    weight,
+  });
   return data.createLink;
 }
 
 export async function updateLink(id: string, linkType?: string, weight?: number): Promise<LinkRecord> {
-  const data = await gqlRequest<{ updateLink: LinkRecord }>(
-    `mutation UpdLink($id: ID!, $linkType: String, $weight: Float) {
-       updateLink(id: $id, linkType: $linkType, weight: $weight) { id sourceId targetId linkType weight }
-     }`,
-    { id, linkType, weight },
-  );
+  const data = await gqlRequest<{ updateLink: LinkRecord }>(D.UPDATE_LINK_MUTATION, { id, linkType, weight });
   return data.updateLink;
 }
 
 export async function deleteLink(id: string): Promise<boolean> {
-  const data = await gqlRequest<{ deleteLink: boolean }>(`mutation DelLink($id: ID!) { deleteLink(id: $id) }`, { id });
+  const data = await gqlRequest<{ deleteLink: boolean }>(D.DELETE_LINK_MUTATION, { id });
   return data.deleteLink;
 }
 
@@ -164,15 +127,25 @@ export async function acceptSuggestedLink(
   linkType = "RELATED_TO",
   weight = 0.7,
 ): Promise<LinkRecord> {
-  const data = await gqlRequest<{ acceptSuggestedLink: LinkRecord }>(
-    `mutation Accept($sourceId: ID!, $targetId: ID!, $linkType: String, $weight: Float) {
-       acceptSuggestedLink(sourceId: $sourceId, targetId: $targetId, linkType: $linkType, weight: $weight) {
-         id sourceId targetId linkType weight
-       }
-     }`,
-    { sourceId, targetId, linkType, weight },
-  );
+  const data = await gqlRequest<{ acceptSuggestedLink: LinkRecord }>(D.ACCEPT_SUGGESTED_LINK_MUTATION, {
+    sourceId,
+    targetId,
+    linkType,
+    weight,
+  });
   return data.acceptSuggestedLink;
+}
+
+/** Resolve a contradiction: keepFactId supersedes the other fact; omitted = keep both ("kept"). */
+export async function resolveContradiction(
+  id: string,
+  keepFactId?: string,
+): Promise<{ id: string; resolution: string }> {
+  const data = await gqlRequest<{ resolveContradiction: { id: string; resolution: string } }>(
+    D.RESOLVE_CONTRADICTION_MUTATION,
+    { id, keepFactId },
+  );
+  return data.resolveContradiction;
 }
 
 export type { ContradictionPair };

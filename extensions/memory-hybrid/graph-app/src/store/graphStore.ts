@@ -27,6 +27,9 @@ export interface ActivityItem {
   at: number;
 }
 
+/** What drives node color: category hue, Louvain community, or decay/staleness. */
+export type ColorMode = "category" | "cluster" | "decay";
+
 /**
  * Stable key for an edge in the store index. Real links are keyed by their row `id` so a link-type
  * change (same id, new type) updates the existing edge in place instead of adding a duplicate, and a
@@ -52,11 +55,22 @@ interface GraphState {
   activity: ActivityItem[];
   /** nodeId → clusterId (client-side Louvain). */
   clusters: Map<string, string>;
-  colorByCluster: boolean;
+  /** Louvain clusterId → human label (server topic-cluster names / dominant terms). */
+  clusterLabels: Map<string, string>;
+  colorMode: ColorMode;
   /** When set, the next node click bonds it to this source fact instead of selecting it. */
   linkingFrom: string | null;
+  /** When set, the canvas flies to this node (then clears it). */
+  focusNodeId: string | null;
 
   setGraph: (nodes: GraphNode[], edges: GraphEdge[], stats: MemoryStats | null) => void;
+  /**
+   * Reconcile a fresh server snapshot into the live view WITHOUT scrambling the layout: existing
+   * node objects are mutated in place (preserving the force sim's x/y), new ones are added, and —
+   * only when `prune` is set (resync after a connection gap) — nodes absent from the snapshot are
+   * dropped. Neighborhood expansion uses prune:false so it only ever adds.
+   */
+  mergeGraph: (nodes: GraphNode[], edges: GraphEdge[], opts?: { stats?: MemoryStats | null; prune?: boolean }) => void;
   upsertNode: (node: GraphNode) => void;
   removeNode: (id: string) => void;
   upsertEdge: (edge: GraphEdge) => void;
@@ -69,10 +83,14 @@ interface GraphState {
   setStats: (stats: MemoryStats) => void;
   pulse: (factIds: string[], ttlMs?: number) => void;
   prunePulses: () => void;
-  addActivity: (kind: ActivityKind, label: string) => void;
+  addActivity: (kind: ActivityKind, label: string, at?: number) => void;
+  /** Append history entries (newest-first) below any live items — ActivityFeed hydration. */
+  seedActivity: (entries: Array<{ kind: ActivityKind; label: string; at: number }>) => void;
   setClusters: (clusters: Map<string, string>) => void;
-  setColorByCluster: (on: boolean) => void;
+  setClusterLabels: (labels: Map<string, string>) => void;
+  setColorMode: (mode: ColorMode) => void;
   setLinkingFrom: (id: string | null) => void;
+  setFocusNode: (id: string | null) => void;
 }
 
 let activitySeq = 0;
@@ -92,13 +110,57 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   pulses: new Map(),
   activity: [],
   clusters: new Map(),
-  colorByCluster: false,
+  clusterLabels: new Map(),
+  colorMode: "category",
   linkingFrom: null,
+  focusNodeId: null,
 
   setGraph: (nodes, edges, stats) => {
     const nodeIndex = new Map(nodes.map((n) => [n.id, n]));
     const edgeIndex = new Map(edges.map((e) => [edgeId(e), e]));
     set({ nodes: [...nodes], edges: [...edges], nodeIndex, edgeIndex, stats, loading: false, error: null });
+  },
+
+  mergeGraph: (nodes, edges, opts) => {
+    const { nodeIndex } = get();
+    const incomingIds = new Set(nodes.map((n) => n.id));
+    for (const node of nodes) {
+      const existing = nodeIndex.get(node.id);
+      // Mutate existing objects in place so react-force-graph keeps their x/y (same contract as
+      // upsertNode); brand-new nodes enter the sim at the origin and drift out.
+      if (existing) Object.assign(existing, node);
+      else nodeIndex.set(node.id, node);
+    }
+    if (opts?.prune) {
+      for (const id of [...nodeIndex.keys()]) {
+        if (!incomingIds.has(id)) nodeIndex.delete(id);
+      }
+    }
+    const mergedNodes = [...nodeIndex.values()];
+    const presentIds = new Set(mergedNodes.map((n) => n.id));
+    let mergedEdges: GraphEdge[];
+    if (opts?.prune) {
+      // Authoritative snapshot: the server's edge set replaces ours.
+      mergedEdges = edges.filter((e) => presentIds.has(e.source) && presentIds.has(e.target));
+    } else {
+      // Additive: keep everything we had, fold in new edges by id/endpoints.
+      const merged = new Map(get().edgeIndex);
+      for (const e of edges) {
+        if (presentIds.has(e.source) && presentIds.has(e.target)) merged.set(edgeId(e), e);
+      }
+      mergedEdges = [...merged.values()];
+    }
+    const edgeIndex = new Map(mergedEdges.map((e) => [edgeId(e), e]));
+    set((s) => ({
+      nodes: mergedNodes,
+      edges: mergedEdges,
+      nodeIndex,
+      edgeIndex,
+      stats: opts?.stats ?? s.stats,
+      loading: false,
+      error: null,
+      selectedId: s.selectedId && !presentIds.has(s.selectedId) ? null : s.selectedId,
+    }));
   },
 
   upsertNode: (node) => {
@@ -186,14 +248,22 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     if (changed) set({ pulses: new Map(pulses) });
   },
 
-  addActivity: (kind, label) => {
-    const item: ActivityItem = { id: ++activitySeq, kind, label, at: Date.now() };
+  addActivity: (kind, label, at) => {
+    const item: ActivityItem = { id: ++activitySeq, kind, label, at: at ?? Date.now() };
     set((s) => ({ activity: [item, ...s.activity].slice(0, MAX_ACTIVITY) }));
   },
 
+  seedActivity: (entries) => {
+    const items = entries.map((e) => ({ ...e, id: ++activitySeq }));
+    // History goes BELOW whatever live items already arrived (feed renders newest-first).
+    set((s) => ({ activity: [...s.activity, ...items].slice(0, MAX_ACTIVITY) }));
+  },
+
   setClusters: (clusters) => set({ clusters }),
-  setColorByCluster: (on) => set({ colorByCluster: on }),
+  setClusterLabels: (labels) => set({ clusterLabels: labels }),
+  setColorMode: (mode) => set({ colorMode: mode }),
   setLinkingFrom: (id) => set({ linkingFrom: id }),
+  setFocusNode: (id) => set({ focusNodeId: id }),
 }));
 
 /** performance.now() with a safe fallback (kept out of the store body for testability). */

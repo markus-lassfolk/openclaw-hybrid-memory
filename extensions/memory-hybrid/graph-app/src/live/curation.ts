@@ -128,3 +128,39 @@ export async function acceptSuggested(sourceId: string, targetId: string): Promi
     return { ok: false, error: toError(e) };
   }
 }
+
+/**
+ * Resolve a contradiction. With `keepFactId`, the OTHER fact is superseded by it; without, both
+ * stand and the pair is just marked resolved. The superseded flag is applied optimistically — the
+ * factUpdated SSE echo delivers the authoritative state.
+ */
+export async function resolveConflict(id: string, keepFactId?: string, loserFactId?: string): Promise<Result> {
+  try {
+    await q.resolveContradiction(id, keepFactId);
+    const store = useGraphStore.getState();
+    if (keepFactId && loserFactId) {
+      const loser = store.nodeIndex.get(loserFactId);
+      if (loser) store.upsertNode({ ...loser, superseded: true, contradicted: false });
+      const winner = store.nodeIndex.get(keepFactId);
+      if (winner) store.upsertNode({ ...winner, contradicted: false });
+    }
+    store.addActivity("update", keepFactId ? "conflict resolved — superseded" : "conflict resolved — both kept");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: toError(e) };
+  }
+}
+
+/**
+ * Pull a node's immediate neighborhood into the view (additive merge — nothing is removed), so the
+ * constellation can be explored outward past the initial top-N without a full reload.
+ */
+export async function expandNeighborhood(id: string): Promise<Result> {
+  try {
+    const graph = await q.fetchNeighborhood([id], 1, 150);
+    useGraphStore.getState().mergeGraph(graph.nodes, graph.edges, { prune: false });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: toError(e) };
+  }
+}

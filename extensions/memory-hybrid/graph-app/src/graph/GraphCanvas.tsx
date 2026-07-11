@@ -7,10 +7,13 @@ import { forceRadial } from "d3-force";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D, { type ForceGraphMethods } from "react-force-graph-2d";
 import type { GraphNode } from "../api/types";
-import { addLink } from "../live/curation";
+import { addLink, expandNeighborhood } from "../live/curation";
 import { selectVisibleNodes, useGraphStore } from "../store/graphStore";
-import { categoryColor, COLORS, linkColor } from "../theme";
+import { categoryColor, COLORS, decayColor, decayLevel, linkColor } from "../theme";
 import { clusterColor } from "./clustering";
+
+/** Two clicks on the same node within this window mean "expand its neighborhood". */
+const DBLCLICK_MS = 350;
 
 type FGNode = GraphNode & { x?: number; y?: number };
 type FGLink = { source: string; target: string; linkType: string; weight: number };
@@ -34,13 +37,17 @@ export function GraphCanvas() {
   const filters = useGraphStore((s) => s.filters);
   const selectedId = useGraphStore((s) => s.selectedId);
   const pulses = useGraphStore((s) => s.pulses);
-  const colorByCluster = useGraphStore((s) => s.colorByCluster);
+  const colorMode = useGraphStore((s) => s.colorMode);
   const clusters = useGraphStore((s) => s.clusters);
+  const clusterLabels = useGraphStore((s) => s.clusterLabels);
   const linkingFrom = useGraphStore((s) => s.linkingFrom);
+  const focusNodeId = useGraphStore((s) => s.focusNodeId);
+  const setFocusNode = useGraphStore((s) => s.setFocusNode);
   const setSelected = useGraphStore((s) => s.setSelected);
   const setLinkingFrom = useGraphStore((s) => s.setLinkingFrom);
   const addActivity = useGraphStore((s) => s.addActivity);
   const prunePulses = useGraphStore((s) => s.prunePulses);
+  const lastClick = useRef<{ id: string; at: number }>({ id: "", at: 0 });
 
   const [size, setSize] = useState({ width: window.innerWidth, height: window.innerHeight });
   useEffect(() => {
@@ -102,11 +109,38 @@ export function GraphCanvas() {
   // place, which triggers no repaint on its own. If we're coloring by cluster, nudge the render loop
   // so the new colors actually show without waiting for an unrelated interaction.
   useEffect(() => {
-    if (colorByCluster) fgRef.current?.resumeAnimation();
-  }, [clusters, colorByCluster]);
+    if (colorMode !== "category") fgRef.current?.resumeAnimation();
+  }, [clusters, colorMode]);
 
-  const nodeFill = (node: FGNode): string =>
-    colorByCluster ? clusterColor(node.clusterId) : categoryColor(node.category);
+  // Fly to a node (search find-and-focus / expansion): wait until the force sim has given it
+  // coordinates, then center + zoom in and select it. Gives up quietly after ~2s.
+  useEffect(() => {
+    if (!focusNodeId) return;
+    const startedAt = performance.now();
+    let raf = 0;
+    const attempt = () => {
+      const node = useGraphStore.getState().nodeIndex.get(focusNodeId) as FGNode | undefined;
+      if (node && Number.isFinite(node.x) && Number.isFinite(node.y)) {
+        const fg = fgRef.current;
+        fg?.centerAt(node.x, node.y, 600);
+        if ((fg?.zoom() ?? 0) < 2.2) fg?.zoom(2.2, 600);
+        setSelected(focusNodeId);
+        setFocusNode(null);
+        return;
+      }
+      if (performance.now() - startedAt < 2000) raf = requestAnimationFrame(attempt);
+      else setFocusNode(null);
+    };
+    fgRef.current?.resumeAnimation();
+    raf = requestAnimationFrame(attempt);
+    return () => cancelAnimationFrame(raf);
+  }, [focusNodeId, setFocusNode, setSelected]);
+
+  const nodeFill = (node: FGNode): string => {
+    if (colorMode === "cluster") return clusterColor(node.clusterId);
+    if (colorMode === "decay") return decayColor(decayLevel(node));
+    return categoryColor(node.category);
+  };
 
   const paintNode = (node: FGNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
     const norm = Math.min(1, (node.strength ?? 0) / maxStrength);
@@ -199,13 +233,50 @@ export function GraphCanvas() {
           addLink(from, id, "RELATED_TO", 0.7).then((res) => {
             if (!res.ok) addActivity("update", `bond failed — ${res.error ?? "unknown error"}`);
           });
-        } else {
-          setSelected(id);
+          lastClick.current = { id: "", at: 0 };
+          return;
+        }
+        // Manual double-click detection (react-force-graph-2d has no onNodeDblClick): a second
+        // click on the same node inside the window pulls in its neighbors.
+        const now = performance.now();
+        const isDouble = lastClick.current.id === id && now - lastClick.current.at < DBLCLICK_MS;
+        lastClick.current = { id, at: now };
+        setSelected(id);
+        if (isDouble) {
+          expandNeighborhood(id).then((res) => {
+            if (!res.ok) addActivity("update", `expand failed — ${res.error ?? "unknown error"}`);
+          });
         }
       }}
       onBackgroundClick={() => {
         if (linkingFrom) setLinkingFrom(null);
         else setSelected(null);
+      }}
+      onRenderFramePost={(ctx, globalScale) => {
+        // Community labels at hull centroids while cluster coloring is on.
+        if (colorMode !== "cluster" || clusterLabels.size === 0) return;
+        const sums = new Map<string, { x: number; y: number; n: number }>();
+        for (const node of visibleNodes as FGNode[]) {
+          const community = node.clusterId;
+          if (!community || !clusterLabels.has(community)) continue;
+          if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) continue;
+          const acc = sums.get(community) ?? { x: 0, y: 0, n: 0 };
+          acc.x += node.x ?? 0;
+          acc.y += node.y ?? 0;
+          acc.n += 1;
+          sums.set(community, acc);
+        }
+        ctx.save();
+        ctx.font = `${13 / globalScale}px system-ui, sans-serif`;
+        ctx.textAlign = "center";
+        for (const [community, acc] of sums) {
+          if (acc.n < 3) continue; // tiny communities: a label would just be noise
+          const label = clusterLabels.get(community);
+          if (!label) continue;
+          ctx.fillStyle = "rgba(226,232,240,0.42)";
+          ctx.fillText(label, acc.x / acc.n, acc.y / acc.n);
+        }
+        ctx.restore();
       }}
     />
   );

@@ -76,6 +76,20 @@ function getSseClient(): SseClient {
 }
 
 /**
+ * Dispose the shared SSE client so the next gqlSubscribe builds a fresh one. Used by the live
+ * supervisor when restarting all subscriptions after a transport failure — a disposed client's
+ * in-flight retries would otherwise linger alongside the new generation's connections.
+ */
+export function resetSseClient(): void {
+  try {
+    sseClient?.dispose();
+  } catch {
+    // ignore — the transport may already be dead
+  }
+  sseClient = null;
+}
+
+/**
  * Subscribe to a GraphQL subscription over SSE. Returns an unsubscribe function.
  * `onData` receives the `data` field of each event; errors are routed to `onError`.
  */

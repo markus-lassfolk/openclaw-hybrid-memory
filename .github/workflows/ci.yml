@@ -165,7 +165,7 @@ jobs:
           npm run test
 
   graph-app:
-    name: Memory Graph App (build)
+    name: Memory Graph App (build + browser smoke)
     needs: changes
     if: needs.changes.outputs.ci_required == 'true' || github.event_name == 'workflow_call'
     runs-on: ubuntu-latest
@@ -190,6 +190,22 @@ jobs:
         run: cd extensions/memory-hybrid/graph-app && npm run build
       - name: Smoke check build output
         run: test -f extensions/memory-hybrid/graph-app/dist/index.html
+      # Full-stack browser smoke: real dashboard server + built SPA + the runner's Chrome. Catches
+      # what unit tests can't — asset serving, schema drift at runtime, and the SSE live overlay.
+      - name: Cache plugin node_modules
+        uses: actions/cache@v6
+        with:
+          path: extensions/memory-hybrid/node_modules
+          key: ${{ runner.os }}-node-22.16-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-22.16-
+      - name: Install plugin dependencies
+        run: cd extensions/memory-hybrid && npm install
+      - name: Browser smoke (served SPA + live SSE against a real server)
+        env:
+          RUN_GRAPH_E2E: "1"
+          GRAPH_E2E_CHROMIUM: /usr/bin/google-chrome
+        run: cd extensions/memory-hybrid && npm test -- tests/graph-app-e2e.smoke.test.ts
 
   test-coverage:
     name: Test Coverage

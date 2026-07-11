@@ -403,7 +403,11 @@ export function getContradictions(db: DatabaseSync, factId?: string, limit?: num
     : (db
         .prepare(`SELECT * FROM contradictions WHERE resolved = 0 ORDER BY detected_at DESC${limitClause}`)
         .all() as Array<Record<string, unknown>>);
-  return rows.map((r) => ({
+  return rows.map(rowToContradictionRecord);
+}
+
+function rowToContradictionRecord(r: Record<string, unknown>): ContradictionRecord {
+  return {
     id: r.id as string,
     factIdNew: r.fact_id_new as string,
     factIdOld: r.fact_id_old as string,
@@ -412,7 +416,12 @@ export function getContradictions(db: DatabaseSync, factId?: string, limit?: num
     resolution: (r.resolution as "superseded" | "kept" | "merged" | null) ?? null,
     oldFactOriginalConfidence:
       r.old_fact_original_confidence == null ? undefined : (r.old_fact_original_confidence as number),
-  }));
+  };
+}
+
+export function getContradictionById(db: DatabaseSync, id: string): ContradictionRecord | null {
+  const row = db.prepare("SELECT * FROM contradictions WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+  return row ? rowToContradictionRecord(row) : null;
 }
 
 export function resolveContradiction(

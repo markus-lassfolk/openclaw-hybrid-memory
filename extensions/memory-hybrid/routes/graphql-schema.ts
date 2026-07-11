@@ -153,6 +153,9 @@ export const graphqlSchema = `#graphql
     clusterId: String
     tags: [String!]
     entity: String
+    # Epoch seconds this fact expires (null = no scheduled expiry) — drives the decay lens.
+    expiresAt: DateTime
+    createdAt: DateTime
   }
 
   type GraphEdge {
@@ -163,6 +166,14 @@ export const graphqlSchema = `#graphql
     target: ID!
     linkType: String!
     weight: Float!
+  }
+
+  # A labeled topic cluster (connected component of the link graph), for naming hulls in the UI.
+  type TopicCluster {
+    id: ID!
+    label: String!
+    factCount: Int!
+    factIds: [ID!]!
   }
 
   # A pair of facts that are semantically similar but not yet linked (embedding-based suggestion).
@@ -291,6 +302,14 @@ export const graphqlSchema = `#graphql
     staleImportantFacts(minImportance: Float, staleDays: Int, limit: Int): [Fact!]!
     # Embedding-backed similar-but-unlinked suggestions — on-demand only (never in base graph load).
     suggestedLinks(threshold: Float, limit: Int): [SuggestedLink!]!
+
+    # Recent recall history (newest first) for ActivityFeed hydration. Ownership-gated exactly like
+    # the recallOccurred subscription: identity-scoped callers only see their own agent/session
+    # recalls; hits are additionally trimmed per-fact to the caller's scope.
+    recentRecallEvents(limit: Int): [RecallEvent!]!
+
+    # Labeled topic clusters (scope-filtered connected components) for naming cluster hulls.
+    topicClusters(minSize: Int): [TopicCluster!]!
   }
 
   # Mutations
@@ -311,6 +330,10 @@ export const graphqlSchema = `#graphql
     # Curation: pin / unpin a fact so it stays central and decay-frozen.
     pinFact(id: ID!, reason: String): Fact!
     unpinFact(id: ID!): Fact!
+
+    # Curation: resolve a contradiction. With keepFactId, the OTHER fact is superseded by it
+    # (resolution "superseded"); without, both facts stand and the pair is marked "kept".
+    resolveContradiction(id: ID!, keepFactId: ID): ContradictionPair!
 
     # Bulk operations
     importFacts(facts: [CreateFactInput!]!): [Fact!]!

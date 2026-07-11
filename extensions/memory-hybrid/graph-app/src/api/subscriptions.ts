@@ -3,6 +3,14 @@
  * time as the agent stores, links, supersedes, and recalls memories.
  */
 import { gqlSubscribe } from "./client";
+import {
+  FACT_CREATED_SUBSCRIPTION,
+  FACT_DELETED_SUBSCRIPTION,
+  FACT_UPDATED_SUBSCRIPTION,
+  LINK_CREATED_SUBSCRIPTION,
+  LINK_UPDATED_SUBSCRIPTION,
+  RECALL_OCCURRED_SUBSCRIPTION,
+} from "./documents";
 import { estimateStrength } from "./strength";
 import type { GraphEdge, GraphNode, RecallEvent } from "./types";
 
@@ -16,6 +24,7 @@ interface SubFact {
   tags?: string[] | null;
   entity?: string | null;
   createdAt?: number | null;
+  expiresAt?: number | null;
   recallCount?: number | null;
   accessCount?: number | null;
   lastAccessedAt?: string | number | null;
@@ -31,12 +40,6 @@ interface SubLink {
   linkType: string;
   weight: number;
 }
-
-const FACT_FIELDS = `
-  id text category importance confidence decayClass tags entity createdAt
-  recallCount accessCount lastAccessedAt reinforcedCount pinned supersededBy
-`;
-const LINK_FIELDS = `id sourceId targetId linkType weight`;
 
 export function factToNode(f: SubFact): GraphNode {
   // NOTE: a Fact subscription payload does NOT carry the server-computed degree / contradicted /
@@ -68,6 +71,8 @@ export function factToNode(f: SubFact): GraphNode {
     superseded: Boolean(f.supersededBy),
     tags: f.tags ?? [],
     entity: f.entity ?? null,
+    expiresAt: f.expiresAt ?? null,
+    createdAt: f.createdAt ?? null,
   };
 }
 
@@ -80,7 +85,7 @@ export interface LiveHandlers {
   onFactDelete: (id: string) => void;
   onLinkUpsert: (edge: GraphEdge & { id: string }, kind: "create" | "update") => void;
   onRecall: (event: RecallEvent) => void;
-  onConnected: (connected: boolean) => void;
+  /** A subscription transport failed (after graphql-sse's own retries). The supervisor restarts. */
   onError: (err: unknown) => void;
 }
 
@@ -89,44 +94,41 @@ export function startLiveUpdates(h: LiveHandlers): () => void {
   const unsubs: Array<() => void> = [];
 
   unsubs.push(
-    gqlSubscribe<{ factCreated: SubFact }>(`subscription { factCreated { ${FACT_FIELDS} } }`, {
+    gqlSubscribe<{ factCreated: SubFact }>(FACT_CREATED_SUBSCRIPTION, {
       onData: (d) => h.onFactUpsert(factToNode(d.factCreated), "store"),
       onError: h.onError,
     }),
   );
   unsubs.push(
-    gqlSubscribe<{ factUpdated: SubFact }>(`subscription { factUpdated { ${FACT_FIELDS} } }`, {
+    gqlSubscribe<{ factUpdated: SubFact }>(FACT_UPDATED_SUBSCRIPTION, {
       onData: (d) => h.onFactUpsert(factToNode(d.factUpdated), "update"),
       onError: h.onError,
     }),
   );
   unsubs.push(
-    gqlSubscribe<{ factDeleted: string }>(`subscription { factDeleted }`, {
+    gqlSubscribe<{ factDeleted: string }>(FACT_DELETED_SUBSCRIPTION, {
       onData: (d) => h.onFactDelete(d.factDeleted),
       onError: h.onError,
     }),
   );
   unsubs.push(
-    gqlSubscribe<{ linkCreated: SubLink }>(`subscription { linkCreated { ${LINK_FIELDS} } }`, {
+    gqlSubscribe<{ linkCreated: SubLink }>(LINK_CREATED_SUBSCRIPTION, {
       onData: (d) => h.onLinkUpsert(linkToEdge(d.linkCreated), "create"),
       onError: h.onError,
     }),
   );
   unsubs.push(
-    gqlSubscribe<{ linkUpdated: SubLink }>(`subscription { linkUpdated { ${LINK_FIELDS} } }`, {
+    gqlSubscribe<{ linkUpdated: SubLink }>(LINK_UPDATED_SUBSCRIPTION, {
       onData: (d) => h.onLinkUpsert(linkToEdge(d.linkUpdated), "update"),
       onError: h.onError,
     }),
   );
   unsubs.push(
-    gqlSubscribe<{ recallOccurred: RecallEvent }>(
-      `subscription { recallOccurred { query source sessionKey occurredAt hits { factId score } } }`,
-      { onData: (d) => h.onRecall(d.recallOccurred), onError: h.onError },
-    ),
+    gqlSubscribe<{ recallOccurred: RecallEvent }>(RECALL_OCCURRED_SUBSCRIPTION, {
+      onData: (d) => h.onRecall(d.recallOccurred),
+      onError: h.onError,
+    }),
   );
-
-  // The SSE clients connect lazily; assume connected once subscriptions are registered.
-  h.onConnected(true);
 
   return () => {
     for (const u of unsubs) {
@@ -136,6 +138,5 @@ export function startLiveUpdates(h: LiveHandlers): () => void {
         // ignore teardown errors
       }
     }
-    h.onConnected(false);
   };
 }

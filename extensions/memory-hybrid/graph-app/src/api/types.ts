@@ -19,6 +19,9 @@ export interface GraphNode {
   clusterId?: string | null;
   tags?: string[] | null;
   entity?: string | null;
+  /** Epoch seconds this fact expires (null = no scheduled expiry) — drives the decay lens. */
+  expiresAt?: number | null;
+  createdAt?: number | null;
 }
 
 export interface GraphEdge {
@@ -88,13 +91,27 @@ export interface GraphInsights {
   staleImportantFacts: FactDetail[];
 }
 
-/** Live recall event (subscription payload). */
+/** Live recall event (subscription payload) — also the shape of recentRecallEvents history rows. */
 export interface RecallEvent {
   query?: string | null;
   source: string;
   sessionKey?: string | null;
   occurredAt: number;
   hits: Array<{ factId: string; score: number }>;
+}
+
+/** A labeled topic cluster from the server (scope-filtered link-graph component). */
+export interface TopicCluster {
+  id: string;
+  label: string;
+  factCount: number;
+  factIds: string[];
+}
+
+/** One server-side search hit (find-and-focus). */
+export interface SearchHit {
+  score: number;
+  fact: { id: string; text: string; category: string };
 }
 
 /** Known typed link kinds + a stable color per kind (kept in sync with the plugin). */

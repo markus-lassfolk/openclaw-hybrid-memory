@@ -15,9 +15,9 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { RecallHitPayload, RecallOccurredPayload } from "../services/memory-events.js";
 import type { MemoryScope, ScopeFilter } from "../types/memory.js";
 import { pluginLogger } from "../utils/logger.js";
-import { GLOBAL_ONLY_SCOPE_SENTINEL, scopeFilterFromIdentityHeaders } from "../utils/scope-filter.js";
+import { scopeFilterFromIdentityHeaders } from "../utils/scope-filter.js";
 import { graphqlPubSub } from "./graphql-pubsub.js";
-import { type GraphQLContext, isLinkVisible, resolvers } from "./graphql-resolvers.js";
+import { type GraphQLContext, isLinkVisible, resolvers, subscriberOwnsRecall } from "./graphql-resolvers.js";
 import { graphqlSchema } from "./graphql-schema.js";
 import { wireMemoryEventsToPubSub } from "./memory-events-bridge.js";
 
@@ -119,21 +119,9 @@ function visibleRecallHits(context: GraphQLContext, hits: RecallHitPayload[]): R
   return hits.filter((h) => context.factsDb.getById(h.factId, { scopeFilter: context.scopeFilter }) != null);
 }
 
-/**
- * May this subscriber receive a recall event's metadata (query/session/agent)? A caller with no
- * real identity — the header-less local operator, represented by the global-only sentinel agentId —
- * owns all activity on the box; an identity-scoped caller (multi-tenant) may only see recalls
- * originating from their own agent or session, never another tenant's.
- */
-export function subscriberOwnsRecall(scopeFilter: ScopeFilter, payload: RecallOccurredPayload): boolean {
-  const realAgentId =
-    scopeFilter.agentId && scopeFilter.agentId !== GLOBAL_ONLY_SCOPE_SENTINEL ? scopeFilter.agentId : null;
-  const identityScoped = Boolean(scopeFilter.userId || realAgentId || scopeFilter.sessionId);
-  if (!identityScoped) return true;
-  if (realAgentId && payload.agentId && realAgentId === payload.agentId) return true;
-  if (scopeFilter.sessionId && payload.sessionKey && scopeFilter.sessionId === payload.sessionKey) return true;
-  return false;
-}
+// Re-exported for the recall-subscription security tests: the ownership gate moved to the
+// resolver module so the recentRecallEvents history query shares the exact same logic.
+export { subscriberOwnsRecall } from "./graphql-resolvers.js";
 
 /**
  * Create GraphQL Yoga server instance

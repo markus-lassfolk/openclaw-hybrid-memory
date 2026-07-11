@@ -2,7 +2,11 @@
 // Keep this module conservative: it must compile against the real FactsDB API and
 // return safe placeholders for schema areas that are not implemented yet.
 
-import { getContradictions } from "../backends/facts-db/contradictions.js";
+import {
+  getContradictionById,
+  getContradictions,
+  resolveContradiction as resolveContradictionRow,
+} from "../backends/facts-db/contradictions.js";
 import { isPreStoreGuardBlocked } from "../backends/facts-db/crud.js";
 import type { MemoryLinkType } from "../backends/facts-db/types.js";
 import type { FactsDB } from "../backends/facts-db.js";
@@ -13,11 +17,14 @@ import type { EmbeddingProvider } from "../services/embeddings/types.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { computeNodeStrength, lastAccessSec } from "../services/graph-node-metrics.js";
 import { detectSuggestedLinks } from "../services/knowledge-gaps.js";
+import type { RecallOccurredPayload } from "../services/memory-events.js";
+import { listRecentRecallEvents } from "../services/recall-events.js";
+import { detectClusters as detectTopicClusters } from "../services/topic-clusters.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
 import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
 import { pluginLogger } from "../utils/logger.js";
-import { scopeFieldsFromFilter } from "../utils/scope-filter.js";
+import { GLOBAL_ONLY_SCOPE_SENTINEL, scopeFieldsFromFilter } from "../utils/scope-filter.js";
 
 export type GraphQLContext = {
   factsDb: FactsDB;
@@ -428,6 +435,23 @@ function createStoreInput(input: Record<string, unknown>, context: GraphQLContex
   };
 }
 
+/**
+ * May this subscriber/reader receive a recall event's metadata (query/session/agent)? A caller
+ * with no real identity — the header-less local operator, represented by the global-only sentinel
+ * agentId — owns all activity on the box; an identity-scoped caller (multi-tenant) may only see
+ * recalls originating from their own agent or session, never another tenant's. Shared by the
+ * recallOccurred subscription gate and the recentRecallEvents history query.
+ */
+export function subscriberOwnsRecall(scopeFilter: ScopeFilter, payload: RecallOccurredPayload): boolean {
+  const realAgentId =
+    scopeFilter.agentId && scopeFilter.agentId !== GLOBAL_ONLY_SCOPE_SENTINEL ? scopeFilter.agentId : null;
+  const identityScoped = Boolean(scopeFilter.userId || realAgentId || scopeFilter.sessionId);
+  if (!identityScoped) return true;
+  if (realAgentId && payload.agentId && realAgentId === payload.agentId) return true;
+  if (scopeFilter.sessionId && payload.sessionKey && scopeFilter.sessionId === payload.sessionKey) return true;
+  return false;
+}
+
 async function cleanupGraphqlEviction(context: GraphQLContext, evictedFactId: string | null | undefined) {
   if (!context.vectorDb || !evictedFactId) return;
   await cleanupEvictedVector({
@@ -612,6 +636,40 @@ export const resolvers: GraphQLResolvers = {
         .slice(0, limit);
     },
 
+    recentRecallEvents: (_parent, args, context) => {
+      const limit = Math.max(1, Math.min(200, asNumber(asRecord(args).limit) ?? 50));
+      // SECURITY: same two gates as the live recallOccurred subscription. Ownership first — an
+      // identity-scoped tenant only sees recalls from their own agent/session (the query text and
+      // session metadata are sensitive) — then per-hit scope trimming. One in-scope id set is built
+      // up front instead of a getById per hit (a history page of 50 events × 100 hits would
+      // otherwise hydrate up to 5000 rows).
+      const inScopeIds = new Set(allFacts(context, true).map((fact) => fact.id));
+      const events = listRecentRecallEvents(context.factsDb.getRawDb(), 200);
+      const out: RecallOccurredPayload[] = [];
+      for (const event of events) {
+        if (out.length >= limit) break;
+        if (!subscriberOwnsRecall(context.scopeFilter, event)) continue;
+        out.push({ ...event, hits: event.hits.filter((hit) => inScopeIds.has(hit.factId)) });
+      }
+      return out;
+    },
+
+    topicClusters: (_parent, args, context) => {
+      const minSize = Math.max(2, Math.min(50, asNumber(asRecord(args).minSize) ?? 3));
+      // detectClusters scope-checks every member fact before it can enter a cluster, so the
+      // labels/ids below never encode another tenant's facts.
+      const result = detectTopicClusters(context.factsDb, {
+        minClusterSize: minSize,
+        scopeFilter: context.scopeFilter,
+      });
+      return result.clusters.slice(0, 100).map((cluster) => ({
+        id: cluster.id,
+        label: cluster.label,
+        factCount: cluster.factCount,
+        factIds: cluster.factIds,
+      }));
+    },
+
     graph: (_parent, args, context) => {
       const filter = asRecord(asRecord(args).filter);
       const categories = asStringArray(filter.categories);
@@ -720,6 +778,8 @@ export const resolvers: GraphQLResolvers = {
           clusterId: null,
           tags: fact.tags ?? [],
           entity: fact.entity ?? null,
+          expiresAt: fact.expiresAt ?? null,
+          createdAt: fact.createdAt,
         })),
         edges: [...linkEdges, ...supersedeEdges],
       };
@@ -963,6 +1023,49 @@ export const resolvers: GraphQLResolvers = {
       if (!existing) throw new Error(`Fact not found: ${id}`);
       context.factsDb.unpinFact(id);
       return context.factsDb.getById(id, { scopeFilter: context.scopeFilter });
+    },
+
+    resolveContradiction: async (_parent, args, context) => {
+      const input = asRecord(args);
+      const id = asString(input.id);
+      const keepFactId = asString(input.keepFactId);
+      if (!id) throw new Error("Missing contradiction id");
+      const db = context.factsDb.getRawDb();
+      const record = getContradictionById(db, id);
+      // SECURITY: fail-closed — both facts must be in the caller's scope (mirrors
+      // collectContradictionPairs), and the same "not found" is thrown whether the row is missing
+      // or merely out of scope, so the id space can't be probed as an existence oracle.
+      const factNew = record && context.factsDb.getById(record.factIdNew, { scopeFilter: context.scopeFilter });
+      const factOld = record && context.factsDb.getById(record.factIdOld, { scopeFilter: context.scopeFilter });
+      if (!record || !factNew || !factOld) throw new Error(`Contradiction not found: ${id}`);
+      if (record.resolved) throw new Error(`Contradiction already resolved: ${id}`);
+
+      let resolution: "superseded" | "kept" = "kept";
+      if (keepFactId) {
+        if (keepFactId !== record.factIdNew && keepFactId !== record.factIdOld) {
+          throw new Error("keepFactId must be one of the contradicting facts");
+        }
+        const loserId = keepFactId === record.factIdNew ? record.factIdOld : record.factIdNew;
+        const applied = context.factsDb.supersede(loserId, keepFactId);
+        if (!applied) throw new Error(`Fact supersede did not apply: ${loserId}`);
+        if (context.vectorDb) {
+          await deleteVectorForFactId({
+            vectorDb: context.vectorDb,
+            factId: loserId,
+            logger: pluginLogger,
+            context: "graphql-resolve-contradiction",
+          });
+        }
+        resolution = "superseded";
+      }
+      resolveContradictionRow(db, id, resolution);
+      return {
+        id: record.id,
+        factNew: context.factsDb.getById(record.factIdNew, { scopeFilter: context.scopeFilter }),
+        factOld: context.factsDb.getById(record.factIdOld, { scopeFilter: context.scopeFilter }),
+        detectedAt: record.detectedAt,
+        resolution,
+      };
     },
 
     importFacts: async (_parent, args, context) => {

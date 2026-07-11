@@ -45,9 +45,15 @@ cd extensions/memory-hybrid/graph-app && npm ci && npm run build
   `computeNodeStrength` the retrieval engine's composite score is built from). Central = load-bearing.
 - **Typed, colored bonds.** `RELATED_TO`, `CAUSED_BY`, `PART_OF`, `DEPENDS_ON`, `SUPERSEDES`,
   `INSTANCE_OF`, `CONTRADICTS` each have a distinct color; edge width tracks strength.
-- **Clusters.** Toggle *color by cluster* to run client-side community detection (Louvain) and see
-  how memories group into topics.
-- **Filter.** By category, minimum strength, superseded visibility, and free-text/entity search.
+- **Three color lenses.** *category* (memory kind), *cluster* (client-side Louvain communities with
+  **named hulls** — labels come from the server's topic clusters, falling back to each community's
+  dominant entity/tag), and *decay* (green fresh → red stale/expiring, from last access, decay class,
+  and any scheduled `expiresAt` — spot important memories fading before they're gone).
+- **Filter & find.** Filter the view by category, minimum strength, superseded visibility, and
+  free-text/entity search. The same search box also queries the **full store server-side** — pick a
+  hit outside the loaded view and the app pulls it (plus its neighbors) in and flies to it.
+- **Explore outward.** Double-click any star (or *Expand* in the inspector) to pull its immediate
+  neighbors into the view — no full reload, the existing layout stays put.
 
 ### Watch it think (real-time overlay)
 When the agent (or you) operates on memory, the graph updates without a reload:
@@ -55,6 +61,12 @@ When the agent (or you) operates on memory, the graph updates without a reload:
 - **Recalled memories pulse** — an expanding ring marks exactly which facts were called upon, with
   the recall's per-fact scores.
 - A **live activity feed** streams stores, recalls, and bonds; a green dot shows the live connection.
+  On open, the feed **hydrates with recent recall history** (from the persisted `recall_events`
+  table, ownership-gated per caller) so you see what the agent has been recalling lately, not just
+  from-now-on.
+- **Self-healing connection.** If the SSE transport drops (gateway restart, laptop sleep), the app
+  reconnects with backoff and **re-fetches the base graph to reconcile anything missed** — the view
+  never silently drifts from reality, and settled stars keep their positions through the resync.
 
 This works for the *whole* write surface — the `memory_store`/`memory_link` tools, auto-capture,
 CLI, GraphQL, and maintenance — not just changes made through the app.
@@ -72,7 +84,8 @@ The *gaps* panel surfaces where the graph needs attention, each item actionable:
 - **Orphans** — unlinked, never-recalled facts → prune or connect.
 - **Suggested links** — embedding-similar but unlinked pairs → accept to bond (needs an embedding
   provider; on-demand only).
-- **Conflicts** — unresolved contradictions between facts.
+- **Conflicts** — unresolved contradictions, resolvable in place: *keep new* / *keep old*
+  (the loser is superseded by the winner) or *both fine* (both stand, conflict marked reviewed).
 - **Weak** — low-strength bonds → cut.
 - **Stale** — high-importance facts not accessed in a while.
 
@@ -133,8 +146,17 @@ npm run build      # typecheck + production build → graph-app/dist
 ```
 
 Stack: React 18 + TypeScript + Vite, `react-force-graph-2d` (canvas) with a d3 `forceRadial`
-strength layout, `graphology` + `graphology-communities-louvain` for clustering, `zustand` for state,
-and `graphql-sse` for subscriptions.
+strength layout, `graphology` + `graphology-communities-louvain` for clustering (lazy-loaded into
+its own chunk), `zustand` for state, and `graphql-sse` for subscriptions.
+
+Two guards keep the app honest in CI:
+- **Schema parity** — every GraphQL document the app sends lives in `src/api/documents.ts`
+  (dependency-free); the plugin test `tests/graph-app-schema-parity.test.ts` validates each one
+  against the live schema, so client/server drift fails CI instead of breaking at runtime.
+- **Browser smoke** — `tests/graph-app-e2e.smoke.test.ts` (gated by `RUN_GRAPH_E2E=1`) boots the
+  real dashboard server with a seeded FactsDB, loads the *built* SPA in headless Chromium, and
+  asserts the constellation renders, recall history hydrates, and a server-side write arrives over
+  live SSE. Locally: `RUN_GRAPH_E2E=1 GRAPH_E2E_CHROMIUM=<chrome path> npm test -- tests/graph-app-e2e.smoke.test.ts`.
 
 ---
 

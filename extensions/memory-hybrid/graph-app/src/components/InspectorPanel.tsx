@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { type FactWithLinks, fetchFact } from "../api/queries";
-import { changeLink, editFactText, removeFact, removeLink, setPinned } from "../live/curation";
+import { changeLink, editFactText, expandNeighborhood, removeFact, removeLink, setPinned } from "../live/curation";
 import { useGraphStore } from "../store/graphStore";
 import { categoryColor, COLORS, linkColor } from "../theme";
 import { LINK_TYPES } from "../api/types";
@@ -130,6 +130,14 @@ export function InspectorPanel() {
                 onClick={() => setLinkingFrom(linkingFrom === selectedId ? null : selectedId)}
               >
                 {linkingFrom === selectedId ? "Cancel bond" : "Add bond"}
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                title="Pull this memory's neighbors into the view (also: double-click the star)"
+                onClick={() => run(() => expandNeighborhood(selectedId))}
+              >
+                Expand
               </button>
               <button
                 type="button"
