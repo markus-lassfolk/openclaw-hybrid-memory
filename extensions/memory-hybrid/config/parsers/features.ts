@@ -160,6 +160,14 @@ export function parseGraphRetrievalConfig(cfg: Record<string, unknown>): GraphRe
       typeof graphRetrievalRaw?.maxExpandedResults === "number" && graphRetrievalRaw.maxExpandedResults >= 0
         ? Math.min(50, Math.floor(graphRetrievalRaw.maxExpandedResults))
         : 20,
+    autoRecallExpand: {
+      enabled: (graphRetrievalRaw?.autoRecallExpand as Record<string, unknown> | undefined)?.enabled !== false,
+      maxAdds:
+        typeof (graphRetrievalRaw?.autoRecallExpand as Record<string, unknown> | undefined)?.maxAdds === "number" &&
+        ((graphRetrievalRaw?.autoRecallExpand as Record<string, unknown>).maxAdds as number) > 0
+          ? Math.floor((graphRetrievalRaw?.autoRecallExpand as Record<string, unknown>).maxAdds as number)
+          : 5,
+    },
   };
 }
 

@@ -79,6 +79,12 @@ export type GraphRetrievalConfig = {
   maxExpandDepth: number;
   /** Maximum number of graph-expanded results appended to direct matches (default: 20). */
   maxExpandedResults: number;
+  /** Associative expansion on the AUTO-recall hot path: 1-hop neighbors of top seeds (default on). */
+  autoRecallExpand: {
+    enabled: boolean;
+    /** Max expanded facts appended to the ambient candidate set (default 5). */
+    maxAdds: number;
+  };
 };
 
 /** Topic cluster detection configuration (Issue #146). */

@@ -16,12 +16,17 @@ import {
 } from "../../services/ambient-retrieval.js";
 import { loadKnownEntitySurfaces, matchEntitySurfacesInText } from "../../services/entity-retrieval.js";
 import { capturePluginError } from "../../services/error-reporter.js";
+import { expandGraph } from "../../services/graph-retrieval.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
 import { type RecallPipelineDeps, runRecallPipelineQuery } from "../../services/recall-pipeline.js";
 import { mergeSearchResultsByBestScore } from "../../services/merge-results.js";
 import { createRecallSpan, createRecallTimingLogger } from "../../services/recall-timing.js";
 import { filterCandidatesByInteractiveGrading } from "../../services/interactive-recall-grader.js";
-import { consumePrependBudget, getRemainingPrependTokens, initPrependBudgetWithInjectorReserve } from "../../services/prepend-budget.js";
+import {
+  consumePrependBudget,
+  getRemainingPrependTokens,
+  initPrependBudgetWithInjectorReserve,
+} from "../../services/prepend-budget.js";
 import {
   assembleRecallPrependContext,
   edictMaxTokensForBudget,
@@ -590,6 +595,42 @@ export async function runRecall(
       }
       if (candidates.length > 0) {
         skipPostMainRecallEnrichment = true;
+      }
+    }
+
+    // Associative recall on the hot path (living-memory P3.1): pull 1-hop graph neighbors of the
+    // strongest matches into the candidate set (hop-decayed scores), so injected context includes
+    // what the memory ASSOCIATES with the topic — not just what embeds like the prompt. Pure
+    // SQLite hops, bounded by maxAdds + hubDegreeCap; failures never affect the recall.
+    const autoExpandCfg = ctx.cfg.graphRetrieval?.autoRecallExpand;
+    if (
+      !skipPostMainRecallEnrichment &&
+      candidates.length > 0 &&
+      ctx.cfg.graph.enabled &&
+      ctx.cfg.graphRetrieval?.enabled !== false &&
+      autoExpandCfg?.enabled !== false
+    ) {
+      try {
+        const seenIds = new Set(candidates.map((c) => c.entry.id));
+        const seeds = candidates.slice(0, 3).map((c) => ({ factId: c.entry.id, score: c.score, entry: c.entry }));
+        const { results: expanded } = expandGraph(ctx.factsDb, seeds, {
+          maxDepth: 1,
+          maxExpandedResults: autoExpandCfg?.maxAdds ?? 5,
+          scopeFilter,
+          hubDegreeCap: ctx.cfg.graph.hubDegreeCap,
+          hubScorePenalty: ctx.cfg.graph.hubScorePenalty,
+        });
+        for (const ex of expanded) {
+          if (ex.expansionSource !== "graph" || seenIds.has(ex.entry.id)) continue;
+          // Ambient association follows STRONG meaning-edges only: temporal adjacency
+          // (PRECEDED_BY) and weak bonds (< 0.4, e.g. 0.3 session co-occurrence links) would
+          // inject whatever happened nearby, not what the memory associates with the topic.
+          if (ex.linkPath.some((step) => step.linkType === "PRECEDED_BY" || step.strength < 0.4)) continue;
+          seenIds.add(ex.entry.id);
+          candidates.push({ entry: ex.entry, score: ex.score, backend: "sqlite" });
+        }
+      } catch (err) {
+        api.logger.warn(`memory-hybrid: auto-recall graph expansion failed: ${err}`);
       }
     }
     if (

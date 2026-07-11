@@ -319,6 +319,29 @@ describe("Memory journey e2e — full register() stack", () => {
     expect(toolRecall.details?.memories?.some((m) => m.text.includes(QUERY_ANCHOR_PHRASE))).toBe(true);
   }, 60_000);
 
+  it("auto-recall pulls 1-hop graph neighbors into ambient context (associative recall)", async () => {
+    await registerJourney({ retrieval: { strategies: ["fts5"] } });
+    const store = api.getTool("memory_store")!;
+
+    const a = (await store.execute("c1", {
+      text: `AcmeCorp ${QUERY_ANCHOR_PHRASE} ${DEPLOY_MARKER}`,
+      category: "project",
+      importance: 0.9,
+    })) as { details?: { id?: string } };
+    const b = (await store.execute("c1", {
+      text: `AcmeCorp ${LINKED_NEIGHBOR_PHRASE}`,
+      category: "project",
+      importance: 0.9,
+    })) as { details?: { id?: string } };
+    runtimeRef.value!.factsDb.createLink(a.details!.id!, b.details!.id!, "RELATED_TO", 0.9);
+
+    // The prompt matches ONLY fact A lexically; B must arrive via the graph edge.
+    const results = await invokeHooks(api, "before_agent_start", { prompt: "zephyr port 9911 status?" }, HOOK_CTX);
+    const prepend = mergePrependFromHookResults(results);
+    expect(prepend).toContain(QUERY_ANCHOR_PHRASE);
+    expect(prepend).toContain(LINKED_NEIGHBOR_PHRASE);
+  }, 60_000);
+
   it("memory_recall query path reinforces results (recall_count + TTL renewal) but never asOf reads", async () => {
     await registerJourney({ retrieval: { strategies: ["fts5"] } });
     const store = api.getTool("memory_store")!;
