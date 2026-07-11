@@ -2736,6 +2736,96 @@ describe("FactsDB.getByCategory", () => {
     expect(prefs.length).toBe(2);
     expect(prefs.every((e) => e.category === "preference")).toBe(true);
   });
+
+  it("excludes superseded facts (#2067-followup)", () => {
+    const original = db.store({
+      text: "Original rule",
+      category: "rule",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.getRawDb().prepare("UPDATE facts SET superseded_at = ? WHERE id = ?").run(Math.floor(Date.now() / 1000), original.id);
+    db.store({
+      text: "Replacement rule",
+      category: "rule",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    const rules = db.getByCategory("rule");
+    expect(rules.map((r) => r.text)).toEqual(["Replacement rule"]);
+  });
+
+  it("excludes expired facts (#2067-followup)", () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const expired = db.store({
+      text: "Expired preference",
+      category: "preference",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.getRawDb().prepare("UPDATE facts SET expires_at = ? WHERE id = ?").run(nowSec - 100, expired.id);
+    db.store({
+      text: "Live preference",
+      category: "preference",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    const prefs = db.getByCategory("preference");
+    expect(prefs.map((p) => p.text)).toEqual(["Live preference"]);
+  });
+});
+
+describe("rowToMemoryEntry falsy-zero timestamp fields (#2074-followup)", () => {
+  it("preserves an explicit expiresAt of 0 instead of coercing it to null", () => {
+    const fact = db.store({
+      text: "Immediately-expired fact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      expiresAt: 0,
+    });
+
+    expect(fact.expiresAt).toBe(0);
+    const reread = db.getById(fact.id);
+    expect(reread?.expiresAt).toBe(0);
+  });
+
+  it("preserves a raw 0 for lastAccessed/lastIndexed/supersededAt instead of coercing to null", () => {
+    const fact = db.store({
+      text: "Fact with zeroed timestamp columns",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.getRawDb()
+      .prepare("UPDATE facts SET last_accessed = 0, last_indexed = 0, superseded_at = 0 WHERE id = ?")
+      .run(fact.id);
+
+    const reread = db.getById(fact.id, { scopeFilter: null });
+    expect(reread?.lastAccessed).toBe(0);
+    expect(reread?.lastIndexed).toBe(0);
+    expect(reread?.supersededAt).toBe(0);
+  });
 });
 
 describe("FactsDB.getRecentFacts", () => {

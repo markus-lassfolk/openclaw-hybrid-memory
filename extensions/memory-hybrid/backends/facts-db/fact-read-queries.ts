@@ -487,10 +487,18 @@ export function getHotFacts(db: DatabaseSync, maxTokens: number, scopeFilter?: S
 }
 
 export function getByCategory(db: DatabaseSync, category: string, globalOnly?: boolean): MemoryEntry[] {
+  const nowSec = Math.floor(Date.now() / 1000);
   const scopeClause = globalOnly ? " AND scope = 'global'" : "";
   const rows = db
-    .prepare(`SELECT * FROM facts WHERE category = ?${scopeClause} ORDER BY created_at DESC`)
-    .all(category) as Array<Record<string, unknown>>;
+    .prepare(
+      `SELECT * FROM facts
+         WHERE category = ?
+           AND superseded_at IS NULL
+           AND (expires_at IS NULL OR expires_at > ?)
+           ${scopeClause}
+         ORDER BY created_at DESC`,
+    )
+    .all(category, nowSec) as Array<Record<string, unknown>>;
   return rows.map((row) => rowToMemoryEntry(row));
 }
 

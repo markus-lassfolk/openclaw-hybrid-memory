@@ -698,7 +698,7 @@ export class FactsDBLayer1 extends BaseSqliteStore {
   getConnectedFactIds(
     factIds: string[],
     maxDepth: number,
-    options?: { hubDegreeCap?: number | null; stats?: GraphConnectedStats },
+    options?: { hubDegreeCap?: number | null; stats?: GraphConnectedStats; scopeFilter?: ScopeFilter | null },
   ): string[] {
     return getConnectedFactIdsHelper(this.liveDb, factIds, maxDepth, options);
   }

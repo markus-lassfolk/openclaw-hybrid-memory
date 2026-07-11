@@ -107,6 +107,35 @@ describe("scope prune vector cleanup", () => {
   });
 });
 
+describe("scope promote validation exit code (#2067-followup)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    process.exitCode = undefined;
+  });
+
+  it("sets process.exitCode instead of killing the host process on invalid --threshold-days", async () => {
+    const mem = makeProgram({ factsDb: {}, vectorDb: {} });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    // A raw process.exit(1) here (instead of process.exitCode = 1; return;) would previously
+    // terminate the entire embedding host process -- not just this command -- since it bypasses
+    // withExit's isStandaloneCliProcess() guard entirely. If this test doesn't hang/crash the
+    // worker, the guard held.
+    await mem.parseAsync(["scope", "promote", "--threshold-days", "not-a-number"], { from: "user" });
+
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("sets process.exitCode instead of killing the host process on invalid --min-importance", async () => {
+    const mem = makeProgram({ factsDb: {}, vectorDb: {} });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await mem.parseAsync(["scope", "promote", "--min-importance", "1.5"], { from: "user" });
+
+    expect(process.exitCode).toBe(1);
+  });
+});
+
 describe("scope promote --verbose heartbeat", () => {
   let db: InstanceType<typeof FactsDB>;
 
