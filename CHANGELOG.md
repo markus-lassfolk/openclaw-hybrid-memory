@@ -25,6 +25,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.211] - 2026-07-11
+
+### Fixed
+
+Targeted codebase-wide sweep for the falsy-zero `(row.x as number) || default` pattern fixed twice already this session (v2026.7.209, v2026.7.210), to check whether it had spread further:
+
+- **`backends/facts-db/search.ts`** (correctness, latent): `searchFacts()` also read `const freshness = (row.freshness as number) || 1.0;` — `freshness` is computed a few lines earlier as exactly `0.0` for an already-expired fact, specifically to signal "no freshness left" in the composite ranking score. The `|| 1.0` silently threw that signal away, scoring an expired fact as if it were brand new. Currently unreachable in production (the `freshness = 0.0` branch is only hit when a caller passes `includeExpired: true`, which no current call site does — expired facts are excluded by the default filter before freshness is even computed), but fixed for the same reason the other latent instances were: cheap, zero-risk, and consistent with every other numeric field in this file. Switched to `??`.
+
+One related finding was investigated and deliberately left unfixed, this time for a substantive reason rather than low risk/benefit: `backends/facts-db/contradictions.ts`'s `resolve-contradictions --auto` manual-review path has `confidence: clampConfidence(decision.confidence) || 1`, where `clampConfidence()` already collapses two different cases — "no confidence value was provided in the review file" and "a human reviewer explicitly wrote confidence: 0" — into the same return value (`0`). Fixing the `||` here to `??` would not actually fix anything, because the ambiguity is baked into `clampConfidence()` itself, one level up; disentangling "missing" from "explicit zero" requires a genuine design decision (should an explicit zero-confidence override still apply, or should it be rejected?) on a low-traffic, operator-only path, not a mechanical `||`→`??` swap. Flagged for a human product decision rather than fixed unilaterally.
+
+A full sweep of the rest of the codebase (all raw-SQL-row-reading sites across `backends/`, `services/`, `routes/`, `tools/`, `cli/`) found no other instances of this bug class — every remaining `||`-with-non-zero-default hit was on a string field with a string default (fine — an empty string is never ambiguous with the default) or a numeric field whose own default is already `0` (fine — `x || 0` and `x ?? 0` are equivalent).
+
+Fix verified via a stash-based regression proof (mutating a single fact's `expires_at` between two `search()` calls to isolate the freshness contribution to the composite score, without introducing BM25/confidence variance). tsc clean, biome clean, targeted test suites passing (226/229, 3 pre-existing skips unrelated to this change).
+
 ## [2026.7.210] - 2026-07-11
 
 ### Fixed

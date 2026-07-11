@@ -189,7 +189,7 @@ export function searchFacts(
   const results = rows.map((row) => {
     const rawScore = 1 - ((row.fts_score as number) - minScore) / range;
     const bm25Score = Number.isNaN(rawScore) ? 0.8 : rawScore;
-    const freshness = (row.freshness as number) || 1.0;
+    const freshness = (row.freshness as number) ?? 1.0;
     const confidence = (row.confidence as number) ?? 1.0;
     const reinforcedCount = (row.reinforced_count as number) || 0;
     let reinforcement = 0;

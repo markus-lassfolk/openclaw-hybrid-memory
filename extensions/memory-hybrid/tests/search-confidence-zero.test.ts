@@ -85,3 +85,36 @@ describe("search score confidence=0 consistency (#2074-followup)", () => {
     expect(scoreAtZeroConfidence).toBeLessThan(scoreAtFullConfidence);
   });
 });
+
+describe("search score freshness=0 consistency (#2074-followup-2)", () => {
+  it("searchFacts scores an already-expired fact (freshness=0) lower than the same fact unexpired", () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const fact = factsDb.store({
+      text: "Ephemeral gadget wombat schedule",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    factsDb.getRawDb().prepare("UPDATE facts SET expires_at = ? WHERE id = ?").run(nowSec + 1_000_000, fact.id);
+
+    const beforeResults = factsDb.search("Ephemeral gadget wombat", 5, { includeExpired: true });
+    expect(beforeResults.length).toBe(1);
+    const scoreWhileFresh = beforeResults[0].score;
+
+    // searchFacts computes freshness=0.0 for an already-expired fact (expires_at <= now) -- but
+    // that branch is only reached when a caller explicitly opts into includeExpired: true, since
+    // the default filter excludes expired facts outright.
+    factsDb.getRawDb().prepare("UPDATE facts SET expires_at = ? WHERE id = ?").run(nowSec - 100, fact.id);
+
+    const afterResults = factsDb.search("Ephemeral gadget wombat", 5, { includeExpired: true });
+    expect(afterResults.length).toBe(1);
+    const scoreAfterExpiry = afterResults[0].score;
+
+    // Same fact, same text/bm25/confidence -- only freshness dropped from 1.0 to 0.0. The
+    // composite score must reflect that, not silently keep scoring as if still fully fresh.
+    expect(scoreAfterExpiry).toBeLessThan(scoreWhileFresh);
+  });
+});
