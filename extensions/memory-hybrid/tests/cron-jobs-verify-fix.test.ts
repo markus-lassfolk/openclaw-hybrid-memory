@@ -130,6 +130,8 @@ describe("ensureMaintenanceCronJobs verify --fix (#1971, #1972)", () => {
       "crystallization.enabled": true,
       "workshop.enabled": true,
       "lifecycle.adapters.github.enabled": true,
+      // research is the one default-ON gate (proactive research loop ships enabled)
+      "research.enabled": true,
     });
   });
 

@@ -1,17 +1,18 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-import type { DigestWeeklyDeliveryConfig } from "../../config.js";
+import type { DigestWeeklyDeliveryConfig, ResearchDeliveryConfig } from "../../config.js";
 import { type CronModelConfig, getDefaultCronModel } from "../../config.js";
 import { acquireStepLock, buildGuardPrefix, releaseStepLock } from "../../services/cron-guard.js";
 import {
-  HYBRID_MEM_CRON_ENV_SANITIZER_MARKER,
   buildHybridMemCronTaskMessage,
+  HYBRID_MEM_CRON_ENV_SANITIZER_MARKER,
   hybridMemCronEnvSanitizerBashLines,
 } from "../../services/cron-job-bash-harness.js";
 import { findDeprecatedHybridMemCronTokens } from "../../services/deprecated-cron-commands.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { readOpenClawCronStore, writeOpenClawCronStore } from "../../services/openclaw-cron-store.js";
+import { buildResearchOvernightCronMessage } from "../../services/research-cron-message.js";
 import {
   extractCronStoreJobModel,
   readAgentsPrimaryModelFromOpenclawJsonPath,
@@ -183,6 +184,9 @@ const MIN_INTERVAL_MS: Record<string, number> = {
   monthly: 25 * 24 * 60 * 60 * 1000, // 25 days (monthly jobs)
 };
 
+/** Stable id of the overnight research agent job (proactive research loop A3). */
+export const RESEARCH_OVERNIGHT_JOB_ID = `${PLUGIN_JOB_ID_PREFIX}research-overnight`;
+
 /** Single consolidated nightly job — orchestrator handles staggered per-step guards. */
 const CONSOLIDATED_CRON_JOBS: Array<
   Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy"; minIntervalMs?: number; featureGate?: string }
@@ -223,6 +227,7 @@ export function buildMaintenanceCronFeatureGates(cfg: {
   crystallization?: { enabled?: boolean };
   workshop?: { enabled?: boolean };
   lifecycle?: { adapters?: { github?: { enabled?: boolean } } };
+  research?: { enabled?: boolean };
 }): Record<string, boolean> {
   return {
     "sensorSweep.enabled": cfg.sensorSweep?.enabled === true,
@@ -230,6 +235,8 @@ export function buildMaintenanceCronFeatureGates(cfg: {
     "crystallization.enabled": cfg.crystallization?.enabled === true,
     "workshop.enabled": cfg.workshop?.enabled === true,
     "lifecycle.adapters.github.enabled": cfg.lifecycle?.adapters?.github?.enabled === true,
+    // Default-ON gate (unlike the opt-in features above): the research loop ships enabled.
+    "research.enabled": cfg.research?.enabled !== false,
   };
 }
 
@@ -433,7 +440,9 @@ const MAINTENANCE_CRON_JOBS: Array<
     channel: "system",
     message: buildHybridMemCronTaskMessage("weekly-vectordb-optimize-sunday", {
       preamble: "Weekly LanceDB optimize (Sunday). Report compacted fragments and bytes freed.",
-      steps: [{ name: "vectordb-optimize", cmd: "openclaw hybrid-mem vectordb-optimize --older-than-days 7 --verbose" }],
+      steps: [
+        { name: "vectordb-optimize", cmd: "openclaw hybrid-mem vectordb-optimize --older-than-days 7 --verbose" },
+      ],
     }),
     isolated: true,
     modelTier: "nano",
@@ -534,6 +543,24 @@ const MAINTENANCE_CRON_JOBS: Array<
     enabled: false,
     minIntervalMs: MIN_INTERVAL_MS.twiceDaily,
     featureGate: "workshop.enabled",
+    supersededByOrchestrator: false,
+  },
+
+  // Daily 03:30 (configurable via research.schedule) | research-overnight | proactive research loop A3:
+  // isolated heavy-model agent picks the queued concern (if any), researches it with web tools, and
+  // stores a briefing via the single-writer research CLI. Most nights it no-ops ("SKIPPED").
+  {
+    pluginJobId: RESEARCH_OVERNIGHT_JOB_ID,
+    sessionTarget: "isolated",
+    name: "research-overnight",
+    schedule: { kind: "cron", expr: "30 3 * * *" },
+    channel: "system",
+    message: buildResearchOvernightCronMessage(),
+    isolated: true,
+    modelTier: "heavy",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.daily,
+    featureGate: "research.enabled",
     supersededByOrchestrator: false,
   },
 
@@ -677,14 +704,10 @@ function isSupersededByConsolidatedOrchestrator(job: (typeof MAINTENANCE_CRON_JO
 
 /** Standalone / optional jobs still normalized in consolidated orchestrator mode (#1972). */
 function getConsolidatedOptionalNormalizeJobDefs(): typeof MAINTENANCE_CRON_JOBS {
-  return MAINTENANCE_CRON_JOBS.filter(
-    (job) => job.supersededByOrchestrator === false || job.normalizeOnly === true,
-  );
+  return MAINTENANCE_CRON_JOBS.filter((job) => job.supersededByOrchestrator === false || job.normalizeOnly === true);
 }
 
-function buildMaintenanceCronJobDefsForEnsure(options: {
-  useConsolidated: boolean;
-}): typeof MAINTENANCE_CRON_JOBS {
+function buildMaintenanceCronJobDefsForEnsure(options: { useConsolidated: boolean }): typeof MAINTENANCE_CRON_JOBS {
   if (!options.useConsolidated) return MAINTENANCE_CRON_JOBS;
   const consolidatedIds = new Set(CONSOLIDATED_CRON_JOBS.map((job) => job.pluginJobId as string));
   const optional = getConsolidatedOptionalNormalizeJobDefs().filter(
@@ -767,6 +790,17 @@ function resolveWeeklyPendingDigestDelivery(del?: DigestWeeklyDeliveryConfig): R
   return { mode: "none" };
 }
 
+/** research.delivery → cron delivery block for the research-overnight job. Same #2056 rule as the
+ * weekly digest: announce only with an explicit channel + to; every other shape maps to "none"
+ * (the briefing still lands as a memory and surfaces via the session-start block). */
+function resolveResearchOvernightDelivery(del?: ResearchDeliveryConfig): Record<string, unknown> {
+  if (del?.mode !== "announce") return { mode: "none" };
+  const channel = del.channel?.trim();
+  const to = del.to?.trim();
+  if (!channel || !to) return { mode: "none" };
+  return { mode: "announce", channel, to, bestEffort: true };
+}
+
 /** Jobs that have historically shipped with `delivery.mode = "announce"` and no destination.
  * Issue #2056: those legacy jobs caused the OpenClaw cron safety guard to reject delivery.
  * Plugin-internal maintenance logs do not need an operator-visible announce channel by
@@ -785,6 +819,7 @@ function resolveCronJob(
   pluginConfig: CronModelConfig | undefined,
   agentPrimary: string | undefined,
   digestWeeklyDelivery?: DigestWeeklyDeliveryConfig,
+  researchDelivery?: ResearchDeliveryConfig,
 ): Record<string, unknown> {
   const { modelTier, channel: _channel, minIntervalMs, featureGate: _featureGate, ...rest } = def;
   const tier = modelTier ?? "default";
@@ -802,6 +837,9 @@ function resolveCronJob(
   const delivery: Record<string, unknown> = (() => {
     if (stableId === `${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest`) {
       return resolveWeeklyPendingDigestDelivery(digestWeeklyDelivery);
+    }
+    if (stableId === RESEARCH_OVERNIGHT_JOB_ID) {
+      return resolveResearchOvernightDelivery(researchDelivery);
     }
     if (stableId && isPluginInternalAnnounceJob(stableId)) {
       return { mode: "none" };
@@ -854,6 +892,7 @@ const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolea
   [`${PLUGIN_JOB_ID_PREFIX}weekly-audit-health`]: (j) => /weekly-audit-health|audit health/i.test(String(j.name ?? "")),
   [`${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest-autopilot`]: (j) =>
     /weekly-pending-digest-autopilot|pending digest autopilot/i.test(String(j.name ?? "")),
+  [RESEARCH_OVERNIGHT_JOB_ID]: (j) => /research-overnight|overnight research/i.test(String(j.name ?? "")),
   [`${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest`]: (j) => {
     const name = String(j.name ?? "");
     if (/weekly-pending-digest-autopilot|pending digest autopilot/i.test(name)) return false;
@@ -893,6 +932,8 @@ export function ensureMaintenanceCronJobs(
     messageOverrides?: Record<string, string>;
     featureGates?: Record<string, boolean>;
     digestWeeklyDelivery?: DigestWeeklyDeliveryConfig;
+    /** Parsed research.delivery for the research-overnight job (announce needs channel + to). */
+    researchDelivery?: ResearchDeliveryConfig;
     /** When true (default), install single consolidated maintenance-nightly job. */
     consolidatedCronJobs?: boolean;
   } = {},
@@ -920,6 +961,8 @@ function ensureMaintenanceCronJobsLocked(
     messageOverrides?: Record<string, string>;
     featureGates?: Record<string, boolean>;
     digestWeeklyDelivery?: DigestWeeklyDeliveryConfig;
+    /** Parsed research.delivery for the research-overnight job (announce needs channel + to). */
+    researchDelivery?: ResearchDeliveryConfig;
     consolidatedCronJobs?: boolean;
   },
 ): { added: string[]; normalized: string[] } {
@@ -930,6 +973,7 @@ function ensureMaintenanceCronJobsLocked(
     messageOverrides,
     featureGates,
     digestWeeklyDelivery,
+    researchDelivery,
     consolidatedCronJobs,
   } = options;
   const useConsolidated = isConsolidatedMaintenanceCronEnabled({ consolidatedCronJobs });
@@ -995,9 +1039,7 @@ function ensureMaintenanceCronJobsLocked(
     const id = def.pluginJobId as string;
     const name = def.name as string;
     const scheduleExpr = scheduleOverrides?.[id];
-    const existing = jobsArr.find(
-      (j) => j && (j.pluginJobId === id || j.id === id || LEGACY_JOB_MATCHERS[id]?.(j)),
-    );
+    const existing = jobsArr.find((j) => j && (j.pluginJobId === id || j.id === id || LEGACY_JOB_MATCHERS[id]?.(j)));
     // If feature gate is explicitly disabled, disable existing job (if any) and mark it as
     // feature-gate-disabled so we can re-enable it later when the gate turns back on.
     // This distinguishes system-controlled disable from user-controlled disable.
@@ -1025,7 +1067,10 @@ function ensureMaintenanceCronJobsLocked(
     }
     if (!existing) {
       if (shouldSkipAddingMaintenanceCronJob(def, useConsolidated)) continue;
-      const job = resolveCronJob(def, pluginConfig, agentPrimary, digestWeeklyDelivery) as Record<string, unknown>;
+      const job = resolveCronJob(def, pluginConfig, agentPrimary, digestWeeklyDelivery, researchDelivery) as Record<
+        string,
+        unknown
+      >;
       if (scheduleExpr) job.schedule = { kind: "cron", expr: scheduleExpr };
       if (messageOverrides?.[id]) job.message = messageOverrides[id];
       jobsArr.push(job);
@@ -1054,7 +1099,7 @@ function ensureMaintenanceCronJobsLocked(
               : "";
         const deprecated = findDeprecatedHybridMemCronTokens(currentMsg);
         if (deprecated.length > 0 && !messageOverrides?.[id]) {
-          const desiredJob = resolveCronJob(def, pluginConfig, agentPrimary, digestWeeklyDelivery);
+          const desiredJob = resolveCronJob(def, pluginConfig, agentPrimary, digestWeeklyDelivery, researchDelivery);
           const desiredMsg = typeof desiredJob.message === "string" ? desiredJob.message : "";
           if (desiredMsg) {
             if (existingPayload && typeof existingPayload.message === "string") {
@@ -1233,7 +1278,7 @@ function ensureMaintenanceCronJobsLocked(
         // Fix: Update message to match current definition to remove obsolete command references.
         // Skip when the caller supplied messageOverrides for this job — those must win over canonical text.
         if (!messageOverrides?.[id]) {
-          const currentDef = resolveCronJob(def, pluginConfig, agentPrimary, digestWeeklyDelivery);
+          const currentDef = resolveCronJob(def, pluginConfig, agentPrimary, digestWeeklyDelivery, researchDelivery);
           const defMessage = currentDef.message as string | undefined;
           const payload = existing.payload as { message?: string; kind?: string } | undefined;
           if (defMessage && payload && typeof payload.message === "string") {
