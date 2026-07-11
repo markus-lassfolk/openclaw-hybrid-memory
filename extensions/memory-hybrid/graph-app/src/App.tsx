@@ -1,9 +1,12 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { fetchGraph } from "./api/queries";
 import { ActivityFeed } from "./components/ActivityFeed";
+import { AddFactDialog } from "./components/AddFactDialog";
 import { FiltersSidebar } from "./components/FiltersSidebar";
+import { GapsPanel } from "./components/GapsPanel";
 import { Header } from "./components/Header";
 import { InspectorPanel } from "./components/InspectorPanel";
+import { TokenSettings } from "./components/TokenSettings";
 import { GraphCanvas } from "./graph/GraphCanvas";
 import { useClustering, useLiveUpdates } from "./live/useLiveUpdates";
 import { useGraphStore } from "./store/graphStore";
@@ -36,6 +39,9 @@ export function App() {
   useLiveUpdates();
   useClustering();
 
+  const [gapsOpen, setGapsOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+
   return (
     <div className="app">
       <GraphCanvas />
@@ -43,6 +49,18 @@ export function App() {
       <FiltersSidebar />
       <InspectorPanel />
       <ActivityFeed />
+
+      <div className="toolbar">
+        <button type="button" onClick={() => setAddOpen(true)}>
+          + memory
+        </button>
+        <button type="button" className={gapsOpen ? "accent" : ""} onClick={() => setGapsOpen((o) => !o)}>
+          gaps
+        </button>
+        <TokenSettings />
+      </div>
+      {gapsOpen ? <GapsPanel onClose={() => setGapsOpen(false)} /> : null}
+      {addOpen ? <AddFactDialog onClose={() => setAddOpen(false)} /> : null}
 
       {loading && !hasNodes ? <div className="overlay">Charting the constellation…</div> : null}
       {error ? (

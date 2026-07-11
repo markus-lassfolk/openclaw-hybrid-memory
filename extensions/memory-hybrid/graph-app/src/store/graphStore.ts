@@ -48,6 +48,8 @@ interface GraphState {
   /** nodeId → clusterId (client-side Louvain). */
   clusters: Map<string, string>;
   colorByCluster: boolean;
+  /** When set, the next node click bonds it to this source fact instead of selecting it. */
+  linkingFrom: string | null;
 
   setGraph: (nodes: GraphNode[], edges: GraphEdge[], stats: MemoryStats | null) => void;
   upsertNode: (node: GraphNode) => void;
@@ -65,6 +67,7 @@ interface GraphState {
   addActivity: (kind: ActivityKind, label: string) => void;
   setClusters: (clusters: Map<string, string>) => void;
   setColorByCluster: (on: boolean) => void;
+  setLinkingFrom: (id: string | null) => void;
 }
 
 let activitySeq = 0;
@@ -85,6 +88,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   activity: [],
   clusters: new Map(),
   colorByCluster: false,
+  linkingFrom: null,
 
   setGraph: (nodes, edges, stats) => {
     const nodeIndex = new Map(nodes.map((n) => [n.id, n]));
@@ -180,6 +184,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
 
   setClusters: (clusters) => set({ clusters }),
   setColorByCluster: (on) => set({ colorByCluster: on }),
+  setLinkingFrom: (id) => set({ linkingFrom: id }),
 }));
 
 /** performance.now() with a safe fallback (kept out of the store body for testability). */

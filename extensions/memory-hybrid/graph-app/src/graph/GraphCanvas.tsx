@@ -7,9 +7,10 @@ import { forceRadial } from "d3-force";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D, { type ForceGraphMethods } from "react-force-graph-2d";
 import type { GraphNode } from "../api/types";
-import { clusterColor } from "./clustering";
+import { addLink } from "../live/curation";
 import { selectVisibleNodes, useGraphStore } from "../store/graphStore";
 import { categoryColor, COLORS, linkColor } from "../theme";
+import { clusterColor } from "./clustering";
 
 type FGNode = GraphNode & { x?: number; y?: number };
 type FGLink = { source: string; target: string; linkType: string; weight: number };
@@ -34,7 +35,9 @@ export function GraphCanvas() {
   const selectedId = useGraphStore((s) => s.selectedId);
   const pulses = useGraphStore((s) => s.pulses);
   const colorByCluster = useGraphStore((s) => s.colorByCluster);
+  const linkingFrom = useGraphStore((s) => s.linkingFrom);
   const setSelected = useGraphStore((s) => s.setSelected);
+  const setLinkingFrom = useGraphStore((s) => s.setLinkingFrom);
   const prunePulses = useGraphStore((s) => s.prunePulses);
 
   const [size, setSize] = useState({ width: window.innerWidth, height: window.innerHeight });
@@ -179,8 +182,20 @@ export function GraphCanvas() {
       linkDirectionalParticles={0}
       cooldownTicks={120}
       d3VelocityDecay={0.3}
-      onNodeClick={(node) => setSelected((node as FGNode).id)}
-      onBackgroundClick={() => setSelected(null)}
+      onNodeClick={(node) => {
+        const id = (node as FGNode).id;
+        if (linkingFrom && linkingFrom !== id) {
+          // Complete a click-to-bond: create a RELATED_TO link from the pending source.
+          void addLink(linkingFrom, id, "RELATED_TO", 0.7);
+          setLinkingFrom(null);
+        } else {
+          setSelected(id);
+        }
+      }}
+      onBackgroundClick={() => {
+        if (linkingFrom) setLinkingFrom(null);
+        else setSelected(null);
+      }}
     />
   );
 }

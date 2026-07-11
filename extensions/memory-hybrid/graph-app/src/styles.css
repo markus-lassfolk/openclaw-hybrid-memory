@@ -343,6 +343,253 @@ button:disabled {
   white-space: nowrap;
 }
 
+/* Toolbar (top-center) */
+.toolbar {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  z-index: 11;
+}
+.toolbar button {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+}
+button.accent {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+button.danger {
+  border-color: #7f1d1d;
+  color: #fca5a5;
+}
+button.danger:hover:not(:disabled) {
+  border-color: #f87171;
+}
+button.mini {
+  padding: 2px 7px;
+}
+
+/* Token settings */
+.token-settings {
+  position: relative;
+}
+.token-chip {
+  font-size: 12px;
+}
+.token-popover {
+  position: absolute;
+  top: 40px;
+  right: 0;
+  width: 260px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.token-popover input {
+  background: #0b0d12;
+  border: 1px solid var(--panel-border);
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+.token-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Inspector curation */
+.actions.wrap {
+  flex-wrap: wrap;
+}
+.linking-hint {
+  color: var(--accent);
+  font-size: 12px;
+  font-style: italic;
+}
+.edit-box textarea,
+.modal textarea {
+  width: 100%;
+  background: #0b0d12;
+  border: 1px solid var(--panel-border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+.small {
+  font-size: 10px;
+}
+.neighbor-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid var(--panel-border);
+  padding: 4px 0;
+}
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+.link-type {
+  background: #10141d;
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  font-size: 10px;
+  padding: 2px;
+  max-width: 92px;
+}
+
+/* Gaps panel (right, below sidebar) */
+.gaps {
+  position: absolute;
+  top: 14px;
+  right: 270px;
+  width: 340px;
+  max-height: calc(100vh - 28px);
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  backdrop-filter: blur(6px);
+  z-index: 11;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.gaps-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.gaps-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.gaps-tab {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+.gaps-tab.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.gaps-body {
+  overflow: auto;
+}
+.gaps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.gaps-item,
+.gaps-mini {
+  text-align: left;
+  background: #10141d;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.gaps-item-row,
+.gaps-suggested,
+.gaps-conflict {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.gaps-suggested,
+.gaps-conflict {
+  background: #10141d;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 6px;
+}
+.gaps-suggested-pair {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.gaps-mini {
+  flex-direction: row;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.gaps-item-text {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gaps-item-meta {
+  font-size: 10px;
+  color: var(--muted);
+}
+.gaps-sim {
+  font-size: 10px;
+  color: var(--accent);
+}
+.gaps-vs {
+  color: #f43f5e;
+}
+
+/* Modal */
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(4, 6, 10, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+}
+.modal {
+  width: 380px;
+  max-width: 92vw;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.modal select,
+.control select {
+  background: #0b0d12;
+  border: 1px solid var(--panel-border);
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
 .overlay {
   position: absolute;
   inset: 0;
