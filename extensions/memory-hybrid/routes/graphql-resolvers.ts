@@ -412,15 +412,22 @@ function asDecayClass(value: unknown): DecayClass {
 }
 
 /**
- * Source values reserved for internal write paths that downstream consumers gate trust on — e.g.
- * buildBriefingBlock (briefing-delivery.ts) only surfaces facts with source = "research-executor"
- * because memory_store always stamps "conversation" and can't forge it. createFact/importFacts sit
- * behind dashboard.token, which is unset (open) by default, so a caller claiming one of these
- * values here would defeat that trust check entirely. Not the same list as crud.ts's
- * BLOCKED_SOURCES (which rejects the fact outright); this only strips the reserved identity and
- * lets the store proceed, same as any other unrecognized source.
+ * Source values reserved for internal write paths that downstream consumers gate trust on:
+ *  - "research-executor": buildBriefingBlock (briefing-delivery.ts) only surfaces facts with this
+ *    exact source, since memory_store always stamps "conversation" and can't forge it.
+ *  - "conversation" / "cli": isAutoResolvableContradiction (backends/facts-db/contradictions.ts)
+ *    treats a contradiction's newer fact as user-authored — eligible to auto-supersede the older
+ *    fact — only when its source is one of these two (docs/contradiction-detection.md's "explicit
+ *    user store" rule). A forged fact created with this source, once picked up by nightly
+ *    contradiction detection (structured entity+key match, or contradiction-candidates' free-text
+ *    NLI pass, which scans all recent facts regardless of source), could auto-supersede a
+ *    legitimate fact it happens to contradict.
+ * createFact/importFacts sit behind dashboard.token, which is unset (open) by default, so a caller
+ * claiming one of these values here would defeat the corresponding trust check entirely. Not the
+ * same list as crud.ts's BLOCKED_SOURCES (which rejects the fact outright); this only strips the
+ * reserved identity and lets the store proceed, same as any other unrecognized source.
  */
-const RESERVED_INTERNAL_SOURCES = new Set(["research-executor"]);
+const RESERVED_INTERNAL_SOURCES = new Set(["research-executor", "conversation", "cli"]);
 
 /**
  * SECURITY: scope/scopeTarget are derived from the caller's own resolved identity

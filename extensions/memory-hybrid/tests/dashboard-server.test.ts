@@ -620,16 +620,21 @@ describeCreateDashboardServer("createDashboardServer", () => {
     expect(parsed.data.createFact.scopeTarget).toBeNull();
   });
 
-  it("POST /graphql createFact ignores client-supplied source", async () => {
+  it.each([
+    "research-executor",
+    "conversation",
+    "cli",
+  ])("POST /graphql createFact ignores client-supplied source=%s", async (forgedSource) => {
     if (!server) return;
     const mutation = JSON.stringify({
-      query: 'mutation { createFact(input: { text: "forged briefing", source: "research-executor" }) { id source } }',
+      query: `mutation { createFact(input: { text: "forged fact", source: "${forgedSource}" }) { id source } }`,
     });
 
-    // Attacker with no special identity tries to mint a fact whose source claims it came from the
-    // research CLI's single-writer path, so it would pass buildBriefingBlock's
-    // source = 'research-executor' filter (briefing-delivery.ts) and get injected next session as
-    // a trusted "overnight research" briefing.
+    // Attacker with no special identity tries to mint a fact under a source value that gates a
+    // downstream trust decision: "research-executor" passes buildBriefingBlock's filter
+    // (briefing-delivery.ts) as a trusted overnight-research briefing; "conversation"/"cli" make
+    // isAutoResolvableContradiction (contradictions.ts) treat the fact as user-authored and
+    // eligible to auto-supersede a contradicting legitimate fact.
     const { status, body } = await httpPost(port, "/graphql", mutation);
     expect(status).toBe(200);
     const parsed = JSON.parse(body);
