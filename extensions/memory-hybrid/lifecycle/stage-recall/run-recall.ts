@@ -40,6 +40,7 @@ import {
 } from "../../services/recalled-context-assembler.js";
 import { resolveInteractiveRecallPolicy } from "../../services/retrieval-mode-policy.js";
 import { applyRetrievalV2, DEFAULT_RETRIEVAL_V2_CONFIG } from "../../services/retrieval-v2.js";
+import { pickSerendipityFact } from "../../services/serendipity.js";
 import { sanitizePromptInjection } from "../../services/skill-prompt-injection.js";
 import type { ScopeFilter, SearchResult } from "../../types/memory.js";
 import { isConsolidatedDerivedFact } from "../../utils/consolidation-controls.js";
@@ -1186,6 +1187,45 @@ export async function runRecall(
       }
     }
 
+    // Serendipity slot (living-memory, staged default-OFF): once per cooldownPrompts prompts,
+    // one index-only [serendipity] headline from strong-but-never-recalled graph neighbors of
+    // the ranked results (falling back to stale-important). Counter persists across turns; a
+    // threshold hit with no viable pick holds the counter and retries next prompt.
+    let serendipity: RecallResult["serendipity"] = null;
+    const serendipityCfg = ctx.cfg.autoRecall.serendipity;
+    if (serendipityCfg?.enabled === true) {
+      try {
+        const count = (sessionState.serendipityPromptCounter.get(sessionKey) ?? 0) + 1;
+        let nextCount = count;
+        if (count >= serendipityCfg.cooldownPrompts && candidates.length > 0) {
+          const excludeIds = new Set<string>([...candidates.map((c) => c.entry.id), ...hotFactIds]);
+          const seeds = candidates.slice(0, 3).map((c) => ({ factId: c.entry.id, score: c.score, entry: c.entry }));
+          const pick = pickSerendipityFact(
+            ctx.factsDb,
+            seeds,
+            {
+              minLinkStrength: serendipityCfg.minLinkStrength,
+              staleImportanceMin: serendipityCfg.staleImportanceMin,
+              staleDays: serendipityCfg.staleDays,
+              hubDegreeCap: ctx.cfg.graph.hubDegreeCap,
+              hubScorePenalty: ctx.cfg.graph.hubScorePenalty,
+            },
+            { scopeFilter, excludeIds },
+          );
+          if (pick) {
+            serendipity = {
+              factId: pick.factId,
+              line: `\n[serendipity] ${pick.category}: ${sanitizePromptInjection(pick.title)} — recall with memory_recall if curious\n`,
+            };
+            nextCount = 0;
+          }
+        }
+        sessionState.serendipityPromptCounter.set(sessionKey, nextCount);
+      } catch {
+        /* serendipity is best-effort */
+      }
+    }
+
     const {
       maxPerMemoryChars,
       useSummaryInInjection,
@@ -1340,6 +1380,7 @@ export async function runRecall(
       semanticDegraded: pipelineStatusRef.semanticDegraded,
       totalBudget,
       briefingBlock,
+      serendipity,
     };
     return completeStage({ kind: "full", result });
   } catch (err) {

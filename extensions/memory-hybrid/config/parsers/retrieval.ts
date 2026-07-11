@@ -140,6 +140,20 @@ export function parseAutoClassifyConfig(cfg: Record<string, unknown>): AutoClass
   };
 }
 
+function parseSerendipityConfig(ar: Record<string, unknown> | undefined): AutoRecallConfig["serendipity"] {
+  const raw = ar?.serendipity as Record<string, unknown> | undefined;
+  const num = (v: unknown, fallback: number, min: number, max: number): number =>
+    typeof v === "number" && Number.isFinite(v) && v >= min && v <= max ? v : fallback;
+  return {
+    // Named staged exception (prompt-visible): opt-in, unlike the rest of the living-memory flags.
+    enabled: raw?.enabled === true,
+    cooldownPrompts: Math.floor(num(raw?.cooldownPrompts, 10, 1, 1000)),
+    minLinkStrength: num(raw?.minLinkStrength, 0.4, 0, 1),
+    staleImportanceMin: num(raw?.staleImportanceMin, 0.7, 0, 1),
+    staleDays: Math.floor(num(raw?.staleDays, 30, 1, 3650)),
+  };
+}
+
 export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallConfig {
   const arRaw = cfg.autoRecall;
   const VALID_FORMATS = ["full", "short", "minimal", "progressive", "progressive_hybrid"] as const;
@@ -331,6 +345,7 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
       progressivePinnedRecallCount,
       scopeFilter,
       authFailure,
+      serendipity: parseSerendipityConfig(ar),
       degradationQueueDepth:
         typeof ar.degradationQueueDepth === "number" && ar.degradationQueueDepth >= 0
           ? Math.floor(ar.degradationQueueDepth)
@@ -385,6 +400,7 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
       maxRecallsPerTarget: 1,
       includeVaultHints: true,
     },
+    serendipity: parseSerendipityConfig(undefined),
     interactiveEnrichment: "balanced",
   };
 }
