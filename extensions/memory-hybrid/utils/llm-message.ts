@@ -107,5 +107,18 @@ export function extractAssistantMessageText(message: unknown): AssistantMessageT
   const reasoning = trimNonEmpty(msg.reasoning);
   if (reasoning) return { text: reasoning, source: "reasoning" };
 
+  // Reasoning-only response: msg.content was non-empty but consisted entirely of <think>/<reasoning>
+  // wrappers that stripLeadingReasoningBlocks collapsed to empty (e.g. a think-wrapped "no actionable
+  // rules" no-op). A response that is all reasoning is not "empty" — preserve the raw text so
+  // downstream reasoning-aware parsers (reflect-rules/-meta) can inspect the wrapper contents instead
+  // of receiving an empty response and reporting it as degraded. Consumers that JSON-parse the text
+  // re-strip <think> internally, so they still see "no items" exactly as before.
+  if (typeof msg.content === "string") {
+    const rawContent = msg.content.trim();
+    if (rawContent.length > 0 && !isPlaceholderContent(rawContent)) {
+      return { text: rawContent, source: "reasoning" };
+    }
+  }
+
   return { text: "", source: "empty" };
 }
