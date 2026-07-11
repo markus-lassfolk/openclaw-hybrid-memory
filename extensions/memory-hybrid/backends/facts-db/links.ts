@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 
 import { createTransaction } from "../../utils/sqlite-transaction.js";
+import type { ScopeFilter } from "../../types/memory.js";
 
+import { scopeFilterClauseForAlias } from "./scope-sql.js";
 import type { MemoryLinkType } from "./types.js";
 
 export function createLink(
@@ -155,7 +157,7 @@ export function getConnectedFactIds(
   db: DatabaseSync,
   factIds: string[],
   maxDepth: number,
-  options?: { hubDegreeCap?: number | null; stats?: GraphConnectedStats },
+  options?: { hubDegreeCap?: number | null; stats?: GraphConnectedStats; scopeFilter?: ScopeFilter | null },
 ): string[] {
   if (factIds.length === 0 || maxDepth < 1) return [...factIds];
 
@@ -177,13 +179,24 @@ export function getConnectedFactIds(
   // can be silently undone by having the stale fact resurface via its surviving graph link.
   // Falls back to the unfiltered statements above when `facts` doesn't exist (e.g. minimal
   // in-memory tests), matching the `denormDegreeStmt` fallback pattern below.
+  //
+  // SECURITY (#2067-followup): also apply the caller's scope filter to the `facts f` join, not
+  // just superseded_at. Without this, a hidden/out-of-scope fact can still serve as an
+  // intermediate hop — the BFS walks THROUGH it to reach a visible fact beyond it, and only the
+  // final result set gets scope-checked by callers, leaking the existence of a path through
+  // private data even though the hidden fact itself is never returned. Mirrors the same fix
+  // already applied to expandGraphWithCTE and the JS-side scopedConnectedFactIds() helpers in
+  // routes/graphql-resolvers.ts and tools/graph-tools.ts.
+  const scopeClause = scopeFilterClauseForAlias(options?.scopeFilter, "f");
+  let scopeParams: SQLInputValue[] = [];
   try {
     outStmt = db.prepare(
-      `SELECT ml.target_fact_id AS id FROM memory_links ml JOIN facts f ON f.id = ml.target_fact_id WHERE ml.source_fact_id = ? AND ml.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM') AND f.superseded_at IS NULL ORDER BY ml.strength DESC, ml.created_at DESC LIMIT ?`,
+      `SELECT ml.target_fact_id AS id FROM memory_links ml JOIN facts f ON f.id = ml.target_fact_id WHERE ml.source_fact_id = ? AND ml.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM') AND f.superseded_at IS NULL${scopeClause.clause} ORDER BY ml.strength DESC, ml.created_at DESC LIMIT ?`,
     );
     inStmt = db.prepare(
-      `SELECT ml.source_fact_id AS id FROM memory_links ml JOIN facts f ON f.id = ml.source_fact_id WHERE ml.target_fact_id = ? AND ml.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM') AND f.superseded_at IS NULL ORDER BY ml.strength DESC, ml.created_at DESC LIMIT ?`,
+      `SELECT ml.source_fact_id AS id FROM memory_links ml JOIN facts f ON f.id = ml.source_fact_id WHERE ml.target_fact_id = ? AND ml.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM') AND f.superseded_at IS NULL${scopeClause.clause} ORDER BY ml.strength DESC, ml.created_at DESC LIMIT ?`,
     );
+    scopeParams = scopeClause.params;
   } catch {
     // facts table absent; keep the unfiltered statements above.
   }
@@ -251,8 +264,8 @@ export function getConnectedFactIds(
       // bound per direction when fresh. With hub cap, +1 avoids edge truncation vs the skip threshold.
       const limit = hubDegreeCap == null ? Math.max(liveCombinedDegree(id), 1) : Math.max(hubDegreeCap + 1, 1);
       const neighbours = [
-        ...(outStmt.all(id, limit) as Array<{ id: string }>),
-        ...(inStmt.all(id, limit) as Array<{ id: string }>),
+        ...(outStmt.all(id, ...scopeParams, limit) as Array<{ id: string }>),
+        ...(inStmt.all(id, ...scopeParams, limit) as Array<{ id: string }>),
       ];
       if (stats) stats.nodesConsidered += neighbours.length;
       for (const row of neighbours) {

@@ -1364,7 +1364,8 @@ function registerManageStorageMaintenanceOnParent(
               } catch (err) {
                 console.error(`Re-index failed: unable to create shadow table: ${err}`);
                 finishReindexJobRun("failed", false);
-                process.exit(1);
+                process.exitCode = 1;
+                return;
               }
               if (ctx.resolvedSqlitePath) {
                 appendVectorLifecycleAuditEvent(ctx.resolvedSqlitePath, {
@@ -1453,7 +1454,8 @@ function registerManageStorageMaintenanceOnParent(
                 console.error(`Shadow table preserved for inspection: ${shadowTableName}`);
                 console.error("Recommendation: Re-run 'openclaw hybrid-mem storage re-index --resume' to continue.");
                 finishReindexJobRun("partial", false);
-                process.exit(1);
+                process.exitCode = 1;
+                return;
               }
 
               // Validate row count before swapping
@@ -1467,7 +1469,8 @@ function registerManageStorageMaintenanceOnParent(
                 console.error(`Shadow table preserved for inspection: ${shadowTableName}`);
                 console.error("To retry, clean up shadow table and run re-index again.");
                 finishReindexJobRun("failed", false);
-                process.exit(1);
+                process.exitCode = 1;
+                return;
               }
 
               console.log(
@@ -1482,7 +1485,8 @@ function registerManageStorageMaintenanceOnParent(
                 console.error("Live vector store was NOT modified.");
                 console.error(`Shadow table preserved for inspection: ${shadowTableName}`);
                 finishReindexJobRun("failed", false);
-                process.exit(1);
+                process.exitCode = 1;
+                return;
               }
 
               // Update embedding metadata in SQLite (batch update for all facts)
