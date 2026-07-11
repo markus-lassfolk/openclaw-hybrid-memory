@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
-import { type FutureDateProtectionConfig, detectFutureDate } from "../utils/date-detector.js";
+import { detectFutureDate, type FutureDateProtectionConfig } from "../utils/date-detector.js";
 
 const { FactsDB } = _testing;
 
@@ -525,7 +525,9 @@ describe("FactsDB — pruneExpired respects decay_freeze_until", () => {
     const expiresAt = nowSec - 1 * 86400;
     rawDb.prepare("UPDATE facts SET expires_at = ? WHERE id = ?").run(expiresAt, entry.id);
 
-    db.pruneExpired();
+    // secondChance off: this test pins freeze/expiry mechanics, not the importance-based
+    // one-time reprieve (covered in living-memory-dynamics.test.ts) that 0.8 would trigger.
+    db.pruneExpired(undefined, { secondChance: false });
 
     const retrieved = db.getById(entry.id);
     expect(retrieved).toBeNull();
@@ -551,7 +553,7 @@ describe("FactsDB — pruneExpired respects decay_freeze_until", () => {
     const expiresAt = nowSec - 1 * 86400;
     rawDb.prepare("UPDATE facts SET expires_at = ? WHERE id = ?").run(expiresAt, entry.id);
 
-    db.pruneExpired();
+    db.pruneExpired(undefined, { secondChance: false });
 
     const retrieved = db.getById(entry.id);
     expect(retrieved).toBeNull();
@@ -704,7 +706,9 @@ describe("FactsDB — combined freeze+prune: frozen survives, unfrozen decays", 
     const rawDb = db.getRawDb();
     rawDb.prepare("UPDATE facts SET expires_at = ? WHERE id IN (?, ?)").run(pastExpiry, frozen.id, unfrozen.id);
 
-    db.pruneExpired();
+    // secondChance off: importance 0.8 would otherwise earn the unfrozen fact a one-time
+    // reprieve (living-memory) — this test pins the freeze guard, not eviction policy.
+    db.pruneExpired(undefined, { secondChance: false });
 
     expect(db.getById(frozen.id)).not.toBeNull(); // frozen → survives
     expect(db.getById(unfrozen.id)).toBeNull(); // unfrozen → pruned

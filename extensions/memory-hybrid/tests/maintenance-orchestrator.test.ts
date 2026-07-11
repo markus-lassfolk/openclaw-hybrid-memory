@@ -2,13 +2,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import type { HybridMemoryConfig } from "../config.js";
+import { acquireStepLock, readStepGuardTimestampMs, writeStepGuardTimestampMs } from "../services/cron-guard.js";
 import {
   MAINTENANCE_STEPS,
   runMaintenanceOrchestrator,
   toOrchestratorRunSummary,
 } from "../services/maintenance-orchestrator.js";
-import { acquireStepLock, readStepGuardTimestampMs, writeStepGuardTimestampMs } from "../services/cron-guard.js";
-import type { HybridMemoryConfig } from "../config.js";
 
 function minimalCfg(): HybridMemoryConfig {
   return {
@@ -23,8 +23,8 @@ describe("maintenance-orchestrator", () => {
     if (openclawDir) rmSync(openclawDir, { recursive: true, force: true });
   });
 
-  it("registers 50 maintenance steps", () => {
-    expect(MAINTENANCE_STEPS.length).toBe(50);
+  it("registers 53 maintenance steps", () => {
+    expect(MAINTENANCE_STEPS.length).toBe(53);
   });
 
   it("skips steps when guard has not expired", async () => {
