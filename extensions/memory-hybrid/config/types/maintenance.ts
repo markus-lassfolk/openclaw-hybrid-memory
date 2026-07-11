@@ -210,6 +210,19 @@ export type MaintenanceConfig = {
     /** Max routine facts stored per run (default 2). */
     maxPerRun: number;
   };
+  /** Free-text contradiction candidates: nightly vector-neighbor + NLI pass (living-memory B1). */
+  contradictions: {
+    /** Default true — catches free-text pairs the structured entity+key detector cannot see. */
+    freeText: boolean;
+    /** Cosine similarity floor for candidate pairs (default 0.85). */
+    similarityFloor: number;
+    /** Hard cap on NLI LLM calls per run (default 40). */
+    maxPairsPerRun: number;
+    /** Minimum NLI confidence to record a contradiction (default 0.7). */
+    minConfidence: number;
+    /** Model override for the NLI verdict (default: nano tier). */
+    model?: string;
+  };
 };
 
 /**

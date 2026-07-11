@@ -140,6 +140,10 @@ export type ManageContext = {
     dryRun: boolean;
     verbose?: boolean;
   }) => Promise<import("../services/insight-synthesis.js").InsightSynthesisResult>;
+  runContradictionCandidates?: (opts: {
+    dryRun: boolean;
+    verbose?: boolean;
+  }) => Promise<import("../services/contradiction-candidates.js").ContradictionCandidatesResult>;
   reflectionConfig: { enabled: boolean; defaultWindow: number; minObservations: number; model: string };
   runClassify: (opts: { dryRun: boolean; limit: number; model?: string }) => Promise<{
     reclassified: number;

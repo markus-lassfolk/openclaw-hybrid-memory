@@ -198,6 +198,16 @@ export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
     featureGate: (cfg) => (cfg.distill as { enabled?: boolean } | undefined)?.enabled !== false,
   },
   {
+    // Free-text contradiction candidates (living-memory B1): vector neighbors + NLI verdict for
+    // pairs the structured entity+key detector cannot see. Runs before resolve-contradictions so
+    // recorded pairs can resolve the same night.
+    name: "contradiction-candidates",
+    tier: "nightly",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h44,
+    llmTier: "local",
+    featureGate: (cfg) => cfg.maintenance?.contradictions?.freeText !== false,
+  },
+  {
     name: "resolve-contradictions",
     tier: "nightly",
     guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h44,

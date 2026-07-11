@@ -16,6 +16,7 @@ import { runClassifyForCli } from "../../services/auto-classifier.js";
 import { runConsolidate } from "../../services/consolidation.js";
 import { runVerificationCycle, type VerificationCycleResult } from "../../services/continuous-verifier.js";
 import { adjudicateContradictionWithLlm } from "../../services/contradiction-adjudicator.js";
+import { runContradictionCandidates } from "../../services/contradiction-candidates.js";
 import { type DreamCycleResult, makeDreamCycleRunId, runDreamCycle } from "../../services/dream-cycle.js";
 import { runEntityEnrichmentForCli } from "../../services/entity-enrichment-cli.js";
 import { runExport } from "../../services/export-memory.js";
@@ -88,6 +89,10 @@ interface CliContextServices {
     dryRun: boolean;
     verbose?: boolean;
   }) => Promise<import("../../services/insight-synthesis.js").InsightSynthesisResult>;
+  runContradictionCandidates: (opts: {
+    dryRun: boolean;
+    verbose?: boolean;
+  }) => Promise<import("../../services/contradiction-candidates.js").ContradictionCandidatesResult>;
   runClassify: (opts: { dryRun: boolean; limit: number; model?: string }) => Promise<{
     reclassified: number;
     total: number;
@@ -390,6 +395,22 @@ export function buildCliContextServices(
           minEvidence: cfg.research.insights.minEvidence,
           model: requestedModel ?? defaultModel,
           fallbackModels: fallbackModels ?? [],
+        },
+        opts,
+        logSink,
+      );
+    },
+    runContradictionCandidates: async (opts) => {
+      await guardWalUnlessDryRun("cli_contradiction_candidates", opts.dryRun);
+      const c = cfg.maintenance.contradictions;
+      return runContradictionCandidates(
+        { factsDb, vectorDb, embeddings, openai },
+        {
+          similarityFloor: c.similarityFloor,
+          maxPairsPerRun: c.maxPairsPerRun,
+          minConfidence: c.minConfidence,
+          model: c.model ?? getDefaultCronModel(getCronModelConfig(cfg), "nano"),
+          fallbackModels: [],
         },
         opts,
         logSink,

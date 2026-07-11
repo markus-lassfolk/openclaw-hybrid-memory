@@ -359,6 +359,12 @@ export function buildCliMaintenanceRunners(
     return `picked=${r.picked} eligible=${r.eligible} cooldown=${r.skippedCooldown} blocklist=${r.skippedBlocklist} evidence=${r.skippedEvidence} semantic=success`;
   });
 
+  set("contradiction-candidates", async () => {
+    if (!b.runContradictionCandidates) return "skipped (contradiction candidates unavailable) semantic=success";
+    const r = await b.runContradictionCandidates({ dryRun: false, verbose });
+    return `recorded=${r.recorded} pairs=${r.pairsConsidered} llm=${r.llmCalls} scanned=${r.scanned} existing=${r.skippedExisting} structured=${r.skippedStructured} semantic=${r.semanticOutcome}`;
+  });
+
   set("auto-classify", async () => {
     const r = await b.runClassify({ dryRun: false, limit: b.cfg.autoClassify.batchSize ?? 20 });
     const batchFailures = r.batchFailures ?? 0;

@@ -3,8 +3,8 @@ import type {
   CouncilProvenanceMode,
   CronReliabilityConfig,
   HealthConfig,
-  MaintenanceFailureReportingConfig,
   MaintenanceConfig,
+  MaintenanceFailureReportingConfig,
   MaintenancePrivacyRedactionConfig,
   MonthlyReviewConfig,
   NightlyCycleConfig,
@@ -287,5 +287,25 @@ export function parseMaintenanceConfig(cfg: Record<string, unknown>): Maintenanc
           ? Math.floor((maintenanceRaw?.routineMining as Record<string, unknown>).maxPerRun as number)
           : 2,
     },
+    contradictions: parseContradictionsConfig(maintenanceRaw?.contradictions as Record<string, unknown> | undefined),
+  };
+}
+
+function parseContradictionsConfig(raw: Record<string, unknown> | undefined): MaintenanceConfig["contradictions"] {
+  const similarityFloor =
+    typeof raw?.similarityFloor === "number" && raw.similarityFloor > 0 && raw.similarityFloor <= 1
+      ? raw.similarityFloor
+      : 0.85;
+  const minConfidence =
+    typeof raw?.minConfidence === "number" && raw.minConfidence >= 0 && raw.minConfidence <= 1
+      ? raw.minConfidence
+      : 0.7;
+  return {
+    freeText: raw?.freeText !== false,
+    similarityFloor,
+    maxPairsPerRun:
+      typeof raw?.maxPairsPerRun === "number" && raw.maxPairsPerRun > 0 ? Math.floor(raw.maxPairsPerRun) : 40,
+    minConfidence,
+    model: typeof raw?.model === "string" && raw.model.trim().length > 0 ? raw.model.trim() : undefined,
   };
 }
