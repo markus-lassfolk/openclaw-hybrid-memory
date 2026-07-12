@@ -24,7 +24,11 @@ import {
   type VectorBackendObservability,
 } from "../../../services/vector-backend-observability.js";
 import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
-import { deleteVectorsForFactIds, reconcileOrphanVectors } from "../../../services/vector-maintenance.js";
+import {
+  backfillEmbeddingCacheFromVectorStore,
+  deleteVectorsForFactIds,
+  reconcileOrphanVectors,
+} from "../../../services/vector-maintenance.js";
 import { runStorageRepairPipeline } from "../../../services/storage-repair-pipeline.js";
 import type { MemoryEntry } from "../../../types/memory.js";
 import { embedCallWithTimeoutAndRetry } from "../../../utils/embed-call.js";
@@ -1524,6 +1528,21 @@ function registerManageStorageMaintenanceOnParent(
                   // ignore per-fact metadata update errors (non-fatal)
                 }
               }
+
+              // Best-effort fact_embeddings (canonical embedding cache) backfill, post-swap only
+              // (#2084). fact_embeddings is a cache, not vector-store integrity (#2080), so a
+              // failure here never fails the re-index — it just leaves the cache to catch up via
+              // the normal reembed-vectorless path.
+              console.log("Re-index: backfilling embedding cache (fact_embeddings) from the live vector store...");
+              const cacheBackfillResult = await backfillEmbeddingCacheFromVectorStore({
+                factsDb,
+                vectorDb,
+                embeddingModel: embeddings.modelName,
+              });
+              console.log(
+                `Re-index: embedding cache backfill — ${cacheBackfillResult.backfilled} updated` +
+                  (cacheBackfillResult.failed > 0 ? `, ${cacheBackfillResult.failed} skipped (non-fatal)` : ""),
+              );
 
               if (ctx.resolvedSqlitePath) {
                 appendVectorLifecycleAuditEvent(ctx.resolvedSqlitePath, {
