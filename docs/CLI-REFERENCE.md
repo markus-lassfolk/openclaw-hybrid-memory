@@ -24,6 +24,7 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | Category | Commands |
 |----------|----------|
 | **Setup & installation** | `install` (`setup`), `verify [--fix]` (`preflight`), `doctor [--fix]`, `status`, `dashboard`, `config` (`settings`) |
+| **Smoke testing** | `smoke e2e [--json]` |
 | **Maintenance** | `run-all`, `compact`, `prune`, `checkpoint`, `backfill-decay`, `backfill`, `dream-cycle`, `resolve-contradictions` |
 | **Stats & query** | `stats [--efficiency]`, `test`, `context-audit`, `search <query>`, `lookup <id>`, `forget <id> [--yes]`, `list [--limit, --category, --tier]`, `show <id>`, `categories` |
 | **Proposals & corrections** | `proposals list|show|approve|reject <id>`, `corrections list`, `corrections approve-all`, `review` |
@@ -279,6 +280,25 @@ This adds:
 - **By source:** How facts were added (conversation, cli, distillation, reflection, auto-capture, etc.)
 - **Estimated tokens in memory:** Total token size of stored facts (same heuristic as auto-recall)
 - **Token savings note:** Explains that providers can cache injected memories; Cache Read is typically 90%+ cheaper than Input. Compare your provider dashboard (Input vs Cache Read) to see actual savings — many users see 90–97% reduction.
+
+---
+
+## Smoke testing
+
+`openclaw hybrid-mem smoke e2e [--json]` runs a first-class end-to-end pipeline check (issue [#2088](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2088)): store → embed → recall → link → episode → forget → verify, using two disposable, uniquely-tagged test facts. Unlike `verify`/`doctor` (which check config/connectivity), `smoke e2e` proves new memories actually flow through every intended feature:
+
+1. Store two facts (`decayClass: "ephemeral"`, tagged with a unique run id) and confirm the SQLite rows.
+2. Store canonical vectors and confirm the `fact_embeddings` cache row (model + dimensions).
+3. Confirm the LanceDB vector row exists with the expected dimension.
+4. Keyword recall (FTS5) finds the fact.
+5. Semantic recall finds the fact for a paraphrased query.
+6. Create an explicit `RELATED_TO` graph link; confirm it's readable both directions and that `out_degree`/`in_degree` incremented.
+7. Record and search an episode.
+8. Forget/delete everything created (facts, embeddings cache rows, LanceDB vectors, the link, the episode) — always attempted, regardless of which earlier step failed.
+9. Verify no leftover rows in SQLite, LanceDB, links, the embedding cache, or episodes.
+10. Verify the storage-sync drift state (see [`verify`](#verify-and-doctor) below) didn't regress.
+
+Safe to run against a production local memory store — every artifact is uniquely tagged and cleanup is mandatory, not opt-in. `--json` emits the full structured result (`runId`, `overall`, per-step `{name, status, detail, durationMs}`, and `leftover` artifact ids). Without `--json`, a failed run whose cleanup could not fully complete prints exact commands (`link delete <id>`, `forget <id> --yes`) to remove leftovers manually. Exits `1` when any step fails.
 
 ---
 
