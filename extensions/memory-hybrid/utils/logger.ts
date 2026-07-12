@@ -25,12 +25,34 @@
  * stdout if the host attaches api.logger to stdout).
  */
 
+import { getEnv } from "./env-manager.js";
+
 /** Logger interface matching api.logger from ClawdbotPluginApi */
 export interface PluginLoggerApi {
   info: (msg: string) => void;
   warn: (msg: string) => void;
   error: (msg: string) => void;
   debug?: (msg: string) => void;
+}
+
+/**
+ * Quiet mode (#2095): `OPENCLAW_HYBRID_MEM_QUIET=1` suppresses info/debug bootstrap noise
+ * (startup checkpoints, "registered ..." confirmations, vault-check-OK lines, etc.) so operators
+ * can get parseable output from status/read-only CLI commands without hundreds of lines of
+ * boilerplate ahead of the actual result. Warnings and errors are never suppressed — quiet mode
+ * only trims routine progress logging, not diagnostics an operator needs to see.
+ *
+ * Two suppression points share this flag: `pluginLogger.info`/`.debug` below (gates any code
+ * already using the plugin logger abstraction), and `wrapApiLoggerQuietForCli` in
+ * `utils/hybrid-mem-json-cli.ts` (gates raw `api.logger.info`/`.debug` calls across the bootstrap
+ * path — bootstrap-databases.ts, plugin-service.ts, register-hooks.ts, register-tools.ts — since
+ * those receive the wrapped api instance and call `.logger` directly). Host-side
+ * "[plugins] loading ..." lines are emitted by OpenClaw's own plugin loader before this module is
+ * ever reached and are out of scope here. Re-read on every call (not cached) so tests can toggle
+ * it via process.env freely.
+ */
+export function isHybridMemQuiet(): boolean {
+  return getEnv("OPENCLAW_HYBRID_MEM_QUIET") === "1";
 }
 
 /** Silent no-op logger used before initPluginLogger is called. */
@@ -119,6 +141,7 @@ export function restoreDefaultLogger(): void {
  */
 export const pluginLogger = {
   info(msg: string): void {
+    if (isHybridMemQuiet()) return;
     activeLogger.info(msg);
   },
   warn(msg: string): void {
@@ -128,6 +151,7 @@ export const pluginLogger = {
     activeLogger.error(msg);
   },
   debug(msg: string): void {
+    if (isHybridMemQuiet()) return;
     activeLogger.debug(msg);
   },
 };

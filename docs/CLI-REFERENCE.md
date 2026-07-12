@@ -321,6 +321,15 @@ Several commands support **`--json`**. Follow these rules when automating:
 
 Commands that register plugin config during startup must not print non-JSON lines to stdout when you use JSON mode (for example corrections/config registration during `config --json`). If `jq` fails with “parse error”, check stderr for the real message and upgrade to **2026.5.190+** if you hit legacy stdout pollution.
 
+**Quiet mode (`OPENCLAW_HYBRID_MEM_QUIET=1`, issue [#2095](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2095)):** By default, `hybrid-mem` commands print plugin bootstrap telemetry (startup checkpoints, `registered ...` confirmations, credential-vault-OK lines) before the command's real output, which can bury the result in a smoke suite or cron harness. Set the env var to `1` to drop that info/debug boilerplate:
+
+```bash
+OPENCLAW_HYBRID_MEM_QUIET=1 openclaw hybrid-mem maintenance status
+OPENCLAW_HYBRID_MEM_QUIET=1 openclaw hybrid-mem digest pending --json
+```
+
+Warnings and errors are never suppressed by quiet mode — only routine progress logging is trimmed. `--help` invocations are already quiet (they short-circuit before the plugin/storage stack bootstraps) and are unaffected by this flag. Quiet mode composes with `--json`: bootstrap `warn`/`error` lines still route to stderr as usual, just without the `info`/`debug` noise ahead of them. Note: the `[plugins] loading ...` lines the OpenClaw host itself prints before the plugin registers are outside this plugin's control.
+
 ---
 
 ## Session observability (CLI)

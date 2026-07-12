@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { initPluginLogger, pluginLogger, resetPluginLogger, restoreDefaultLogger } from "../utils/logger.js";
+import {
+  initPluginLogger,
+  isHybridMemQuiet,
+  pluginLogger,
+  resetPluginLogger,
+  restoreDefaultLogger,
+} from "../utils/logger.js";
 
 describe("pluginLogger", () => {
   afterEach(() => {
@@ -109,5 +115,63 @@ describe("pluginLogger", () => {
     expect(mockLogger.info).not.toHaveBeenCalled();
     errSpy.mockRestore();
     restoreDefaultLogger();
+  });
+});
+
+describe("isHybridMemQuiet / quiet mode (#2095)", () => {
+  const savedQuiet = process.env.OPENCLAW_HYBRID_MEM_QUIET;
+
+  afterEach(() => {
+    if (savedQuiet === undefined) {
+      delete process.env.OPENCLAW_HYBRID_MEM_QUIET;
+    } else {
+      process.env.OPENCLAW_HYBRID_MEM_QUIET = savedQuiet;
+    }
+    restoreDefaultLogger();
+  });
+
+  it("is false by default", () => {
+    delete process.env.OPENCLAW_HYBRID_MEM_QUIET;
+    expect(isHybridMemQuiet()).toBe(false);
+  });
+
+  it('is true only for the literal value "1"', () => {
+    process.env.OPENCLAW_HYBRID_MEM_QUIET = "1";
+    expect(isHybridMemQuiet()).toBe(true);
+
+    process.env.OPENCLAW_HYBRID_MEM_QUIET = "true";
+    expect(isHybridMemQuiet()).toBe(false);
+
+    process.env.OPENCLAW_HYBRID_MEM_QUIET = "0";
+    expect(isHybridMemQuiet()).toBe(false);
+  });
+
+  it("suppresses pluginLogger.info and .debug but not .warn/.error", () => {
+    const mockLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    initPluginLogger(mockLogger);
+    process.env.OPENCLAW_HYBRID_MEM_QUIET = "1";
+
+    pluginLogger.info("bootstrap noise");
+    pluginLogger.debug("debug noise");
+    pluginLogger.warn("real warning");
+    pluginLogger.error("real error");
+
+    expect(mockLogger.info).not.toHaveBeenCalled();
+    expect(mockLogger.debug).not.toHaveBeenCalled();
+    expect(mockLogger.warn).toHaveBeenCalledWith("real warning");
+    expect(mockLogger.error).toHaveBeenCalledWith("real error");
+  });
+
+  it("stops suppressing once the env var is cleared", () => {
+    const mockLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    initPluginLogger(mockLogger);
+
+    process.env.OPENCLAW_HYBRID_MEM_QUIET = "1";
+    pluginLogger.info("suppressed");
+    expect(mockLogger.info).not.toHaveBeenCalled();
+
+    delete process.env.OPENCLAW_HYBRID_MEM_QUIET;
+    pluginLogger.info("visible again");
+    expect(mockLogger.info).toHaveBeenCalledWith("visible again");
   });
 });

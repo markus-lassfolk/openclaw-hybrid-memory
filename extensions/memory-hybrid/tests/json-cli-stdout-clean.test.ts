@@ -12,6 +12,7 @@ import {
   restoreStdoutAfterJsonCli,
   withJsonCliStdoutMirrorSuppressed,
   withMachineOutputStdoutSuppressed,
+  wrapApiLoggerQuietForCli,
   wrapApiLoggerStderrForJsonCli,
 } from "../utils/hybrid-mem-json-cli.js";
 
@@ -346,5 +347,76 @@ describe("wrapApiLoggerStderrForJsonCli", () => {
 
     expect(stdoutWrite).toHaveBeenCalledWith("s3cr3t");
     expect(stderrWrite).not.toHaveBeenCalledWith("s3cr3t");
+  });
+});
+
+describe("wrapApiLoggerQuietForCli (#2095)", () => {
+  const savedQuiet = process.env.OPENCLAW_HYBRID_MEM_QUIET;
+
+  afterEach(() => {
+    if (savedQuiet === undefined) {
+      delete process.env.OPENCLAW_HYBRID_MEM_QUIET;
+    } else {
+      process.env.OPENCLAW_HYBRID_MEM_QUIET = savedQuiet;
+    }
+  });
+
+  it("returns the same api reference when quiet mode is off", () => {
+    delete process.env.OPENCLAW_HYBRID_MEM_QUIET;
+    const api = {
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+    } as unknown as ClawdbotPluginApi;
+    expect(wrapApiLoggerQuietForCli(api)).toBe(api);
+  });
+
+  it("drops info/debug but preserves warn/error when quiet mode is on", () => {
+    process.env.OPENCLAW_HYBRID_MEM_QUIET = "1";
+    const origInfo = vi.fn();
+    const origWarn = vi.fn();
+    const origError = vi.fn();
+    const origDebug = vi.fn();
+    const api = {
+      logger: { info: origInfo, warn: origWarn, error: origError, debug: origDebug },
+    } as unknown as ClawdbotPluginApi;
+
+    const wrapped = wrapApiLoggerQuietForCli(api);
+    expect(wrapped).not.toBe(api);
+
+    wrapped.logger.info("bootstrap noise");
+    wrapped.logger.debug?.("debug noise");
+    wrapped.logger.warn("real warning");
+    wrapped.logger.error("real error");
+
+    expect(origInfo).not.toHaveBeenCalled();
+    expect(origDebug).not.toHaveBeenCalled();
+    expect(origWarn).toHaveBeenCalledWith("real warning");
+    expect(origError).toHaveBeenCalledWith("real error");
+  });
+
+  it('only treats the literal value "1" as enabling quiet mode', () => {
+    process.env.OPENCLAW_HYBRID_MEM_QUIET = "true";
+    const api = {
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+    } as unknown as ClawdbotPluginApi;
+    expect(wrapApiLoggerQuietForCli(api)).toBe(api);
+  });
+
+  it("composes with wrapApiLoggerStderrForJsonCli — quiet drops info/debug, warn/error still route to stderr", () => {
+    process.argv = ["node", "openclaw", "hybrid-mem", "config", "--json"];
+    process.env.OPENCLAW_HYBRID_MEM_QUIET = "1";
+    const api = {
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+    } as unknown as ClawdbotPluginApi;
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const wrapped = wrapApiLoggerQuietForCli(wrapApiLoggerStderrForJsonCli(api));
+    wrapped.logger.info("telemetry");
+    wrapped.logger.warn("warn");
+
+    expect(errSpy).not.toHaveBeenCalledWith("telemetry");
+    expect(errSpy).toHaveBeenCalledWith("warn");
+
+    restoreStdoutAfterJsonCli();
+    process.argv = ["node", "openclaw", "hybrid-mem", "config"];
   });
 });
