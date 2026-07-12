@@ -10,6 +10,7 @@ import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { vacuumAndCheckpoint } from "../backends/facts-db/housekeeping.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import { spawnSync } from "../utils/process-runner.js";
+import { markStepRetryOnce } from "./cron-guard.js";
 import { countPersistedSqliteBusySince, type MaintenanceFinding } from "./maintenance-log-analyzer.js";
 import { isPidAlive } from "./task-queue-watchdog.js";
 
@@ -37,20 +38,30 @@ export function clearStaleLock(lockPath: string): { ok: boolean; detail: string 
   }
 }
 
-/** Idempotent annotation for orchestrator retry — no shell. */
-export function recordRetryOnce(finding: MaintenanceFinding): MaintenanceFinding {
+/**
+ * Idempotent annotation for orchestrator retry — no shell. Persists a per-step retry-once marker
+ * (#2094) that runMaintenanceOrchestrator's guard check consumes to force one run of this step
+ * outside its normal cadence window, so a transient-llm/transient-network failure actually gets
+ * retried instead of the annotation being purely cosmetic.
+ */
+export function recordRetryOnce(finding: MaintenanceFinding, openclawDir?: string): MaintenanceFinding {
   if (finding.actionTaken === "auto-fixed-retry-once") return finding;
+  try {
+    markStepRetryOnce(finding.step, openclawDir);
+  } catch {
+    // Best-effort — the finding is still annotated even if the marker write fails (e.g. read-only fs).
+  }
   return {
     ...finding,
     actionTaken: "auto-fixed-retry-once",
-    suggestedAction: `${finding.suggestedAction} [auto-fix: marked retry-once for next cron tick]`,
+    suggestedAction: `${finding.suggestedAction} [auto-fix: marked retry-once for next maintenance run]`,
   };
 }
 
 /**
  * Apply a single safe auto-fix based on rule id and log content.
  */
-export function applyMaintenanceAutoFix(finding: MaintenanceFinding): MaintenanceFinding {
+export function applyMaintenanceAutoFix(finding: MaintenanceFinding, openclawDir?: string): MaintenanceFinding {
   const id = finding.ruleId;
 
   if (id === "sqlite-busy" || id === "scan-lock-present") {
@@ -76,7 +87,7 @@ export function applyMaintenanceAutoFix(finding: MaintenanceFinding): Maintenanc
   }
 
   if (id === "llm-rate-limit" || id === "gateway-network") {
-    return recordRetryOnce(finding);
+    return recordRetryOnce(finding, openclawDir);
   }
 
   return finding;

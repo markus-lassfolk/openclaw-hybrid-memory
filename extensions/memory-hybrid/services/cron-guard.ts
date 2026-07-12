@@ -214,6 +214,46 @@ export function formatStepLockDetail(info: StepLockInfo | null): string {
   return `pid=${info.pid ?? "unknown"} host=${info.hostname ?? "unknown"} held=${Math.round(info.ageMs / 1000)}s stale=${info.stale} lock=${info.lockPath}`;
 }
 
+/** Per-step "retry once" marker file: `step--{name}.retry-once`. */
+function getStepRetryOnceMarkerPath(stepName: string, openclawDir?: string): string {
+  return join(getGuardDir(openclawDir), `step--${stepName}.retry-once`);
+}
+
+/**
+ * Mark a step for one forced run outside its normal cadence guard (#2094). Set by
+ * analyze-maintenance-logs --auto-fix when a finding is classified transient-llm/transient-network
+ * with the retry-once action; consumed by the orchestrator's guard check on the step's next
+ * evaluation (forced or scheduled), so a transient failure gets one automatic bounded retry instead
+ * of silently waiting out the full cadence window.
+ */
+export function markStepRetryOnce(stepName: string, openclawDir?: string): void {
+  const guardDir = getGuardDir(openclawDir);
+  mkdirSync(guardDir, { recursive: true });
+  writeFileSync(getStepRetryOnceMarkerPath(stepName, openclawDir), String(Date.now()), "utf-8");
+}
+
+/** Whether a retry-once marker is currently pending for this step, without consuming it. */
+export function hasStepRetryOncePending(stepName: string, openclawDir?: string): boolean {
+  return existsSync(getStepRetryOnceMarkerPath(stepName, openclawDir));
+}
+
+/**
+ * Consume (delete) a pending retry-once marker, if present. Returns whether one existed. Always
+ * call this as soon as a pending marker is observed — regardless of whether the bypass it grants
+ * ends up mattering for this particular guard check — so the marker can never grant more than one
+ * extra chance, and never lingers to retroactively affect an unrelated future guard evaluation.
+ */
+export function consumeStepRetryOnce(stepName: string, openclawDir?: string): boolean {
+  const markerPath = getStepRetryOnceMarkerPath(stepName, openclawDir);
+  if (!existsSync(markerPath)) return false;
+  try {
+    rmSync(markerPath, { force: true });
+  } catch {
+    // Non-fatal — worst case this step gets one more forced retry than intended on a future tick.
+  }
+  return true;
+}
+
 export function stepGuardEligible(
   stepName: string,
   guardIntervalMs: number,

@@ -15,7 +15,9 @@ import {
 import { is429OrWrapped } from "./chat.js";
 import {
   acquireStepLock,
+  consumeStepRetryOnce,
   formatStepLockDetail,
+  hasStepRetryOncePending,
   readStepGuardTimestampMs,
   readStepLockInfo,
   releaseStepLock,
@@ -666,7 +668,14 @@ export async function runMaintenanceOrchestrator(
       }
 
       const guardMs = resolveStepGuardIntervalMs(step, cfg);
-      if (!options.force && guardMs > 0) {
+      // #2094: a pending retry-once marker (set by `analyze-maintenance-logs --auto-fix` for a
+      // transient-llm/transient-network finding) forces exactly one run outside the normal cadence
+      // guard. Consumed unconditionally as soon as it's observed, whether or not the bypass ends up
+      // mattering, so it can never grant more than one extra chance or linger stale.
+      const retryOnceForced = hasStepRetryOncePending(step.name, openclawDir)
+        ? consumeStepRetryOnce(step.name, openclawDir)
+        : false;
+      if (!options.force && guardMs > 0 && !retryOnceForced) {
         const guard = stepGuardEligible(step.name, guardMs, openclawDir);
         if (!guard.eligible) {
           const agoH = guard.lastRunMs ? Math.round((Date.now() - guard.lastRunMs) / HOUR_MS) : 0;
@@ -678,6 +687,10 @@ export async function runMaintenanceOrchestrator(
           });
           continue;
         }
+      } else if (retryOnceForced) {
+        logger?.info?.(
+          `maintenance-orchestrator: ${step.name} forced outside cadence guard — consuming pending retry-once marker (#2094)`,
+        );
       }
 
       const runner = runners.get(step.name);

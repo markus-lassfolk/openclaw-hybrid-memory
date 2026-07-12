@@ -3,7 +3,13 @@ import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { HybridMemoryConfig } from "../config.js";
-import { acquireStepLock, readStepGuardTimestampMs, writeStepGuardTimestampMs } from "../services/cron-guard.js";
+import {
+  acquireStepLock,
+  hasStepRetryOncePending,
+  markStepRetryOnce,
+  readStepGuardTimestampMs,
+  writeStepGuardTimestampMs,
+} from "../services/cron-guard.js";
 import {
   MAINTENANCE_STEPS,
   runMaintenanceOrchestrator,
@@ -38,6 +44,42 @@ describe("maintenance-orchestrator", () => {
     const prune = result.steps.find((s) => s.name === "prune");
     expect(prune?.status).toBe("skipped_guard");
     expect(result.exitCode).toBe(0);
+  });
+
+  it("bypasses an unexpired guard exactly once when a retry-once marker is pending, then consumes it (#2094)", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    writeStepGuardTimestampMs("prune", Date.now(), openclawDir);
+    markStepRetryOnce("prune", openclawDir);
+    const runners = new Map<string, () => Promise<string>>([["prune", async () => "ok"]]);
+
+    const first = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["cycle"], verbose: false, include: ["prune"] },
+    );
+    const prune = first.steps.find((s) => s.name === "prune");
+    expect(prune?.status).toBe("ok");
+    expect(hasStepRetryOncePending("prune", openclawDir)).toBe(false);
+
+    // The marker is consumed — a second run inside the same guard window is skipped normally.
+    const second = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["cycle"], verbose: false, include: ["prune"] },
+    );
+    expect(second.steps.find((s) => s.name === "prune")?.status).toBe("skipped_guard");
+  });
+
+  it("consumes a retry-once marker even when the step was already guard-eligible, so it cannot linger stale", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    // No guard timestamp written — the step is naturally eligible without needing the marker.
+    markStepRetryOnce("prune", openclawDir);
+    const runners = new Map<string, () => Promise<string>>([["prune", async () => "ok"]]);
+
+    await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["cycle"], verbose: false, include: ["prune"] },
+    );
+
+    expect(hasStepRetryOncePending("prune", openclawDir)).toBe(false);
   });
 
   it("surfaces lock owner metadata (pid/host/held) in the skipped_guard summary when a step is locked (#2031)", async () => {

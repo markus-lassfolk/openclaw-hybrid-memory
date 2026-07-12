@@ -20,6 +20,7 @@ import {
   applyMaintenanceAutoFix,
   clearStaleLock,
 } from "../services/maintenance-auto-fix.js";
+import { hasStepRetryOncePending } from "../services/cron-guard.js";
 import * as maintenanceLogAnalyzerModule from "../services/maintenance-log-analyzer.js";
 import {
   analyzeMaintenanceSteps,
@@ -1275,6 +1276,64 @@ describe("maintenance log analyzer", () => {
     });
     expect(fixed.actionTaken).toBe("auto-fixed-clear-stale-lock");
     expect(existsSync(stalePath)).toBe(false);
+  });
+
+  it("applyMaintenanceAutoFix persists a retry-once marker for transient-llm/transient-network findings (#2094)", () => {
+    const openclawDir = mkdtempSync(join(tmpdir(), "hm-retry-marker-"));
+    const makeFinding = (ruleId: string, step: string): Parameters<typeof applyMaintenanceAutoFix>[0] => ({
+      id: "x",
+      occurredAt: 1,
+      job: "maintenance-nightly",
+      step,
+      exitCode: 1,
+      classification: ruleId === "llm-rate-limit" ? "transient-llm" : "transient-network",
+      ruleId,
+      fingerprint: "fp",
+      logExcerpt: "429 Too Many Requests",
+      logPath: "/tmp/x.log",
+      pluginVersion: null,
+      actionTaken: "retry-once",
+      suggestedAction: "retry",
+      severity: "medium",
+    });
+
+    const llmFixed = applyMaintenanceAutoFix(makeFinding("llm-rate-limit", "insight-synthesis"), openclawDir);
+    expect(llmFixed.actionTaken).toBe("auto-fixed-retry-once");
+    expect(hasStepRetryOncePending("insight-synthesis", openclawDir)).toBe(true);
+
+    const networkFixed = applyMaintenanceAutoFix(
+      makeFinding("gateway-network", "contradiction-candidates"),
+      openclawDir,
+    );
+    expect(networkFixed.actionTaken).toBe("auto-fixed-retry-once");
+    expect(hasStepRetryOncePending("contradiction-candidates", openclawDir)).toBe(true);
+
+    // A step whose rule isn't retry-once related must not get a marker.
+    expect(hasStepRetryOncePending("prune", openclawDir)).toBe(false);
+  });
+
+  it("recordRetryOnce is idempotent: re-annotating an already-fixed finding does not re-throw or duplicate", () => {
+    const openclawDir = mkdtempSync(join(tmpdir(), "hm-retry-marker-"));
+    const already: Parameters<typeof applyMaintenanceAutoFix>[0] = {
+      id: "x",
+      occurredAt: 1,
+      job: "maintenance-nightly",
+      step: "insight-synthesis",
+      exitCode: 1,
+      classification: "transient-llm",
+      ruleId: "llm-rate-limit",
+      fingerprint: "fp",
+      logExcerpt: "429",
+      logPath: "/tmp/x.log",
+      pluginVersion: null,
+      actionTaken: "auto-fixed-retry-once",
+      suggestedAction: "retry [auto-fix: marked retry-once for next maintenance run]",
+      severity: "medium",
+    };
+    const result = applyMaintenanceAutoFix(already, openclawDir);
+    expect(result).toEqual(already);
+    // No marker written this time — the finding was already annotated, so recordRetryOnce short-circuits.
+    expect(hasStepRetryOncePending("insight-synthesis", openclawDir)).toBe(false);
   });
 
   it("clearStaleLock keeps a live-but-unsignalable lock (EPERM must not be treated as dead, loop iteration 26 regression)", () => {

@@ -269,6 +269,23 @@ export function registerMaintenanceHealthCommands(maintenance: Chainable, cfg: H
           );
         }
 
+        // #2094: cron cadence looking fresh must never read as "maintenance is fine" on its own —
+        // a single unambiguous bottom-line verdict combining both signals, so a reader who only
+        // looks at the last line of output still catches a semantic-only failure.
+        console.log("");
+        if (schedulerHealthy && logHealthy) {
+          console.log("✅ Overall: healthy (scheduler cadence + maintenance log health both OK).");
+        } else if (schedulerHealthy && !logHealthy) {
+          console.log(
+            "⚠️  Overall: ATTENTION NEEDED — cron cadence is fresh, but maintenance is semantically failing " +
+              "(see Log health above). Fresh cadence does not mean maintenance succeeded.",
+          );
+        } else if (!schedulerHealthy && logHealthy) {
+          console.log("⚠️  Overall: ATTENTION NEEDED — scheduler issue(s) detected (see above).");
+        } else {
+          console.log("⚠️  Overall: ATTENTION NEEDED — both scheduler cadence and maintenance log health have issues.");
+        }
+
         if (locks.length > 0) {
           console.log("");
           console.log(`🔒 Active/stale maintenance step locks (${locks.length}):`);
