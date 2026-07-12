@@ -33,6 +33,7 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | **Self-correction** | `self-correction-extract`, `self-correction-run` |
 | **Export & config** | `export`, `config`, `config-mode <mode>` (`mode`), `config-set <key> <value>` (`set`) |
 | **Credentials & scope** | `credentials migrate-to-vault`, `scope list|stats|prune|promote` |
+| **Error-reporter queue** | `error-reports status [--json]`, `error-reports peek [--limit N] [--json]`, `error-reports flush [--timeout ms] [--json]` |
 | **Contacts** | `contacts list`, `contacts suggest-merges`, `contacts merge <fromId> <intoId>`, `contacts import --from <file>`, `contacts sync --from <file>` |
 | **Graph & audit** | `graph repair --collapse-event-hubs [--apply]`, `graph health` / `audit health [--json] [--strict\|--strict-errors] [--output <path>]`, `audit log` |
 | **Plugin lifecycle** | `upgrade [version]`, `uninstall` |

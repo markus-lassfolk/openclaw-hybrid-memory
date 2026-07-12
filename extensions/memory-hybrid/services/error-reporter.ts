@@ -19,9 +19,8 @@ import type {
   ReportStacktrace,
 } from "./error-reporter/types.js";
 
-export { compareVersions };
 export { shouldDropNoisyError } from "./error-reporter/noisy-errors.js";
-export { extractVersion, sanitizeEvent, sanitizePath, scrubString, shouldDropForResolvedIssue };
+export { compareVersions, extractVersion, sanitizeEvent, sanitizePath, scrubString, shouldDropForResolvedIssue };
 
 /**
  * Error Reporter Service for GlitchTip Integration
@@ -89,7 +88,7 @@ const COMMUNITY_DSN = DEFAULT_GLITCHTIP_DSN;
 
 export type { GlitchTipEvent };
 
-interface PendingReportRecord {
+export interface PendingReportRecord {
   id: string;
   event: GlitchTipEvent;
   enqueuedAt: number;
@@ -764,6 +763,153 @@ export function resolvePendingErrorReportCount(resolvedSqlitePath?: string): num
   return countPendingErrorReportsOnDisk(queuePath);
 }
 
+/** Oldest/newest `enqueuedAt` (ms epoch) across the on-disk pending queue, or null when empty/absent. */
+export function readPendingErrorReportEnqueueRange(queuePath?: string): { oldest: number; newest: number } | null {
+  const entries = readPendingErrorReportEntries(queuePath);
+  if (entries.length === 0) return null;
+  let oldest = entries[0].enqueuedAt;
+  let newest = entries[0].enqueuedAt;
+  for (const entry of entries) {
+    if (entry.enqueuedAt < oldest) oldest = entry.enqueuedAt;
+    if (entry.enqueuedAt > newest) newest = entry.enqueuedAt;
+  }
+  return { oldest, newest };
+}
+
+export interface PendingErrorReportSummary {
+  id: string;
+  enqueuedAt: number;
+  eventTimestamp?: number;
+  type: string;
+  message: string;
+  subsystem?: string;
+  operation?: string;
+}
+
+function summarizePendingReportRecord(record: PendingReportRecord): PendingErrorReportSummary {
+  const exc = record.event.exception?.values?.[0];
+  return {
+    id: record.id,
+    enqueuedAt: record.enqueuedAt,
+    eventTimestamp: typeof record.event.timestamp === "number" ? record.event.timestamp : undefined,
+    type: typeof exc?.type === "string" && exc.type.length > 0 ? exc.type : "Error",
+    message: typeof exc?.value === "string" ? exc.value : "",
+    subsystem: record.event.tags?.subsystem,
+    operation: record.event.tags?.operation,
+  };
+}
+
+/**
+ * Read pending report entries directly off disk (works whether or not the reporter is active in
+ * this process — issue #2082). Returns oldest-first, optionally capped to `limit`.
+ */
+export function readPendingErrorReportEntries(queuePath?: string, limit?: number): PendingErrorReportSummary[] {
+  if (!queuePath) return [];
+  let content: string;
+  try {
+    if (!existsSync(queuePath)) return [];
+    content = readFileSync(queuePath, "utf-8");
+  } catch {
+    return [];
+  }
+
+  const records: PendingReportRecord[] = [];
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const parsed = JSON.parse(trimmed) as Partial<PendingReportRecord>;
+      if (typeof parsed.id !== "string" || parsed.id.length === 0) continue;
+      if (!parsed.event || typeof parsed.event !== "object") continue;
+      records.push({
+        id: parsed.id,
+        event: parsed.event,
+        enqueuedAt: typeof parsed.enqueuedAt === "number" ? parsed.enqueuedAt : 0,
+      });
+    } catch {
+      // Skip unparseable lines — mirrors GlitchTipReporter's own queue-load tolerance.
+    }
+  }
+
+  records.sort((a, b) => a.enqueuedAt - b.enqueuedAt);
+  const bounded = typeof limit === "number" && limit >= 0 ? records.slice(0, limit) : records;
+  return bounded.map(summarizePendingReportRecord);
+}
+
+export interface OneShotErrorReportFlushResult {
+  attempted: boolean;
+  /** Set when attempted is false, explaining why no network flush was tried. */
+  reason?: string;
+  pendingBefore: number;
+  pendingAfter: number;
+  flushed: boolean;
+}
+
+/**
+ * One-shot bounded flush for CLI use (#2082). Constructs an isolated reporter instance scoped to
+ * this call only — unlike initErrorReporter(), it never touches the module-level reporter/
+ * initialized state, so it is safe to call from a bare CLI process without side effects on the
+ * wider plugin error-reporting lifecycle. Callers should prefer flushErrorReporter() when
+ * isErrorReporterActive() is already true in this process, to avoid two reporters racing the same
+ * on-disk queue file.
+ */
+export async function attemptOneShotErrorReportFlush(
+  config: Pick<
+    ErrorReporterConfig,
+    "enabled" | "dsn" | "mode" | "consent" | "environment" | "sampleRate" | "resolvedIssues" | "maxPendingReports"
+  >,
+  pendingQueuePath: string | undefined,
+  pluginVersion: string,
+  timeoutMs: number,
+): Promise<OneShotErrorReportFlushResult> {
+  const empty = { pendingBefore: 0, pendingAfter: 0, flushed: false };
+  if (!config.enabled || !config.consent) {
+    return { attempted: false, reason: "error reporting disabled (enabled=false or consent=false)", ...empty };
+  }
+  if (!pendingQueuePath) {
+    return { attempted: false, reason: "no on-disk pending queue configured (in-memory database)", ...empty };
+  }
+
+  const rawEnvDsn = getEnv("ERROR_REPORTING_DSN");
+  const envDsn = typeof rawEnvDsn === "string" && rawEnvDsn.trim().length > 0 ? rawEnvDsn.trim() : "";
+  let resolvedDsn: string;
+  if (envDsn) {
+    resolvedDsn = envDsn;
+  } else if (config.mode === "community") {
+    resolvedDsn = config.dsn || COMMUNITY_DSN;
+  } else {
+    if (!config.dsn) {
+      return { attempted: false, reason: "self-hosted mode requires a DSN but none is configured", ...empty };
+    }
+    resolvedDsn = config.dsn;
+  }
+
+  let oneShotReporter: GlitchTipReporter;
+  try {
+    oneShotReporter = new GlitchTipReporter(
+      resolvedDsn,
+      `openclaw-hybrid-memory@${pluginVersion}`,
+      config.environment || "production",
+      config.sampleRate ?? 1.0,
+      config.resolvedIssues,
+      pendingQueuePath,
+      config.maxPendingReports,
+    );
+  } catch (err) {
+    return {
+      attempted: false,
+      reason: `failed to construct reporter: ${err instanceof Error ? err.message : String(err)}`,
+      ...empty,
+    };
+  }
+
+  await oneShotReporter.initPersistentQueue();
+  const pendingBefore = oneShotReporter.getPendingCount();
+  const flushed = await oneShotReporter.flush(timeoutMs);
+  const pendingAfter = oneShotReporter.getPendingCount();
+  return { attempted: true, pendingBefore, pendingAfter, flushed };
+}
+
 function scheduleStartupErrorReporterDrain(): void {
   if (!reporter) return;
   void (async () => {
@@ -796,9 +942,7 @@ function scheduleStartupErrorReporterDrain(): void {
         );
       }
     } catch (err) {
-      logger.debug?.(
-        `[ErrorReporter] Startup drain failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      logger.debug?.(`[ErrorReporter] Startup drain failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   })();
 }

@@ -373,6 +373,27 @@ await reportMaintenanceFailureIssues(issues, {
 
 ---
 
+## Inspecting and draining the pending queue (`error-reports` CLI)
+
+Failed deliveries are queued on disk next to the SQLite database (`.error_reports.pending.jsonl`) and normally drain automatically the next time the gateway starts with error reporting enabled. `doctor`/`verify` warn when the queue is non-empty, but historically the only remediation was "restart the gateway" or run the much broader `verify` command (issue [#2082](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2082)).
+
+`openclaw hybrid-mem error-reports` gives a focused CLI for this queue, reading it directly off disk so it works whether or not the reporter happens to be initialized in that CLI process:
+
+```bash
+# Queue path, pending count, reporter activity, consent/enabled, oldest/newest enqueue time
+openclaw hybrid-mem error-reports status [--json]
+
+# Inspect the oldest N queued reports (type/message/subsystem/operation) without draining them
+openclaw hybrid-mem error-reports peek [--limit 5] [--json]
+
+# Attempt a bounded delivery; reports whether the pending count actually changed
+openclaw hybrid-mem error-reports flush [--timeout 30000] [--json]
+```
+
+`flush` reuses the live reporter when one is already active in that process; otherwise it spins up an isolated, throwaway reporter instance scoped to that single command (never touching the module-level singleton state `initErrorReporter()` owns), attempts delivery, and reports the before/after pending count. If `errorReporting.enabled`/`consent` is `false`, or self-hosted mode has no DSN configured, `flush` explains why nothing was attempted instead of silently no-op'ing, and exits non-zero.
+
+---
+
 ## FAQ
 
 ### Q: Is this enabled by default?
