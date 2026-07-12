@@ -11,6 +11,11 @@ import { isValidCategory } from "../../../config.js";
 import { DASHBOARD_TIER_FILTER } from "../../../backends/facts-db/stats.js";
 import { buildAuditFailureArtifact, buildAuditHealthExitInfo } from "../../../services/audit-health-exit-info.js";
 import { listDumpTypeAliases, runSqliteTableDump } from "../../../services/cli-sql-dump.js";
+import {
+  decideDiscoveredCategory,
+  readPendingDiscoveredCategories,
+  readRejectedDiscoveredCategories,
+} from "../../../services/discovered-categories.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { repairEventHubs } from "../../../services/event-hub-repair.js";
 import { hasAnyScopeFilter } from "../../../backends/scope-filter-sql.js";
@@ -933,6 +938,85 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
         if (!report.apply) {
           console.log("Dry-run only. Re-run with --apply to update facts.");
         }
+      }),
+    );
+
+  // #2100: the bootstrap warning ("N proposed categories pending operator review") pointed only
+  // at a raw JSON file with no way to list/act on it. `discovered` is deliberately separate from
+  // `propose` above — propose reads `category-suggested:*` fact tags; discovered reads
+  // .discovered-categories.json, written by the auto-classifier's LLM-driven discovery pass.
+  // Resolved lazily (inside each handler, not at registration time) — some ManageBindings
+  // fixtures (existing tests, minimal CLI wiring) omit cfg.sqlitePath entirely, and this command
+  // group must not break every other `categories` subcommand just by being registered alongside them.
+  const getDiscoveredCategoriesPath = (): string =>
+    join(dirname(cfg.sqlitePath ?? "."), ".discovered-categories.json");
+  const printDiscoveredCategories = async (opts?: { json?: boolean }): Promise<void> => {
+    const discoveredCategoriesPath = getDiscoveredCategoriesPath();
+    const [pending, rejected] = await Promise.all([
+      readPendingDiscoveredCategories(discoveredCategoriesPath),
+      readRejectedDiscoveredCategories(discoveredCategoriesPath),
+    ]);
+    if (opts?.json) {
+      console.log(JSON.stringify({ path: discoveredCategoriesPath, pending, rejected }, null, 2));
+      return;
+    }
+    if (pending.length === 0) {
+      console.log("No discovered categories pending review.");
+    } else {
+      console.log(`Discovered categories pending review (${pending.length}): ${pending.join(", ")}`);
+      console.log("");
+      console.log("These are advisory-only — facts still write to their existing category until promoted.");
+      console.log("  Approve (add to config, then apply): openclaw hybrid-mem categories discovered approve <label>");
+      console.log("  Reject (dismiss, never re-proposed):  openclaw hybrid-mem categories discovered reject <label>");
+    }
+    if (rejected.length > 0) {
+      console.log(`Previously rejected (never re-proposed): ${rejected.join(", ")}`);
+    }
+  };
+  const discoveredCommand = categoriesCommand
+    .command("discovered")
+    .description("Review categories the auto-classifier's discovery pass proposed but has not yet been approved")
+    .option("--json", "Emit JSON")
+    .action(withExit(printDiscoveredCategories));
+
+  discoveredCommand
+    .command("list")
+    .description("Same as `categories discovered` with no subcommand")
+    .option("--json", "Emit JSON")
+    .action(withExit(printDiscoveredCategories));
+
+  discoveredCommand
+    .command("approve <label>")
+    .description("Remove a discovered label from the pending queue and print the config command to promote it")
+    .action(
+      withExit(async (label: string) => {
+        const decision = await decideDiscoveredCategory(getDiscoveredCategoriesPath(), label, "approve");
+        if (decision === "not-pending") {
+          console.error(`error: "${label}" is not in the pending discovered-categories queue`);
+          process.exitCode = 1;
+          return;
+        }
+        console.log(`Approved "${label}" — removed from the pending queue.`);
+        console.log("This does not add it to config automatically. To promote it:");
+        console.log(`  1. Add "${label}" to plugin config \`categories\` (see openclaw hybrid-mem config-set categories).`);
+        console.log(
+          `  2. Remap existing facts into it: openclaw hybrid-mem categories remap --from other --to ${label} --apply`,
+        );
+      }),
+    );
+
+  discoveredCommand
+    .command("reject <label>")
+    .description("Dismiss a discovered label — it will not be re-proposed by future discovery runs")
+    .action(
+      withExit(async (label: string) => {
+        const decision = await decideDiscoveredCategory(getDiscoveredCategoriesPath(), label, "reject");
+        if (decision === "not-pending") {
+          console.error(`error: "${label}" is not in the pending discovered-categories queue`);
+          process.exitCode = 1;
+          return;
+        }
+        console.log(`Rejected "${label}" — removed from the pending queue and will not be re-proposed.`);
       }),
     );
 

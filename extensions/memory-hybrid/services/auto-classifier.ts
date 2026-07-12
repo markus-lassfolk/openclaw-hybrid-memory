@@ -26,6 +26,7 @@ import {
   resolveMaintenanceChatTimeoutMs,
 } from "./chat.js";
 import { acquireStepLock, releaseStepLock } from "./cron-guard.js";
+import { readRejectedDiscoveredCategories } from "./discovered-categories.js";
 import { capturePluginError } from "./error-reporter.js";
 import { isMiniMaxModel } from "./model-capabilities.js";
 
@@ -204,9 +205,13 @@ async function discoverCategoriesFromOther(
     if (i + DISCOVERY_BATCH_SIZE < others.length) await new Promise((r) => setTimeout(r, 400));
   }
 
+  // #2100: an operator's explicit `categories discovered reject <label>` must stick — otherwise
+  // "reject" is purely cosmetic and the next discovery run just re-proposes the same label.
+  const rejectedLabels = new Set(await readRejectedDiscoveredCategories(discoveredCategoriesPath));
   const proposedCategoryNames: string[] = [];
   for (const [label, ids] of labelToIds) {
     if (existingCategories.has(label)) continue;
+    if (rejectedLabels.has(label)) continue;
     if (ids.length < minForNew) continue;
     proposedCategoryNames.push(label);
   }
