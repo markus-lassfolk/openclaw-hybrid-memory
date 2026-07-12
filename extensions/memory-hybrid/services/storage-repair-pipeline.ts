@@ -3,7 +3,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { nowIso } from "../utils/dates.js";
 import { appendVectorLifecycleAuditEvent } from "./vector-lifecycle-audit.js";
-import { reconcileOrphanVectors } from "./vector-maintenance.js";
+import { reconcileOrphanVectors, storeCanonicalVectorForFact } from "./vector-maintenance.js";
 
 export type StorageRepairPolicy = "conservative" | "balanced" | "aggressive";
 
@@ -68,12 +68,15 @@ export async function runStorageRepairPipeline(args: {
     for (const fact of candidates.slice(0, allowedRebuilds)) {
       try {
         const vec = await args.embeddings.embed(fact.text);
-        await args.vectorDb.store({
-          id: fact.id,
+        await storeCanonicalVectorForFact({
+          vectorDb: args.vectorDb,
+          factsDb: args.factsDb,
+          factId: fact.id,
           text: fact.text,
           vector: vec,
-          importance: 0.5,
+          importance: fact.importance ?? 0.5,
           category: fact.category,
+          embeddingModel: args.embeddings.modelName,
         });
         report.reembedded++;
       } catch (err) {
@@ -109,12 +112,15 @@ export async function runStorageRepairPipeline(args: {
           continue;
         }
         const vec = await args.embeddings.embed(fact.text);
-        await args.vectorDb.store({
-          id: fact.id,
+        await storeCanonicalVectorForFact({
+          vectorDb: args.vectorDb,
+          factsDb: args.factsDb,
+          factId: fact.id,
           text: fact.text,
           vector: vec,
           importance: fact.importance ?? 0.5,
           category: fact.category,
+          embeddingModel: args.embeddings.modelName,
         });
         report.reconcile.sqliteOrphansRebuilt++;
       } catch (err) {

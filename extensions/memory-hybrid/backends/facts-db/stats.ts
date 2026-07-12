@@ -119,6 +119,7 @@ export type VectorlessFactRow = {
   source: string;
   category: string;
   createdAt: number;
+  importance: number;
 };
 
 export type VectorlessBySourceRow = {
@@ -211,19 +212,27 @@ export function listVectorlessActiveFacts(
   const rows = db
     .prepare(
       `SELECT f.id, f.text, COALESCE(NULLIF(f.source, ''), 'unknown') AS source,
-              COALESCE(f.category, 'other') AS category, f.created_at
+              COALESCE(f.category, 'other') AS category, f.created_at, f.importance
        FROM facts f
        WHERE ${where}
        ORDER BY f.created_at ASC, f.rowid ASC
        LIMIT ?`,
     )
-    .all(...params) as Array<{ id: string; text: string; source: string; category: string; created_at: number }>;
+    .all(...params) as Array<{
+    id: string;
+    text: string;
+    source: string;
+    category: string;
+    created_at: number;
+    importance: number | null;
+  }>;
   return rows.map((row) => ({
     id: row.id,
     text: row.text,
     source: row.source,
     category: row.category,
     createdAt: Number(row.created_at ?? 0),
+    importance: Number(row.importance ?? 0.5),
   }));
 }
 

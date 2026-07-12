@@ -1886,7 +1886,7 @@ export async function runToolEffectivenessForCli(
         .prepare("SELECT id FROM facts WHERE key = ? AND superseded_at IS NULL LIMIT 1")
         .get(monthlyKey);
       if (!existing) {
-        await generateMonthlyReport(effStore, ctx.factsDb);
+        await generateMonthlyReport(effStore, ctx.factsDb, { embeddings: ctx.embeddings, vectorDb: ctx.vectorDb });
       }
     } catch (mrErr) {
       capturePluginError(mrErr instanceof Error ? mrErr : new Error(String(mrErr)), {

@@ -18,10 +18,13 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BaseSqliteStore } from "../backends/base-sqlite-store.js";
 import type { FactsDB } from "../backends/facts-db.js";
+import type { VectorDB } from "../backends/vector-db.js";
 import type { ToolEffectivenessConfig } from "../config/types/features.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
 import { formatDateUtc, nowSec, formatTimestampUtc } from "../utils/dates.js";
 import { capturePluginError } from "./error-reporter.js";
+import type { EmbeddingProvider } from "./embeddings.js";
+import { storeCanonicalVectorForFact } from "./vector-maintenance.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -672,8 +675,16 @@ export function generateToolHint(
  *
  * @param store    ToolEffectivenessStore with scored data.
  * @param factsDb  Facts database to store the pattern fact.
+ * @param vectors  Optional embeddings/vectorDb — when provided, the report fact gets a
+ *   canonical vector so it is semantically searchable and does not show up as permanent
+ *   storage-sync drift (#2092: keyed facts are excluded from the vectorless-backlog repair
+ *   path, so a report fact created without a vector could never self-heal).
  */
-export async function generateMonthlyReport(store: ToolEffectivenessStore, factsDb: FactsDB): Promise<void> {
+export async function generateMonthlyReport(
+  store: ToolEffectivenessStore,
+  factsDb: FactsDB,
+  vectors?: { embeddings: Pick<EmbeddingProvider, "embed" | "modelName">; vectorDb: VectorDB },
+): Promise<void> {
   try {
     const allScores = store.getAll();
 
@@ -723,6 +734,28 @@ export async function generateMonthlyReport(store: ToolEffectivenessStore, facts
     });
     if (storeResult.skipped || storeResult.newlyStored === false) {
       return;
+    }
+    if (vectors) {
+      try {
+        const vector = await vectors.embeddings.embed(summary);
+        await storeCanonicalVectorForFact({
+          vectorDb: vectors.vectorDb,
+          factsDb,
+          factId: storeResult.entry.id,
+          text: summary,
+          vector,
+          importance: storeResult.entry.importance,
+          category: storeResult.entry.category,
+          embeddingModel: vectors.embeddings.modelName,
+        });
+      } catch (vecErr) {
+        // Non-fatal: the report fact itself stored successfully; a missing vector just means
+        // it stays out of semantic search until the next reembed pass picks it up.
+        capturePluginError(vecErr instanceof Error ? vecErr : new Error(String(vecErr)), {
+          operation: "tool-effectiveness-monthly-report-vector",
+          severity: "info",
+        });
+      }
     }
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
