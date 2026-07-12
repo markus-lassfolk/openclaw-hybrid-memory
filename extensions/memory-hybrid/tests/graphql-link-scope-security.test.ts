@@ -55,6 +55,7 @@ describe("GraphQL link/subscription scope enforcement", () => {
         })),
       })),
       createLink: vi.fn(() => "new-link-id"),
+      deleteLink: vi.fn(() => true),
       getConnectedFactIds: vi.fn(getConnectedFactIds),
     };
   }
@@ -128,6 +129,22 @@ describe("GraphQL link/subscription scope enforcement", () => {
     ]);
     const context = { factsDb, scopeFilter: { userId: "tenantA" } } as unknown as ResolverContext;
     expect(resolvers.Mutation.deleteLink(null, { id: "link-1" } as ResolverArgs, context)).toBe(false);
+  });
+
+  it("deleteLink routes through FactsDB.deleteLink (not raw SQL) so degree counters stay live (#2085/#2090 QA follow-up)", () => {
+    const factsDb = makeFactsDb([
+      {
+        id: "link-1",
+        source_fact_id: "a-fact",
+        target_fact_id: "g-fact",
+        link_type: "RELATED_TO",
+        strength: 1,
+        created_at: 0,
+      },
+    ]);
+    const context = { factsDb, scopeFilter: { userId: "tenantA" } } as unknown as ResolverContext;
+    expect(resolvers.Mutation.deleteLink(null, { id: "link-1" } as ResolverArgs, context)).toBe(true);
+    expect(factsDb.deleteLink).toHaveBeenCalledWith("link-1");
   });
 
   it("relatedFacts does not use an out-of-scope root factId as a graph-traversal oracle (loop iteration 18 regression)", () => {

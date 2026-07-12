@@ -147,28 +147,31 @@ export async function runSmokeE2E(deps: {
 
   await runStep(steps, "vector-store", async () => {
     if (!lanceAvailable) return { ok: "skip", detail: "LanceDB unavailable in this environment" };
-    const v1 = await embeddings.embed(factsDb.getById(f1.id)?.text ?? "");
-    const v2 = await embeddings.embed(factsDb.getById(f2.id)?.text ?? "");
-    await storeCanonicalVectorForFact({
-      vectorDb,
-      factsDb,
-      factId: f1.id,
-      text: factsDb.getById(f1.id)?.text ?? "",
-      vector: v1,
-      importance: 0.5,
-      category: "fact",
-      embeddingModel: embeddings.modelName,
-    });
-    await storeCanonicalVectorForFact({
-      vectorDb,
-      factsDb,
-      factId: f2.id,
-      text: factsDb.getById(f2.id)?.text ?? "",
-      vector: v2,
-      importance: 0.5,
-      category: "fact",
-      embeddingModel: embeddings.modelName,
-    });
+    const text1 = factsDb.getById(f1.id)?.text ?? "";
+    const text2 = factsDb.getById(f2.id)?.text ?? "";
+    const [v1, v2] = await Promise.all([embeddings.embed(text1), embeddings.embed(text2)]);
+    await Promise.all([
+      storeCanonicalVectorForFact({
+        vectorDb,
+        factsDb,
+        factId: f1.id,
+        text: text1,
+        vector: v1,
+        importance: 0.5,
+        category: "fact",
+        embeddingModel: embeddings.modelName,
+      }),
+      storeCanonicalVectorForFact({
+        vectorDb,
+        factsDb,
+        factId: f2.id,
+        text: text2,
+        vector: v2,
+        importance: 0.5,
+        category: "fact",
+        embeddingModel: embeddings.modelName,
+      }),
+    ]);
     return { ok: true, detail: `stored vectors for ${f1.id} and ${f2.id}` };
   });
 

@@ -315,4 +315,44 @@ describe("incremental degree counters (#2085)", () => {
       expect(readDegrees(b.id).inDegree).toBe(0);
     });
   });
+
+  describe("degree counters stay live across other link-deletion paths (QA follow-up)", () => {
+    it("factsDb.delete(id) decrements the surviving endpoint's degree counter", () => {
+      const a = makeFact("A");
+      const b = makeFact("B");
+      factsDb.createLink(a.id, b.id, "RELATED_TO", 1.0);
+      expect(readDegrees(a.id).outDegree).toBe(1);
+      expect(readDegrees(b.id).inDegree).toBe(1);
+
+      factsDb.delete(a.id);
+
+      const degreesB = readDegrees(b.id);
+      expect(degreesB.inDegree).toBe(0);
+      expect(degreesB.inDegree).toBe(degreesB.groundTruthIn);
+    });
+
+    it("factsDb.pruneExpiredWithDetails() decrements the surviving endpoint's degree counter", () => {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const expired = factsDb.store({
+        text: "expired",
+        category: "fact",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "conversation",
+        decayClass: "session",
+        expiresAt: nowSec - 100,
+      });
+      const survivor = makeFact("survivor");
+      factsDb.createLink(expired.id, survivor.id, "RELATED_TO", 1.0);
+      expect(readDegrees(survivor.id).inDegree).toBe(1);
+
+      factsDb.pruneExpiredWithDetails();
+
+      const degreesSurvivor = readDegrees(survivor.id);
+      expect(degreesSurvivor.inDegree).toBe(0);
+      expect(degreesSurvivor.inDegree).toBe(degreesSurvivor.groundTruthIn);
+    });
+  });
 });

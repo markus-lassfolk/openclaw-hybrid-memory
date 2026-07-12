@@ -3,19 +3,19 @@
  */
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-
-import type { DecayClass, MemoryCategory } from "../../config.js";
 import { TTL_DEFAULTS } from "../../config/types/core.js";
+import type { DecayClass, MemoryCategory } from "../../config.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { effectiveHalfLifeDays } from "../../services/semantic-lifecycle.js";
 import type { MemoryEntry, MemoryTier, ScopeFilter } from "../../types/memory.js";
+import { nowIso } from "../../utils/dates.js";
 import { calculateExpiry, classifyDecay } from "../../utils/decay.js";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { parseTags } from "../../utils/tags.js";
-import { nowIso } from "../../utils/dates.js";
 import type { StoreFactInput } from "./crud.js";
 import { preserveTagsColumnExcludesFromTrimSql } from "./fact-queries.js";
 import { isLikelyGarbage } from "./fact-read-queries.js";
+import { decrementFactDegreesForLink } from "./links.js";
 import { scopeFilterClausePositional } from "./scope-sql.js";
 
 function extractFactIds(rows: Array<{ id: string }>): string[] {
@@ -37,10 +37,23 @@ function deleteLinksForFactIds(db: DatabaseSync, factIds: readonly string[]): vo
   if (factIds.length === 0) return;
   for (const batch of batchedInClauseBinds(factIds, LINK_DELETE_BATCH_SIZE)) {
     const placeholders = batch.map(() => "?").join(",");
+    // Fetch doomed links before deleting so the surviving endpoint's out_degree/in_degree can be
+    // decremented (#2085/#2090) — mirrors pruneOrphanedLinks/deleteFact's fetch-then-delete-then-
+    // decrement pattern. decrementFactDegreesForLink is a no-op UPDATE for whichever id is being
+    // pruned in this same batch, so it's safe to call for both endpoints unconditionally.
+    const doomed = db
+      .prepare(
+        `SELECT source_fact_id, target_fact_id, link_type FROM memory_links
+         WHERE source_fact_id IN (${placeholders}) OR target_fact_id IN (${placeholders})`,
+      )
+      .all(...batch, ...batch) as Array<{ source_fact_id: string; target_fact_id: string; link_type: string }>;
     db.prepare(
       `DELETE FROM memory_links
        WHERE source_fact_id IN (${placeholders}) OR target_fact_id IN (${placeholders})`,
     ).run(...batch, ...batch);
+    for (const link of doomed) {
+      decrementFactDegreesForLink(db, link.source_fact_id, link.target_fact_id, link.link_type);
+    }
   }
 }
 
@@ -711,7 +724,7 @@ export function pruneExpiredWithDetails(
           )
           .all({ "@now": nowSec }) as Array<{ id: string; decay_class: DecayClass }>;
         const reprieveStmt = db.prepare(
-          `UPDATE facts SET expires_at = ?, confidence = MAX(0.15, confidence * 0.7), decay_second_chance_at = ? WHERE id = ?`,
+          "UPDATE facts SET expires_at = ?, confidence = MAX(0.15, confidence * 0.7), decay_second_chance_at = ? WHERE id = ?",
         );
         for (const row of reprieved) {
           const ttl = TTL_DEFAULTS[row.decay_class] ?? 45 * 24 * 3600;

@@ -617,6 +617,23 @@ function resolveNodeName(env: NodeJS.ProcessEnv = process.env): string | undefin
   );
 }
 
+type DsnResolution = { dsn: string; source: "env" | "community" | "self-hosted" } | { error: string };
+
+/**
+ * Shared DSN precedence: `ERROR_REPORTING_DSN` env override, then community mode's `config.dsn`
+ * fallback to `COMMUNITY_DSN`, then self-hosted mode's required `config.dsn`. Used by both
+ * initErrorReporter (the module-level singleton) and attemptOneShotErrorReportFlush (#2082's
+ * isolated one-shot reporter) so a future precedence change only needs applying once.
+ */
+function resolveDsn(config: Pick<ErrorReporterConfig, "dsn" | "mode">): DsnResolution {
+  const rawEnvDsn = getEnv("ERROR_REPORTING_DSN");
+  const envDsn = typeof rawEnvDsn === "string" && rawEnvDsn.trim().length > 0 ? rawEnvDsn.trim() : "";
+  if (envDsn) return { dsn: envDsn, source: "env" };
+  if (config.mode === "community") return { dsn: config.dsn || COMMUNITY_DSN, source: "community" };
+  if (!config.dsn) return { error: "self-hosted mode requires a DSN but none was provided" };
+  return { dsn: config.dsn, source: "self-hosted" };
+}
+
 /**
  * Initialize error reporter with STRICT privacy settings.
  * Optionally pass runtimeBotId from OpenClaw plugin context (e.g. api.context?.agentId) to use as bot UUID when config.botId is not set.
@@ -636,27 +653,18 @@ export async function initErrorReporter(
     return;
   }
 
-  const rawEnvDsn = getEnv("ERROR_REPORTING_DSN");
-  const envDsn = typeof rawEnvDsn === "string" && rawEnvDsn.trim().length > 0 ? rawEnvDsn.trim() : "";
-
-  // Resolve DSN based on mode
-  let resolvedDsn: string;
-  if (envDsn) {
-    resolvedDsn = envDsn;
-    logger.info?.("[ErrorReporter] Using DSN from ERROR_REPORTING_DSN");
-  } else if (config.mode === "community") {
-    // Community mode: allow override via config.dsn, otherwise use COMMUNITY_DSN
-    resolvedDsn = config.dsn || COMMUNITY_DSN;
-    logger.info?.("[ErrorReporter] Using community mode (anonymous telemetry)");
-  } else {
-    // self-hosted mode
-    if (!config.dsn) {
-      logger.warn?.("[ErrorReporter] Self-hosted mode requires a DSN but none was provided. Error reporting disabled.");
-      return;
-    }
-    resolvedDsn = config.dsn;
-    logger.info?.("[ErrorReporter] Using self-hosted mode");
+  const dsnResult = resolveDsn(config);
+  if ("error" in dsnResult) {
+    logger.warn?.("[ErrorReporter] Self-hosted mode requires a DSN but none was provided. Error reporting disabled.");
+    return;
   }
+  const resolvedDsn = dsnResult.dsn;
+  const dsnSourceMessage = {
+    env: "[ErrorReporter] Using DSN from ERROR_REPORTING_DSN",
+    community: "[ErrorReporter] Using community mode (anonymous telemetry)",
+    "self-hosted": "[ErrorReporter] Using self-hosted mode",
+  }[dsnResult.source];
+  logger.info?.(dsnSourceMessage);
 
   const releaseStr = `openclaw-hybrid-memory@${pluginVersion}`;
 
@@ -870,19 +878,11 @@ export async function attemptOneShotErrorReportFlush(
     return { attempted: false, reason: "no on-disk pending queue configured (in-memory database)", ...empty };
   }
 
-  const rawEnvDsn = getEnv("ERROR_REPORTING_DSN");
-  const envDsn = typeof rawEnvDsn === "string" && rawEnvDsn.trim().length > 0 ? rawEnvDsn.trim() : "";
-  let resolvedDsn: string;
-  if (envDsn) {
-    resolvedDsn = envDsn;
-  } else if (config.mode === "community") {
-    resolvedDsn = config.dsn || COMMUNITY_DSN;
-  } else {
-    if (!config.dsn) {
-      return { attempted: false, reason: "self-hosted mode requires a DSN but none is configured", ...empty };
-    }
-    resolvedDsn = config.dsn;
+  const dsnResult = resolveDsn(config);
+  if ("error" in dsnResult) {
+    return { attempted: false, reason: dsnResult.error, ...empty };
   }
+  const resolvedDsn = dsnResult.dsn;
 
   let oneShotReporter: GlitchTipReporter;
   try {

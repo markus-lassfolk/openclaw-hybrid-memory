@@ -2069,7 +2069,7 @@ export class VectorDB {
 
         for (let offset = 0; offset < unique.length; offset += CHUNK) {
           const chunk = unique.slice(offset, offset + CHUNK);
-          const inList = chunk.map((id) => `'${this.escapeSqlString(id)}'`).join(", ");
+          const inList = chunk.map((id) => toSafeIdLiteral(id)).join(", ");
 
           const queryPromise = table.query().where(`id IN (${inList})`).select(["id", "vector"]).toArray();
           const rows = await withTimeout(VECTORDB_GET_VECTORS_TIMEOUT_MS, () => queryPromise);

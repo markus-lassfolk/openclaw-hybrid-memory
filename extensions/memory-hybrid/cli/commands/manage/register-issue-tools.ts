@@ -23,6 +23,19 @@ function splitList(value: string | undefined): string[] | undefined {
   return items;
 }
 
+/** Throws formatError(value) for the first entry of `values` not present in `allowed`. */
+function validateEnumValues(
+  values: readonly string[],
+  allowed: readonly string[],
+  formatError: (badValue: string) => string,
+): void {
+  for (const value of values) {
+    if (!allowed.includes(value)) {
+      throw new Error(formatError(value));
+    }
+  }
+}
+
 function formatIssueLine(issue: Issue): string {
   return `[${issue.id.slice(0, 8)}] ${issue.title} — ${issue.status} (${issue.severity})`;
 }
@@ -51,8 +64,12 @@ export function registerManageIssueTools(mem: Chainable, b: ManageBindings): voi
         async (title: string, opts?: { symptoms?: string; severity?: string; tags?: string; json?: boolean }) => {
           const store = requireIssueStore();
           const severity = opts?.severity as IssueSeverity | undefined;
-          if (severity && !(ISSUE_SEVERITIES as readonly string[]).includes(severity)) {
-            throw new Error(`--severity must be one of: ${ISSUE_SEVERITIES.join(", ")}`);
+          if (severity) {
+            validateEnumValues(
+              [severity],
+              ISSUE_SEVERITIES,
+              () => `--severity must be one of: ${ISSUE_SEVERITIES.join(", ")}`,
+            );
           }
           const symptoms = splitList(opts?.symptoms) ?? [];
           const issue = store.create({ title, symptoms, severity, tags: splitList(opts?.tags) });
@@ -93,8 +110,8 @@ export function registerManageIssueTools(mem: Chainable, b: ManageBindings): voi
         ) => {
           const store = requireIssueStore();
           const status = opts?.status as IssueStatus | undefined;
-          if (status && !(ISSUE_STATUSES as readonly string[]).includes(status)) {
-            throw new Error(`--status must be one of: ${ISSUE_STATUSES.join(", ")}`);
+          if (status) {
+            validateEnumValues([status], ISSUE_STATUSES, () => `--status must be one of: ${ISSUE_STATUSES.join(", ")}`);
           }
           const symptoms = splitList(opts?.symptoms);
           const issue = status
@@ -130,19 +147,17 @@ export function registerManageIssueTools(mem: Chainable, b: ManageBindings): voi
           throw new Error(`Invalid --limit value: ${opts.limit}`);
         }
         const statusFilter = splitList(opts?.status);
-        for (const s of statusFilter ?? []) {
-          if (!(ISSUE_STATUSES as readonly string[]).includes(s)) {
-            throw new Error(`--status contains an invalid value "${s}"; must be one of: ${ISSUE_STATUSES.join(", ")}`);
-          }
-        }
+        validateEnumValues(
+          statusFilter ?? [],
+          ISSUE_STATUSES,
+          (bad) => `--status contains an invalid value "${bad}"; must be one of: ${ISSUE_STATUSES.join(", ")}`,
+        );
         const severityFilter = splitList(opts?.severity);
-        for (const s of severityFilter ?? []) {
-          if (!(ISSUE_SEVERITIES as readonly string[]).includes(s)) {
-            throw new Error(
-              `--severity contains an invalid value "${s}"; must be one of: ${ISSUE_SEVERITIES.join(", ")}`,
-            );
-          }
-        }
+        validateEnumValues(
+          severityFilter ?? [],
+          ISSUE_SEVERITIES,
+          (bad) => `--severity contains an invalid value "${bad}"; must be one of: ${ISSUE_SEVERITIES.join(", ")}`,
+        );
         // IssueStore.list() only appends LIMIT when limit > 0 — clamp like the memory_issue_list
         // tool does so an unset/invalid limit can't silently return the entire table.
         const limit = typeof limitRaw === "number" ? Math.max(1, Math.min(500, Math.floor(limitRaw))) : 50;

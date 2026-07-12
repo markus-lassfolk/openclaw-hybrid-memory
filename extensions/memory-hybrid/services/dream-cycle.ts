@@ -1375,42 +1375,44 @@ export async function runDreamCycle(
   let bridgeCrystallizationCreated = 0;
   let bridgeSkillBridged = 0;
 
-  if (dryRun && bridge?.cfg?.nightlyCycle?.autoPropose === true) {
-    skipForDryRun("auto-propose bridge (persona/crystallization/skill-workshop)");
-  } else if (bridge?.cfg?.nightlyCycle?.autoPropose === true) {
-    try {
-      const newPatternFactIds = factsDb
-        .getAll()
-        .filter((f) => f.category === "pattern" && !f.supersededAt && !patternIdsBeforeReflection.has(f.id))
-        .map((f) => f.id);
-      const newRuleFactIds = factsDb
-        .getAll()
-        .filter((f) => f.category === "rule" && !f.supersededAt && !ruleIdsBeforeReflectRules.has(f.id))
-        .map((f) => f.id);
-      const bridgeResult = runDreamCycleProposalBridge({
-        cfg: bridge.cfg,
-        factsDb,
-        proposalsDb: bridge.proposalsDb ?? null,
-        crystallizationStore: bridge.crystallizationStore ?? null,
-        toolProposalStore: bridge.toolProposalStore ?? null,
-        patternsStored: patternsFound,
-        rulesGenerated,
-        newRuleFactIds,
-        newPatternFactIds,
-        logger,
-        api: bridge.api,
-        changeFeed: bridge.changeFeed,
-      });
-      bridgePersonaCreated = bridgeResult.personaProposalsCreated;
-      bridgeCrystallizationCreated = bridgeResult.crystallizationProposalsCreated;
-      bridgeSkillBridged = bridgeResult.skillWorkshopBridged;
-      if (bridgePersonaCreated > 0 || bridgeCrystallizationCreated > 0 || bridgeSkillBridged > 0) {
-        logger.info(
-          `memory-hybrid: dream-cycle auto-propose — persona=${bridgePersonaCreated} crystallization=${bridgeCrystallizationCreated} skillWorkshop=${bridgeSkillBridged}`,
-        );
+  if (bridge?.cfg?.nightlyCycle?.autoPropose === true) {
+    if (dryRun) {
+      skipForDryRun("auto-propose bridge (persona/crystallization/skill-workshop)");
+    } else {
+      try {
+        const newPatternFactIds = factsDb
+          .getAll()
+          .filter((f) => f.category === "pattern" && !f.supersededAt && !patternIdsBeforeReflection.has(f.id))
+          .map((f) => f.id);
+        const newRuleFactIds = factsDb
+          .getAll()
+          .filter((f) => f.category === "rule" && !f.supersededAt && !ruleIdsBeforeReflectRules.has(f.id))
+          .map((f) => f.id);
+        const bridgeResult = runDreamCycleProposalBridge({
+          cfg: bridge.cfg,
+          factsDb,
+          proposalsDb: bridge.proposalsDb ?? null,
+          crystallizationStore: bridge.crystallizationStore ?? null,
+          toolProposalStore: bridge.toolProposalStore ?? null,
+          patternsStored: patternsFound,
+          rulesGenerated,
+          newRuleFactIds,
+          newPatternFactIds,
+          logger,
+          api: bridge.api,
+          changeFeed: bridge.changeFeed,
+        });
+        bridgePersonaCreated = bridgeResult.personaProposalsCreated;
+        bridgeCrystallizationCreated = bridgeResult.crystallizationProposalsCreated;
+        bridgeSkillBridged = bridgeResult.skillWorkshopBridged;
+        if (bridgePersonaCreated > 0 || bridgeCrystallizationCreated > 0 || bridgeSkillBridged > 0) {
+          logger.info(
+            `memory-hybrid: dream-cycle auto-propose — persona=${bridgePersonaCreated} crystallization=${bridgeCrystallizationCreated} skillWorkshop=${bridgeSkillBridged}`,
+          );
+        }
+      } catch (err) {
+        logger.warn(`memory-hybrid: dream-cycle auto-propose bridge failed (non-fatal): ${err}`);
       }
-    } catch (err) {
-      logger.warn(`memory-hybrid: dream-cycle auto-propose bridge failed (non-fatal): ${err}`);
     }
   }
 
@@ -1558,76 +1560,80 @@ export async function runDreamCycle(
     );
   }
 
-  if (dryRun && bridge?.changeFeed && bridge?.cfg) {
-    skipForDryRun("change-feed prune + workshop sync + dream-cycle-complete event");
-  } else if (bridge?.changeFeed && bridge?.cfg) {
-    if (bridge.cfg.liveChangeFeed?.enabled !== false) {
-      try {
-        const pruned = bridge.changeFeed.pruneOlderThan(bridge.cfg.liveChangeFeed?.retentionDays ?? 90);
-        if (pruned > 0) {
-          logger.info(`memory-hybrid: dream-cycle — pruned ${pruned} old change-feed event(s)`);
-        }
-      } catch (err) {
-        logger.warn(`memory-hybrid: dream-cycle — change-feed prune failed (non-fatal): ${err}`);
-      }
-      try {
-        if (isWorkshopEnabled(bridge.cfg)) {
-          const synced = syncWorkshopProposedEvents(
-            withWorkshopDefaults({
-              cfg: bridge.cfg,
-              factsDb,
-              proposalsDb: bridge.proposalsDb ?? null,
-              crystallizationStore: bridge.crystallizationStore ?? null,
-              toolProposalStore: bridge.toolProposalStore ?? null,
-              workflowStore: bridge.workflowStore ?? null,
-              resolvedSqlitePath: bridge.resolvedSqlitePath ?? "",
-              changeFeed: bridge.changeFeed,
-            }),
-          );
-          if (synced > 0) {
-            logger.info(`memory-hybrid: dream-cycle — synced ${synced} workshop proposed change event(s)`);
+  if (bridge?.changeFeed && bridge?.cfg) {
+    if (dryRun) {
+      skipForDryRun("change-feed prune + workshop sync + dream-cycle-complete event");
+    } else {
+      if (bridge.cfg.liveChangeFeed?.enabled !== false) {
+        try {
+          const pruned = bridge.changeFeed.pruneOlderThan(bridge.cfg.liveChangeFeed?.retentionDays ?? 90);
+          if (pruned > 0) {
+            logger.info(`memory-hybrid: dream-cycle — pruned ${pruned} old change-feed event(s)`);
           }
+        } catch (err) {
+          logger.warn(`memory-hybrid: dream-cycle — change-feed prune failed (non-fatal): ${err}`);
         }
-      } catch (err) {
-        logger.warn(`memory-hybrid: dream-cycle — workshop change-feed sync failed (non-fatal): ${err}`);
+        try {
+          if (isWorkshopEnabled(bridge.cfg)) {
+            const synced = syncWorkshopProposedEvents(
+              withWorkshopDefaults({
+                cfg: bridge.cfg,
+                factsDb,
+                proposalsDb: bridge.proposalsDb ?? null,
+                crystallizationStore: bridge.crystallizationStore ?? null,
+                toolProposalStore: bridge.toolProposalStore ?? null,
+                workflowStore: bridge.workflowStore ?? null,
+                resolvedSqlitePath: bridge.resolvedSqlitePath ?? "",
+                changeFeed: bridge.changeFeed,
+              }),
+            );
+            if (synced > 0) {
+              logger.info(`memory-hybrid: dream-cycle — synced ${synced} workshop proposed change event(s)`);
+            }
+          }
+        } catch (err) {
+          logger.warn(`memory-hybrid: dream-cycle — workshop change-feed sync failed (non-fatal): ${err}`);
+        }
       }
+      emitDreamCycleComplete(bridge.changeFeed, bridge.cfg, {
+        success,
+        digestSummary,
+        personaProposalsCreated: bridgePersonaCreated,
+        crystallizationProposalsCreated: bridgeCrystallizationCreated,
+        skillWorkshopBridged: bridgeSkillBridged,
+      });
     }
-    emitDreamCycleComplete(bridge.changeFeed, bridge.cfg, {
-      success,
-      digestSummary,
-      personaProposalsCreated: bridgePersonaCreated,
-      crystallizationProposalsCreated: bridgeCrystallizationCreated,
-      skillWorkshopBridged: bridgeSkillBridged,
-    });
   }
 
   // Optional: Ingest dream cycle findings into facts for wiki surface
   let dreamFindingsIngested = 0;
   let dreamIngestSuccess = true;
-  if (dryRun && config.ingestDreamFindings && config.stageArtifactDir && success) {
-    skipForDryRun("dream findings ingest");
-  } else if (config.ingestDreamFindings && config.stageArtifactDir && success) {
-    try {
-      const { ingestDreamFindings } = await import("./wiki-dream-ingester.js");
-      const ingesterResult = await ingestDreamFindings({
-        factsDb,
-        dreamCycleLogDir: config.stageArtifactDir.replace(/\/[^/]+$/, ""),
-        verbose: !!config.verbose,
-      });
-      dreamFindingsIngested = ingesterResult.findingsIngested;
-      if (ingesterResult.errors.length > 0) {
+  if (config.ingestDreamFindings && config.stageArtifactDir && success) {
+    if (dryRun) {
+      skipForDryRun("dream findings ingest");
+    } else {
+      try {
+        const { ingestDreamFindings } = await import("./wiki-dream-ingester.js");
+        const ingesterResult = await ingestDreamFindings({
+          factsDb,
+          dreamCycleLogDir: config.stageArtifactDir.replace(/\/[^/]+$/, ""),
+          verbose: !!config.verbose,
+        });
+        dreamFindingsIngested = ingesterResult.findingsIngested;
+        if (ingesterResult.errors.length > 0) {
+          dreamIngestSuccess = false;
+          logger.warn(
+            `memory-hybrid: dream-cycle — dream findings ingest errors: ${ingesterResult.errors.slice(0, 3).join("; ")}`,
+          );
+        } else if (ingesterResult.findingsIngested > 0) {
+          logger.info(
+            `memory-hybrid: dream-cycle — ingested ${ingesterResult.findingsIngested} finding(s) from ${ingesterResult.runsProcessed} run(s)`,
+          );
+        }
+      } catch (err) {
         dreamIngestSuccess = false;
-        logger.warn(
-          `memory-hybrid: dream-cycle — dream findings ingest errors: ${ingesterResult.errors.slice(0, 3).join("; ")}`,
-        );
-      } else if (ingesterResult.findingsIngested > 0) {
-        logger.info(
-          `memory-hybrid: dream-cycle — ingested ${ingesterResult.findingsIngested} finding(s) from ${ingesterResult.runsProcessed} run(s)`,
-        );
+        logger.warn?.(`memory-hybrid: dream-cycle — dream findings ingest failed: ${err}`);
       }
-    } catch (err) {
-      dreamIngestSuccess = false;
-      logger.warn?.(`memory-hybrid: dream-cycle — dream findings ingest failed: ${err}`);
     }
   }
 

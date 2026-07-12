@@ -8,12 +8,11 @@
  */
 
 import { MEMORY_LINK_TYPES, type MemoryLinkType } from "../../../backends/facts-db.js";
+import { truncateText } from "../../../utils/text.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
-function truncate(text: string, max = 50): string {
-  return text.length > max ? `${text.slice(0, max)}…` : text;
-}
+const truncate = (text: string): string => truncateText(text, 50);
 
 export function registerManageLinkTools(mem: Chainable, b: ManageBindings): void {
   const { factsDb } = b;
