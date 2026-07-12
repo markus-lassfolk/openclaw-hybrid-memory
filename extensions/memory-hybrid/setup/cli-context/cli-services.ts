@@ -149,7 +149,7 @@ interface CliContextServices {
     sources?: string[];
     mode?: "replace" | "additive";
   }) => Promise<{ factsExported: number; proceduresExported: number; filesWritten: number; outputPath: string }>;
-  runDreamCycle: (opts?: { verbose?: boolean }) => Promise<DreamCycleResult>;
+  runDreamCycle: (opts?: { verbose?: boolean; dryRun?: boolean }) => Promise<DreamCycleResult>;
   runContinuousVerification: (opts?: { verbose?: boolean }) => Promise<VerificationCycleResult>;
   requireWalFlushBeforeMutation: (phase: string) => Promise<{ committed: number; skipped: number }>;
   runResolveContradictions: () => Promise<{
@@ -498,8 +498,9 @@ export function buildCliContextServices(
           schemaVersion: versionInfo.schemaVersion,
         }),
       ),
-    runDreamCycle: async (opts?: { verbose?: boolean }) => {
+    runDreamCycle: async (opts?: { verbose?: boolean; dryRun?: boolean }) => {
       const verbose = !!opts?.verbose;
+      const dryRun = !!opts?.dryRun;
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
       const dreamModel = cfg.nightlyCycle.model ?? defaultModel;
       const tierPref = resolveTierPreferenceWithSources(cfg, "default");
@@ -554,6 +555,7 @@ export function buildCliContextServices(
           enableReflectionRules: cfg.nightlyCycle.enableReflectionRules,
           ingestDreamFindings: cfg.nightlyCycle.ingestDreamFindings === true,
           verbose,
+          dryRun,
           episodicConsolidationEventTypes: {
             allow: cfg.nightlyCycle.consolidationEventTypeAllow,
             deny: cfg.nightlyCycle.consolidationEventTypeDeny,

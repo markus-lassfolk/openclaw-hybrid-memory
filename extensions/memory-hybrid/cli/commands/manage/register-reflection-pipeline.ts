@@ -8,10 +8,22 @@ import type {
 } from "../../../backends/facts-db/contradictions.js";
 import { PROJECT_STATE_LWW_KEYS } from "../../../backends/facts-db/contradictions.js";
 import { getCronModelConfig, getDefaultCronModel } from "../../../config.js";
+import {
+  buildContradictionProgressJsonSummary,
+  type ContradictionProgressJsonSummary,
+  DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD,
+  DEFAULT_DEGRADED_CONSECUTIVE_THRESHOLD,
+  evaluateContradictionProgress,
+  formatContradictionProgressSummaryLine,
+  persistConsecutiveNoProgressState,
+  readConsecutiveNoProgressRuns,
+} from "../../../services/contradiction-progress-summary.js";
 import { acquireStepLock, releaseStepLock } from "../../../services/cron-guard.js";
-import { capturePluginError } from "../../../services/error-reporter.js";
+import { runCrystallizationProposalCycle } from "../../../services/crystallization-maintenance.js";
 import { isEntityEnrichmentHardFailure } from "../../../services/entity-enrichment-adaptive.js";
+import { capturePluginError } from "../../../services/error-reporter.js";
 import { getEffectivenessReport, runClosedLoopAnalysis } from "../../../services/feedback-effectiveness.js";
+import { formatTimestampUtc } from "../../../utils/dates.js";
 import {
   cleanupImplicitFeedbackDuplicates,
   type ExtractImplicitFeedbackProgressSnapshot,
@@ -22,31 +34,18 @@ import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-ver
 import { registerScanMaintenanceOverrideOptions } from "../../maintenance-overrides.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
-
 import {
-  assessContinuousVerificationResult,
   applyDreamCyclePipelineExitCode,
+  assessContinuousVerificationResult,
   dreamCycleFollowUpSkipReason,
   formatContinuousVerificationAssessmentLine,
   formatExtractImplicitFeedbackProgress,
-  recordDreamCycleFollowUpFailure,
   type RunVerboseFollowUpOptions,
-  shouldSkipDreamCycleFollowUps,
+  recordDreamCycleFollowUpFailure,
   runVerboseFollowUp,
+  shouldSkipDreamCycleFollowUps,
 } from "./dream-cycle-followup.js";
 import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
-import {
-  DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD,
-  DEFAULT_DEGRADED_CONSECUTIVE_THRESHOLD,
-  buildContradictionProgressJsonSummary,
-  evaluateContradictionProgress,
-  formatContradictionProgressSummaryLine,
-  persistConsecutiveNoProgressState,
-  readConsecutiveNoProgressRuns,
-  type ContradictionProgressJsonSummary,
-} from "../../../services/contradiction-progress-summary.js";
-import { runCrystallizationProposalCycle } from "../../../services/crystallization-maintenance.js";
-import { formatTimestampUtc } from "../../../utils/dates.js";
 
 const CONTRADICTION_BUCKET_PREVIEW_TARGET_RATE = 0.8;
 
@@ -798,382 +797,417 @@ export function registerManageReflectionPipeline(
           "Run nightly dream cycle: prune expired/decayed facts, consolidate old episodic events, reflect to extract patterns, optionally extract rules",
         )
         .option("-v, --verbose", "Detailed progress (reflection, memory index, WAL flush, nightly follow-up steps)")
+        .option(
+          "--dry-run",
+          "Preview what the cycle would prune/consolidate/reflect/promote without mutating anything (#2089)",
+        )
+        .option(
+          "--json",
+          "Emit the dry-run preview as JSON instead of human-readable text (requires --dry-run; a live run touches" +
+            " too many follow-up subsystems for a single structured summary)",
+        )
         .action(
-          withExit(async (opts?: { verbose?: boolean }, cmd?: CommanderOptsParent) => {
-            const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
-            const pipelineStartedAt = Date.now();
-            const coreStartedAt = Date.now();
-            let res;
-            const followUpFailures: Array<{ phase: string; error: string }> = [];
-            let toolEffectivenessSummary: string | null = null;
-            // Real cross-process mutex, matching the "dream-cycle-core" lock name the maintenance
-            // orchestrator acquires around its own dream-cycle step — without this, a manual CLI
-            // run can overlap a scheduled orchestrator tick and both compute different merges for
-            // the same event group (see #72). Only the core run needs the lock; released
-            // immediately after so it doesn't block a concurrent run for the whole follow-up
-            // pipeline (which doesn't share dream-cycle's own race window).
-            if (!acquireStepLock("dream-cycle-core")) {
-              console.log("Dream cycle skipped — another dream-cycle run is already in progress.");
-              return;
-            }
-            try {
-              res = await runDreamCycle(verbose ? { verbose: true } : undefined);
-            } catch (err) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                subsystem: "cli",
-                operation: "dream-cycle",
-              });
-              throw err;
-            } finally {
-              releaseStepLock("dream-cycle-core");
-            }
-            const coreElapsedSec = Math.floor((Date.now() - coreStartedAt) / 1000);
-            if (res.skipped) {
-              console.log("Dream cycle skipped (nightlyCycle.enabled = false in config).");
-            } else if (res.success) {
-              console.log(`Dream cycle complete: ${res.digestSummary}`);
-            } else {
-              console.log(`Dream cycle finished with errors: ${res.digestSummary}`);
-              if (res.failedStages.length > 0) {
-                console.log(`  Core stage failures: ${res.failedStages.join(", ")}`);
+          withExit(
+            async (opts?: { verbose?: boolean; dryRun?: boolean; json?: boolean }, cmd?: CommanderOptsParent) => {
+              const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+              const dryRun = !!opts?.dryRun;
+              const jsonMode = !!opts?.json;
+              if (jsonMode && !dryRun) {
+                throw new Error("--json is only supported together with --dry-run for dream-cycle");
               }
-            }
-            if (!res.skipped) {
-              console.log(`  Core cycle elapsed: ${coreElapsedSec}s`);
-              console.log(`  Facts pruned: ${res.factsPruned}`);
-              console.log(`  Facts decayed: ${res.factsDecayed}`);
-              console.log(`  Events consolidated: ${res.eventsConsolidated} → ${res.factsCreated} facts`);
-              console.log(`  Patterns found: ${res.patternsFound}`);
-              console.log(`  Rules generated: ${res.rulesGenerated}`);
-              if (res.reflectionRulesDiagnostics) {
-                const zeroReason = res.reflectionRulesDiagnostics.zeroRulesReason
-                  ? ` zero_rules_reason=${res.reflectionRulesDiagnostics.zeroRulesReason}`
-                  : "";
-                console.log(
-                  `  Reflect-rules diagnostics: model_response_chars=${res.reflectionRulesDiagnostics.modelResponseChars} parse_success=${res.reflectionRulesDiagnostics.parseSuccess} parsed_candidates=${res.reflectionRulesDiagnostics.parsedCandidates} rejected_duplicates=${res.reflectionRulesDiagnostics.rejectedDuplicates} rejected_low_confidence=${res.reflectionRulesDiagnostics.rejectedLowConfidence} stored=${res.reflectionRulesDiagnostics.stored} status=${res.reflectionRulesDiagnostics.status}${zeroReason}`,
-                );
-              }
-            }
-
-            const skipFollowUps = shouldSkipDreamCycleFollowUps(res);
-            const followUpSkipReason = dreamCycleFollowUpSkipReason(res);
-            if (followUpSkipReason && verbose) {
-              console.log(`[dream-cycle] skipping follow-ups: ${followUpSkipReason}`);
-            }
-
-            const followUpPlan: string[] = [];
-            if (
-              !skipFollowUps &&
-              runContinuousVerification &&
-              cfg.verification.enabled &&
-              cfg.verification.continuousVerification
-            ) {
-              followUpPlan.push("continuous verification");
-            }
-            if (!skipFollowUps && runExtractImplicitFeedback && cfg.implicitFeedback?.enabled !== false) {
-              followUpPlan.push("extract implicit feedback");
-            }
-            if (!skipFollowUps && cfg.closedLoop?.enabled !== false && cfg.closedLoop?.runInNightlyCycle !== false) {
-              followUpPlan.push("closed-loop effectiveness");
-            }
-            if (
-              !skipFollowUps &&
-              runCrossAgentLearning &&
-              cfg.crossAgentLearning?.enabled &&
-              cfg.crossAgentLearning?.runInNightlyCycle !== false
-            ) {
-              followUpPlan.push("cross-agent learning");
-            }
-            if (
-              !skipFollowUps &&
-              runToolEffectiveness &&
-              cfg.toolEffectiveness?.enabled !== false &&
-              cfg.toolEffectiveness?.runInNightlyCycle !== false
-            ) {
-              followUpPlan.push("tool effectiveness");
-            }
-            if (!skipFollowUps && cfg.crystallization?.enabled === true) {
-              followUpPlan.push("crystallization proposals");
-            }
-            if (
-              !skipFollowUps &&
-              pruneCostLog &&
-              cfg.costTracking?.enabled !== false &&
-              cfg.costTracking?.pruneInNightlyCycle !== false
-            ) {
-              followUpPlan.push("cost log prune");
-            }
-
-            let followUpCompleted = 0;
-            const runFollowUpStage = async <T>(
-              phaseLabel: string,
-              fn: () => Promise<T> | T,
-              options?: RunVerboseFollowUpOptions,
-            ): Promise<T> => {
-              const stageIndex = followUpCompleted + 1;
-              try {
-                const result = await runVerboseFollowUp(phaseLabel, verbose, fn, {
-                  ...options,
-                  stageIndex: followUpPlan.length > 0 ? stageIndex : undefined,
-                  stageTotal: followUpPlan.length > 0 ? followUpPlan.length : undefined,
-                });
-                followUpCompleted++;
-                return result;
-              } catch (err) {
-                recordDreamCycleFollowUpFailure(
-                  followUpFailures,
-                  followUpPlan.length > 0 ? `${phaseLabel} (stage ${stageIndex}/${followUpPlan.length})` : phaseLabel,
-                  err,
-                );
-                throw err;
-              }
-            };
-            const runFollowUpStageSafe = async <T>(
-              phaseLabel: string,
-              fn: () => Promise<T> | T,
-              operation: string,
-              options?: RunVerboseFollowUpOptions,
-            ): Promise<void> => {
-              try {
-                await runFollowUpStage(phaseLabel, fn, options);
-              } catch (err) {
-                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                  subsystem: "cli",
-                  operation,
-                });
-              }
-            };
-
-            if (!skipFollowUps && verbose) {
-              const labels = followUpPlan.length > 0 ? followUpPlan.join(", ") : "none";
-              console.log(`[dream-cycle] follow-up plan: ${followUpPlan.length} stage(s) — ${labels}`);
-            }
-
-            if (
-              !skipFollowUps &&
-              runContinuousVerification &&
-              cfg.verification.enabled &&
-              cfg.verification.continuousVerification
-            ) {
-              await runFollowUpStageSafe(
-                "continuous verification",
-                async () => {
-                  const verificationRes = await runContinuousVerification(verbose ? { verbose: true } : undefined);
-                  console.log("Continuous verification complete:");
-                  console.log(`  Checked: ${verificationRes.checked}`);
-                  console.log(`  Confirmed: ${verificationRes.confirmed}`);
-                  console.log(`  Stale: ${verificationRes.stale}`);
-                  console.log(`  Uncertain: ${verificationRes.uncertain}`);
-                  console.log(`  Errors: ${verificationRes.errors}`);
-                  if (verificationRes.errorSummaries.length > 0) {
-                    console.log("  Error summary:");
-                    for (const summary of verificationRes.errorSummaries) {
-                      console.log(`    - ${summary}`);
-                    }
-                  }
-                  const verificationAssessment = assessContinuousVerificationResult(verificationRes);
-                  if (verificationAssessment.status !== "healthy") {
-                    console.log(`  Status: ${verificationAssessment.status.toUpperCase()}`);
-                    console.log(
-                      `  Machine status: ${formatContinuousVerificationAssessmentLine(verificationRes, verificationAssessment)}`,
-                    );
-                    if (verificationAssessment.summary) {
-                      console.log(`  Warning: ${verificationAssessment.summary}`);
-                    }
-                    if (verificationAssessment.shouldFailPipeline) {
-                      recordDreamCycleFollowUpFailure(
-                        followUpFailures,
-                        "continuous verification",
-                        verificationAssessment.summary ?? "verification follow-up degraded",
-                      );
-                    }
-                  }
-                },
-                "continuous-verification",
-              );
-            }
-
-            // Extract implicit feedback signals as part of nightly cycle
-            if (!skipFollowUps && runExtractImplicitFeedback && cfg.implicitFeedback?.enabled !== false) {
-              let latestProgress: ExtractImplicitFeedbackProgressSnapshot | undefined;
-              await runFollowUpStageSafe(
-                "extract implicit feedback",
-                async () => {
-                  const implRes = await runExtractImplicitFeedback({
-                    days: 3,
-                    dryRun: false,
-                    includeClosedLoop: false,
-                    verbose,
-                    onProgress: (snapshot) => {
-                      latestProgress = snapshot;
-                    },
-                  });
-                  const partialSuffix = implRes.partial
-                    ? ` Partial: ${implRes.partialReason ?? "capped"}; deferred=${implRes.sessionsDeferred}; backlog≈${implRes.backlogSignalsEstimate} signals/${implRes.backlogTrajectoriesEstimate} trajectories.`
-                    : "";
+              const pipelineStartedAt = Date.now();
+              const coreStartedAt = Date.now();
+              let res;
+              const followUpFailures: Array<{ phase: string; error: string }> = [];
+              let toolEffectivenessSummary: string | null = null;
+              // Real cross-process mutex, matching the "dream-cycle-core" lock name the maintenance
+              // orchestrator acquires around its own dream-cycle step — without this, a manual CLI
+              // run can overlap a scheduled orchestrator tick and both compute different merges for
+              // the same event group (see #72). Only the core run needs the lock; released
+              // immediately after so it doesn't block a concurrent run for the whole follow-up
+              // pipeline (which doesn't share dream-cycle's own race window).
+              if (!acquireStepLock("dream-cycle-core")) {
+                if (jsonMode) {
                   console.log(
-                    `Extract-implicit: ${implRes.signalsExtracted} signals (${implRes.positiveCount}+/${implRes.negativeCount}-) from ${implRes.sessionsProcessed}/${implRes.sessionsScanned} sessions.${partialSuffix}`,
-                  );
-                },
-                "dream-cycle:extract-implicit",
-                {
-                  progressSupplier: () => formatExtractImplicitFeedbackProgress(latestProgress),
-                },
-              );
-            }
-
-            // Closed-loop effectiveness analysis
-            if (!skipFollowUps && cfg.closedLoop?.enabled !== false && cfg.closedLoop?.runInNightlyCycle !== false) {
-              await runFollowUpStageSafe(
-                "closed-loop effectiveness",
-                async () => {
-                  const clReport = await runClosedLoopAnalysis(factsDb, cfg.closedLoop ?? { enabled: true }, {
-                    verbose,
-                    logger: (msg) => console.log(msg),
-                  });
-                  console.log(
-                    `Closed-loop analysis: ${clReport.rulesAnalyzed} rules measured, ${clReport.deprecated} deprecated, ${clReport.boosted} boosted.`,
-                  );
-                  if (clReport.rulesAnalyzed > 0) {
-                    const report = getEffectivenessReport(factsDb);
-                    if (report && report.length > 0) console.log(report);
-                  }
-                },
-                "dream-cycle:closed-loop",
-              );
-            }
-
-            // Cross-agent learning (Issue #263 — Phase 2)
-            if (
-              !skipFollowUps &&
-              runCrossAgentLearning &&
-              cfg.crossAgentLearning?.enabled &&
-              cfg.crossAgentLearning?.runInNightlyCycle !== false
-            ) {
-              await runFollowUpStageSafe(
-                "cross-agent learning",
-                async () => {
-                  const caRes = await runCrossAgentLearning(verbose ? { verbose: true } : undefined);
-                  console.log(
-                    `Cross-agent learning: ${caRes.generalisedStored} generalised patterns stored from ${caRes.agentsScanned} agents.`,
-                  );
-                },
-                "dream-cycle:cross-agent-learning",
-              );
-            }
-
-            // Tool effectiveness scoring (Issue #263 — Phase 3)
-            if (
-              !skipFollowUps &&
-              runToolEffectiveness &&
-              cfg.toolEffectiveness?.enabled !== false &&
-              cfg.toolEffectiveness?.runInNightlyCycle !== false
-            ) {
-              try {
-                const teOutput = await runFollowUpStage("tool effectiveness", () => runToolEffectiveness({ verbose }));
-                const firstLine = (typeof teOutput === "string" ? teOutput : "").split("\n")[0]?.trim() ?? "";
-                if (firstLine.startsWith("No tool effectiveness data available")) {
-                  toolEffectivenessSummary = `no-op (${firstLine})`;
-                } else if (firstLine.startsWith("Tool Effectiveness Report")) {
-                  toolEffectivenessSummary = `ran (${firstLine})`;
-                } else if (firstLine.length > 0) {
-                  toolEffectivenessSummary = `degraded (unexpected output: ${firstLine})`;
-                  recordDreamCycleFollowUpFailure(
-                    followUpFailures,
-                    "tool effectiveness",
-                    `unexpected output: ${firstLine}`,
+                    JSON.stringify({ skipped: true, reason: "another dream-cycle run is already in progress" }),
                   );
                 } else {
-                  toolEffectivenessSummary = "degraded (unexpected empty output)";
-                  recordDreamCycleFollowUpFailure(followUpFailures, "tool effectiveness", "unexpected empty output");
+                  console.log("Dream cycle skipped — another dream-cycle run is already in progress.");
                 }
+                return;
+              }
+              try {
+                res = await runDreamCycle(verbose || dryRun ? { verbose, dryRun } : undefined);
               } catch (err) {
                 capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                   subsystem: "cli",
-                  operation: "dream-cycle:tool-effectiveness",
+                  operation: "dream-cycle",
                 });
-                toolEffectivenessSummary = `degraded (${err instanceof Error ? err.message : String(err)})`;
-                // runFollowUpStage already pushed this failure onto followUpFailures before
-                // re-throwing — recording it again here would double-count a single failure in
-                // the "N failure(s)" summary and follow_up_failures count below.
+                throw err;
+              } finally {
+                releaseStepLock("dream-cycle-core");
               }
-            } else if (!skipFollowUps) {
-              if (!runToolEffectiveness) {
-                toolEffectivenessSummary = "no-op (tool-effectiveness handler unavailable)";
-              } else if (cfg.toolEffectiveness?.enabled === false) {
-                toolEffectivenessSummary = "no-op (toolEffectiveness.enabled=false)";
-              } else if (cfg.toolEffectiveness?.runInNightlyCycle === false) {
-                toolEffectivenessSummary = "no-op (toolEffectiveness.runInNightlyCycle=false)";
+              const coreElapsedSec = Math.floor((Date.now() - coreStartedAt) / 1000);
+              if (jsonMode) {
+                console.log(JSON.stringify({ ...res, coreElapsedSec }, null, 2));
+                if (!res.skipped && !res.success) process.exitCode = 2;
+                return;
               }
-            }
-
-            if (!skipFollowUps && toolEffectivenessSummary) {
-              console.log(`Tool effectiveness: ${toolEffectivenessSummary}`);
-            }
-
-            if (!skipFollowUps && cfg.crystallization?.enabled === true) {
-              await runFollowUpStageSafe(
-                "crystallization proposals",
-                async () => {
-                  const crystalRes = runCrystallizationProposalCycle(cfg, {
-                    changeFeed: b.changeFeed ?? null,
-                    factsDb,
-                  });
-                  if (crystalRes.skippedReason === "disabled") {
-                    console.log("Crystallization: skipped (disabled).");
-                    return;
-                  }
+              if (res.skipped) {
+                console.log("Dream cycle skipped (nightlyCycle.enabled = false in config).");
+              } else if (res.success) {
+                console.log(`Dream cycle complete: ${res.digestSummary}`);
+              } else {
+                console.log(`Dream cycle finished with errors: ${res.digestSummary}`);
+                if (res.failedStages.length > 0) {
+                  console.log(`  Core stage failures: ${res.failedStages.join(", ")}`);
+                }
+              }
+              if (!res.skipped) {
+                console.log(`  Core cycle elapsed: ${coreElapsedSec}s`);
+                console.log(`  Facts pruned: ${res.factsPruned}`);
+                console.log(`  Facts decayed: ${res.factsDecayed}`);
+                console.log(`  Events consolidated: ${res.eventsConsolidated} → ${res.factsCreated} facts`);
+                console.log(`  Patterns found: ${res.patternsFound}`);
+                console.log(`  Rules generated: ${res.rulesGenerated}`);
+                if (res.reflectionRulesDiagnostics) {
+                  const zeroReason = res.reflectionRulesDiagnostics.zeroRulesReason
+                    ? ` zero_rules_reason=${res.reflectionRulesDiagnostics.zeroRulesReason}`
+                    : "";
                   console.log(
-                    `Crystallization: proposed=${crystalRes.proposed}, skipped=${crystalRes.skipped}${crystalRes.reasons.length > 0 ? ` — ${crystalRes.reasons.slice(0, 3).join("; ")}` : ""}`,
+                    `  Reflect-rules diagnostics: model_response_chars=${res.reflectionRulesDiagnostics.modelResponseChars} parse_success=${res.reflectionRulesDiagnostics.parseSuccess} parsed_candidates=${res.reflectionRulesDiagnostics.parsedCandidates} rejected_duplicates=${res.reflectionRulesDiagnostics.rejectedDuplicates} rejected_low_confidence=${res.reflectionRulesDiagnostics.rejectedLowConfidence} stored=${res.reflectionRulesDiagnostics.stored} status=${res.reflectionRulesDiagnostics.status}${zeroReason}`,
                   );
-                  if (crystalRes.skippedReason === "stores-unavailable") {
-                    throw new Error(crystalRes.reasons[0] ?? "crystallization stores unavailable");
-                  }
-                },
-                "dream-cycle:crystallization",
-              );
-            }
-
-            // Cost log pruning (Issue #270)
-            if (
-              !skipFollowUps &&
-              pruneCostLog &&
-              cfg.costTracking?.enabled !== false &&
-              cfg.costTracking?.pruneInNightlyCycle !== false
-            ) {
-              await runFollowUpStageSafe(
-                "cost log prune",
-                async () => {
-                  const pruned = await pruneCostLog(cfg.costTracking?.retainDays);
-                  if (pruned > 0) console.log(`Cost log: pruned ${pruned} old entries.`);
-                },
-                "dream-cycle:cost-log-prune",
-              );
-            }
-
-            if (!res.skipped && followUpFailures.length > 0) {
-              console.log(`Dream cycle follow-ups: ${followUpFailures.length} failure(s)`);
-              for (const f of followUpFailures) {
-                console.log(`  - ${f.phase}: ${f.error}`);
+                }
               }
-            }
 
-            if (!res.skipped) {
-              applyDreamCyclePipelineExitCode({
-                coreSuccess: res.success,
-                coreFailedStages: res.failedStages,
-                followUpFailures,
-              });
-              console.log(
-                `Dream cycle status: success=${res.success && followUpFailures.length === 0} core_success=${res.success} failed_stages=${res.failedStages.length} follow_up_failures=${followUpFailures.length}`,
-              );
-              const totalElapsedSec = Math.floor((Date.now() - pipelineStartedAt) / 1000);
-              const followUpElapsedSec = Math.max(0, totalElapsedSec - coreElapsedSec);
-              console.log(
-                `[dream-cycle] pipeline complete in ${totalElapsedSec}s (core=${coreElapsedSec}s, follow-ups=${followUpCompleted}/${followUpPlan.length}, follow-up-elapsed=${followUpElapsedSec}s, follow-up-failures=${followUpFailures.length})`,
-              );
-            }
-          }),
+              // #2089: dry-run must not mutate anything, and none of the follow-up stages below
+              // (verification writes, tool effectiveness, crystallization proposals, cost log
+              // prune, ...) have their own preview mode — skip the whole pipeline rather than risk
+              // a partial-mutation dry-run.
+              const skipFollowUps = dryRun || shouldSkipDreamCycleFollowUps(res);
+              const followUpSkipReason = dryRun
+                ? "dry-run — no mutating follow-up stages run"
+                : dreamCycleFollowUpSkipReason(res);
+              if (followUpSkipReason && (verbose || dryRun)) {
+                console.log(`[dream-cycle] skipping follow-ups: ${followUpSkipReason}`);
+              }
+
+              const followUpPlan: string[] = [];
+              if (
+                !skipFollowUps &&
+                runContinuousVerification &&
+                cfg.verification.enabled &&
+                cfg.verification.continuousVerification
+              ) {
+                followUpPlan.push("continuous verification");
+              }
+              if (!skipFollowUps && runExtractImplicitFeedback && cfg.implicitFeedback?.enabled !== false) {
+                followUpPlan.push("extract implicit feedback");
+              }
+              if (!skipFollowUps && cfg.closedLoop?.enabled !== false && cfg.closedLoop?.runInNightlyCycle !== false) {
+                followUpPlan.push("closed-loop effectiveness");
+              }
+              if (
+                !skipFollowUps &&
+                runCrossAgentLearning &&
+                cfg.crossAgentLearning?.enabled &&
+                cfg.crossAgentLearning?.runInNightlyCycle !== false
+              ) {
+                followUpPlan.push("cross-agent learning");
+              }
+              if (
+                !skipFollowUps &&
+                runToolEffectiveness &&
+                cfg.toolEffectiveness?.enabled !== false &&
+                cfg.toolEffectiveness?.runInNightlyCycle !== false
+              ) {
+                followUpPlan.push("tool effectiveness");
+              }
+              if (!skipFollowUps && cfg.crystallization?.enabled === true) {
+                followUpPlan.push("crystallization proposals");
+              }
+              if (
+                !skipFollowUps &&
+                pruneCostLog &&
+                cfg.costTracking?.enabled !== false &&
+                cfg.costTracking?.pruneInNightlyCycle !== false
+              ) {
+                followUpPlan.push("cost log prune");
+              }
+
+              let followUpCompleted = 0;
+              const runFollowUpStage = async <T>(
+                phaseLabel: string,
+                fn: () => Promise<T> | T,
+                options?: RunVerboseFollowUpOptions,
+              ): Promise<T> => {
+                const stageIndex = followUpCompleted + 1;
+                try {
+                  const result = await runVerboseFollowUp(phaseLabel, verbose, fn, {
+                    ...options,
+                    stageIndex: followUpPlan.length > 0 ? stageIndex : undefined,
+                    stageTotal: followUpPlan.length > 0 ? followUpPlan.length : undefined,
+                  });
+                  followUpCompleted++;
+                  return result;
+                } catch (err) {
+                  recordDreamCycleFollowUpFailure(
+                    followUpFailures,
+                    followUpPlan.length > 0 ? `${phaseLabel} (stage ${stageIndex}/${followUpPlan.length})` : phaseLabel,
+                    err,
+                  );
+                  throw err;
+                }
+              };
+              const runFollowUpStageSafe = async <T>(
+                phaseLabel: string,
+                fn: () => Promise<T> | T,
+                operation: string,
+                options?: RunVerboseFollowUpOptions,
+              ): Promise<void> => {
+                try {
+                  await runFollowUpStage(phaseLabel, fn, options);
+                } catch (err) {
+                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                    subsystem: "cli",
+                    operation,
+                  });
+                }
+              };
+
+              if (!skipFollowUps && verbose) {
+                const labels = followUpPlan.length > 0 ? followUpPlan.join(", ") : "none";
+                console.log(`[dream-cycle] follow-up plan: ${followUpPlan.length} stage(s) — ${labels}`);
+              }
+
+              if (
+                !skipFollowUps &&
+                runContinuousVerification &&
+                cfg.verification.enabled &&
+                cfg.verification.continuousVerification
+              ) {
+                await runFollowUpStageSafe(
+                  "continuous verification",
+                  async () => {
+                    const verificationRes = await runContinuousVerification(verbose ? { verbose: true } : undefined);
+                    console.log("Continuous verification complete:");
+                    console.log(`  Checked: ${verificationRes.checked}`);
+                    console.log(`  Confirmed: ${verificationRes.confirmed}`);
+                    console.log(`  Stale: ${verificationRes.stale}`);
+                    console.log(`  Uncertain: ${verificationRes.uncertain}`);
+                    console.log(`  Errors: ${verificationRes.errors}`);
+                    if (verificationRes.errorSummaries.length > 0) {
+                      console.log("  Error summary:");
+                      for (const summary of verificationRes.errorSummaries) {
+                        console.log(`    - ${summary}`);
+                      }
+                    }
+                    const verificationAssessment = assessContinuousVerificationResult(verificationRes);
+                    if (verificationAssessment.status !== "healthy") {
+                      console.log(`  Status: ${verificationAssessment.status.toUpperCase()}`);
+                      console.log(
+                        `  Machine status: ${formatContinuousVerificationAssessmentLine(verificationRes, verificationAssessment)}`,
+                      );
+                      if (verificationAssessment.summary) {
+                        console.log(`  Warning: ${verificationAssessment.summary}`);
+                      }
+                      if (verificationAssessment.shouldFailPipeline) {
+                        recordDreamCycleFollowUpFailure(
+                          followUpFailures,
+                          "continuous verification",
+                          verificationAssessment.summary ?? "verification follow-up degraded",
+                        );
+                      }
+                    }
+                  },
+                  "continuous-verification",
+                );
+              }
+
+              // Extract implicit feedback signals as part of nightly cycle
+              if (!skipFollowUps && runExtractImplicitFeedback && cfg.implicitFeedback?.enabled !== false) {
+                let latestProgress: ExtractImplicitFeedbackProgressSnapshot | undefined;
+                await runFollowUpStageSafe(
+                  "extract implicit feedback",
+                  async () => {
+                    const implRes = await runExtractImplicitFeedback({
+                      days: 3,
+                      dryRun: false,
+                      includeClosedLoop: false,
+                      verbose,
+                      onProgress: (snapshot) => {
+                        latestProgress = snapshot;
+                      },
+                    });
+                    const partialSuffix = implRes.partial
+                      ? ` Partial: ${implRes.partialReason ?? "capped"}; deferred=${implRes.sessionsDeferred}; backlog≈${implRes.backlogSignalsEstimate} signals/${implRes.backlogTrajectoriesEstimate} trajectories.`
+                      : "";
+                    console.log(
+                      `Extract-implicit: ${implRes.signalsExtracted} signals (${implRes.positiveCount}+/${implRes.negativeCount}-) from ${implRes.sessionsProcessed}/${implRes.sessionsScanned} sessions.${partialSuffix}`,
+                    );
+                  },
+                  "dream-cycle:extract-implicit",
+                  {
+                    progressSupplier: () => formatExtractImplicitFeedbackProgress(latestProgress),
+                  },
+                );
+              }
+
+              // Closed-loop effectiveness analysis
+              if (!skipFollowUps && cfg.closedLoop?.enabled !== false && cfg.closedLoop?.runInNightlyCycle !== false) {
+                await runFollowUpStageSafe(
+                  "closed-loop effectiveness",
+                  async () => {
+                    const clReport = await runClosedLoopAnalysis(factsDb, cfg.closedLoop ?? { enabled: true }, {
+                      verbose,
+                      logger: (msg) => console.log(msg),
+                    });
+                    console.log(
+                      `Closed-loop analysis: ${clReport.rulesAnalyzed} rules measured, ${clReport.deprecated} deprecated, ${clReport.boosted} boosted.`,
+                    );
+                    if (clReport.rulesAnalyzed > 0) {
+                      const report = getEffectivenessReport(factsDb);
+                      if (report && report.length > 0) console.log(report);
+                    }
+                  },
+                  "dream-cycle:closed-loop",
+                );
+              }
+
+              // Cross-agent learning (Issue #263 — Phase 2)
+              if (
+                !skipFollowUps &&
+                runCrossAgentLearning &&
+                cfg.crossAgentLearning?.enabled &&
+                cfg.crossAgentLearning?.runInNightlyCycle !== false
+              ) {
+                await runFollowUpStageSafe(
+                  "cross-agent learning",
+                  async () => {
+                    const caRes = await runCrossAgentLearning(verbose ? { verbose: true } : undefined);
+                    console.log(
+                      `Cross-agent learning: ${caRes.generalisedStored} generalised patterns stored from ${caRes.agentsScanned} agents.`,
+                    );
+                  },
+                  "dream-cycle:cross-agent-learning",
+                );
+              }
+
+              // Tool effectiveness scoring (Issue #263 — Phase 3)
+              if (
+                !skipFollowUps &&
+                runToolEffectiveness &&
+                cfg.toolEffectiveness?.enabled !== false &&
+                cfg.toolEffectiveness?.runInNightlyCycle !== false
+              ) {
+                try {
+                  const teOutput = await runFollowUpStage("tool effectiveness", () =>
+                    runToolEffectiveness({ verbose }),
+                  );
+                  const firstLine = (typeof teOutput === "string" ? teOutput : "").split("\n")[0]?.trim() ?? "";
+                  if (firstLine.startsWith("No tool effectiveness data available")) {
+                    toolEffectivenessSummary = `no-op (${firstLine})`;
+                  } else if (firstLine.startsWith("Tool Effectiveness Report")) {
+                    toolEffectivenessSummary = `ran (${firstLine})`;
+                  } else if (firstLine.length > 0) {
+                    toolEffectivenessSummary = `degraded (unexpected output: ${firstLine})`;
+                    recordDreamCycleFollowUpFailure(
+                      followUpFailures,
+                      "tool effectiveness",
+                      `unexpected output: ${firstLine}`,
+                    );
+                  } else {
+                    toolEffectivenessSummary = "degraded (unexpected empty output)";
+                    recordDreamCycleFollowUpFailure(followUpFailures, "tool effectiveness", "unexpected empty output");
+                  }
+                } catch (err) {
+                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                    subsystem: "cli",
+                    operation: "dream-cycle:tool-effectiveness",
+                  });
+                  toolEffectivenessSummary = `degraded (${err instanceof Error ? err.message : String(err)})`;
+                  // runFollowUpStage already pushed this failure onto followUpFailures before
+                  // re-throwing — recording it again here would double-count a single failure in
+                  // the "N failure(s)" summary and follow_up_failures count below.
+                }
+              } else if (!skipFollowUps) {
+                if (!runToolEffectiveness) {
+                  toolEffectivenessSummary = "no-op (tool-effectiveness handler unavailable)";
+                } else if (cfg.toolEffectiveness?.enabled === false) {
+                  toolEffectivenessSummary = "no-op (toolEffectiveness.enabled=false)";
+                } else if (cfg.toolEffectiveness?.runInNightlyCycle === false) {
+                  toolEffectivenessSummary = "no-op (toolEffectiveness.runInNightlyCycle=false)";
+                }
+              }
+
+              if (!skipFollowUps && toolEffectivenessSummary) {
+                console.log(`Tool effectiveness: ${toolEffectivenessSummary}`);
+              }
+
+              if (!skipFollowUps && cfg.crystallization?.enabled === true) {
+                await runFollowUpStageSafe(
+                  "crystallization proposals",
+                  async () => {
+                    const crystalRes = runCrystallizationProposalCycle(cfg, {
+                      changeFeed: b.changeFeed ?? null,
+                      factsDb,
+                    });
+                    if (crystalRes.skippedReason === "disabled") {
+                      console.log("Crystallization: skipped (disabled).");
+                      return;
+                    }
+                    console.log(
+                      `Crystallization: proposed=${crystalRes.proposed}, skipped=${crystalRes.skipped}${crystalRes.reasons.length > 0 ? ` — ${crystalRes.reasons.slice(0, 3).join("; ")}` : ""}`,
+                    );
+                    if (crystalRes.skippedReason === "stores-unavailable") {
+                      throw new Error(crystalRes.reasons[0] ?? "crystallization stores unavailable");
+                    }
+                  },
+                  "dream-cycle:crystallization",
+                );
+              }
+
+              // Cost log pruning (Issue #270)
+              if (
+                !skipFollowUps &&
+                pruneCostLog &&
+                cfg.costTracking?.enabled !== false &&
+                cfg.costTracking?.pruneInNightlyCycle !== false
+              ) {
+                await runFollowUpStageSafe(
+                  "cost log prune",
+                  async () => {
+                    const pruned = await pruneCostLog(cfg.costTracking?.retainDays);
+                    if (pruned > 0) console.log(`Cost log: pruned ${pruned} old entries.`);
+                  },
+                  "dream-cycle:cost-log-prune",
+                );
+              }
+
+              if (!res.skipped && followUpFailures.length > 0) {
+                console.log(`Dream cycle follow-ups: ${followUpFailures.length} failure(s)`);
+                for (const f of followUpFailures) {
+                  console.log(`  - ${f.phase}: ${f.error}`);
+                }
+              }
+
+              if (!res.skipped) {
+                applyDreamCyclePipelineExitCode({
+                  coreSuccess: res.success,
+                  coreFailedStages: res.failedStages,
+                  followUpFailures,
+                });
+                console.log(
+                  `Dream cycle status: success=${res.success && followUpFailures.length === 0} core_success=${res.success} failed_stages=${res.failedStages.length} follow_up_failures=${followUpFailures.length}`,
+                );
+                const totalElapsedSec = Math.floor((Date.now() - pipelineStartedAt) / 1000);
+                const followUpElapsedSec = Math.max(0, totalElapsedSec - coreElapsedSec);
+                console.log(
+                  `[dream-cycle] pipeline complete in ${totalElapsedSec}s (core=${coreElapsedSec}s, follow-ups=${followUpCompleted}/${followUpPlan.length}, follow-up-elapsed=${followUpElapsedSec}s, follow-up-failures=${followUpFailures.length})`,
+                );
+              }
+            },
+          ),
         );
     }
   }
