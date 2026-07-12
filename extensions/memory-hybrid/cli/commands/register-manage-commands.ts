@@ -13,8 +13,11 @@ import { registerManageCouncil } from "./manage/register-council.js";
 import { registerManageCredentialsAndScope } from "./manage/register-credentials-scope.js";
 import { registerManageDigest } from "./manage/register-digest.js";
 import { registerManageErrorReports } from "./manage/register-error-reports.js";
+import { registerManageIssueTools } from "./manage/register-issue-tools.js";
 import { registerExpireBySourceCommands, registerLifecycleSyncCommands } from "./manage/register-lifecycle.js";
+import { registerManageLinkTools } from "./manage/register-link-tools.js";
 import { registerManageProcedureAndLifecycle } from "./manage/register-procedure-lifecycle.js";
+import { registerManageProvenanceTools } from "./manage/register-provenance-tools.js";
 import { registerManageStorageAndStats } from "./manage/register-storage-and-stats.js";
 
 export function registerManageCommands(mem: Chainable, ctx: ManageContext): void {
@@ -31,6 +34,9 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
   registerManageCouncil(mem, b);
   registerManageDigest(mem, b);
   registerManageErrorReports(mem, b);
+  registerManageLinkTools(mem, b);
+  registerManageIssueTools(mem, b);
+  registerManageProvenanceTools(mem, b);
   // Workflow trace QA tools stay flat (not under grouped maintenance backfill).
   registerBackfillMaintenanceCommands(mem, b, { onlyWorkflowQa: true });
 }

@@ -255,4 +255,64 @@ describe("incremental degree counters (#2085)", () => {
     expect(readDegrees(a.id).outDegree).toBe(1);
     expect(readDegrees(b.id).inDegree).toBe(1);
   });
+
+  describe("deleteLink (#2090)", () => {
+    it("removes the row and decrements out_degree/in_degree for a countable link type", () => {
+      const a = makeFact("A");
+      const b = makeFact("B");
+      const linkId = factsDb.createLink(a.id, b.id, "RELATED_TO", 1.0);
+      expect(readDegrees(a.id).outDegree).toBe(1);
+      expect(readDegrees(b.id).inDegree).toBe(1);
+
+      const deleted = factsDb.deleteLink(linkId);
+
+      expect(deleted).toBe(true);
+      expect(factsDb.getLinksFrom(a.id)).toHaveLength(0);
+      const degreesA = readDegrees(a.id);
+      const degreesB = readDegrees(b.id);
+      expect(degreesA.outDegree).toBe(0);
+      expect(degreesA.outDegree).toBe(degreesA.groundTruthOut);
+      expect(degreesB.inDegree).toBe(0);
+      expect(degreesB.inDegree).toBe(degreesB.groundTruthIn);
+    });
+
+    it("does not touch degree counters for an excluded link type (CONTRADICTS)", () => {
+      const a = makeFact("A");
+      const b = makeFact("B");
+      const linkId = factsDb.createLink(a.id, b.id, "CONTRADICTS", 1.0);
+      expect(readDegrees(a.id).outDegree).toBe(0);
+
+      const deleted = factsDb.deleteLink(linkId);
+
+      expect(deleted).toBe(true);
+      expect(readDegrees(a.id).outDegree).toBe(0);
+      expect(readDegrees(b.id).inDegree).toBe(0);
+    });
+
+    it("returns false and changes nothing for an unknown link id", () => {
+      const a = makeFact("A");
+      const b = makeFact("B");
+      factsDb.createLink(a.id, b.id, "RELATED_TO", 1.0);
+      const before = readDegrees(a.id);
+
+      const deleted = factsDb.deleteLink("nonexistent-link-id");
+
+      expect(deleted).toBe(false);
+      expect(readDegrees(a.id)).toEqual(before);
+    });
+
+    it("leaves counters floored at 0 rather than going negative on a second delete", () => {
+      const a = makeFact("A");
+      const b = makeFact("B");
+      const linkId = factsDb.createLink(a.id, b.id, "RELATED_TO", 1.0);
+      factsDb.deleteLink(linkId);
+
+      // decrementFactDegreesForLink is idempotent-safe (MAX(0, ...)) even if somehow called twice
+      // for the same endpoints; simulate that directly since deleteLink itself won't re-fire for
+      // an already-deleted row.
+      decrementFactDegreesForLink(factsDb.getRawDb(), a.id, b.id, "RELATED_TO");
+      expect(readDegrees(a.id).outDegree).toBe(0);
+      expect(readDegrees(b.id).inDegree).toBe(0);
+    });
+  });
 });

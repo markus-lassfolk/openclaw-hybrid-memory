@@ -35,13 +35,14 @@ import {
 import {
   createLink as createLinkHelper,
   createOrStrengthenRelatedLink as createOrStrengthenRelatedLinkHelper,
+  decayLinkStrengths as decayLinkStrengthsHelper,
+  deleteLink as deleteLinkHelper,
   expandGraphWithCTE as expandGraphWithCTEHelper,
   type GraphConnectedStats,
   getConnectedFactIds as getConnectedFactIdsHelper,
   getLinksFrom as getLinksFromHelper,
   getLinksTo as getLinksToHelper,
   refreshFactDegrees as refreshFactDegreesHelper,
-  decayLinkStrengths as decayLinkStrengthsHelper,
   strengthenRelatedLinksBatch as strengthenRelatedLinksBatchHelper,
   updateLink as updateLinkHelper,
 } from "./links.js";
@@ -625,6 +626,11 @@ export class FactsDBLayer1 extends BaseSqliteStore {
   /** Update a link's type and/or strength by id (curation). Emits linkUpdated. */
   updateLink(id: string, changes: { linkType?: MemoryLinkType; strength?: number }): boolean {
     return updateLinkHelper(this.liveDb, id, changes);
+  }
+
+  /** Delete a link by id, decrementing out_degree/in_degree when applicable (#2085/#2090). */
+  deleteLink(id: string): boolean {
+    return deleteLinkHelper(this.liveDb, id);
   }
 
   /** Pin a fact so it stays central and decay-frozen (curation). Emits factUpdated. */

@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 
 import { emitMemoryEvent, type MemoryLinkEventPayload } from "../../services/memory-events.js";
-import { createTransaction } from "../../utils/sqlite-transaction.js";
 import type { ScopeFilter } from "../../types/memory.js";
+import { createTransaction } from "../../utils/sqlite-transaction.js";
 
 import { scopeFilterClauseForAlias } from "./scope-sql.js";
 import type { MemoryLinkType } from "./types.js";
@@ -240,6 +240,30 @@ export function updateLink(
     }
   }
   return result.changes > 0;
+}
+
+/**
+ * Delete a single link by id, decrementing out_degree/in_degree on both endpoints when the
+ * deleted link's type is degree-counted (#2085/#2090). Mirrors pruneOrphanedLinks's fetch-then-
+ * delete-then-decrement pattern; unlike a bulk prune, no event is emitted (matches
+ * pruneOrphanedLinks — no linkDeleted overlay event exists yet).
+ */
+export function deleteLink(db: DatabaseSync, id: string): boolean {
+  const row = db.prepare("SELECT source_fact_id, target_fact_id, link_type FROM memory_links WHERE id = ?").get(id) as
+    | { source_fact_id: string; target_fact_id: string; link_type: string }
+    | undefined;
+  if (!row) return false;
+
+  let deleted = false;
+  const tx = createTransaction(db, () => {
+    const result = db.prepare("DELETE FROM memory_links WHERE id = ?").run(id);
+    deleted = Number(result.changes ?? 0) > 0;
+    if (deleted) {
+      decrementFactDegreesForLink(db, row.source_fact_id, row.target_fact_id, row.link_type);
+    }
+  });
+  tx();
+  return deleted;
 }
 
 export function strengthenRelatedLinksBatch(db: DatabaseSync, pairs: [string, string][], deltaStrength = 0.1): void {
