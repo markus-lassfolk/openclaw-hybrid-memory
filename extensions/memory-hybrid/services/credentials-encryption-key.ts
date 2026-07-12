@@ -3,6 +3,7 @@ import type { CredentialType } from "../config.js";
 import { resolveCredentialsEncryptionKeyCandidates } from "../config/parsers/core.js";
 import { CredentialsDB } from "../backends/credentials-db.js";
 import { pluginLogger } from "../utils/logger.js";
+import { resetWarnOnceForTests, warnOnce } from "../utils/warn-once.js";
 
 export {
   resolveCredentialsEncryptionKeyCandidates,
@@ -10,7 +11,7 @@ export {
 } from "../config/parsers/core.js";
 export { getCredentialsEncryptionKeyRaw } from "./credentials-path.js";
 
-const legacyFileRefWarnedPaths = new Set<string>();
+const LEGACY_FILE_REF_WARN_KEY_PREFIX = "credentials-vault-legacy-key:";
 
 /** Returns true when the key can open the vault (empty vaults always pass). */
 export function probeCredentialsVaultKey(dbPath: string, encryptionKey: string): boolean {
@@ -30,16 +31,16 @@ export function probeCredentialsVaultKey(dbPath: string, encryptionKey: string):
 }
 
 function warnLegacyFileRefLiteralKey(dbPath: string, raw: string): void {
-  if (legacyFileRefWarnedPaths.has(dbPath)) return;
-  legacyFileRefWarnedPaths.add(dbPath);
-  pluginLogger.warn(
-    "memory-hybrid: credentials vault opened using legacy literal file: SecretRef key material " +
-      `(configured as "${raw.slice(0, 48)}${raw.length > 48 ? "…" : ""}"). ` +
-      "New installs should use file contents via file:/path/to/key. " +
-      "To migrate from legacy literal file: key material, store the desired passphrase in that file, " +
-      "set credentials.encryptionKey to the file: ref, then run " +
-      "`openclaw hybrid-mem credentials rekey-vault --backup --verify --yes`.",
-  );
+  warnOnce(`${LEGACY_FILE_REF_WARN_KEY_PREFIX}${dbPath}`, () => {
+    pluginLogger.warn(
+      "memory-hybrid: credentials vault opened using legacy literal file: SecretRef key material " +
+        `(configured as "${raw.slice(0, 48)}${raw.length > 48 ? "…" : ""}"). ` +
+        "New installs should use file contents via file:/path/to/key. " +
+        "To migrate from legacy literal file: key material, store the desired passphrase in that file, " +
+        "set credentials.encryptionKey to the file: ref, then run " +
+        "`openclaw hybrid-mem credentials rekey-vault --backup --verify --yes`.",
+    );
+  });
 }
 
 /**
@@ -82,5 +83,5 @@ export function resolveCredentialsVaultKeyMaterial(raw: string, dbPath: string):
 
 /** @internal Test hook */
 export function _resetCredentialsEncryptionKeyWarningsForTests(): void {
-  legacyFileRefWarnedPaths.clear();
+  resetWarnOnceForTests();
 }

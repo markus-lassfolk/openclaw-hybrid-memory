@@ -99,6 +99,8 @@ export type HybridMemCliContext = {
   aliasDb?: AliasDB | null;
   crystallizationStore?: CrystallizationStore | null;
   changeFeed?: import("../services/change-feed.js").ChangeFeed | null;
+  provenanceService?: import("../services/provenance.js").ProvenanceService | null;
+  issueStore?: import("../backends/issue-store.js").IssueStore | null;
   versionInfo: {
     pluginVersion: string;
     memoryManagerVersion: string;

@@ -58,6 +58,10 @@ export interface HandlerContext {
   agentHealthStore?: AgentHealthStore | null;
   /** Live change feed for operator notifications (CLI pipeline emit). */
   changeFeed?: import("../services/change-feed.js").ChangeFeed | null;
+  /** Issue lifecycle store backing memory_issue_* tools and the `issues` CLI (#2090). */
+  issueStore?: import("../backends/issue-store.js").IssueStore | null;
+  /** Provenance chain store backing memory_provenance and the `provenance` CLI (#2090). */
+  provenanceService?: import("../services/provenance.js").ProvenanceService | null;
 }
 
 // ---------------------------------------------------------------------------

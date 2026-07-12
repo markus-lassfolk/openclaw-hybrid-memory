@@ -194,6 +194,7 @@ export interface HybridMemCliRegistrationContext {
   workflowStore?: import("../../backends/workflow-store.js").WorkflowStore | null;
   verificationStore?: import("../../services/verification-store.js").VerificationStore | null;
   provenanceService?: import("../../services/provenance.js").ProvenanceService | null;
+  issueStore?: import("../../backends/issue-store.js").IssueStore | null;
   resolvedSqlitePath: string;
   resolvedLancePath: string;
   pluginId: string;

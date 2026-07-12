@@ -121,6 +121,12 @@ export interface DreamCycleConfig {
    * Default: false.
    */
   ingestDreamFindings?: boolean;
+  /**
+   * When true, preview what the cycle would prune/consolidate/reflect/promote without mutating
+   * facts, links, episodes, or proposals (#2089). Stages with no preview support are skipped and
+   * reported as such rather than silently running with side effects. Default: false.
+   */
+  dryRun?: boolean;
 }
 
 /** Optional bridge context for auto-proposing reflection output (Phase 4). */

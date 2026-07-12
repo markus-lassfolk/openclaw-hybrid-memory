@@ -832,6 +832,7 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
         eventLog: runtime.eventLog,
         verificationStore: runtime.verificationStore,
         provenanceService: runtime.provenanceService,
+        issueStore: runtime.issueStore ?? null,
         costTracker: runtime.costTracker,
         eventBus: runtime.eventBus,
         resolvedSqlitePath: runtime.resolvedSqlitePath,

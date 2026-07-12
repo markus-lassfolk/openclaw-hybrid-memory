@@ -54,6 +54,7 @@ export function registerHybridMemCliCredentialsOnlyWithApi(api: ClawdbotPluginAp
     eventLog: null,
     verificationStore: null,
     provenanceService: null,
+    issueStore: null,
     resolvedSqlitePath,
     resolvedLancePath,
     pluginId: "openclaw-hybrid-memory",

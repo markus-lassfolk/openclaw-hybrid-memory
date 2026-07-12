@@ -97,6 +97,7 @@ import {
   cleanEntityStopwords as cleanEntityStopwordsImpl,
   countExpiredFacts as countExpiredFactsImpl,
   countFacts as countFactsImpl,
+  countExpectedVectorFacts as countExpectedVectorFactsImpl,
   countVectorlessActiveFacts as countVectorlessActiveFactsImpl,
   directivesCount as directivesCountImpl,
   entityCount as entityCountImpl,
@@ -104,6 +105,7 @@ import {
   estimateStoredTokens as estimateStoredTokensImpl,
   linksCount as linksCountImpl,
   listForDashboard as listForDashboardImpl,
+  listExpectedVectorFactIds as listExpectedVectorFactIdsImpl,
   listVectorlessActiveFacts as listVectorlessActiveFactsImpl,
   metaPatternsCount as metaPatternsCountImpl,
   proposedCategories as proposedCategoriesImpl,
@@ -413,6 +415,16 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
 
   countVectorlessActiveFacts(source?: string): number {
     return countVectorlessActiveFactsImpl(this.liveDb, source);
+  }
+
+  /** Count of active, unstructured facts — the population vector-store diagnostics should compare against LanceDB. */
+  countExpectedVectorFacts(): number {
+    return countExpectedVectorFactsImpl(this.liveDb);
+  }
+
+  /** IDs of active, unstructured facts — the population vector-store diagnostics should compare against LanceDB. */
+  listExpectedVectorFactIds(): string[] {
+    return listExpectedVectorFactIdsImpl(this.liveDb);
   }
 
   vectorlessActiveFactsBySource(limit = 20): ReturnType<typeof vectorlessActiveFactsBySourceImpl> {
