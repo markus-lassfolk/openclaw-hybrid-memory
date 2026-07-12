@@ -8,7 +8,56 @@ import type { ScopeFilter } from "../../types/memory.js";
 import { scopeFilterClauseForAlias } from "./scope-sql.js";
 import type { MemoryLinkType } from "./types.js";
 
-/** Insert a link row WITHOUT emitting an event. Callers emit after their transaction commits. */
+/**
+ * Link types excluded from denormalized facts.out_degree/in_degree — mirrors refreshFactDegrees
+ * and the BFS/CTE hub-cap traversal's own NOT IN filter, so incremental maintenance and the
+ * periodic dream-cycle reconciler (#1192) never disagree about what counts as a traversable edge.
+ */
+const DEGREE_EXCLUDED_LINK_TYPES = new Set<string>(["CONTRADICTS", "DERIVED_FROM"]);
+
+export function isDegreeCountedLinkType(linkType: string): boolean {
+  return !DEGREE_EXCLUDED_LINK_TYPES.has(linkType);
+}
+
+/** Increment out_degree/in_degree for a newly-created countable link (#2085). */
+function incrementFactDegreesForLink(
+  db: DatabaseSync,
+  sourceFactId: string,
+  targetFactId: string,
+  linkType: string,
+): void {
+  if (!isDegreeCountedLinkType(linkType)) return;
+  try {
+    db.prepare("UPDATE facts SET out_degree = COALESCE(out_degree, 0) + 1 WHERE id = ?").run(sourceFactId);
+    db.prepare("UPDATE facts SET in_degree = COALESCE(in_degree, 0) + 1 WHERE id = ?").run(targetFactId);
+  } catch {
+    // `facts` may not exist, or may lack the degree columns, in minimal test/legacy schemas —
+    // matches the defensive pattern already used for degree reads elsewhere in this file.
+  }
+}
+
+/** Decrement out_degree/in_degree for a removed countable link, floored at 0 (#2085). */
+export function decrementFactDegreesForLink(
+  db: DatabaseSync,
+  sourceFactId: string,
+  targetFactId: string,
+  linkType: string,
+): void {
+  if (!isDegreeCountedLinkType(linkType)) return;
+  try {
+    db.prepare("UPDATE facts SET out_degree = MAX(0, COALESCE(out_degree, 0) - 1) WHERE id = ?").run(sourceFactId);
+    db.prepare("UPDATE facts SET in_degree = MAX(0, COALESCE(in_degree, 0) - 1) WHERE id = ?").run(targetFactId);
+  } catch {
+    // See incrementFactDegreesForLink above.
+  }
+}
+
+/**
+ * Insert a link row WITHOUT emitting an event (callers emit after their transaction commits),
+ * incrementing denormalized degree counters for countable link types (#2085) so
+ * out_degree/in_degree stay live between dream-cycle refreshFactDegrees() passes instead of
+ * reading 0 for any fact linked since the last cycle.
+ */
 function insertLinkRow(
   db: DatabaseSync,
   id: string,
@@ -21,6 +70,7 @@ function insertLinkRow(
   db.prepare(
     "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at, strength_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
   ).run(id, sourceFactId, targetFactId, linkType, clampedStrength, createdAt, createdAt);
+  incrementFactDegreesForLink(db, sourceFactId, targetFactId, linkType);
 }
 
 export function createLink(
@@ -126,10 +176,18 @@ export function updateLink(
 ): boolean {
   const sets: string[] = [];
   const params: Array<string | number> = [];
+  let previousLinkType: string | undefined;
   if (changes.linkType !== undefined) {
     if ((changes.linkType as string) === "DERIVED_FROM") {
       throw new Error("DERIVED_FROM provenance is stored on facts.provenance_json, not memory_links");
     }
+    // Read the current type before the update so a countedness flip (e.g. RELATED_TO ->
+    // CONTRADICTS) can adjust out_degree/in_degree (#2085) — a curator retyping a link should not
+    // silently desync the denormalized counters.
+    const existing = db.prepare("SELECT link_type FROM memory_links WHERE id = ?").get(id) as
+      | { link_type: string }
+      | undefined;
+    previousLinkType = existing?.link_type;
     sets.push("link_type = ?");
     params.push(changes.linkType);
   }
@@ -158,6 +216,17 @@ export function updateLink(
         }
       | undefined;
     if (row) {
+      if (
+        previousLinkType !== undefined &&
+        previousLinkType !== row.link_type &&
+        isDegreeCountedLinkType(previousLinkType) !== isDegreeCountedLinkType(row.link_type)
+      ) {
+        if (isDegreeCountedLinkType(row.link_type)) {
+          incrementFactDegreesForLink(db, row.source_fact_id, row.target_fact_id, row.link_type);
+        } else {
+          decrementFactDegreesForLink(db, row.source_fact_id, row.target_fact_id, previousLinkType);
+        }
+      }
       emitMemoryEvent("linkUpdated", {
         link: {
           id: row.id,
@@ -193,6 +262,7 @@ export function strengthenRelatedLinksBatch(db: DatabaseSync, pairs: [string, st
         updateStmt.run(newStrength, now, existing.id);
       } else {
         insertStmt.run(randomUUID(), source, target, newStrength, now, now);
+        incrementFactDegreesForLink(db, source, target, "RELATED_TO");
       }
     }
   });
@@ -217,13 +287,19 @@ export function decayLinkStrengths(
   const minDeltaSec = 3_600;
   const rows = db
     .prepare(
-      `SELECT id, strength, COALESCE(strength_updated_at, created_at) AS anchored_at
+      `SELECT id, source_fact_id, target_fact_id, strength, COALESCE(strength_updated_at, created_at) AS anchored_at
          FROM memory_links WHERE link_type = 'RELATED_TO'`,
     )
-    .all() as Array<{ id: string; strength: number; anchored_at: number }>;
+    .all() as Array<{
+    id: string;
+    source_fact_id: string;
+    target_fact_id: string;
+    strength: number;
+    anchored_at: number;
+  }>;
 
   const updateStmt = db.prepare("UPDATE memory_links SET strength = ?, strength_updated_at = ? WHERE id = ?");
-  const toPrune: string[] = [];
+  const toPrune: Array<{ id: string; source_fact_id: string; target_fact_id: string }> = [];
   let decayed = 0;
   const tx = createTransaction(db, () => {
     for (const row of rows) {
@@ -231,7 +307,7 @@ export function decayLinkStrengths(
       if (deltaSec < minDeltaSec) continue;
       const next = row.strength * 0.5 ** (deltaSec / halfLifeSec);
       if (next < opts.floor) {
-        toPrune.push(row.id);
+        toPrune.push(row);
       } else {
         updateStmt.run(next, nowSec, row.id);
         decayed++;
@@ -239,7 +315,11 @@ export function decayLinkStrengths(
     }
     if (toPrune.length > 0) {
       const placeholders = toPrune.map(() => "?").join(",");
-      db.prepare(`DELETE FROM memory_links WHERE id IN (${placeholders})`).run(...toPrune);
+      db.prepare(`DELETE FROM memory_links WHERE id IN (${placeholders})`).run(...toPrune.map((r) => r.id));
+      // RELATED_TO is always a degree-counted type — decrement the endpoints of every pruned edge.
+      for (const row of toPrune) {
+        decrementFactDegreesForLink(db, row.source_fact_id, row.target_fact_id, "RELATED_TO");
+      }
     }
   });
   tx();
@@ -502,10 +582,13 @@ export function expandGraphWithCTE(
 
   // Use recursive CTE to traverse the graph in a single query.
   // We track: current node, seed that originated this path, hop count, and JSON path.
-  // #1192: prefer the denormalized `out_degree`/`in_degree` columns on `facts` (refreshed by the
-  // dream-cycle) so the per-traversal `COUNT(*)` (O(edges) per hop) is avoided. The COALESCE
-  // fallback ensures correctness on stores whose dream-cycle has not yet refreshed the columns
-  // (or for legacy data with NULL/zero degrees) by checking `> 0` and only then short-circuiting.
+  // #1192: prefer the denormalized `out_degree`/`in_degree` columns on `facts` (refreshed
+  // incrementally on link create/prune, #2085, and reconciled periodically by the dream-cycle) so
+  // the per-traversal `COUNT(*)` (O(edges) per hop) is avoided. The condition checks the summed
+  // degree is `> 0` (not `IS NOT NULL`, #2085 — the columns are `NOT NULL DEFAULT 0`, so an
+  // `IS NOT NULL` check always takes the denorm branch and the COUNT(*) fallback below was dead
+  // code) before trusting the denorm value; a genuinely zero-degree node falls through to the
+  // live COUNT(*).
   // Hub degree cap applies to the neighbor being entered (outgoing → `ml.target_fact_id`, incoming →
   // `ml.source_fact_id`), matching `getConnectedFactIds` which skips expanding from overloaded nodes.
   const degreeCheckOut =
@@ -513,7 +596,7 @@ export function expandGraphWithCTE(
       ? ""
       : `AND (
         SELECT
-          CASE WHEN facts.out_degree IS NOT NULL AND facts.in_degree IS NOT NULL
+          CASE WHEN (COALESCE(facts.out_degree, 0) + COALESCE(facts.in_degree, 0)) > 0
             THEN (COALESCE(facts.out_degree, 0) + COALESCE(facts.in_degree, 0))
             ELSE (
               (SELECT COUNT(*) FROM memory_links sub WHERE sub.source_fact_id = ml.target_fact_id AND sub.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')) +
@@ -527,7 +610,7 @@ export function expandGraphWithCTE(
       ? ""
       : `AND (
         SELECT
-          CASE WHEN facts.out_degree IS NOT NULL AND facts.in_degree IS NOT NULL
+          CASE WHEN (COALESCE(facts.out_degree, 0) + COALESCE(facts.in_degree, 0)) > 0
             THEN (COALESCE(facts.out_degree, 0) + COALESCE(facts.in_degree, 0))
             ELSE (
               (SELECT COUNT(*) FROM memory_links sub WHERE sub.source_fact_id = ml.source_fact_id AND sub.link_type NOT IN ('CONTRADICTS', 'DERIVED_FROM')) +

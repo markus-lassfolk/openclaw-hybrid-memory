@@ -8,18 +8,37 @@ import { rebuildFtsIndex } from "../../services/fts-search.js";
 import type { MemoryEntry, ScopeFilter } from "../../types/memory.js";
 import { getLanguageKeywordsFilePath } from "../../utils/language-keywords.js";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
+import { decrementFactDegreesForLink } from "./links.js";
 import { rowToMemoryEntry } from "./row-mapper.js";
 import { scopeFilterClausePositional } from "./scope-sql.js";
 
 export function pruneOrphanedLinks(db: DatabaseSync): number {
-  const result = db
+  // Fetch doomed rows before deleting so the *surviving* endpoint's out_degree/in_degree can be
+  // decremented (#2085) — one side's fact may still exist even though the link itself is orphaned
+  // (its counterpart fact was hard-deleted). decrementFactDegreesForLink is a no-op UPDATE for
+  // whichever id no longer exists in `facts`, so it's safe to call for both endpoints unconditionally.
+  const doomed = db
     .prepare(
-      `DELETE FROM memory_links
+      `SELECT id, source_fact_id, target_fact_id, link_type FROM memory_links
          WHERE NOT EXISTS (SELECT 1 FROM facts WHERE facts.id = memory_links.source_fact_id)
             OR NOT EXISTS (SELECT 1 FROM facts WHERE facts.id = memory_links.target_fact_id)`,
     )
-    .run();
-  return Number(result.changes ?? 0);
+    .all() as Array<{ id: string; source_fact_id: string; target_fact_id: string; link_type: string }>;
+  if (doomed.length === 0) return 0;
+
+  let changes = 0;
+  const tx = createTransaction(db, () => {
+    const placeholders = doomed.map(() => "?").join(",");
+    const result = db
+      .prepare(`DELETE FROM memory_links WHERE id IN (${placeholders})`)
+      .run(...doomed.map((row) => row.id));
+    changes = Number(result.changes ?? 0);
+    for (const row of doomed) {
+      decrementFactDegreesForLink(db, row.source_fact_id, row.target_fact_id, row.link_type);
+    }
+  });
+  tx();
+  return changes;
 }
 
 /**
