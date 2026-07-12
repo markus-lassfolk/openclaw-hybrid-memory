@@ -41,6 +41,22 @@ vi.mock("../services/classification.js", async (importOriginal) => {
   };
 });
 
+// ---------------------------------------------------------------------------
+// Mock runHumanizerScore: the real implementation shells out to a `humanizer` binary that isn't
+// installed in CI, so it always returns null there. Mock it deterministically for the #2091
+// suppress-warning regression test below.
+// ---------------------------------------------------------------------------
+
+const runHumanizerScoreMock = vi.fn();
+
+vi.mock("../services/humanizer-score.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/humanizer-score.js")>();
+  return {
+    ...actual,
+    runHumanizerScore: (...args: Parameters<typeof actual.runHumanizerScore>) => runHumanizerScoreMock(...args),
+  };
+});
+
 function makeApi(messageChannel?: string) {
   return {
     logger: {
@@ -188,6 +204,96 @@ describe("runCaptureStage", () => {
         extractionMethod: "auto-capture:user:interactive",
         extractionConfidence: 1,
       }),
+    );
+  });
+
+  it("plumbs resolved vector candidates into storeWithResult on an auto-capture ADD (#2091)", async () => {
+    const api = makeApi("chat");
+    const storeWithResult = vi.fn().mockImplementation((entry: Record<string, unknown>) => ({
+      entry: { id: "fact-1", ...entry },
+      evictedFactId: null,
+      skipped: false,
+      newlyStored: true,
+    }));
+    const search = vi.fn().mockResolvedValue([]);
+    const { ctx } = makeContext({
+      factsDb: {
+        store: vi.fn().mockReturnValue({ id: "fact-1" }),
+        storeWithResult,
+        hasDuplicate: vi.fn().mockReturnValue(false),
+      } as unknown as LifecycleContext["factsDb"],
+      vectorDb: { search, hasDuplicate: vi.fn().mockResolvedValue(false) } as unknown as LifecycleContext["vectorDb"],
+      embeddings: { modelName: "test-model", embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]) } as never,
+      cfg: {
+        autoCapture: true,
+        captureMaxChars: 5000,
+        autoRecall: { enabled: false, summaryThreshold: 0, summaryMaxChars: 200 },
+        retrieval: { strategies: ["semantic"] },
+        store: { classifyBeforeWrite: false, fuzzyDedupe: true },
+        memoryTiering: { enabled: false, compactionOnSessionEnd: false },
+        credentials: { enabled: false },
+        humanizer: { enabled: false },
+      } as never,
+    });
+    const sessionState = makeSessionState();
+
+    await runCaptureStage(
+      { success: true, messages: [{ role: "user", content: "Remember that the API key rotates monthly." }] },
+      api as never,
+      ctx,
+      sessionState,
+    );
+
+    expect(search).toHaveBeenCalled();
+    expect(storeWithResult).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "auto-capture" }),
+      expect.objectContaining({ vectorCandidates: expect.anything(), warnContext: "auto-capture" }),
+    );
+  });
+
+  it("suppresses the vector-fallback warning for the humanizer quality_loop store, which never embeds (#2091)", async () => {
+    runHumanizerScoreMock.mockResolvedValue({
+      score: 0.42,
+      patternsTriggered: ["hedging"],
+      categoryBreakdown: {},
+      rawOutput: {},
+    });
+    const api = makeApi("chat");
+    const storeWithResult = vi.fn().mockImplementation((entry: Record<string, unknown>) => ({
+      entry: { id: "fact-1", ...entry },
+      evictedFactId: null,
+      skipped: false,
+      newlyStored: true,
+    }));
+    const { ctx } = makeContext({
+      factsDb: {
+        store: vi.fn().mockReturnValue({ id: "fact-1" }),
+        storeWithResult,
+        hasDuplicate: vi.fn().mockReturnValue(false),
+      } as unknown as LifecycleContext["factsDb"],
+      cfg: {
+        autoCapture: false,
+        captureMaxChars: 5000,
+        autoRecall: { enabled: false, summaryThreshold: 0, summaryMaxChars: 200 },
+        retrieval: { strategies: [] },
+        store: { classifyBeforeWrite: false },
+        memoryTiering: { enabled: false, compactionOnSessionEnd: false },
+        credentials: { enabled: false },
+        humanizer: { enabled: true, bin: "humanizer", minTextLength: 1, maxTextLength: 10_000 },
+      } as never,
+    });
+    const sessionState = makeSessionState();
+
+    await runCaptureStage(
+      { success: true, messages: [{ role: "assistant", content: "I think maybe this could possibly work." }] },
+      api as never,
+      ctx,
+      sessionState,
+    );
+
+    expect(storeWithResult).toHaveBeenCalledWith(
+      expect.objectContaining({ category: "quality_loop", source: "humanizer" }),
+      expect.objectContaining({ suppressVectorFallbackWarning: true }),
     );
   });
 

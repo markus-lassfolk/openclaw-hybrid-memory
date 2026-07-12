@@ -27,6 +27,7 @@ import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
 import { extractTags } from "../utils/tags.js";
 import type { HandlerContext } from "./handlers.js";
 import type { StoreCliOpts, StoreCliResult } from "./types.js";
+import { resolveWriteVectorCandidates } from "./vector-dedupe-helpers.js";
 
 /**
  * Infer which identity file a rule or suggestion should target (#260).
@@ -206,16 +207,19 @@ export async function runStoreForCli(
     return { outcome: "duplicate" };
   }
 
+  // Hoisted to function scope (not just the classifyBeforeWrite block below) so the final
+  // ADD-style store path further down can reuse an already-computed embedding to resolve
+  // write-time vector dedupe candidates (#2091) instead of silently running lexical-only.
+  let dedupeVector: number[] | undefined;
   if (cfg.store.classifyBeforeWrite) {
-    let vector: number[] | undefined;
     try {
-      vector = await embeddings.embed(text);
+      dedupeVector = await embeddings.embed(text);
     } catch (err) {
       log.warn(`memory-hybrid: CLI store embedding failed: ${err}`);
       capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:embed" });
     }
-    if (vector) {
-      let similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vector, 5, 0.3, { scope, scopeTarget });
+    if (dedupeVector) {
+      let similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, dedupeVector, 5, 0.3, { scope, scopeTarget });
       if (similarFacts.length === 0) {
         similarFacts = factsDb.findSimilarForClassification(text, entity, key, 5, scope, scopeTarget);
       }
@@ -269,21 +273,31 @@ export async function runStoreForCli(
             });
             if (oldFact) {
               const nowSec = Math.floor(Date.now() / 1000);
-              const storeResult = factsDb.storeWithResult({
-                text,
-                category,
-                importance: CLI_STORE_IMPORTANCE,
-                entity: entity ?? oldFact.entity,
-                key: opts.key ?? extracted.key ?? oldFact.key ?? null,
-                value: opts.value ?? extracted.value ?? oldFact.value ?? null,
-                source: "cli",
-                sourceDate,
-                tags: tags ?? extractTags(text, entity),
-                validFrom: sourceDate ?? nowSec,
-                supersedesId: classification.targetId,
-                scope,
-                scopeTarget,
-              });
+              const storeResult = factsDb.storeWithResult(
+                {
+                  text,
+                  category,
+                  importance: CLI_STORE_IMPORTANCE,
+                  entity: entity ?? oldFact.entity,
+                  key: opts.key ?? extracted.key ?? oldFact.key ?? null,
+                  value: opts.value ?? extracted.value ?? oldFact.value ?? null,
+                  source: "cli",
+                  sourceDate,
+                  tags: tags ?? extractTags(text, entity),
+                  validFrom: sourceDate ?? nowSec,
+                  supersedesId: classification.targetId,
+                  scope,
+                  scopeTarget,
+                },
+                {
+                  // Explicit supersede target: vector-cosine dedupe would match the supersede
+                  // target itself and silently drop the intended update, so it must not run here
+                  // (mirrors tools/memory/register-store-tools.ts's `!supersedes?.trim()` guard).
+                  // Suppress the resulting "no vector candidates" warning rather than spamming it
+                  // on every classify-before-write UPDATE (#2091).
+                  suppressVectorFallbackWarning: true,
+                },
+              );
               if (storeResult.skipped) {
                 return { outcome: "noop", reason: "artifact text rejected by pre-store guard" };
               }
@@ -334,7 +348,7 @@ export async function runStoreForCli(
                   );
                 } else {
                   const canonicalText = newEntry.text;
-                  const canonicalVector = canonicalText === text ? vector : await embeddings.embed(canonicalText);
+                  const canonicalVector = canonicalText === text ? dedupeVector : await embeddings.embed(canonicalText);
                   factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
                   if (!(await vectorDb.hasDuplicate(canonicalVector))) {
                     await vectorDb.store({
@@ -397,21 +411,60 @@ export async function runStoreForCli(
   // FR-006: scope already computed above
   const supersedesId = opts.supersedes?.trim();
   const nowSec = supersedesId ? Math.floor(Date.now() / 1000) : undefined;
+  // Plumb vector neighbour candidates into write-time dedupe so a configured vectorThreshold
+  // actually runs on this store path instead of silently degrading to lexical-only (#2091).
+  // Reuses the classify-before-write embedding above when available; otherwise computes one here.
+  // Skipped when the caller passed an explicit --supersedes: vector-cosine dedupe would match the
+  // supersede target itself and silently drop the intended update (mirrors
+  // tools/memory/register-store-tools.ts's `!supersedes?.trim()` guard).
+  let storeVectorCandidates: ReadonlyArray<{ id: string; score: number }> | undefined;
+  if (cfg.store.fuzzyDedupe && !supersedesId) {
+    if (dedupeVector === undefined) {
+      try {
+        dedupeVector = await embeddings.embed(text);
+      } catch (err) {
+        log.warn(`memory-hybrid: CLI store embedding failed: ${err}`);
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:embed-for-dedupe" });
+      }
+    }
+    if (dedupeVector) {
+      const resolvedCandidates = await resolveWriteVectorCandidates({
+        fuzzyDedupe: true,
+        vector: dedupeVector,
+        vectorDb,
+        factsDb,
+        source: "cli",
+        embeddingModelName: typeof embeddings.modelName === "string" ? embeddings.modelName : null,
+        candidateScope: scope,
+        candidateScopeTarget: scopeTarget,
+      });
+      storeVectorCandidates = resolvedCandidates.vectorCandidates;
+    }
+  }
   try {
-    const storeResult = factsDb.storeWithResult({
-      text,
-      category,
-      importance: CLI_STORE_IMPORTANCE,
-      entity,
-      key: opts.key ?? extracted.key ?? null,
-      value: opts.value ?? extracted.value ?? null,
-      source: "cli",
-      sourceDate,
-      tags: tags ?? extractTags(text, entity),
-      scope,
-      scopeTarget,
-      ...(supersedesId ? { validFrom: nowSec, supersedesId } : {}),
-    });
+    const storeResult = factsDb.storeWithResult(
+      {
+        text,
+        category,
+        importance: CLI_STORE_IMPORTANCE,
+        entity,
+        key: opts.key ?? extracted.key ?? null,
+        value: opts.value ?? extracted.value ?? null,
+        source: "cli",
+        sourceDate,
+        tags: tags ?? extractTags(text, entity),
+        scope,
+        scopeTarget,
+        ...(supersedesId ? { validFrom: nowSec, supersedesId } : {}),
+      },
+      {
+        vectorCandidates: storeVectorCandidates,
+        warnContext: "cli-store",
+        // Explicit --supersedes target: vector dedupe is intentionally skipped above, so suppress
+        // the "no vector candidates" warning here too rather than firing it on every such store.
+        suppressVectorFallbackWarning: Boolean(supersedesId),
+      },
+    );
     if (storeResult.skipped) {
       return { outcome: "noop", reason: "artifact text rejected by pre-store guard" };
     }
