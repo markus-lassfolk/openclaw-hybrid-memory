@@ -905,6 +905,7 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
     state.lanceOk &&
     state.embeddingOk &&
     state.embeddingAlignmentOk &&
+    state.installReconcileOk &&
     (!cfg.credentials.enabled || state.credentialsOk) &&
     // Only gate on llmOk when --test-llm actually ran live tests — llmOk degrades to a plain
     // credential-presence check outside --test-llm, and requiring LLM credentials unconditionally

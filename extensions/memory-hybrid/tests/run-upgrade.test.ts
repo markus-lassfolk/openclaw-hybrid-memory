@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -11,6 +11,7 @@ import {
   readPluginPackageVersion,
   detectDualPluginInstallVersionMismatch,
   buildDualInstallReconciliationGuidance,
+  buildNpmProjectNewerGuidance,
   syncKnownNpmProjectPinWhenExtensionsCanonical,
   removeRedundantNpmProjectTreeWhenExtensionsCanonical,
   UPGRADE_REQUIRED_BUNDLE_PATHS,
@@ -221,7 +222,10 @@ describe("runUpgrade helpers", () => {
     const projectRoot = join(tmp, "npm", "projects", "openclaw-hybrid-memory");
     const pluginDir = join(projectRoot, "node_modules", "openclaw-hybrid-memory");
     mkdirSync(pluginDir, { recursive: true });
-    writeFileSync(join(projectRoot, "package.json"), JSON.stringify({ dependencies: { "openclaw-hybrid-memory": "2026.6.291" } }));
+    writeFileSync(
+      join(projectRoot, "package.json"),
+      JSON.stringify({ dependencies: { "openclaw-hybrid-memory": "2026.6.291" } }),
+    );
     writeFileSync(join(pluginDir, "openclaw.plugin.json"), "{}");
     writeFileSync(join(pluginDir, "package.json"), JSON.stringify({ version: "2026.6.291" }));
     const res = syncKnownNpmProjectPinWhenExtensionsCanonical({
@@ -240,7 +244,10 @@ describe("runUpgrade helpers", () => {
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, "openclaw.plugin.json"), "{}");
     }
-    writeFileSync(join(projectRoot, "package.json"), JSON.stringify({ dependencies: { "openclaw-hybrid-memory": "2026.6.291" } }));
+    writeFileSync(
+      join(projectRoot, "package.json"),
+      JSON.stringify({ dependencies: { "openclaw-hybrid-memory": "2026.6.291" } }),
+    );
     writeFileSync(join(npmPluginDir, "package.json"), JSON.stringify({ version: "2026.6.291" }));
     writeFileSync(join(extDir, "package.json"), JSON.stringify({ version: "2026.6.291" }));
 
@@ -254,13 +261,68 @@ describe("runUpgrade helpers", () => {
     expect(synced.attempted).toBe(false);
     expect(synced.updated).toBe(false);
 
-    writeFileSync(join(projectRoot, "package.json"), JSON.stringify({ dependencies: { "openclaw-hybrid-memory": "2026.6.261" } }));
+    writeFileSync(
+      join(projectRoot, "package.json"),
+      JSON.stringify({ dependencies: { "openclaw-hybrid-memory": "2026.6.261" } }),
+    );
     writeFileSync(join(npmPluginDir, "package.json"), JSON.stringify({ version: "2026.6.261" }));
     const withoutDetected = syncKnownNpmProjectPinWhenExtensionsCanonical({
       extensionsPluginDir: extDir,
       version: "2026.6.291",
     });
     expect(withoutDetected.attempted).toBe(false);
+  });
+
+  it("syncKnownNpmProjectPinWhenExtensionsCanonical refuses to downgrade a newer npm-project install (#2077)", () => {
+    // Reproduces the exact version pair from the reported issue: gateway is actively running
+    // npm-project 2026.7.212, extensions is a stale leftover at 2026.7.172.
+    const projectRoot = join(tmp, "npm-projects", "openclaw-hybrid-memory");
+    const npmPluginDir = join(projectRoot, "node_modules", "openclaw-hybrid-memory");
+    const extDir = join(tmp, "extensions", "openclaw-hybrid-memory");
+    for (const dir of [npmPluginDir, extDir]) {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "openclaw.plugin.json"), "{}");
+    }
+    writeFileSync(
+      join(projectRoot, "package.json"),
+      JSON.stringify({ dependencies: { "openclaw-hybrid-memory": "2026.7.212" } }),
+    );
+    writeFileSync(join(npmPluginDir, "package.json"), JSON.stringify({ version: "2026.7.212" }));
+    writeFileSync(join(extDir, "package.json"), JSON.stringify({ version: "2026.7.172" }));
+
+    const res = syncKnownNpmProjectPinWhenExtensionsCanonical({
+      extensionsPluginDir: extDir,
+      version: "2026.7.172",
+      npmProjectPluginDir: npmPluginDir,
+    });
+
+    expect(res.attempted).toBe(false);
+    expect(res.updated).toBe(false);
+    expect(res.skippedReason).toBe("npm-project-not-older");
+    expect(res.npmVersion).toBe("2026.7.212");
+    expect(res.guidance).toMatch(/2026\.7\.212/);
+    expect(res.guidance).toMatch(/2026\.7\.172/);
+    expect(res.guidance).toMatch(/rm -rf/);
+
+    // No npm install was ever spawned — the pin must be byte-for-byte untouched.
+    const pkgAfter = JSON.parse(readFileSync(join(projectRoot, "package.json"), "utf-8")) as {
+      dependencies: Record<string, string>;
+    };
+    expect(pkgAfter.dependencies["openclaw-hybrid-memory"]).toBe("2026.7.212");
+  });
+
+  it("buildNpmProjectNewerGuidance points at the extensions copy as the stale leftover, not npm-project (#2077)", () => {
+    const guidance = buildNpmProjectNewerGuidance({
+      npmProjectPluginDir: "/home/x/.openclaw/npm/projects/openclaw-hybrid-memory/node_modules/openclaw-hybrid-memory",
+      npmVersion: "2026.7.212",
+      extensionsPluginDir: "/home/x/.openclaw/extensions/openclaw-hybrid-memory",
+      extVersion: "2026.7.172",
+    });
+    expect(guidance).toMatch(/2026\.7\.212/);
+    expect(guidance).toMatch(/2026\.7\.172/);
+    expect(guidance).toMatch(/rm -rf \/home\/x\/\.openclaw\/extensions\/openclaw-hybrid-memory/);
+    // Must not tell the operator to remove the npm-project copy — that's the newer one here.
+    expect(guidance).not.toMatch(/rm -rf \/home\/x\/\.openclaw\/npm/);
   });
 
   it("verifyUpgradePluginBundle passes for the live plugin root", () => {

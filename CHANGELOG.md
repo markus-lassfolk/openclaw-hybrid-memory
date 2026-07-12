@@ -25,6 +25,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.214] - 2026-07-12
+
+### Fixed — `verify --fix` could downgrade a newer managed plugin install ([#2077](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2077))
+
+`syncKnownNpmProjectPinWhenExtensionsCanonical` (the pin-sync fallback `verify --fix` and `upgrade` reach when the sibling npm-project-tree-removal guard refuses to delete a *newer* npm-project copy) read the npm-project's installed version but never compared its direction against the version it was about to write — so it could `npm install openclaw-hybrid-memory@<older>` over an actively newer managed install, immediately (not just "on next restart," the on-disk code changed synchronously). The correct "never delete a newer install" guard already existed one function over (`removeRedundantNpmProjectTreeWhenExtensionsCanonical`'s `npm-project-not-older` check) — its refusal was just silently discarded by both callers before falling through to the unguarded pin write.
+
+- `cli/install/workspace.ts`: `syncKnownNpmProjectPinWhenExtensionsCanonical` now compares versions (`utils/version-check.ts`'s `compareVersions`, already used elsewhere for this CalVer scheme) before writing the pin, and refuses with `skippedReason: "npm-project-not-older"` when the npm-project copy is newer — mirroring the sibling removal guard exactly, so the two guards can't drift out of sync with each other again. New `buildNpmProjectNewerGuidance` gives direction-correct cleanup guidance (suggests removing the *extensions* copy) for this reversed scenario, since the existing `buildDualInstallReconciliationGuidance` hardcodes the opposite assumption.
+- `cli/verify/sections/infrastructure.ts`: a refused downgrade during `verify --fix` is now a hard issue (`Refusing to downgrade npm-project openclaw-hybrid-memory X -> Y during verify --fix: ...`), not a silent log line — new `VerifyRunState.installReconcileOk` (folded into `config-cron.ts`'s `allOk` computation) makes `verify` exit non-zero when this happens.
+- `cli/install/run-install.ts`: the `upgrade` command logs the same refusal loudly without failing the command — the primary upgrade (of the canonical extensions copy) already succeeded by this point; the npm-project pin is a secondary, best-effort reconciliation step.
+
+Tests: 2 new in `tests/run-upgrade.test.ts` — the exact reported version pair (npm-project 2026.7.212 vs extensions 2026.7.172) refuses with the pin left byte-for-byte untouched, plus a `buildNpmProjectNewerGuidance` content check. Full suite green (713 files / 9371 tests), tsc/lint/verify:gate clean.
+
 ## [2026.7.213] - 2026-07-12
 
 ### Added — Proactive research grounded in ambitions and identity ([PROACTIVE-RESEARCH.md](docs/PROACTIVE-RESEARCH.md))

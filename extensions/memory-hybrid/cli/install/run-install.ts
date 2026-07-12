@@ -725,6 +725,15 @@ export async function runUpgradeForCli(
       });
       if (staleSync.updated) {
         logger?.info?.(`memory-hybrid: upgrade — reconciled stale npm-project pin to ${installedVersion} (#2008)`);
+      } else if (staleSync.skippedReason === "npm-project-not-older") {
+        // The just-upgraded extensions copy is OLDER than the existing npm-project install —
+        // leave the npm-project pin untouched rather than downgrade it (#2077). The primary
+        // upgrade (extensions copy) already succeeded, so this does not fail the command, but
+        // it is loud: a stale npm-project copy silently left ahead of the extensions copy is
+        // exactly the confusing dual-install state operators need to reconcile manually.
+        logger?.warn?.(
+          `memory-hybrid: upgrade — refusing to downgrade npm-project ${PLUGIN_ID} ${staleSync.npmVersion} -> ${installedVersion}: npm-project copy is newer than the just-upgraded extensions copy.${staleSync.guidance ? ` ${staleSync.guidance}` : ""}`,
+        );
       } else if (staleSync.attempted && staleSync.error) {
         logger?.warn?.(
           `memory-hybrid: upgrade — could not reconcile npm-project pin: ${staleSync.error}${staleSync.guidance ? ` (${staleSync.guidance})` : ""}`,

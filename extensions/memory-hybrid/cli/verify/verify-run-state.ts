@@ -61,6 +61,8 @@ export type VerifyRunState = {
   embeddingAlignmentOk: boolean;
   /** True when at least one credentialed LLM provider is available; with --test-llm, requires an actual configured-model test to succeed. */
   llmOk: boolean;
+  /** False when install reconciliation refused an unsafe action (e.g. would downgrade a newer npm-project install, #2077). */
+  installReconcileOk: boolean;
   loadBlocking: string[];
   extDir: string;
   defaultConfigPath: string;
@@ -135,6 +137,7 @@ export function createVerifyRunState(ctx: HandlerContext, opts: VerifyRunOpts, s
     embeddingOk: false,
     embeddingAlignmentOk: true,
     llmOk: false,
+    installReconcileOk: true,
     loadBlocking: [],
     extDir,
     defaultConfigPath,
