@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -92,7 +92,8 @@ describe("cron-job-bash-harness", () => {
     const bin = join(tmp, "bin");
     const home = join(tmp, "oc-home");
     writeFileSync(join(tmp, "mkdir-placeholder"), "");
-    spawnSync("mkdir", ["-p", bin, home]);
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(home, { recursive: true });
     const marker = join(tmp, "validator-called.txt");
     const fakeOpenclaw = join(bin, "openclaw");
     writeFileSync(
@@ -140,7 +141,8 @@ exit 2
     const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
     const bin = join(tmp, "bin");
     const home = join(tmp, "oc-home");
-    spawnSync("mkdir", ["-p", bin, home]);
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(home, { recursive: true });
     const fakeOpenclaw = join(bin, "openclaw");
     writeFileSync(
       fakeOpenclaw,
@@ -180,7 +182,8 @@ exit 2
     const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
     const bin = join(tmp, "bin");
     const home = join(tmp, "oc-home");
-    spawnSync("mkdir", ["-p", bin, home]);
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(home, { recursive: true });
     const fakeOpenclaw = join(bin, "openclaw");
     writeFileSync(
       fakeOpenclaw,
@@ -224,7 +227,8 @@ exit 2
     const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
     const bin = join(tmp, "bin");
     const home = join(tmp, "oc-home");
-    spawnSync("mkdir", ["-p", bin, home]);
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(home, { recursive: true });
     const fakeOpenclaw = join(bin, "openclaw");
     writeFileSync(
       fakeOpenclaw,
@@ -273,7 +277,8 @@ exit 2
     const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
     const bin = join(tmp, "bin");
     const home = join(tmp, "oc-home");
-    spawnSync("mkdir", ["-p", bin, home]);
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(home, { recursive: true });
     const fakeOpenclaw = join(bin, "openclaw");
     writeFileSync(
       fakeOpenclaw,
@@ -305,7 +310,8 @@ exit 2
     const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
     const bin = join(tmp, "bin");
     const home = join(tmp, "oc-home");
-    spawnSync("mkdir", ["-p", bin, home]);
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(home, { recursive: true });
     const marker = join(tmp, "validator-called.txt");
     const exitCapture = join(tmp, "exit-captured.txt");
     const shouldNotRun = join(tmp, "unexpected-second-step.txt");
@@ -366,7 +372,8 @@ exit 2
     const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
     const bin = join(tmp, "bin");
     const home = join(tmp, "oc-home");
-    spawnSync("mkdir", ["-p", bin, home]);
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(home, { recursive: true });
     const marker = join(tmp, "resolve-ran.txt");
     const exitCapture = join(tmp, "exit-captured.txt");
     const fakeOpenclaw = join(bin, "openclaw");
@@ -441,7 +448,8 @@ exit 2
     const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
     const bin = join(tmp, "bin");
     const home = join(tmp, "oc-home");
-    spawnSync("mkdir", ["-p", bin, home]);
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(home, { recursive: true });
     const marker = join(tmp, "exit-captured.txt");
     const fakeOpenclaw = join(bin, "openclaw");
     writeFileSync(
@@ -488,7 +496,8 @@ exit 2
     const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
     const bin = join(tmp, "bin");
     const home = join(tmp, "oc-home");
-    spawnSync("mkdir", ["-p", bin, home]);
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(home, { recursive: true });
     const fakeOpenclaw = join(bin, "openclaw");
     writeFileSync(
       fakeOpenclaw,
@@ -531,7 +540,8 @@ exit 2
     const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
     const bin = join(tmp, "bin");
     const home = join(tmp, "oc-home");
-    spawnSync("mkdir", ["-p", bin, home]);
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(home, { recursive: true });
     const fakeOpenclaw = join(bin, "openclaw");
     writeFileSync(
       fakeOpenclaw,
@@ -566,7 +576,8 @@ exit 2
     const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
     const bin = join(tmp, "bin");
     const home = join(tmp, "oc-home");
-    spawnSync("mkdir", ["-p", bin, home]);
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(home, { recursive: true });
     const marker = join(tmp, "extract-procedures-args.txt");
     const fakeOpenclaw = join(bin, "openclaw");
     writeFileSync(
@@ -606,7 +617,8 @@ exit 2
     const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
     const bin = join(tmp, "bin");
     const home = join(tmp, "oc-home");
-    spawnSync("mkdir", ["-p", bin, home]);
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(home, { recursive: true });
     const marker = join(tmp, "distill-args.txt");
     const fakeOpenclaw = join(bin, "openclaw");
     writeFileSync(
@@ -646,7 +658,8 @@ exit 2
     const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
     const bin = join(tmp, "bin");
     const home = join(tmp, "oc-home");
-    spawnSync("mkdir", ["-p", bin, home]);
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(home, { recursive: true });
     const marker = join(tmp, "extract-daily-args.txt");
     const fakeOpenclaw = join(bin, "openclaw");
     writeFileSync(
@@ -686,7 +699,8 @@ exit 2
     const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
     const bin = join(tmp, "bin");
     const home = join(tmp, "oc-home");
-    spawnSync("mkdir", ["-p", bin, home]);
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(home, { recursive: true });
     const marker = join(tmp, "reflect-args.txt");
     const fakeOpenclaw = join(bin, "openclaw");
     writeFileSync(
@@ -727,7 +741,8 @@ exit 2
     const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
     const bin = join(tmp, "bin");
     const home = join(tmp, "oc-home");
-    spawnSync("mkdir", ["-p", bin, home]);
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(home, { recursive: true });
     const marker = join(tmp, "extract-daily-args.txt");
     const fakeOpenclaw = join(bin, "openclaw");
     writeFileSync(
@@ -767,7 +782,8 @@ exit 2
     const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
     const bin = join(tmp, "bin");
     const home = join(tmp, "oc-home");
-    spawnSync("mkdir", ["-p", bin, home]);
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(home, { recursive: true });
     const secondStepMarker = join(tmp, "second-step-ran.txt");
     const fakeOpenclaw = join(bin, "openclaw");
     writeFileSync(
