@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import { workspaceRootForCli } from "../../cli/config-feature-summaries.js";
 import type { HandlerContext } from "../../cli/handlers.js";
 import type { HybridMemCliContext } from "../../cli/register.js";
 import type { FindDuplicatesResult } from "../../cli/types.js";
@@ -21,6 +22,7 @@ import { type DreamCycleResult, makeDreamCycleRunId, runDreamCycle } from "../..
 import { runEntityEnrichmentForCli } from "../../services/entity-enrichment-cli.js";
 import { runExport } from "../../services/export-memory.js";
 import { runFindDuplicates } from "../../services/find-duplicates.js";
+import { resolveGoalsDir } from "../../services/goal-registry.js";
 import { runIdentityReflection } from "../../services/identity-reflection.js";
 import { runInsightSynthesis } from "../../services/insight-synthesis.js";
 import { runBuildLanguageKeywords } from "../../services/language-keywords-build.js";
@@ -386,6 +388,13 @@ export function buildCliContextServices(
       await guardWalUnlessDryRun("cli_insight_synthesis", opts.dryRun);
       const requestedModel = cfg.research.insights.model;
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance", requestedModel);
+      // Goal/identity evidence grounds insights in ambitions and the relationship, not just
+      // friction — same enable semantics as goal context injection (autoEnableWhenGoalsPresent
+      // lets ad-hoc goals count even without opting into full stewardship).
+      const goalsDir =
+        cfg.goalStewardship.enabled || cfg.goalStewardship.autoEnableWhenGoalsPresent
+          ? resolveGoalsDir(workspaceRootForCli(), cfg.goalStewardship.goalsDir)
+          : null;
       return runInsightSynthesis(
         factsDb,
         openai,
@@ -396,7 +405,7 @@ export function buildCliContextServices(
           model: requestedModel ?? defaultModel,
           fallbackModels: fallbackModels ?? [],
         },
-        opts,
+        { ...opts, goalsDir, identityStore: ctx.identityReflectionStore },
         logSink,
       );
     },

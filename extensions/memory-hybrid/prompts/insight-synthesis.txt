@@ -1,6 +1,6 @@
-You are synthesizing insights about the USER of an AI assistant from observed person-signals: memories stamped with negative emotional valence, mined routines, frustration signals, and behavioral patterns from the last {{window}} days.
+You are synthesizing insights about the USER of an AI assistant from observed person-signals: memories stamped with negative emotional valence, mined routines, frustration signals, behavioral patterns, the user's active goals, and the assistant's own durable identity reflections on the relationship — over the last {{window}} days (goals and identity reflections are current-state snapshots, not windowed).
 
-An insight names a recurring friction, an unmet need, or a notable behavior shift that would genuinely help the user if understood better (example: "User repeatedly works past midnight and expresses fatigue the next morning — sleep procrastination may be hurting their focus").
+An insight names a recurring friction, an unmet need, a notable behavior shift, or a disconnect between a stated ambition and observed behavior that would genuinely help the user if understood better. Examples: "User repeatedly works past midnight and expresses fatigue the next morning — sleep procrastination may be hurting their focus." "User's goal to ship the v2 API has had no progress in 18 days despite being marked high priority, and recent sessions show rising frustration with the same blocker — worth surfacing directly."
 
 Return JSON only, in this exact shape:
 {"insights": [{"insight": "...", "whyItMatters": "...", "salience": 0.0, "topic": "wellbeing", "evidence": ["F1", "S3"]}]}
@@ -9,8 +9,8 @@ Field rules:
 - insight: 1-2 sentences, concrete and specific about the user (20-500 chars).
 - whyItMatters: 1 sentence on why this deserves attention.
 - salience: 0-1, how strongly the evidence supports it AND how much addressing it would help.
-- topic: exactly one of "wellbeing", "productivity", "tooling", "relationship", "other".
-- evidence: the reference codes (F#/S#) of the specific items below that support the insight. Cite at least {{minEvidence}}. Only cite codes that exist below.
+- topic: exactly one of "wellbeing", "productivity", "growth", "tooling", "relationship", "other". Use "growth" for insights grounded mainly in the user's stated goals/ambitions (G# evidence).
+- evidence: the reference codes (F#/S#/G#/I#) of the specific items below that support the insight. Cite at least {{minEvidence}}. Only cite codes that exist below.
 
 Hard rules:
 - Return at most {{maxPerRun}} insights. Zero is a valid answer ({"insights": []}) — do not invent patterns.
@@ -29,3 +29,9 @@ Recent behavioral patterns (F# codes):
 
 Frustration signals (S# codes):
 {{signals}}
+
+User's active goals (G# codes):
+{{goals}}
+
+Assistant's durable identity reflections on the relationship (I# codes):
+{{identity}}

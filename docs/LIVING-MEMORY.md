@@ -73,10 +73,12 @@ config knob added by the living-memory upgrade (all **on by default** unless mar
   the frustration detector's per-session signals stamp a confidence-weighted **valence** (−1..1)
   and `affect_source` onto facts formed in that session's window. Memory formation carries
   emotional state; nothing runs on the hot path.
-- **Routine mining** (`maintenance.routineMining { enabled: true, maxPerRun: 2 }`, nightly): recall
-  patterns recurring ≥3 times across ≥3 distinct weeks in the same weekday/time-band become
-  ordinary decayable `routine` facts ("Routine: on Tuesday mornings, a recurring focus is …").
-  Routines that stop recurring decay out — learned from interaction, not programmed.
+- **Routine mining** (`maintenance.routineMining { enabled: true, maxPerRun: 2, timezone: "UTC" }`,
+  nightly): recall patterns recurring ≥3 times across ≥3 distinct weeks in the same weekday/time-band
+  become ordinary decayable `routine` facts ("Routine: on Tuesday mornings, a recurring focus is …").
+  Weekday/time-band bucketing uses `timezone` (an IANA zone, default `"UTC"`) — set it to the user's
+  local timezone so a "night" routine means local late-night, not 00:00-06:00 UTC. Routines that stop
+  recurring decay out — learned from interaction, not programmed.
 
 ## Free-text contradictions (shipped)
 

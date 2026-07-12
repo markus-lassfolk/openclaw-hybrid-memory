@@ -129,6 +129,45 @@ describe("research pick", () => {
     expect(lastJson().topicId).toBe(first.topicId); // same-night retry gets the same topic
   });
 
+  it("includes pre-rendered goal/identity evidence alongside facts, with no extra reads needed", async () => {
+    const evidenceId = db.store({
+      text: "Working past midnight again, exhausted",
+      entity: null,
+      key: null,
+      value: null,
+      category: "fact",
+      importance: 0.5,
+      source: "test",
+      tags: [],
+    } as never).id;
+    db.store({
+      text: "Insight: user's active goal has stalled alongside late-night work",
+      entity: "insight:goal-and-sleep",
+      key: "concern",
+      value: "growth",
+      category: "insight",
+      importance: 0.9,
+      source: "insight-synthesis",
+      tags: ["insight", "auto"],
+      provenanceJson: JSON.stringify({
+        method: "insight-synthesis",
+        sourceFactIds: [evidenceId],
+        sourceEventIds: [],
+        sourceGoalEvidence: [{ id: "goal-1", text: 'Goal "ship v2" (priority: high, status: active, active 40d)' }],
+        sourceIdentityEvidence: [{ id: "id-1", text: "[partnership] concise updates work best" }],
+      }),
+    } as never);
+    expect(runResearchTrigger(db, policy).picked).toBe(1);
+
+    await registry.get("research pick")?.();
+    const out = lastJson();
+    expect(out.evidence).toEqual([
+      { id: evidenceId, text: "Working past midnight again, exhausted" },
+      { id: "goal-1", text: 'Goal "ship v2" (priority: high, status: active, active 40d)' },
+      { id: "id-1", text: "[partnership] concise updates work best" },
+    ]);
+  });
+
   it("ignores stale in-progress topics older than 24h", async () => {
     seedPickedTopic();
     await registry.get("research pick")?.();

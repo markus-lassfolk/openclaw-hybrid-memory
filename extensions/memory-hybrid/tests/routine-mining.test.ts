@@ -61,6 +61,23 @@ describe("routine mining", () => {
     expect(candidates[0].distinctWeeks).toBe(4);
   });
 
+  it("buckets by the configured local timezone, not UTC", () => {
+    // 09:00 UTC Tuesday = "morning" in UTC, but 04:00 Tuesday ("night") five hours west
+    // (Etc/GMT+5 is a fixed UTC-5 offset — no DST, deterministic).
+    seedWeekly("late check in before bed", 4, TUESDAY_9AM);
+
+    const utcCandidates = findRoutineCandidates(db.getRawDb(), { nowSec: TUESDAY_9AM + 5 * WEEK });
+    expect(utcCandidates[0]?.band).toBe("morning");
+
+    const localCandidates = findRoutineCandidates(db.getRawDb(), {
+      nowSec: TUESDAY_9AM + 5 * WEEK,
+      timezone: "Etc/GMT+5",
+    });
+    expect(localCandidates).toHaveLength(1);
+    expect(localCandidates[0].dayOfWeek).toBe(2); // still Tuesday at 04:00 local
+    expect(localCandidates[0].band).toBe("night");
+  });
+
   it("stores routine facts as decayable memories, idempotently, respecting the cap", () => {
     seedWeekly("weekly status report preparation", 4, TUESDAY_9AM);
     seedWeekly("sprint retro follow ups", 3, TUESDAY_9AM + 6 * 3600); // Tuesday afternoon

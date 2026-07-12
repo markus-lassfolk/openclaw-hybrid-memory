@@ -53,10 +53,17 @@ function insightSlug(entity: string | null): string | null {
 function countEvidence(provenanceJson: string | null): number {
   if (!provenanceJson) return 0;
   try {
-    const parsed = JSON.parse(provenanceJson) as { sourceFactIds?: unknown; sourceEventIds?: unknown };
+    const parsed = JSON.parse(provenanceJson) as {
+      sourceFactIds?: unknown;
+      sourceEventIds?: unknown;
+      sourceGoalEvidence?: unknown;
+      sourceIdentityEvidence?: unknown;
+    };
     const facts = Array.isArray(parsed.sourceFactIds) ? parsed.sourceFactIds.length : 0;
     const events = Array.isArray(parsed.sourceEventIds) ? parsed.sourceEventIds.length : 0;
-    return facts + events;
+    const goals = Array.isArray(parsed.sourceGoalEvidence) ? parsed.sourceGoalEvidence.length : 0;
+    const identity = Array.isArray(parsed.sourceIdentityEvidence) ? parsed.sourceIdentityEvidence.length : 0;
+    return facts + events + goals + identity;
   } catch {
     return 0;
   }
