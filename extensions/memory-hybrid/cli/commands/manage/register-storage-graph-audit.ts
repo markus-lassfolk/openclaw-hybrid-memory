@@ -358,6 +358,30 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
     )
     .action(withExit(runAuditHealth));
 
+  // Discoverability alias (#2087): the health report is graph-consistency-relevant (out_degree/
+  // in_degree drift, hub pathologies) and its canonical home is `audit health`, but operators
+  // reasonably look for it under `graph` alongside `graph repair`. Delegates to the exact same
+  // handler as `audit health` — no behavior differences, just a second entry point.
+  graph
+    .command("health")
+    .description("Alias for `audit health` — one-shot non-destructive hybrid-memory health report (JSON or markdown)")
+    .option("--json", "Emit versioned JSON instead of markdown")
+    .option("--format <format>", "Output format: markdown or json", "markdown")
+    .option("--timeout-ms <n>", "Overall audit budget in milliseconds (default: 30000)", "30000")
+    .option(
+      "--strict",
+      "Exit 2 when warnings/errors or partial/failed status are present. JSON includes exitCode/exitReason/strictFailureReason.",
+    )
+    .option(
+      "--strict-errors",
+      "Exit 2 only on errors or degraded status — warnings are informational (#1955). JSON includes exitCode/exitReason/strictFailureReason.",
+    )
+    .option(
+      "--output <path>",
+      "Write JSON artifact atomically to this path (tmp+rename) instead of stdout. Always written even on strict failure (#1823).",
+    )
+    .action(withExit(runAuditHealth));
+
   audit
     .command("log")
     .description("Cross-agent audit trail (Issue #790): query logged memory operations")
