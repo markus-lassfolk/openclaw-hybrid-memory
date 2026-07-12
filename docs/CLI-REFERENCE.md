@@ -82,6 +82,7 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | `audit log [--hours N] [--agent <id>] [--outcome <o>] [--target <t>] [--format lines\|summary\|timeline]` | Cross-agent audit trail (issue #790): query logged memory operations. |
 | `classify [--dry-run] [--limit N] [--model M]` | Auto-classify "other" facts using LLM. Progress bar in TTY. |
 | `categories` | List all configured categories with per-category fact counts. |
+| `categories discovered [list\|approve <label>\|reject <label>] [--json]` | Review labels proposed by category discovery (see [AUTOMATIC-CATEGORIES.md](AUTOMATIC-CATEGORIES.md)) before they're promoted into config. `list` (default) shows pending + previously-rejected labels; `approve`/`reject` remove a label from the pending queue — `approve` prints the manual promotion steps (discovery is advisory-only, it never auto-applies), `reject` also records the label so future discovery runs never re-propose it (#2100). |
 | `list <type> [--limit N] [--status s]` | List items by type: **patterns**, **rules**, **directives**, **procedures**, **proposals**, or **corrections**. `--limit` caps output (default 50). For proposals/corrections, `--status` filters (e.g. pending). See [List, show, and review](#list-show-and-review-issue-56) below. |
 | `show <id>` | Show full details of a fact, procedure, or persona proposal by ID. |
 | `proposals list [--status s]` | List persona proposals (pending, approved, rejected, applied). |
