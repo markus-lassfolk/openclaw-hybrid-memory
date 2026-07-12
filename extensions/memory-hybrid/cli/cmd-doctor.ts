@@ -198,13 +198,10 @@ export function registerDoctorCommand(
               fix: `Run: ${STORAGE_REPAIR_REMEDIATION}`,
             });
           } else {
-            const diff = Math.abs(snapshot.sqliteActiveFacts - snapshot.lanceRowCount);
-            const percentDiff = (diff / Math.max(snapshot.sqliteActiveFacts, 1)) * 100;
-            const syncOk =
-              !snapshot.hasIdSetDrift &&
-              !snapshot.hasRowCountDrift &&
-              percentDiff < 5 &&
-              snapshot.duplicateIdExtraRows === 0;
+            // hasIdSetDrift/hasRowCountDrift are already scoped to the expected-vector population
+            // (active, unstructured facts) — do not add a raw sqliteActiveFacts-vs-lanceRowCount
+            // ratio check here, that comparison mixes populations that are not comparable (#2080).
+            const syncOk = !snapshot.hasIdSetDrift && !snapshot.hasRowCountDrift;
 
             if (syncOk) {
               checks.push({
@@ -217,10 +214,13 @@ export function registerDoctorCommand(
               if (snapshot.hasStructuralDrift) {
                 fixParts.push(STORAGE_OPTIMIZE_REMEDIATION, STORAGE_REPAIR_REMEDIATION);
               }
+              const invariant = snapshot.hasIdSetDrift
+                ? `ID-set drift: vectorOrphans=${snapshot.vectorOrphans.length} sqliteOrphans=${snapshot.sqliteOrphans.length}`
+                : "structural drift (duplicate/fragmented Lance rows)";
               checks.push({
                 name: "Database Sync",
                 status: "warn",
-                message: `Storage drift (${formatStorageSyncSummary(snapshot)})`,
+                message: `Storage drift — ${invariant} (${formatStorageSyncSummary(snapshot)})`,
                 fix: `Run: ${fixParts.join(" then ")}`,
               });
             }

@@ -14,14 +14,14 @@ import { runStorageRepairPipeline, runStorageStructuralRepair } from "../../../s
 import { capturePluginError } from "../../../services/error-reporter.js";
 import type { VerifyRunState } from "../verify-run-state.js";
 
-/** True when the sync snapshot shows any drift a repair pass should address (#2049). */
+/**
+ * True when the sync snapshot shows any drift a repair pass should address (#2049).
+ * hasEmbeddingDrift is intentionally excluded — per #2084/#2080, fact_embeddings is a best-effort
+ * SQLite cache, not a mirror of LanceDB's canonical vector state, so its coverage lagging behind
+ * lanceUniqueIds is not by itself evidence of a broken vector store.
+ */
 export function storageSyncSnapshotHasDrift(snapshot: StorageSyncSnapshot): boolean {
-  return (
-    snapshot.hasIdSetDrift ||
-    snapshot.hasEmbeddingDrift ||
-    snapshot.hasStructuralDrift ||
-    snapshot.duplicateIdExtraRows > 0
-  );
+  return snapshot.hasIdSetDrift || snapshot.hasStructuralDrift || snapshot.duplicateIdExtraRows > 0;
 }
 
 export function logStorageSyncMetrics(state: VerifyRunState, snapshot: StorageSyncSnapshot): void {
@@ -55,12 +55,12 @@ export function logStorageSyncMetrics(state: VerifyRunState, snapshot: StorageSy
     }
   }
   if (snapshot.hasEmbeddingDrift) {
+    // Informational only (#2084/#2080): fact_embeddings is a best-effort SQLite cache, not a
+    // mirror of LanceDB. It legitimately lags after a shadow-table re-index and does not, by
+    // itself, indicate the vector store is missing anything — ID-set drift above is the signal
+    // that gates allOk/exit code for actual vector coverage problems.
     log(
-      `${FAIL} Embedding drift: canonicalEmbeddings=${snapshot.canonicalEmbeddings} vs lanceRows=${snapshot.lanceRowCount}`,
-    );
-    state.allOk = false;
-    state.issues.push(
-      `Storage sync embedding drift: canonicalEmbeddings=${snapshot.canonicalEmbeddings} vs lanceRows=${snapshot.lanceRowCount}. Run \`${STORAGE_REPAIR_REMEDIATION}\`.`,
+      `${WARN_LINE} Embedding cache coverage: canonicalEmbeddings=${snapshot.canonicalEmbeddings} vs lanceUniqueIds=${snapshot.lanceUniqueIds} (informational — fact_embeddings is a cache, not vector-store integrity)`,
     );
   }
   if (snapshot.hasStructuralDrift) {
