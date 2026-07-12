@@ -102,11 +102,32 @@ describe("VectorDB.getAllIds()", () => {
     expect(ids).toContain(stored.toLowerCase());
   });
 
-  it("skips non-UUID IDs", async () => {
+  it("includes slug-style non-UUID IDs (#2079) rather than silently skipping them", async () => {
     const id1 = "not-a-uuid-1234";
-    await vectorDb.store({ id: id1, text: "invalid id fact", vector: makeVector(), importance: 0.5, category: "fact" });
+    await vectorDb.store({ id: id1, text: "slug id fact", vector: makeVector(), importance: 0.5, category: "fact" });
     const ids = await vectorDb.getAllIds();
-    expect(ids).not.toContain(id1);
+    expect(ids).toContain(id1);
+  });
+
+  it("still skips ids unsafe for LanceDB predicate interpolation", async () => {
+    // A row can only get an unsafe id by bypassing store()'s validation directly (e.g. a legacy
+    // row from before #2079's validation landed); getAllIds() must not surface it as a
+    // manageable id even if such a row somehow exists.
+    await vectorDb.ensureInitialized();
+    const table = (vectorDb as unknown as { getTable: () => { add: (rows: unknown[]) => Promise<void> } }).getTable();
+    await table.add([
+      {
+        id: "not safe' OR '1'='1",
+        text: "unsafe id row",
+        why: "",
+        vector: makeVector(),
+        importance: 0.5,
+        category: "fact",
+        createdAt: Math.floor(Date.now() / 1000),
+      },
+    ]);
+    const ids = await vectorDb.getAllIds();
+    expect(ids).not.toContain("not safe' OR '1'='1");
   });
 });
 

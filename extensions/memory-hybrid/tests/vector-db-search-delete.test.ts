@@ -142,29 +142,32 @@ describe("VectorDB issue #379 — delete() handles malformed UUIDs gracefully", 
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("returns false and logs a warning for the specific doubled-suffix UUID from issue #379", async () => {
+  it("does not throw for the specific doubled-suffix UUID from issue #379 (now a valid slug-shaped id, #2079)", async () => {
     const warns: string[] = [];
     db.setLogger({ warn: (msg) => warns.push(msg) });
 
-    // Exact malformed UUID from GlitchTip report: valid UUID with 'c1' appended
+    // Exact malformed UUID from GlitchTip report: valid UUID with 'c1' appended. Fact ids can
+    // also be safe slug-style strings (#2079), and this string matches that format, so delete()
+    // now attempts a real Lance delete instead of rejecting it as an obviously-invalid format.
+    // No row has this id, so the delete matches zero rows and succeeds — the original #379
+    // regression (delete() *throwing* on a malformed-looking id) remains fixed either way.
     const malformedId = "4d062d33-e366-4498-9233-4b78040831c1c1";
     const result = await db.delete(malformedId);
 
-    expect(result).toBe(false);
-    expect(warns.some((w) => w.includes("invalid UUID") && w.includes(malformedId))).toBe(true);
-    // capturePluginError must NOT be called — this is a graceful skip, not an error
+    expect(result).toBe(true);
+    // capturePluginError must NOT be called — no exception, graceful either way
     expect(mockCapturePluginError).not.toHaveBeenCalled();
   });
 
-  it("returns false and logs a warning for any UUID with extra characters appended", async () => {
+  it("does not throw for any UUID with extra characters appended (now a valid slug-shaped id, #2079)", async () => {
     const warns: string[] = [];
     db.setLogger({ warn: (msg) => warns.push(msg) });
 
     const malformedId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeeeXX";
     const result = await db.delete(malformedId);
 
-    expect(result).toBe(false);
-    expect(warns.some((w) => w.includes("invalid UUID"))).toBe(true);
+    expect(result).toBe(true);
+    expect(mockCapturePluginError).not.toHaveBeenCalled();
   });
 
   it("still deletes valid UUIDs correctly", async () => {
@@ -363,7 +366,7 @@ describe("VectorDB graceful degradation — FTS5-only fallback when lancedb.conn
 describe("VectorDB.deleteMany", () => {
   const DIM = 3;
 
-  it("filters invalid UUIDs and de-duplicates IDs before issuing deletes", async () => {
+  it("filters ids unsafe for LanceDB predicate interpolation and de-duplicates before issuing deletes", async () => {
     const db = new VectorDB("/tmp/test-lance-delete-many-filter", DIM);
     const id = randomUUID();
     const tableDelete = vi.fn().mockResolvedValue(undefined);
@@ -391,7 +394,9 @@ describe("VectorDB.deleteMany", () => {
     internals.lanceInitFailed = false;
     internals.table = {};
 
-    const deleted = await db.deleteMany([id, id.toUpperCase(), "invalid"]);
+    // "invalid" is a plain alphanumeric string, which is now a valid slug-style id (#2079) — use
+    // a value containing a character outside the safe id charset (a space) to exercise filtering.
+    const deleted = await db.deleteMany([id, id.toUpperCase(), "not a valid id"]);
 
     expect(deleted).toBe(1);
     expect(tableDelete).toHaveBeenCalledTimes(1);

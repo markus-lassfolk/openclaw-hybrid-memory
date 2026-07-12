@@ -177,17 +177,21 @@ describe("memory_forget UUID validation (issue #334)", () => {
     expect(vectorDb.delete).toHaveBeenCalledWith(stored.id);
   });
 
-  it("returns invalid_id for a UUID-like string that fails validation (wrong version byte)", async () => {
+  it("treats a UUID-like string with an invalid version byte as a slug-shaped id and reports not_found (#2079)", async () => {
     const { api, vectorDb } = setupTool();
     const tool = api.getTool("memory_forget");
 
-    // Construct something that looks UUID-shaped but has invalid version (0 is not 1-5)
+    // Construct something that looks UUID-shaped but has invalid version (0 is not 1-5).
+    // Fact ids can also be safe slug-style strings (#2079), and this string matches that
+    // format, so it now passes the id-format check and falls through to the "no such fact"
+    // scope check instead of being rejected as an obviously-invalid format — no accidental
+    // deletion occurs either way since no fact with this id exists.
     const invalidUuid = "a1b2c3d4-e5f6-0000-abcd-ef1234567890";
     const result = (await tool?.execute("tool-call", {
       memoryId: invalidUuid,
     })) as { details?: { action?: string } };
 
-    expect(result.details?.action).toBe("invalid_id");
+    expect(result.details?.action).toBe("not_found");
     expect(vectorDb.delete).not.toHaveBeenCalled();
   });
 
