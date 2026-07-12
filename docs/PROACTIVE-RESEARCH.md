@@ -16,7 +16,8 @@ with every step auditable back to the memories that triggered it.
 ┌──────────────────────┐   ┌───────────────┐  ┌────────────────┐   ┌──────────────────────────┐   ┌─────────────┐
 │ valence-stamped facts│ → │ insight-      │→ │ research-      │ → │ research-overnight job:   │ → │ 🔎 briefing │
 │ routines, patterns,  │   │ synthesis     │  │ trigger        │   │ pick → web research →     │   │ block (once │
-│ frustration signals  │   │ (LLM, ≤2/run) │  │ (no LLM, ≤1/n) │   │ research store (briefing) │   │ per session)│
+│ frustration signals, │   │ (LLM, ≤2/run) │  │ (no LLM, ≤1/n) │   │ research store (briefing) │   │ per session)│
+│ goals, identity refl.│   │               │  │                │   │                           │   │             │
 └──────────────────────┘   └───────────────┘  └────────────────┘   └──────────────────────────┘   └─────────────┘
 ```
 
@@ -24,11 +25,20 @@ with every step auditable back to the memories that triggered it.
 
 1. **Insight synthesis** (`insight-synthesis`, nightly LLM step): reads the last 7 days of
    person-signals — negative-valence memories, mined routines, frustration signals, behavioral
-   patterns — and writes at most 2 evidence-linked `insight` facts ("User repeatedly works past
-   midnight and expresses fatigue — sleep procrastination may be hurting focus"). The model can
-   only cite numbered evidence references that map back to real memory ids; an insight citing
-   unknown references is dropped, so hallucinated evidence chains are structurally impossible.
-   Insights are ordinary decayable memories tagged `needs-review`.
+   patterns — plus two current-state (not windowed) sources: the user's **active goals** (goal
+   registry) and the assistant's own **durable identity reflections** on the relationship
+   ("what patterns define good partnership with the user?"). It writes at most 2 evidence-linked
+   `insight` facts ("User repeatedly works past midnight and expresses fatigue — sleep
+   procrastination may be hurting focus"; "User's goal to ship the v2 API has stalled for 18 days
+   despite being high priority"). The model can only cite numbered evidence references (`F#`/`S#`
+   for facts/signals, `G#`/`I#` for goals/identity reflections) that map back to real ids; an
+   insight citing an unknown reference is dropped, so hallucinated evidence chains are
+   structurally impossible. Insights are ordinary decayable memories tagged `needs-review`, with
+   `topic` one of `wellbeing`/`productivity`/`growth`/`tooling`/`relationship`/`other` — `growth`
+   marks insights grounded mainly in the user's stated ambitions. Goal/identity evidence text is
+   frozen into the insight's provenance at synthesis time (goal state can change before the
+   research loop re-reads it days later), while fact/signal evidence is re-read live downstream.
+   Both sources are optional and skip cleanly when goal stewardship or identity reflection is off.
 2. **Trigger policy** (`research-trigger`, nightly, deterministic — no LLM): at most one insight
    per night graduates to research. Gates: importance ≥ 0.74 (salience ≥ 0.6), evidence count,
    topic blocklist plus a sensitive-text regex (credentials never leave the machine), and a

@@ -268,6 +268,7 @@ export function parseMaintenanceConfig(cfg: Record<string, unknown>): Maintenanc
         : 1,
   };
   const decayRaw = maintenanceRaw?.decay as Record<string, unknown> | undefined;
+  const routineMiningRaw = maintenanceRaw?.routineMining as Record<string, unknown> | undefined;
   return {
     monthlyReview,
     cronReliability: parseCronReliabilityConfig(cfg),
@@ -280,12 +281,15 @@ export function parseMaintenanceConfig(cfg: Record<string, unknown>): Maintenanc
       secondChance: decayRaw?.secondChance !== false,
     },
     routineMining: {
-      enabled: (maintenanceRaw?.routineMining as Record<string, unknown> | undefined)?.enabled !== false,
+      enabled: routineMiningRaw?.enabled !== false,
       maxPerRun:
-        typeof (maintenanceRaw?.routineMining as Record<string, unknown> | undefined)?.maxPerRun === "number" &&
-        ((maintenanceRaw?.routineMining as Record<string, unknown>).maxPerRun as number) > 0
-          ? Math.floor((maintenanceRaw?.routineMining as Record<string, unknown>).maxPerRun as number)
+        typeof routineMiningRaw?.maxPerRun === "number" && (routineMiningRaw.maxPerRun as number) > 0
+          ? Math.floor(routineMiningRaw.maxPerRun as number)
           : 2,
+      timezone:
+        typeof routineMiningRaw?.timezone === "string" && routineMiningRaw.timezone.trim().length > 0
+          ? routineMiningRaw.timezone.trim()
+          : "UTC",
     },
     contradictions: parseContradictionsConfig(maintenanceRaw?.contradictions as Record<string, unknown> | undefined),
   };

@@ -54,7 +54,33 @@ function parseSourceEventIds(provenanceJson: string | null): string[] {
   }
 }
 
-/** Walk queue fact → insight → evidence facts/signals into displayable items. */
+/**
+ * Goal/identity evidence is stored pre-rendered on the insight's own provenance (frozen at
+ * synthesis time — see services/insight-synthesis.ts), unlike facts/signals which are re-read live
+ * from their tables above. No extra DB/filesystem reads needed here.
+ */
+function parsePrerenderedEvidence(
+  provenanceJson: string | null,
+  field: "sourceGoalEvidence" | "sourceIdentityEvidence",
+): EvidenceItem[] {
+  if (!provenanceJson) return [];
+  try {
+    const parsed = JSON.parse(provenanceJson) as Record<string, unknown>;
+    const arr = parsed[field];
+    if (!Array.isArray(arr)) return [];
+    const out: EvidenceItem[] = [];
+    for (const item of arr) {
+      if (!item || typeof item !== "object") continue;
+      const obj = item as Record<string, unknown>;
+      if (typeof obj.id === "string" && typeof obj.text === "string") out.push({ id: obj.id, text: obj.text });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** Walk queue fact → insight → evidence facts/signals/goals/identity into displayable items. */
 function hydrateEvidence(
   b: ManageBindings,
   insightId: string | null,
@@ -81,6 +107,8 @@ function hydrateEvidence(
       });
     }
   }
+  evidence.push(...parsePrerenderedEvidence(insight.provenanceJson ?? null, "sourceGoalEvidence").slice(0, 10));
+  evidence.push(...parsePrerenderedEvidence(insight.provenanceJson ?? null, "sourceIdentityEvidence").slice(0, 10));
   return { insight: insight.text, evidence };
 }
 

@@ -209,6 +209,11 @@ export type MaintenanceConfig = {
     enabled: boolean;
     /** Max routine facts stored per run (default 2). */
     maxPerRun: number;
+    /**
+     * IANA timezone for day/hour-of-day bucketing (default "UTC"). Set to the user's local
+     * timezone so "night" routines mean local late-night, not 00:00-06:00 UTC.
+     */
+    timezone: string;
   };
   /** Free-text contradiction candidates: nightly vector-neighbor + NLI pass (living-memory B1). */
   contradictions: {

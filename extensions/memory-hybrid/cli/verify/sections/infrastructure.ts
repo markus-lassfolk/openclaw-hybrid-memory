@@ -25,8 +25,17 @@ import {
   removeRedundantNpmProjectTreeWhenExtensionsCanonical,
   resolveCanonicalLivePluginPathForInstallIndex,
 } from "../../install/install-index-reconcile.js";
-import { capturePluginError, isErrorReporterActive, resolvePendingErrorReportCount } from "../../../services/error-reporter.js";
-import { listQuarantinedGoalIds, resolveGoalsDir, auditGoalIndexDrift, rebuildGoalIndex } from "../../../services/goal-registry.js";
+import {
+  capturePluginError,
+  isErrorReporterActive,
+  resolvePendingErrorReportCount,
+} from "../../../services/error-reporter.js";
+import {
+  listQuarantinedGoalIds,
+  resolveGoalsDir,
+  auditGoalIndexDrift,
+  rebuildGoalIndex,
+} from "../../../services/goal-registry.js";
 import { PLUGIN_ID } from "../../../utils/constants.js";
 import { workspaceRootForCli } from "../../config-feature-summaries.js";
 import {
@@ -73,8 +82,7 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
   log("\n───── Infrastructure ─────");
 
   const extensionsPluginDir = join(openclawDir, "extensions", PLUGIN_ID);
-  const npmProjectPluginDir =
-    resolveNpmProjectPluginDirFromLayout(extDir) ?? resolveKnownNpmProjectPluginDir();
+  const npmProjectPluginDir = resolveNpmProjectPluginDirFromLayout(extDir) ?? resolveKnownNpmProjectPluginDir();
   if (npmProjectPluginDir) {
     const dualInstall =
       buildDualInstallReconciliationGuidance(npmProjectPluginDir, extensionsPluginDir) ??
@@ -112,6 +120,15 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
               log(
                 `  → Synced npm-project dependency pin to ${extVer} (legacy install-index sidecar is checked separately below)`,
               );
+            } else if (sync.skippedReason === "npm-project-not-older") {
+              // The extensions copy we were about to pin to is OLDER than the currently
+              // installed npm-project copy — writing it would silently downgrade a newer,
+              // possibly-active install (#2077). Fail closed and surface a real issue rather
+              // than a warning, so `verify` (with or without --fix) reports non-zero.
+              const msg = `Refusing to downgrade npm-project ${PLUGIN_ID} ${sync.npmVersion} -> ${extVer} during verify --fix: npm-project copy at ${npmProjectPluginDir} is newer than the extensions copy at ${extensionsPluginDir}.${sync.guidance ? ` ${sync.guidance}` : ""}`;
+              issues.push(msg);
+              state.installReconcileOk = false;
+              log(`${FAIL} ${msg}`);
             } else if (sync.error) {
               log(`  → Could not sync npm-project pin: ${sync.error}`);
             }
@@ -165,7 +182,9 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
     if (isErrorReporterActive() || pendingReports > 0) {
       if (pendingReports > 0) {
         warnings.push(`Error reporter has ${pendingReports} pending telemetry report(s)`);
-        log(`${WARN_LINE} Error reporter: ${pendingReports} pending report(s) in queue (retries on startup/shutdown flush)`);
+        log(
+          `${WARN_LINE} Error reporter: ${pendingReports} pending report(s) in queue (retries on startup/shutdown flush)`,
+        );
       } else {
         log(`${OK} Error reporter: pending queue empty`);
       }
@@ -188,8 +207,7 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
       );
     }
     const drift = await auditGoalIndexDrift(goalsDir);
-    const driftCount =
-      drift.missingInIndex.length + drift.orphanInIndex.length + drift.staleFields.length;
+    const driftCount = drift.missingInIndex.length + drift.orphanInIndex.length + drift.staleFields.length;
     if (driftCount > 0) {
       const parts: string[] = [];
       if (drift.missingInIndex.length > 0) {
@@ -202,7 +220,9 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
         parts.push(`${drift.staleFields.length} stale field(s)`);
       }
       warnings.push(`Goal index drift detected (${parts.join("; ")})`);
-      log(`${WARN_LINE} Goals: index drift — ${parts.join("; ")}. Run \`openclaw hybrid-mem verify --fix\` to rebuild _index.json.`);
+      log(
+        `${WARN_LINE} Goals: index drift — ${parts.join("; ")}. Run \`openclaw hybrid-mem verify --fix\` to rebuild _index.json.`,
+      );
       if (opts.fix) {
         await rebuildGoalIndex(goalsDir);
         log(`  → Rebuilt goals/_index.json`);

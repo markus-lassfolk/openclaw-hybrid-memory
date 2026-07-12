@@ -341,7 +341,10 @@ export function buildCliMaintenanceRunners(
   });
 
   set("routine-mining", async () => {
-    const r = runRoutineMining(b.factsDb, { maxPerRun: b.cfg.maintenance?.routineMining?.maxPerRun ?? 2 });
+    const r = runRoutineMining(b.factsDb, {
+      maxPerRun: b.cfg.maintenance?.routineMining?.maxPerRun ?? 2,
+      timezone: b.cfg.maintenance?.routineMining?.timezone,
+    });
     return `candidates=${r.candidates} stored=${r.stored} semantic=success`;
   });
 

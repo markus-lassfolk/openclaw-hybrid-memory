@@ -26,6 +26,7 @@ import { atomicWriteFile } from "../../utils/atomic-write.js";
 import { getEnv } from "../../utils/env-manager.js";
 import { expandTilde } from "../../utils/path.js";
 import { escapeRegExp } from "../../utils/text.js";
+import { compareVersions } from "../../utils/version-check.js";
 import {
   loadOpenclawRootForWorkspace,
   resolveAgentWorkspaceRoot,
@@ -195,14 +196,51 @@ export function buildDualInstallReconciliationGuidance(
 }
 
 /**
+ * Operator guidance for the REVERSE of {@link buildDualInstallReconciliationGuidance}'s
+ * assumption: the npm-project copy is confirmed newer, so the extensions copy is the stale
+ * leftover here, not the other way around (#2077). Must not reuse the other guidance text —
+ * it hardcodes "extensions is canonical" framing that would be actively wrong in this direction.
+ */
+export function buildNpmProjectNewerGuidance(opts: {
+  npmProjectPluginDir: string;
+  npmVersion: string;
+  extensionsPluginDir: string;
+  extVersion: string;
+}): string {
+  return (
+    `The npm-project copy (${opts.npmVersion} at ${opts.npmProjectPluginDir}) is newer than the extensions copy ` +
+    `(${opts.extVersion} at ${opts.extensionsPluginDir}). Confirm which path the running gateway actually loaded ` +
+    '(check startup logs for "memory-hybrid: registered"); if it is the npm-project copy, the extensions copy is ' +
+    `a stale leftover and can be removed once confirmed: rm -rf ${opts.extensionsPluginDir}. ` +
+    "Do not run verify --fix again until this is resolved — it will keep refusing to touch the npm-project pin."
+  );
+}
+
+/**
  * When upgrade targets extensions but a stale npm-project copy exists, align its pin (#2008).
+ *
+ * Refuses to write a pin that would downgrade the npm-project install (#2077): the extensions
+ * copy is treated as canonical by construction throughout this module, but that assumption can be
+ * wrong — a host may genuinely be running the npm-project copy while a stale, never-cleaned-up
+ * extensions copy sits at an older version on disk. Writing `extVer` into the npm-project pin in
+ * that case would downgrade an active newer install, silently, the moment `npm install` completes
+ * (not just "on next restart" — the on-disk code changes immediately).
  */
 export function syncKnownNpmProjectPinWhenExtensionsCanonical(opts: {
   extensionsPluginDir: string;
   version: string;
   /** npm-project plugin dir detected by verify/upgrade (defaults to Maeve layout). */
   npmProjectPluginDir?: string;
-}): { attempted: boolean; updated: boolean; error?: string; guidance?: string } {
+}): {
+  attempted: boolean;
+  updated: boolean;
+  error?: string;
+  guidance?: string;
+  /** Populated when the sync was intentionally refused (guard tripped). */
+  skippedReason?: "npm-project-not-older";
+  /** The npm-project's currently-installed version, populated alongside `skippedReason`. */
+  npmVersion?: string;
+} {
   if (isNpmProjectPluginLayout(opts.extensionsPluginDir)) {
     return { attempted: false, updated: false };
   }
@@ -216,6 +254,24 @@ export function syncKnownNpmProjectPinWhenExtensionsCanonical(opts: {
     return { attempted: false, updated: false };
   }
   const npmVer = readPluginPackageVersion(npmPluginDir);
+  if (npmVer && compareVersions(npmVer, extVer) > 0) {
+    // The npm-project copy is newer than the version we're about to pin to — refuse (#2077).
+    // Mirrors removeRedundantNpmProjectTreeWhenExtensionsCanonical's "npm-project-not-older"
+    // guard, which already refuses to delete a newer npm-project tree; this closes the gap
+    // where its refusal fell through to this function's previously-unguarded pin write.
+    return {
+      attempted: false,
+      updated: false,
+      skippedReason: "npm-project-not-older",
+      npmVersion: npmVer,
+      guidance: buildNpmProjectNewerGuidance({
+        npmProjectPluginDir: npmPluginDir,
+        npmVersion: npmVer,
+        extensionsPluginDir: opts.extensionsPluginDir,
+        extVersion: extVer,
+      }),
+    };
+  }
   const pinError = verifyNpmProjectDependencyPin(projectRoot, extVer);
   if (!pinError && npmVer === extVer) {
     return { attempted: false, updated: false };

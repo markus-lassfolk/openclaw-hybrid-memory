@@ -130,4 +130,32 @@ describe("research trigger policy", () => {
     expect(r.eligible).toBe(2);
     expect(queueFacts()[0].entity).toBe("research:concern-a");
   });
+
+  it("counts goal/identity evidence toward the evidence gate — a goal-only insight is still eligible", () => {
+    db.store({
+      text: "Insight: user's active goals show a stagnation pattern",
+      entity: "insight:goal-stagnation",
+      key: "concern",
+      value: "growth",
+      category: "insight",
+      importance: 0.9,
+      source: "insight-synthesis",
+      tags: ["insight", "auto"],
+      provenanceJson: JSON.stringify({
+        method: "insight-synthesis",
+        sourceFactIds: [],
+        sourceEventIds: [],
+        sourceGoalEvidence: [
+          { id: "goal-1", text: 'Goal "ship v2" (priority: high, status: active, active 40d, ...)' },
+        ],
+        sourceIdentityEvidence: [{ id: "id-1", text: "[partnership] ... durable" }],
+      }),
+    } as never);
+
+    const r = runResearchTrigger(db, policy);
+
+    expect(r.picked).toBe(1);
+    expect(r.skippedEvidence).toBe(0);
+    expect(queueFacts()[0].entity).toBe("research:goal-stagnation");
+  });
 });

@@ -1,15 +1,19 @@
 /**
  * Proactive research loop A1: insight synthesis. The LLM only ever cites numbered evidence refs
- * (F#/S#) that the service maps back to real fact/signal ids — hallucinated evidence is dropped
- * wholesale, insights dedupe by slug entity, and caps/windows are enforced deterministically.
+ * (F#/S#/G#/I#) that the service maps back to real fact/signal/goal/identity-reflection ids —
+ * hallucinated evidence is dropped wholesale, insights dedupe by slug entity, and caps/windows are
+ * enforced deterministically.
  */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { IdentityReflectionStore } from "../backends/identity-reflection-store.js";
 import { FactsDB } from "../backends/facts-db.js";
 import { parseResearchConfig } from "../config/parsers/research.js";
+import { writeGoal } from "../services/goal-registry.js";
 import { runInsightSynthesis, slugifyInsight } from "../services/insight-synthesis.js";
+import { baseGoal } from "./helpers/goal-helpers.js";
 
 let dir: string;
 let db: FactsDB;
@@ -215,6 +219,139 @@ describe("insight synthesis", () => {
 
     const r = await runInsightSynthesis(db, mockOpenai(insightJson([])), cfg, { dryRun: false }, logger);
     expect(r.evidenceItems).toBe(5); // the two out-of-window items are not offered
+  });
+});
+
+describe("insight synthesis — goal/identity evidence", () => {
+  it("counts active goals toward the evidence floor and cites them as G# refs", async () => {
+    const goalsDir = join(dir, "goals");
+    // Distinct createdAt per goal (descending as i increases) makes the priority+recency sort in
+    // loadActiveGoalsSafely fully deterministic — G1/G2 must resolve to goal-0/goal-1 regardless
+    // of the filesystem's unspecified readdir() order.
+    for (let i = 0; i < 5; i++) {
+      await writeGoal(
+        goalsDir,
+        baseGoal({
+          id: `goal-${i}`,
+          label: `ship feature ${i}`,
+          status: "active",
+          priority: "high",
+          createdAt: `2026-01-0${5 - i}T00:00:00.000Z`,
+          currentBlockers: i === 0 ? ["waiting on design review"] : [],
+        }),
+      );
+    }
+    const goalInsight = {
+      insight: "User has five active high-priority goals with little visible progress lately",
+      whyItMatters: "Surfacing the backlog may help re-prioritize",
+      salience: 0.7,
+      topic: "growth",
+      evidence: ["G1", "G2"],
+    };
+
+    const r = await runInsightSynthesis(
+      db,
+      mockOpenai(insightJson([goalInsight])),
+      cfg,
+      { dryRun: false, goalsDir },
+      logger,
+    );
+
+    expect(r.evidenceItems).toBe(5);
+    expect(r.stored).toBe(1);
+    const row = db.getRawDb().prepare("SELECT value, provenance_json FROM facts WHERE category = 'insight'").get() as {
+      value: string;
+      provenance_json: string;
+    };
+    expect(row.value).toBe("growth");
+    const prov = JSON.parse(row.provenance_json);
+    expect(prov.sourceGoalEvidence).toHaveLength(2);
+    expect(prov.sourceGoalEvidence[0].id).toBe("goal-0");
+    expect(prov.sourceGoalEvidence[0].text).toContain("ship feature 0");
+    expect(prov.sourceGoalEvidence[0].text).toContain("waiting on design review");
+    expect(prov.sourceFactIds).toEqual([]);
+    expect(prov.sourceEventIds).toEqual([]);
+  });
+
+  it("skips terminal goals and tolerates a missing goals dir", async () => {
+    const goalsDir = join(dir, "goals");
+    await writeGoal(goalsDir, baseGoal({ id: "done-goal", status: "completed" }));
+    seedBaseline(Math.floor(Date.now() / 1000));
+
+    const withGoals = await runInsightSynthesis(
+      db,
+      mockOpenai(insightJson([])),
+      cfg,
+      { dryRun: false, goalsDir },
+      logger,
+    );
+    expect(withGoals.evidenceItems).toBe(5); // the completed goal is not active evidence
+
+    const withMissingDir = await runInsightSynthesis(
+      db,
+      mockOpenai(insightJson([])),
+      cfg,
+      { dryRun: false, goalsDir: join(dir, "does-not-exist") },
+      logger,
+    );
+    expect(withMissingDir.evidenceItems).toBe(5); // best-effort: a missing dir yields zero goals, not an error
+  });
+
+  it("cites only durable identity reflections, excluding temporary ones", async () => {
+    const identityStore = new IdentityReflectionStore(join(dir, "identity.db"));
+    try {
+      identityStore.create({
+        runId: "run-1",
+        questionKey: "partnership",
+        questionText: "What patterns define good partnership with the user?",
+        insight: "The user responds well to direct, concise updates rather than long explanations",
+        durability: "durable",
+        confidence: 0.8,
+      });
+      identityStore.create({
+        runId: "run-1",
+        questionKey: "tradeoffs",
+        questionText: "What kinds of tradeoffs do I keep making?",
+        insight: "This week leaned toward speed over thoroughness on minor fixes",
+        durability: "temporary",
+        confidence: 0.5,
+      });
+      seedBaseline(Math.floor(Date.now() / 1000));
+
+      const identityInsight = {
+        insight: "The user's preference for concise updates connects to their late-night frustration",
+        whyItMatters: "Terser check-ins at night may reduce friction",
+        salience: 0.6,
+        topic: "relationship",
+        evidence: ["F1", "I1"],
+      };
+
+      const r = await runInsightSynthesis(
+        db,
+        mockOpenai(insightJson([identityInsight])),
+        cfg,
+        { dryRun: false, identityStore },
+        logger,
+      );
+
+      expect(r.evidenceItems).toBe(6); // 5 baseline + 1 durable identity entry (temporary excluded)
+      expect(r.stored).toBe(1);
+      const row = db.getRawDb().prepare("SELECT provenance_json FROM facts WHERE category = 'insight'").get() as {
+        provenance_json: string;
+      };
+      const prov = JSON.parse(row.provenance_json);
+      expect(prov.sourceIdentityEvidence).toHaveLength(1);
+      expect(prov.sourceIdentityEvidence[0].text).toContain("direct, concise updates");
+    } finally {
+      identityStore.close();
+    }
+  });
+
+  it("remains fully backward compatible when goalsDir/identityStore are omitted", async () => {
+    seedBaseline(Math.floor(Date.now() / 1000));
+    const r = await runInsightSynthesis(db, mockOpenai(insightJson([])), cfg, { dryRun: false }, logger);
+    expect(r.evidenceItems).toBe(5);
+    expect(r.semanticOutcome).toBe("success");
   });
 });
 

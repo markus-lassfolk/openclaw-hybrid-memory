@@ -33,6 +33,33 @@ export function localMinutesInTimeZone(at: Date, timeZone: string): number {
   }
 }
 
+const WEEKDAY_SHORT_UTC0 = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/**
+ * Local weekday (0=Sunday..6=Saturday, matching `Date#getUTCDay`) and hour-of-day in `timeZone`.
+ * Used by behavioral time-of-day mining (routine-miner) where bucketing in UTC instead of the
+ * user's local time silently mislabels "late at night" for anyone outside UTC.
+ */
+export function localWeekdayAndHourInTimeZone(at: Date, timeZone: string): { weekday: number; hour: number } {
+  try {
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: timeZone || "UTC",
+      weekday: "short",
+      hour: "2-digit",
+      hour12: false,
+      hourCycle: "h23",
+    });
+    const parts = formatter.formatToParts(at);
+    const weekdayStr = parts.find((p) => p.type === "weekday")?.value ?? "";
+    let hour = Number.parseInt(parts.find((p) => p.type === "hour")?.value ?? "0", 10);
+    if (hour === 24) hour = 0;
+    const weekday = WEEKDAY_SHORT_UTC0.indexOf(weekdayStr);
+    return { weekday: weekday >= 0 ? weekday : at.getUTCDay(), hour };
+  } catch {
+    return { weekday: at.getUTCDay(), hour: at.getUTCHours() };
+  }
+}
+
 /** Returns true when wall-clock time in `qw.tz` is inside [start, end). */
 export function isInQuietWindowAt(qw: NonNullable<WorkerLeasesConfig["quietWindow"]>, at: Date): boolean {
   if (!qw.enabled) return false;

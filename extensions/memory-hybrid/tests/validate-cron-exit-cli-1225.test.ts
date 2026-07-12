@@ -265,7 +265,7 @@ Error: LanceDB commit conflict detected
         },
         maintenance: {
           decay: { mode: "half-life" as const, secondChance: true },
-          routineMining: { enabled: true, maxPerRun: 2 },
+          routineMining: { enabled: true, maxPerRun: 2, timezone: "UTC" },
           contradictions: { freeText: true, similarityFloor: 0.85, maxPairsPerRun: 40, minConfidence: 0.7 },
           failureReporting: {
             enabled: true,

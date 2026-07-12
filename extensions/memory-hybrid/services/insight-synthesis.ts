@@ -2,15 +2,18 @@
  * Insight synthesis (proactive research loop, step A1 — docs/PROACTIVE-RESEARCH.md).
  *
  * Nightly LLM pass over person-signals the living-memory layer already captures — negative-valence
- * facts, mined routines, frustration signals, behavioral patterns — synthesizing at most a couple
- * of evidence-linked `insight` facts about the USER ("recurring friction X deserves attention").
- * Evidence is presented to the model as numbered reference codes and mapped back to real ids on
- * parse; insights citing unknown refs are dropped wholesale, so hallucinated evidence chains are
- * structurally impossible. Insights are ordinary decayable facts: if the pattern stops recurring
- * (or the research loop resolves it), they age out.
+ * facts, mined routines, frustration signals, behavioral patterns, the user's active goals, and the
+ * assistant's own durable identity reflections on the relationship — synthesizing at most a couple
+ * of evidence-linked `insight` facts about the USER ("recurring friction X deserves attention", or
+ * "stated ambition Y has stalled despite being a priority"). Evidence is presented to the model as
+ * numbered reference codes and mapped back to real ids on parse; insights citing unknown refs are
+ * dropped wholesale, so hallucinated evidence chains are structurally impossible. Insights are
+ * ordinary decayable facts: if the pattern stops recurring (or the research loop resolves it), they
+ * age out.
  */
 import type { DatabaseSync } from "node:sqlite";
 import type OpenAI from "openai";
+import type { IdentityReflectionStore } from "../backends/identity-reflection-store.js";
 import {
   capTimeoutByMaintenanceRunDeadline,
   getMaintenanceRunAbortSignal,
@@ -20,8 +23,11 @@ import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { chatCompleteWithRetry, LLMRetryError, resolveMaintenanceChatTimeoutMs } from "./chat.js";
 import { CostFeature } from "./cost-feature-labels.js";
 import { capturePluginError } from "./error-reporter.js";
+import { listActiveGoals } from "./goal-registry.js";
+import type { Goal } from "./goal-stewardship-types.js";
+import { DEFAULT_IDENTITY_REFLECTION_QUESTIONS } from "./identity-reflection.js";
 
-export const INSIGHT_TOPICS = ["wellbeing", "productivity", "tooling", "relationship", "other"] as const;
+export const INSIGHT_TOPICS = ["wellbeing", "productivity", "growth", "tooling", "relationship", "other"] as const;
 export type InsightTopic = (typeof INSIGHT_TOPICS)[number];
 
 export interface InsightSynthesisFactsDb {
@@ -59,8 +65,16 @@ export interface InsightSynthesisResult {
 }
 
 interface EvidenceRef {
-  kind: "fact" | "signal";
+  kind: "fact" | "signal" | "goal" | "identity";
   id: string;
+  /**
+   * Frozen display text for goal/identity refs. Facts/signals are re-read live from their tables
+   * downstream (research-trigger, `research pick`), which is fine — those rows are stable. Goal
+   * state and identity reflections can change by the time the research loop re-reads provenance
+   * (a queue fact can sit `in-progress` up to 24h), so their evidence text is captured once, here,
+   * at synthesis time — provenance should show what was actually true when the pattern was noticed.
+   */
+  text?: string;
 }
 
 interface ParsedInsight {
@@ -85,6 +99,70 @@ export function slugifyInsight(text: string): string {
 function oneLine(text: string, maxChars = 200): string {
   const collapsed = text.replace(/\s+/g, " ").trim();
   return collapsed.length > maxChars ? `${collapsed.slice(0, maxChars - 1)}…` : collapsed;
+}
+
+function daysSince(iso: string | null, nowSec: number): number | null {
+  if (!iso) return null;
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return null;
+  return Math.max(0, (nowSec - ms / 1000) / 86_400);
+}
+
+function formatGoalEvidence(g: Goal, nowSec: number): string {
+  const ageDays = daysSince(g.createdAt, nowSec);
+  const assessedDays = daysSince(g.lastAssessedAt, nowSec);
+  const assessed = assessedDays === null ? "never assessed" : `last assessed ${Math.floor(assessedDays)}d ago`;
+  const blockers =
+    g.currentBlockers.length > 0 ? `; blockers: ${oneLine(g.currentBlockers.join("; "), 120)}` : "; no blockers";
+  return `Goal "${oneLine(g.label, 80)}" (priority: ${g.priority}, status: ${g.status}, active ${ageDays === null ? "?" : Math.floor(ageDays)}d, ${assessed}${blockers})`;
+}
+
+const GOAL_PRIORITY_RANK: Record<Goal["priority"], number> = { critical: 0, high: 1, normal: 2, low: 3 };
+
+/**
+ * Active (non-terminal) goals as evidence — grounds insights in what the user is actually working
+ * toward, not just friction (goal-registry is file-based; a read failure must not sink the whole
+ * nightly run, so this is best-effort like every other optional evidence source here).
+ *
+ * `listActiveGoals` returns files in `readdir()` order, which is not a meaningful ranking and isn't
+ * guaranteed stable across filesystems — sort by priority then recency before capping to the top 10
+ * so which goals get surfaced is deterministic and actually reflects urgency, not directory order.
+ */
+async function loadActiveGoalsSafely(
+  goalsDir: string,
+  nowSec: number,
+  logger: { warn(m: string): void },
+): Promise<Array<{ id: string; text: string }>> {
+  try {
+    const active = await listActiveGoals(goalsDir);
+    active.sort((a, b) => {
+      const byPriority = GOAL_PRIORITY_RANK[a.priority] - GOAL_PRIORITY_RANK[b.priority];
+      if (byPriority !== 0) return byPriority;
+      return (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0);
+    });
+    return active.slice(0, 10).map((g) => ({ id: g.id, text: formatGoalEvidence(g, nowSec) }));
+  } catch (err) {
+    logger.warn(`memory-hybrid: insight-synthesis — goal evidence unavailable: ${err}`);
+    return [];
+  }
+}
+
+/**
+ * The assistant's own durable self-model (identity-reflection answers "what patterns define good
+ * partnership with the user?", "what do I reliably protect?", ...) as evidence — this is the
+ * "grounded in who I am and how that relates to who I want to be" half of the loop. Only
+ * `durability: "durable"` entries qualify; `"temporary"` ones are the store's own signal that they
+ * shouldn't anchor a research decision. Bounded to one entry per fixed question (<=5 total).
+ */
+function loadDurableIdentityEntries(store: IdentityReflectionStore): Array<{ id: string; text: string }> {
+  const out: Array<{ id: string; text: string }> = [];
+  for (const q of DEFAULT_IDENTITY_REFLECTION_QUESTIONS) {
+    const entry = store.getLatestByQuestion(q.key);
+    if (entry && entry.durability === "durable") {
+      out.push({ id: entry.id, text: `[${entry.questionKey}] ${q.prompt} → ${oneLine(entry.insight, 220)}` });
+    }
+  }
+  return out;
 }
 
 function parseInsightResponse(raw: string): { insights: ParsedInsight[]; parseOk: boolean } {
@@ -122,7 +200,15 @@ export async function runInsightSynthesis(
   factsDb: InsightSynthesisFactsDb,
   openai: OpenAI,
   cfg: InsightSynthesisConfig,
-  opts: { dryRun: boolean; verbose?: boolean; nowSec?: number },
+  opts: {
+    dryRun: boolean;
+    verbose?: boolean;
+    nowSec?: number;
+    /** Absolute path to the goal registry dir. Omit/null to skip goal evidence (goal stewardship off). */
+    goalsDir?: string | null;
+    /** Identity-reflection store. Omit/null to skip identity evidence (identity reflection off). */
+    identityStore?: IdentityReflectionStore | null;
+  },
   logger: { info(m: string): void; warn(m: string): void },
 ): Promise<InsightSynthesisResult> {
   const none: InsightSynthesisResult = {
@@ -180,14 +266,19 @@ export async function runInsightSynthesis(
     user_message: string | null;
     created_at: number;
   }>;
+  // Goals/identity are current-state snapshots, not windowed like the four sources above — an
+  // active goal or a durable self-model entry is relevant regardless of when it was created.
+  const goals = opts.goalsDir ? await loadActiveGoalsSafely(opts.goalsDir, nowSec, logger) : [];
+  const identityEntries = opts.identityStore ? loadDurableIdentityEntries(opts.identityStore) : [];
 
-  const evidenceItems = negValence.length + routines.length + patterns.length + signals.length;
+  const evidenceItems =
+    negValence.length + routines.length + patterns.length + signals.length + goals.length + identityEntries.length;
   if (evidenceItems < 5) {
     logger.info(`memory-hybrid: insight-synthesis — insufficient evidence (${evidenceItems}/5); skipping`);
     return { ...none, evidenceItems };
   }
 
-  // Numbered reference codes: the model cites F#/S#, the parser maps them back to real ids.
+  // Numbered reference codes: the model cites F#/S#/G#/I#, the parser maps them back to real ids.
   const refs = new Map<string, EvidenceRef>();
   let factRef = 0;
   const factLine = (id: string, text: string, suffix = ""): string => {
@@ -207,6 +298,20 @@ export async function runInsightSynthesis(
       return `- ${code}: ${s.signal_type} (${s.polarity ?? "negative"}, conf ${(s.confidence ?? 0).toFixed(2)}, ${when}): ${oneLine(s.user_message ?? "", 160)}`;
     })
     .join("\n");
+  const goalBlock = goals
+    .map((g, i) => {
+      const code = `G${i + 1}`;
+      refs.set(code, { kind: "goal", id: g.id, text: g.text });
+      return `- ${code}: ${g.text}`;
+    })
+    .join("\n");
+  const identityBlock = identityEntries
+    .map((e, i) => {
+      const code = `I${i + 1}`;
+      refs.set(code, { kind: "identity", id: e.id, text: e.text });
+      return `- ${code}: ${e.text}`;
+    })
+    .join("\n");
 
   const prompt = fillPrompt(loadPrompt("insight-synthesis"), {
     window: String(cfg.windowDays),
@@ -216,6 +321,8 @@ export async function runInsightSynthesis(
     routines: routineBlock || "- (none)",
     patterns: patternBlock || "- (none)",
     signals: signalBlock || "- (none)",
+    goals: goalBlock || "- (none)",
+    identity: identityBlock || "- (none)",
   });
 
   let rawResponse: string;
@@ -271,10 +378,14 @@ export async function runInsightSynthesis(
     }
     const sourceFactIds: string[] = [];
     const sourceEventIds: string[] = [];
+    const sourceGoalEvidence: Array<{ id: string; text: string }> = [];
+    const sourceIdentityEvidence: Array<{ id: string; text: string }> = [];
     for (const code of item.evidence) {
       const ref = refs.get(code) as EvidenceRef;
       if (ref.kind === "fact") sourceFactIds.push(ref.id);
-      else sourceEventIds.push(`implicit_signal:${ref.id}`);
+      else if (ref.kind === "signal") sourceEventIds.push(`implicit_signal:${ref.id}`);
+      else if (ref.kind === "goal") sourceGoalEvidence.push({ id: ref.id, text: ref.text ?? "" });
+      else sourceIdentityEvidence.push({ id: ref.id, text: ref.text ?? "" });
     }
     const entry = factsDb.store({
       text: item.whyItMatters ? `Insight: ${item.insight} — ${item.whyItMatters}` : `Insight: ${item.insight}`,
@@ -290,6 +401,8 @@ export async function runInsightSynthesis(
         salience: item.salience,
         sourceFactIds,
         sourceEventIds,
+        sourceGoalEvidence,
+        sourceIdentityEvidence,
       }),
     });
     stored++;
