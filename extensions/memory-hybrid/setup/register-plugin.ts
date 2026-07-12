@@ -142,6 +142,10 @@ async function performHybridMemCliTeardown(): Promise<void> {
       operation: "hybrid-mem-teardown:close-vaults",
     });
   }
+  // Best-effort: give a fire-and-forget auto-optimize (#2081) a short window to finish before
+  // close() tears the connection down under it. Bounded so a slow/hung native optimize can never
+  // block one-shot CLI process exit — closeOldDatabases proceeds regardless of the outcome.
+  await r.vectorDb?.waitForPendingOptimize?.(5_000);
   try {
     closeOldDatabases({
       factsDb: r.factsDb,

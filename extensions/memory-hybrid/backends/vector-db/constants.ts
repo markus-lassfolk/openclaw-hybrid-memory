@@ -42,6 +42,18 @@ export const VECTOR_QUERY_MAX_RESULTS = parseBoundedPositiveIntEnv(
   5000,
 );
 export const VECTOR_BULK_DELETE_IN_CHUNK = 200;
+/**
+ * Hard ceiling on how long optimize() waits for the native table.optimize() call before giving
+ * up and returning a timed-out result (#2081). The native call is not cancellable — this only
+ * bounds how long the caller waits, so exclusive/optimize locks still release deterministically.
+ * Operator override: OPENCLAW_HYBRID_MEM_VECTORDB_OPTIMIZE_TIMEOUT_MS.
+ */
+export const VECTORDB_OPTIMIZE_TIMEOUT_MS = parseBoundedPositiveIntEnv(
+  "OPENCLAW_HYBRID_MEM_VECTORDB_OPTIMIZE_TIMEOUT_MS",
+  10 * 60 * 1000,
+  1_000,
+  60 * 60 * 1000,
+);
 
 export type VectorDBLogger = { warn: (msg: string) => void };
 

@@ -13,7 +13,7 @@ export type StorageRepairReport = {
   startedAt: string;
   vectorlessBefore: number;
   reembedded: number;
-  optimize: { compacted: number; removedFragments: number; freedBytes: number };
+  optimize: { compacted: number; removedFragments: number; freedBytes: number; timedOut?: boolean };
   reconcile: {
     vectorOrphans: number;
     vectorOrphansDeleted: number;

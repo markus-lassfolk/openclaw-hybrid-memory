@@ -312,13 +312,22 @@ function registerManageStorageMaintenanceOnParent(
               const stats = await runMaintenanceHeartbeat("vectordb-optimize", verbose, () =>
                 vectorDb.optimize(olderThanMs),
               );
-              // Record timestamp after successful optimization
-              if (ctx.resolvedSqlitePath) {
-                recordMaintenanceTimestamp(ctx.resolvedSqlitePath, ".vectordb_optimize_last_run");
+              if (stats.timedOut) {
+                console.log(
+                  "LanceDB: optimize() timed out waiting for native table.optimize() to complete; " +
+                    "it continues running in the background. Re-run later to confirm completion, or set " +
+                    "OPENCLAW_HYBRID_MEM_VECTORDB_OPTIMIZE_TIMEOUT_MS to wait longer.",
+                );
+                process.exitCode = 2;
+              } else {
+                // Record timestamp after successful optimization
+                if (ctx.resolvedSqlitePath) {
+                  recordMaintenanceTimestamp(ctx.resolvedSqlitePath, ".vectordb_optimize_last_run");
+                }
+                console.log(
+                  `LanceDB: compacted ${stats.compacted} fragments, pruned ${stats.removedFragments} fragment(s), freed ${stats.freedBytes} bytes`,
+                );
               }
-              console.log(
-                `LanceDB: compacted ${stats.compacted} fragments, pruned ${stats.removedFragments} fragment(s), freed ${stats.freedBytes} bytes`,
-              );
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                 subsystem: "cli",
@@ -1648,7 +1657,10 @@ function registerManageStorageMaintenanceOnParent(
             console.log(`  policy=${report.policy} maxFixes=${report.maxFixes}`);
             console.log(`  vectorless: before=${report.vectorlessBefore} after=${report.vectorlessAfter}`);
             console.log(
-              `  optimize: compacted=${report.optimize.compacted} removedFragments=${report.optimize.removedFragments} freedBytes=${report.optimize.freedBytes}`,
+              `  optimize: compacted=${report.optimize.compacted} removedFragments=${report.optimize.removedFragments} freedBytes=${report.optimize.freedBytes}` +
+                (report.optimize.timedOut
+                  ? " timedOut=true (native compaction is still running in the background; re-run later to confirm it finished)"
+                  : ""),
             );
             console.log(
               `  reconcile: vectorOrphans=${report.reconcile.vectorOrphans} deleted=${report.reconcile.vectorOrphansDeleted}; sqliteOrphans=${report.reconcile.sqliteOrphans} rebuilt=${report.reconcile.sqliteOrphansRebuilt} skipped=${report.reconcile.sqliteOrphansSkipped}`,
