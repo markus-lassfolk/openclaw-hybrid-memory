@@ -32,10 +32,11 @@ export function registerManageDigest(mem: Chainable, b: ManageBindings): void {
     )
     .option("--since <duration>", "Lookback window, e.g. 7d, 24h, 2w (default: 7d)")
     .option("--format <fmt>", "Output format: md or json (default: md)")
+    .option("--json", "Alias for --format json (siblings such as `digest autopilot` already use --json)")
     .option("--out <path>", "Output file path, or '-' for stdout (default: -)")
     .action(
-      withExit(async (opts?: { since?: string; format?: string; out?: string }) => {
-        const rawFormat = String(opts?.format ?? "md").toLowerCase();
+      withExit(async (opts?: { since?: string; format?: string; json?: boolean; out?: string }) => {
+        const rawFormat = opts?.json ? "json" : String(opts?.format ?? "md").toLowerCase();
         const format = rawFormat === "json" ? "json" : "md";
         const outPath = opts?.out ?? "-";
         const report = buildPendingReviewDigestReport({

@@ -87,6 +87,8 @@ export type PendingReviewDigestReport = {
       contradictionHits: number;
       contradictionDegraded: number;
     };
+    /** #2098: age-bucket hygiene over the FULL pending backlog (not just pendingEntries' cap). */
+    ageHygiene: PendingQueueAgeHygiene;
   };
   toolProposals: {
     proposed: number;
@@ -96,9 +98,13 @@ export type PendingReviewDigestReport = {
       id: string;
       name: string;
       description: string;
+      createdAt: string;
+      /** Days since proposal was created (#2098). */
+      ageDays: number;
       approveCommand: string;
       declineCommand: string;
     }>;
+    ageHygiene: PendingQueueAgeHygiene;
   };
   crystallization: {
     pending: number;
@@ -107,10 +113,14 @@ export type PendingReviewDigestReport = {
     pendingEntries: Array<{
       id: string;
       skillName: string;
+      createdAt: string;
+      /** Days since proposal was created (#2098). */
+      ageDays: number;
       approveCommand: string;
       declineCommand: string;
       validation: string;
     }>;
+    ageHygiene: PendingQueueAgeHygiene;
   };
   verifiedFacts: { pendingReview: number; reviewCommand: string };
 };
@@ -190,6 +200,48 @@ export function countPendingReviewBacklogs(
   };
 }
 
+/** Age-bucket + oldest/newest + a plain-English triage hint for a pending queue (#2098). */
+export type PendingQueueAgeHygiene = {
+  ageBuckets: { d0_1: number; d1_7: number; d7_30: number; d30plus: number };
+  oldestAgeDays: number | null;
+  newestAgeDays: number | null;
+  recommendedNextAction: string;
+};
+
+/**
+ * Bucket a queue's per-item ages into 0-1d / 1-7d / 7-30d / 30d+ and derive a plain-English
+ * triage hint. `queueLabel` and `reviewCommand` are folded into the hint so it reads as guidance,
+ * not just a number — batch approve/reject/defer tooling is explicitly deferred (#2098), so this
+ * stays informational rather than offering an action this digest can't yet perform.
+ */
+function computeQueueAgeHygiene(ageDaysList: number[], queueLabel: string, reviewCommand: string): PendingQueueAgeHygiene {
+  const ageBuckets = { d0_1: 0, d1_7: 0, d7_30: 0, d30plus: 0 };
+  for (const age of ageDaysList) {
+    if (age <= 1) ageBuckets.d0_1++;
+    else if (age <= 7) ageBuckets.d1_7++;
+    else if (age <= 30) ageBuckets.d7_30++;
+    else ageBuckets.d30plus++;
+  }
+  const total = ageDaysList.length;
+  const oldestAgeDays = total > 0 ? Math.max(...ageDaysList) : null;
+  const newestAgeDays = total > 0 ? Math.min(...ageDaysList) : null;
+
+  let recommendedNextAction: string;
+  if (total === 0) {
+    recommendedNextAction = `${queueLabel} backlog is empty — nothing to review.`;
+  } else if (ageBuckets.d30plus > 0) {
+    recommendedNextAction = `${ageBuckets.d30plus} item(s) in ${queueLabel} are 30d+ old — review or reject the oldest first: ${reviewCommand}`;
+  } else if (total > 50) {
+    recommendedNextAction = `${queueLabel} backlog is large (${total}) — triage in batches via: ${reviewCommand}`;
+  } else if (ageBuckets.d7_30 > 0) {
+    recommendedNextAction = `${ageBuckets.d7_30} item(s) in ${queueLabel} are 7-30d old — review before they age further: ${reviewCommand}`;
+  } else {
+    recommendedNextAction = `${queueLabel} backlog is fresh (${total} pending, all under 7d) — no urgent action needed.`;
+  }
+
+  return { ageBuckets, oldestAgeDays, newestAgeDays, recommendedNextAction };
+}
+
 function relativeTime(epochSec: number, nowSec = Math.floor(Date.now() / 1000)): string {
   const diffSec = Math.max(0, nowSec - epochSec);
   if (diffSec < 60) return "just now";
@@ -264,6 +316,15 @@ export function buildPendingReviewDigestReport(opts: {
     verified: factsDb.countVerifiedFacts(),
   };
 
+  function ageDaysFromIso(iso: string): number {
+    const createdSec = Math.floor(new Date(iso).getTime() / 1000);
+    if (!Number.isFinite(createdSec)) return 0;
+    return Math.max(0, Math.floor((nowSec - createdSec) / 86400));
+  }
+  const personaAgeDays = personaPending.map((p) => Math.max(0, Math.floor((nowSec - p.createdAt) / 86400)));
+  const toolAgeDays = toolProposed.map((p) => ageDaysFromIso(p.createdAt));
+  const crystalAgeDays = crystalPending.map((p) => ageDaysFromIso(p.createdAt));
+
   // #1197: resolve persona-proposal evidence by joining `evidenceSessions` against
   // `facts.provenance_session`. Best-effort — empty when the FactsDB does not expose a raw db.
   const rawDb = factsDb.getRawDb?.();
@@ -324,6 +385,11 @@ export function buildPendingReviewDigestReport(opts: {
         evidence: evidenceForProposal(p.evidenceSessions ?? []),
       })),
       metrics: { ...personaRuleRoutingMetrics },
+      ageHygiene: computeQueueAgeHygiene(
+        personaAgeDays,
+        "persona proposals",
+        "openclaw hybrid-mem proposals list --status pending",
+      ),
     },
     toolProposals: {
       proposed: toolProposed.length,
@@ -333,9 +399,12 @@ export function buildPendingReviewDigestReport(opts: {
         id: p.id,
         name: p.name,
         description: p.description,
+        createdAt: p.createdAt,
+        ageDays: ageDaysFromIso(p.createdAt),
         approveCommand: `memory_tool_approve id=${p.id}`,
         declineCommand: `memory_tool_reject id=${p.id}`,
       })),
+      ageHygiene: computeQueueAgeHygiene(toolAgeDays, "tool proposals", "openclaw hybrid-mem digest pending"),
     },
     crystallization: {
       pending: crystalPending.length,
@@ -344,16 +413,30 @@ export function buildPendingReviewDigestReport(opts: {
       pendingEntries: crystalPending.slice(0, 10).map((p) => ({
         id: p.id,
         skillName: p.skillName,
+        createdAt: p.createdAt,
+        ageDays: ageDaysFromIso(p.createdAt),
         approveCommand: `memory_crystallize_approve id=${p.id}`,
         declineCommand: `memory_crystallize_reject id=${p.id}`,
         validation: summarizeSkillProposalValidation(p.validationResult),
       })),
+      ageHygiene: computeQueueAgeHygiene(crystalAgeDays, "crystallization proposals", "openclaw hybrid-mem skills queue"),
     },
     verifiedFacts: {
       pendingReview: pendingReview.verified,
       reviewCommand: "openclaw hybrid-mem verified list",
     },
   };
+}
+
+/** Render one queue's age-bucket hygiene as a compact line + recommended action (#2098). */
+function formatAgeHygieneLines(hygiene: PendingQueueAgeHygiene): string[] {
+  const b = hygiene.ageBuckets;
+  const lines = [`- Age: 0-1d=${b.d0_1}, 1-7d=${b.d1_7}, 7-30d=${b.d7_30}, 30d+=${b.d30plus}`];
+  if (hygiene.oldestAgeDays != null) {
+    lines.push(`- Oldest: ${hygiene.oldestAgeDays}d, newest: ${hygiene.newestAgeDays}d`);
+  }
+  lines.push(`- Next: ${hygiene.recommendedNextAction}`);
+  return lines;
 }
 
 export function renderPendingReviewDigestMarkdown(report: PendingReviewDigestReport): string {
@@ -364,6 +447,7 @@ export function renderPendingReviewDigestMarkdown(report: PendingReviewDigestRep
     `Pending review (proposals/procedures/tools/crystal/verified): ${report.pendingReview.persona}/${report.pendingReview.procedures}/${report.pendingReview.tools}/${report.pendingReview.crystallization}/${report.pendingReview.verified}`,
     "",
     `## Persona proposals (${report.personaProposals.pending})`,
+    ...formatAgeHygieneLines(report.personaProposals.ageHygiene),
   ];
   if (report.personaProposals.pendingEntries.length === 0)
     lines.push("No recent pending persona proposals in this window.");
@@ -397,18 +481,22 @@ export function renderPendingReviewDigestMarkdown(report: PendingReviewDigestRep
     "- Defer: leave validated procedures unpromoted",
     "",
   );
-  lines.push(`## Tool proposals (${report.toolProposals.proposed})`);
+  lines.push(`## Tool proposals (${report.toolProposals.proposed})`, ...formatAgeHygieneLines(report.toolProposals.ageHygiene));
   if (report.toolProposals.proposedEntries.length === 0) lines.push("No pending tool proposals.");
   report.toolProposals.proposedEntries.forEach((p, i) => {
-    lines.push(`${i + 1}. ${p.name} — ${p.description}`);
+    lines.push(`${i + 1}. [pending ${p.ageDays}d] ${p.name} — ${p.description}`);
     lines.push(`   - Approve: ${p.approveCommand}`);
     lines.push(`   - Decline: ${p.declineCommand}`);
     lines.push("   - Defer: leave as proposed");
   });
-  lines.push("", `## Crystallization proposals (${report.crystallization.pending})`);
+  lines.push(
+    "",
+    `## Crystallization proposals (${report.crystallization.pending})`,
+    ...formatAgeHygieneLines(report.crystallization.ageHygiene),
+  );
   if (report.crystallization.pendingEntries.length === 0) lines.push("No pending crystallization proposals.");
   report.crystallization.pendingEntries.forEach((p, i) => {
-    lines.push(`${i + 1}. ${p.skillName}`);
+    lines.push(`${i + 1}. [pending ${p.ageDays}d] ${p.skillName}`);
     lines.push(`   - Validation: ${p.validation}`);
     lines.push(`   - Approve: ${p.approveCommand}`);
     lines.push(`   - Decline: ${p.declineCommand}`);
