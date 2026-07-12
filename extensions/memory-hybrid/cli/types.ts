@@ -129,6 +129,10 @@ export type VaultStatusResult = {
   keyIgnored: boolean;
   migrationRequired: boolean;
   entryCount: number;
+  /** #2099: true when the vault was opened using the legacy literal `file:/path` passphrase. */
+  legacyLiteralFileKey: boolean;
+  /** #2099: present only when legacyLiteralFileKey is true — the exact remediation command. */
+  legacyLiteralFileKeyRemediation: string | null;
 };
 
 export type DistillWindowResult = {

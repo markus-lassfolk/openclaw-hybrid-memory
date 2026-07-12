@@ -97,19 +97,23 @@ export class CredentialsDB extends BaseSqliteStore {
   private storesEncryptedValues: boolean;
   /** True when a 16+ character encryption key was provided to the constructor. */
   private readonly configuredKeyPresent: boolean;
+  /** True when the vault was opened using the legacy literal `file:/path` ref as the passphrase
+   * itself, rather than resolved file contents (#2099). Surfaced via getVaultStatus(). */
+  private readonly legacyLiteralFileKey: boolean;
   private legacyTypesMigrated = false;
   // SECURITY NOTE: Raw password is stored only for lazy migration from legacy SHA-256 to scrypt.
   // Migration is triggered on first successful get() to verify the password is correct before re-encrypting.
   // After migration completes, this field is cleared to minimize exposure in memory.
   private password: string | null;
 
-  constructor(dbPath: string, encryptionKey: string) {
+  constructor(dbPath: string, encryptionKey: string, legacyLiteralFileKey = false) {
     const keyLooksEncrypted = encryptionKey.length >= 16;
     mkdirSync(dirname(dbPath), { recursive: true });
     const db = new DatabaseSync(dbPath);
     super(db);
     this.dbPath = dbPath;
     this.configuredKeyPresent = keyLooksEncrypted;
+    this.legacyLiteralFileKey = legacyLiteralFileKey;
     tryRestrictSqliteDbFileMode(dbPath);
     this.storesEncryptedValues = keyLooksEncrypted;
 
@@ -397,6 +401,10 @@ export class CredentialsDB extends BaseSqliteStore {
     keyIgnored: boolean;
     migrationRequired: boolean;
     entryCount: number;
+    /** #2099: true when the vault was opened using the legacy literal `file:/path` passphrase. */
+    legacyLiteralFileKey: boolean;
+    /** #2099: present only when legacyLiteralFileKey is true — the exact remediation command. */
+    legacyLiteralFileKeyRemediation: string | null;
   } {
     const encryptedAtRest = this.kdfVersion !== CRED_KDF_PLAINTEXT;
     const keyIgnored = this.kdfVersion === CRED_KDF_PLAINTEXT && this.configuredKeyPresent;
@@ -411,6 +419,10 @@ export class CredentialsDB extends BaseSqliteStore {
       keyIgnored,
       migrationRequired,
       entryCount,
+      legacyLiteralFileKey: this.legacyLiteralFileKey,
+      legacyLiteralFileKeyRemediation: this.legacyLiteralFileKey
+        ? "Store the desired passphrase in the file referenced by credentials.encryptionKey, then run: openclaw hybrid-mem credentials rekey-vault --backup --verify --yes"
+        : null,
     };
   }
 

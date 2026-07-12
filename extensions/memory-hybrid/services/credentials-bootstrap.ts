@@ -1,7 +1,7 @@
 import { CredentialsDB } from "../backends/credentials-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { getCredentialsEncryptionKeyRaw } from "./credentials-path.js";
-import { resolveCredentialsVaultKeyMaterial } from "./credentials-encryption-key.js";
+import { resolveCredentialsVaultKeyMaterialDetailed } from "./credentials-encryption-key.js";
 import { resolveCredentialsDbPath } from "./credentials-path.js";
 
 export { resolveCredentialsDbPath } from "./credentials-path.js";
@@ -14,6 +14,6 @@ export function createCredentialsDbForConfig(
   if (!cfg.credentials.enabled) return null;
   const dbPath = resolveCredentialsDbPath(resolvedSqlitePath);
   const rawKey = getCredentialsEncryptionKeyRaw(cfg);
-  const keyMaterial = resolveCredentialsVaultKeyMaterial(rawKey, dbPath);
-  return new CredentialsDB(dbPath, keyMaterial);
+  const { keyMaterial, legacyLiteralFileKey } = resolveCredentialsVaultKeyMaterialDetailed(rawKey, dbPath);
+  return new CredentialsDB(dbPath, keyMaterial, legacyLiteralFileKey);
 }

@@ -46,6 +46,85 @@ describe("credentials migrate-to-vault exit code", () => {
   });
 });
 
+describe("credentials vault-status legacy key surfacing (#2099)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    process.exitCode = undefined;
+  });
+
+  it("prints the legacy-key warning and remediation in human-readable output", async () => {
+    const runVaultStatus = vi.fn().mockReturnValue({
+      dbPath: "/tmp/creds.db",
+      kdfVersion: 2,
+      encryptedAtRest: true,
+      configuredKeyPresent: true,
+      keyIgnored: false,
+      migrationRequired: false,
+      entryCount: 3,
+      legacyLiteralFileKey: true,
+      legacyLiteralFileKeyRemediation: "openclaw hybrid-mem credentials rekey-vault --backup --verify --yes",
+    });
+    const mem = makeProgram({ runVaultStatus, factsDb: {}, vectorDb: {} });
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((a) => String(a)).join(" "));
+    });
+
+    await mem.parseAsync(["credentials", "vault-status"], { from: "user" });
+
+    expect(lines.some((l) => l.includes("Legacy key material"))).toBe(true);
+    expect(lines.some((l) => l.includes("rekey-vault"))).toBe(true);
+  });
+
+  it("includes legacyLiteralFileKey in --json output", async () => {
+    const runVaultStatus = vi.fn().mockReturnValue({
+      dbPath: "/tmp/creds.db",
+      kdfVersion: 2,
+      encryptedAtRest: true,
+      configuredKeyPresent: true,
+      keyIgnored: false,
+      migrationRequired: false,
+      entryCount: 3,
+      legacyLiteralFileKey: true,
+      legacyLiteralFileKeyRemediation: "openclaw hybrid-mem credentials rekey-vault --backup --verify --yes",
+    });
+    const mem = makeProgram({ runVaultStatus, factsDb: {}, vectorDb: {} });
+    let jsonOut = "";
+    vi.spyOn(console, "log").mockImplementation((arg: unknown) => {
+      jsonOut = String(arg);
+    });
+
+    await mem.parseAsync(["credentials", "vault-status", "--json"], { from: "user" });
+
+    const parsed = JSON.parse(jsonOut);
+    expect(parsed.legacyLiteralFileKey).toBe(true);
+    expect(parsed.legacyLiteralFileKeyRemediation).toContain("rekey-vault");
+  });
+
+  it("says nothing about legacy key material when legacyLiteralFileKey is false", async () => {
+    const runVaultStatus = vi.fn().mockReturnValue({
+      dbPath: "/tmp/creds.db",
+      kdfVersion: 2,
+      encryptedAtRest: true,
+      configuredKeyPresent: true,
+      keyIgnored: false,
+      migrationRequired: false,
+      entryCount: 3,
+      legacyLiteralFileKey: false,
+      legacyLiteralFileKeyRemediation: null,
+    });
+    const mem = makeProgram({ runVaultStatus, factsDb: {}, vectorDb: {} });
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((a) => String(a)).join(" "));
+    });
+
+    await mem.parseAsync(["credentials", "vault-status"], { from: "user" });
+
+    expect(lines.some((l) => l.includes("Legacy key material"))).toBe(false);
+  });
+});
+
 describe("scope prune vector cleanup", () => {
   let db: InstanceType<typeof FactsDB>;
 
