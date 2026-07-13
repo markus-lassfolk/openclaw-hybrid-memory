@@ -61,12 +61,17 @@ export function registerManageLinkTools(mem: Chainable, b: ManageBindings): void
           }
 
           const linkId = factsDb.createLink(sourceFactId, targetFactId, linkType, strength);
+          // FactsDB.createLink() silently clamps strength to [0,1] before persisting — mirror that
+          // clamp here so the reported value matches what was actually stored, not the raw input.
+          const persistedStrength = Math.max(0, Math.min(1, strength));
           if (opts?.json) {
-            console.log(JSON.stringify({ linkId, sourceFactId, targetFactId, linkType, strength }, null, 2));
+            console.log(
+              JSON.stringify({ linkId, sourceFactId, targetFactId, linkType, strength: persistedStrength }, null, 2),
+            );
             return;
           }
           console.log(
-            `Created ${linkType} link from "${truncate(src.text)}" to "${truncate(tgt.text)}" (strength=${strength}, id=${linkId})`,
+            `Created ${linkType} link from "${truncate(src.text)}" to "${truncate(tgt.text)}" (strength=${persistedStrength}, id=${linkId})`,
           );
         },
       ),

@@ -1040,7 +1040,8 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
   // Resolved lazily (inside each handler, not at registration time) — some ManageBindings
   // fixtures (existing tests, minimal CLI wiring) omit cfg.sqlitePath entirely, and this command
   // group must not break every other `categories` subcommand just by being registered alongside them.
-  const getDiscoveredCategoriesPath = (): string => join(dirname(cfg.sqlitePath ?? "."), ".discovered-categories.json");
+  const getDiscoveredCategoriesPath = (): string =>
+    join(dirname(ctx.resolvedSqlitePath ?? cfg.sqlitePath ?? "."), ".discovered-categories.json");
   const printDiscoveredCategories = async (opts?: { json?: boolean }): Promise<void> => {
     const discoveredCategoriesPath = getDiscoveredCategoriesPath();
     const [pending, rejected] = await Promise.all([

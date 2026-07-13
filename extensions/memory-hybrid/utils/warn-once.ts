@@ -24,3 +24,15 @@ export function resetWarnOnceForTests(key?: string): void {
     warnedKeys.delete(key);
   }
 }
+
+/**
+ * Test-only: clear every warn-once key starting with `prefix`. For callers whose keys are
+ * per-instance (e.g. namespaced by a file path) rather than a single fixed string, so their test
+ * reset hook doesn't have to clear the whole shared registry and risk wiping unrelated modules'
+ * warned-once state.
+ */
+export function resetWarnOnceForTestsByPrefix(prefix: string): void {
+  for (const key of warnedKeys) {
+    if (key.startsWith(prefix)) warnedKeys.delete(key);
+  }
+}

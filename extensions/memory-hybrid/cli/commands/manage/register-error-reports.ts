@@ -14,7 +14,6 @@ import {
   flushErrorReporter,
   getPendingErrorReportCount,
   isErrorReporterActive,
-  readPendingErrorReportEnqueueRange,
   readPendingErrorReportEntries,
   resolveErrorReportPendingQueuePath,
 } from "../../../services/error-reporter.js";
@@ -23,7 +22,7 @@ import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
 function resolveQueuePath(b: ManageBindings): string | undefined {
-  const sqlitePath = b.cfg.sqlitePath;
+  const sqlitePath = b.resolvedSqlitePath ?? b.cfg.sqlitePath;
   if (!sqlitePath) return undefined;
   return resolveErrorReportPendingQueuePath(sqlitePath);
 }
@@ -41,9 +40,22 @@ export function registerManageErrorReports(mem: Chainable, b: ManageBindings): v
       withExit(async (opts?: { json?: boolean }) => {
         const queuePath = resolveQueuePath(b);
         const activeCount = getPendingErrorReportCount();
-        const diskCount = countPendingErrorReportsOnDisk(queuePath);
+        // Single read+parse pass of the queue file for both the disk count and the enqueue range,
+        // instead of countPendingErrorReportsOnDisk() and readPendingErrorReportEnqueueRange() each
+        // re-reading and re-parsing it separately.
+        const diskEntries = readPendingErrorReportEntries(queuePath);
+        const diskCount = diskEntries.length;
         const pendingCount = Math.max(activeCount, diskCount);
-        const range = readPendingErrorReportEnqueueRange(queuePath);
+        const range =
+          diskEntries.length === 0
+            ? null
+            : diskEntries.reduce<{ oldest: number; newest: number }>(
+                (acc, entry) => ({
+                  oldest: Math.min(acc.oldest, entry.enqueuedAt),
+                  newest: Math.max(acc.newest, entry.enqueuedAt),
+                }),
+                { oldest: diskEntries[0].enqueuedAt, newest: diskEntries[0].enqueuedAt },
+              );
         const status = {
           queuePath: queuePath ?? null,
           pendingCount,

@@ -558,10 +558,21 @@ export function pruneScopedFacts(db: DatabaseSync, scopeFilter: ScopeFilter): st
         `DELETE FROM contradictions
            WHERE fact_id_new IN (${scopedIdsSubquery}) OR fact_id_old IN (${scopedIdsSubquery})`,
       ).run(...params, ...params);
+      // Fetch doomed links before deleting so the surviving endpoint's out_degree/in_degree can be
+      // decremented (#2085) — same pattern as deleteFact()/pruneOrphanedLinks().
+      const doomedLinks = db
+        .prepare(
+          `SELECT source_fact_id, target_fact_id, link_type FROM memory_links
+             WHERE source_fact_id IN (${scopedIdsSubquery}) OR target_fact_id IN (${scopedIdsSubquery})`,
+        )
+        .all(...params, ...params) as Array<{ source_fact_id: string; target_fact_id: string; link_type: string }>;
       db.prepare(
         `DELETE FROM memory_links
            WHERE source_fact_id IN (${scopedIdsSubquery}) OR target_fact_id IN (${scopedIdsSubquery})`,
       ).run(...params, ...params);
+      for (const link of doomedLinks) {
+        decrementFactDegreesForLink(db, link.source_fact_id, link.target_fact_id, link.link_type);
+      }
 
       const query = `DELETE FROM facts WHERE (${conditions.join(" OR ")})
         AND id NOT IN (SELECT fact_id FROM verified_facts)`;

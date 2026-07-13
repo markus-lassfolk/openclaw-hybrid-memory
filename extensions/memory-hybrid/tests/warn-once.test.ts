@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resetWarnOnceForTests, warnOnce } from "../utils/warn-once.js";
+import { resetWarnOnceForTests, resetWarnOnceForTestsByPrefix, warnOnce } from "../utils/warn-once.js";
 
 describe("warnOnce", () => {
   afterEach(() => {
@@ -47,5 +47,23 @@ describe("warnOnce", () => {
     resetWarnOnceForTests();
     warnOnce("k6", emit);
     expect(emit).toHaveBeenCalledTimes(2);
+  });
+
+  it("resetWarnOnceForTestsByPrefix re-arms only keys matching the prefix (QA follow-up)", () => {
+    const scoped1 = vi.fn();
+    const scoped2 = vi.fn();
+    const unrelated = vi.fn();
+    warnOnce("scope:a", scoped1);
+    warnOnce("scope:b", scoped2);
+    warnOnce("other:c", unrelated);
+
+    resetWarnOnceForTestsByPrefix("scope:");
+    warnOnce("scope:a", scoped1);
+    warnOnce("scope:b", scoped2);
+    warnOnce("other:c", unrelated);
+
+    expect(scoped1).toHaveBeenCalledTimes(2);
+    expect(scoped2).toHaveBeenCalledTimes(2);
+    expect(unrelated).toHaveBeenCalledTimes(1);
   });
 });

@@ -114,6 +114,24 @@ describe("link CLI (#2090)", () => {
     expect(parsed.outgoing[0]).toMatchObject({ linkType: "RELATED_TO", targetFactId: b.id, strength: 0.7 });
   });
 
+  it("create reports the actually-persisted clamped strength, not the raw out-of-range input (QA follow-up)", async () => {
+    const a = storeFact("fact a");
+    const b = storeFact("fact b");
+    const mem = makeProgram();
+
+    await mem.parseAsync(["link", "create", a.id, b.id, "--type", "RELATED_TO", "--strength", "5.0", "--json"], {
+      from: "user",
+    });
+    const created = JSON.parse(logs.join(""));
+    expect(created.strength).toBe(1);
+
+    logs.length = 0;
+    const listMem = makeProgram();
+    await listMem.parseAsync(["link", "list", a.id, "--json"], { from: "user" });
+    const parsed = JSON.parse(logs.join(""));
+    expect(parsed.outgoing[0].strength).toBe(1);
+  });
+
   it("create with --type CONTRADICTS records a bidirectional contradiction instead of a plain link", async () => {
     const a = storeFact("fact a");
     const b = storeFact("fact b");

@@ -12,8 +12,9 @@ import { DatabaseSync } from "node:sqlite";
 import * as lancedb from "@lancedb/lancedb";
 import type OpenAI from "openai";
 import type { AliasesConfig } from "../config.js";
-import { LANCE_NO_VECTOR_COL_MSG, UUID_REGEX } from "../utils/constants.js";
+import { LANCE_NO_VECTOR_COL_MSG } from "../utils/constants.js";
 import { pluginLogger } from "../utils/logger.js";
+import { isValidVectorId, toSafeIdLiteral } from "../utils/vector-id.js";
 import { chatComplete } from "./chat.js";
 import { CostFeature } from "./cost-feature-labels.js";
 import type { EmbeddingProvider } from "./embeddings.js";
@@ -289,11 +290,11 @@ class AliasVectorIndex {
   async deleteByFactId(factId: string): Promise<void> {
     try {
       await this.ensureInitialized();
-      if (!UUID_REGEX.test(factId)) {
-        pluginLogger.warn(`memory-hybrid: skipping alias LanceDB delete for non-UUID factId: ${factId}`);
+      if (!isValidVectorId(factId)) {
+        pluginLogger.warn(`memory-hybrid: skipping alias LanceDB delete for invalid factId: ${factId}`);
         return;
       }
-      await this.getTable().delete(`factId = '${factId.toLowerCase()}'`);
+      await this.getTable().delete(`factId = ${toSafeIdLiteral(factId)}`);
     } catch (err) {
       if (!this.closed) {
         capturePluginError(err as Error, {
@@ -583,7 +584,12 @@ export class AliasDB {
       const stmt = this.db.prepare("SELECT id, factId, aliasText, embedding FROM fact_aliases");
       const pendingUpdates: Array<{ id: string; factId: string; aliasText: string; vector: number[] }> = [];
 
-      for (const row of stmt.iterate() as Iterable<{ id: string; factId: string; aliasText: string; embedding: Buffer }>) {
+      for (const row of stmt.iterate() as Iterable<{
+        id: string;
+        factId: string;
+        aliasText: string;
+        embedding: Buffer;
+      }>) {
         let vector: number[] | null = null;
         if (!opts?.reEmbed && row.embedding.byteLength % 4 === 0) {
           const floats = new Float32Array(
@@ -626,9 +632,7 @@ export class AliasDB {
           try {
             const floatArray = Float32Array.from(update.vector);
             const blob = Buffer.from(floatArray.buffer.slice(0));
-            this.db
-              .prepare("UPDATE fact_aliases SET embedding = ? WHERE id = ?")
-              .run(blob, update.id);
+            this.db.prepare("UPDATE fact_aliases SET embedding = ? WHERE id = ?").run(blob, update.id);
           } catch (err) {
             errors.push(`sqlite update ${update.id}: ${String(err)}`);
           }

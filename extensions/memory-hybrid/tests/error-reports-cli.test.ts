@@ -92,6 +92,29 @@ describe("error-reports CLI (#2082)", () => {
       expect(logs.some((l) => l.includes("error-reports flush"))).toBe(true);
     });
 
+    it("resolves the queue path via ctx.resolvedSqlitePath, not the raw (possibly unresolved) cfg.sqlitePath (QA follow-up)", async () => {
+      // cfg.sqlitePath deliberately does NOT point at the real tmp dir (mirrors a config with an
+      // unexpanded `~/...` path) — only ctx.resolvedSqlitePath does. Before the fix, resolveQueuePath()
+      // read b.cfg.sqlitePath directly and would have looked in the wrong place.
+      writeRecord(queuePath, "a", 1_000, "first");
+      const mem = new Command("hybrid-mem");
+      mem.exitOverride();
+      const cfg = hybridConfigSchema.parse({
+        embedding: { provider: "openai", model: "text-embedding-3-small", apiKey: "sk-test-key-12345678" },
+        sqlitePath: "~/.openclaw/memory/facts.db",
+      });
+      registerManageErrorReports(mem, {
+        cfg,
+        ctx: {},
+        resolvedSqlitePath: sqlitePath,
+      } as unknown as ManageBindings);
+      await mem.parseAsync(["error-reports", "status", "--json"], { from: "user" });
+
+      const parsed = JSON.parse(logs.join(""));
+      expect(parsed.queuePath).toBe(queuePath);
+      expect(parsed.pendingCount).toBe(1);
+    });
+
     it("--json emits a structured status object", async () => {
       writeRecord(queuePath, "a", 1_000, "first");
       const mem = makeProgram(sqlitePath);
@@ -153,6 +176,19 @@ describe("error-reports CLI (#2082)", () => {
     it("rejects a non-numeric --limit", async () => {
       const mem = makeProgram(sqlitePath);
       await expect(mem.parseAsync(["error-reports", "peek", "--limit", "abc"], { from: "user" })).rejects.toThrow();
+    });
+
+    it("collapses duplicate-fingerprint entries, matching what flush() would actually deliver (QA follow-up)", async () => {
+      // Two records with the identical exception type+message (same fingerprint) — the live
+      // reporter's own queue-load dedups these to one; the disk-level CLI reader must match.
+      writeRecord(queuePath, "a", 1_000, "same error");
+      writeRecord(queuePath, "b", 2_000, "same error");
+      writeRecord(queuePath, "c", 3_000, "different error");
+      const mem = makeProgram(sqlitePath);
+      await mem.parseAsync(["error-reports", "peek", "--json"], { from: "user" });
+
+      const parsed = JSON.parse(logs.join(""));
+      expect(parsed.entries.map((e: { id: string }) => e.id)).toEqual(["a", "c"]);
     });
   });
 

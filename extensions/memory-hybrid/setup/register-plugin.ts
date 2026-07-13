@@ -48,7 +48,7 @@ import {
   getCategoryFactRegex,
   getCategoryPreferenceRegex,
 } from "../utils/language-keywords.js";
-import { initPluginLogger } from "../utils/logger.js";
+import { initPluginLogger, pluginLogger } from "../utils/logger.js";
 import { buildToolScopeFilter } from "../utils/scope-filter.js";
 import { versionInfo } from "../versionInfo.js";
 import {
@@ -147,14 +147,27 @@ async function performHybridMemCliTeardown(): Promise<void> {
   }
   // Best-effort: give a fire-and-forget auto-optimize (#2081) a short window to finish before
   // close() tears the connection down under it. Bounded so a slow/hung native optimize can never
-  // block one-shot CLI process exit — closeOldDatabases proceeds regardless of the outcome.
+  // block one-shot CLI process exit. The 5s window only covers the short internal auto-optimize
+  // triggered by store() — an explicit `vectordb-optimize`/`storage repair` run can legitimately
+  // still be in progress after 5s (optimize() itself waits up to VECTORDB_OPTIMIZE_TIMEOUT_MS,
+  // 10min by default). If one is still running, skip the synchronous vectorDb.close() rather than
+  // yanking the connection out from under an in-flight native compaction — the native call
+  // releases its own locks once it finishes, exactly as optimize()'s own timeout-path log message
+  // promises; every other store still closes normally.
   await r.vectorDb?.waitForPendingOptimize?.(5_000);
+  const vectorDbStillOptimizing = r.vectorDb?.isOptimizing?.() ?? false;
+  if (vectorDbStillOptimizing) {
+    pluginLogger.warn(
+      "memory-hybrid: skipping vectorDb.close() at CLI teardown — a native optimize is still running in the " +
+        "background and will release its locks once it finishes",
+    );
+  }
   try {
     closeOldDatabases({
       factsDb: r.factsDb,
       edictStore: r.edictStore,
       narrativesDb: r.narrativesDb,
-      vectorDb: r.vectorDb,
+      vectorDb: vectorDbStillOptimizing ? null : r.vectorDb,
       credentialsDb: r.credentialsDb,
       proposalsDb: r.proposalsDb,
       identityReflectionStore: r.identityReflectionStore,

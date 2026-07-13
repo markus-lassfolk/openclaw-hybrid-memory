@@ -103,6 +103,23 @@ export interface PendingReportRecord {
  *    0 if a === b
  *    1 if a > b
  */
+
+/**
+ * Same fingerprint used by GlitchTipReporter's pending-queue dedup — shared so disk-level readers
+ * (readPendingErrorReportEntries, used by the error-reports CLI) collapse duplicate-fingerprint
+ * entries the same way the live reporter's queue does, instead of showing a raw line count that
+ * flush() would never actually deliver as-is.
+ */
+export function computeEventFingerprint(event: GlitchTipEvent): string {
+  if (Array.isArray(event.fingerprint) && event.fingerprint.length > 0) {
+    return buildFingerprintKey(event.fingerprint.map((part) => String(part)));
+  }
+  const exc = event.exception?.values?.[0];
+  const type = typeof exc?.type === "string" ? exc.type : "Error";
+  const msg = typeof exc?.value === "string" ? exc.value : "";
+  return `${type}:${scrubString(msg).slice(0, 100)}`;
+}
+
 // --- GlitchTipReporter: lightweight native-fetch reporter ---
 
 function generateEventId(): string {
@@ -303,13 +320,7 @@ class GlitchTipReporter {
   }
 
   private eventFingerprint(event: GlitchTipEvent): string {
-    if (Array.isArray(event.fingerprint) && event.fingerprint.length > 0) {
-      return buildFingerprintKey(event.fingerprint.map((part) => String(part)));
-    }
-    const exc = event.exception?.values?.[0];
-    const type = typeof exc?.type === "string" ? exc.type : "Error";
-    const msg = typeof exc?.value === "string" ? exc.value : "";
-    return `${type}:${scrubString(msg).slice(0, 100)}`;
+    return computeEventFingerprint(event);
   }
 
   private rememberPendingFingerprint(eventId: string, event: GlitchTipEvent): void {
@@ -822,6 +833,9 @@ export function readPendingErrorReportEntries(queuePath?: string, limit?: number
   }
 
   const records: PendingReportRecord[] = [];
+  // Same fingerprint-dedup GlitchTipReporter.ensureQueueLoaded() applies (first occurrence wins)
+  // so this disk-level view doesn't show duplicate-fingerprint entries flush() would collapse.
+  const seenFingerprints = new Set<string>();
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
@@ -829,6 +843,9 @@ export function readPendingErrorReportEntries(queuePath?: string, limit?: number
       const parsed = JSON.parse(trimmed) as Partial<PendingReportRecord>;
       if (typeof parsed.id !== "string" || parsed.id.length === 0) continue;
       if (!parsed.event || typeof parsed.event !== "object") continue;
+      const fingerprint = computeEventFingerprint(parsed.event);
+      if (seenFingerprints.has(fingerprint)) continue;
+      seenFingerprints.add(fingerprint);
       records.push({
         id: parsed.id,
         event: parsed.event,

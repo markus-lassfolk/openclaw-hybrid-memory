@@ -232,6 +232,16 @@ describe("AliasDB.deleteByFactId", () => {
     expect(db.count()).toBe(0);
     db.close();
   });
+
+  it("deletes aliases for a slug-style (non-UUID) factId instead of silently skipping (#2079 QA follow-up)", () => {
+    const db = makeDb();
+    const factId = "close-goals-2026-06-27-clean-slate-final-1782588700";
+    db.store(factId, "alias for a slug id", unitVec());
+    expect(db.count()).toBe(1);
+    db.deleteByFactId(factId);
+    expect(db.count()).toBe(0);
+    db.close();
+  });
 });
 
 describe("AliasDB.search", () => {

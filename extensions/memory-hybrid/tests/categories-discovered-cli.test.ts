@@ -66,6 +66,37 @@ describe("categories discovered CLI (#2100)", () => {
     expect(lines.some((l) => l.includes("No discovered categories pending review"))).toBe(true);
   });
 
+  it("resolves the discovered-categories path via ctx.resolvedSqlitePath, not raw cfg.sqlitePath (QA follow-up)", async () => {
+    const sqlitePath = setup();
+    writeFileSync(discoveredPath, JSON.stringify(["invoices"]), "utf-8");
+    const mem = new Command("hybrid-mem");
+    mem.exitOverride();
+    // cfg.sqlitePath deliberately points somewhere else — only ctx.resolvedSqlitePath is the real
+    // path — mirroring a config with an unexpanded `~/...` path. Before the fix,
+    // getDiscoveredCategoriesPath() read cfg.sqlitePath directly and would have looked in the
+    // wrong directory, always reporting "no discovered categories pending".
+    const cfg = hybridConfigSchema.parse({
+      embedding: { provider: "openai", model: "text-embedding-3-small", apiKey: "sk-test-key-12345678" },
+      sqlitePath: "~/.openclaw/memory/facts.db",
+    });
+    registerManageStorageGraphAudit(mem, {
+      factsDb: db,
+      vectorDb: {},
+      getMemoryCategories: () => [],
+      cfg,
+      ctx: { resolvedSqlitePath: sqlitePath },
+      resolvedSqlitePath: sqlitePath,
+    } as unknown as ManageBindings);
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((a) => String(a)).join(" "));
+    });
+
+    await mem.parseAsync(["categories", "discovered"], { from: "user" });
+
+    expect(lines.some((l) => l.includes("invoices"))).toBe(true);
+  });
+
   it("lists pending labels and points at approve/reject commands", async () => {
     const sqlitePath = setup();
     writeFileSync(discoveredPath, JSON.stringify(["invoices", "travel"]), "utf-8");

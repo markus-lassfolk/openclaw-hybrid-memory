@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs";
-import type { CredentialType } from "../config.js";
-import { resolveCredentialsEncryptionKeyCandidates } from "../config/parsers/core.js";
 import { CredentialsDB } from "../backends/credentials-db.js";
+import { resolveCredentialsEncryptionKeyCandidates } from "../config/parsers/core.js";
+import type { CredentialType } from "../config.js";
 import { pluginLogger } from "../utils/logger.js";
-import { resetWarnOnceForTests, warnOnce } from "../utils/warn-once.js";
+import { resetWarnOnceForTestsByPrefix, warnOnce } from "../utils/warn-once.js";
 
 export {
   resolveCredentialsEncryptionKeyCandidates,
@@ -101,5 +101,7 @@ export function resolveCredentialsVaultKeyMaterial(raw: string, dbPath: string):
 
 /** @internal Test hook */
 export function _resetCredentialsEncryptionKeyWarningsForTests(): void {
-  resetWarnOnceForTests();
+  // Scoped to this module's own key prefix (not the whole shared warn-once registry) so it can't
+  // clear an unrelated module's suppressed-warning state if another feature adopts warnOnce().
+  resetWarnOnceForTestsByPrefix(LEGACY_FILE_REF_WARN_KEY_PREFIX);
 }

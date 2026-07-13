@@ -354,5 +354,28 @@ describe("incremental degree counters (#2085)", () => {
       expect(degreesSurvivor.inDegree).toBe(0);
       expect(degreesSurvivor.inDegree).toBe(degreesSurvivor.groundTruthIn);
     });
+
+    it("factsDb.pruneScopedFacts() decrements the surviving endpoint's degree counter (QA loop iteration 2)", () => {
+      const purged = factsDb.store({
+        text: "purged global note",
+        category: "fact",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "conversation",
+        scope: "global",
+      });
+      const survivor = makeFact("survivor");
+      factsDb.createLink(purged.id, survivor.id, "RELATED_TO", 1.0);
+      expect(readDegrees(survivor.id).inDegree).toBe(1);
+
+      const deleted = factsDb.pruneScopedFacts({ global: true });
+      expect(deleted).toContain(purged.id);
+
+      const degreesSurvivor = readDegrees(survivor.id);
+      expect(degreesSurvivor.inDegree).toBe(0);
+      expect(degreesSurvivor.inDegree).toBe(degreesSurvivor.groundTruthIn);
+    });
   });
 });

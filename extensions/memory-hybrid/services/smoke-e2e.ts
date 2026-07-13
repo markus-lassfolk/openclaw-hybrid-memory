@@ -310,13 +310,22 @@ export async function runSmokeE2E(deps: {
           `fact ${factId} embedding cache delete threw: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
-      if (lanceAvailable) {
-        try {
-          await vectorDb.delete(factId);
-        } catch (err) {
-          failures.push(`fact ${factId} vector delete threw: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
+    }
+    if (lanceAvailable) {
+      // Independent per-fact LanceDB deletes — run concurrently instead of awaiting one at a time.
+      const vectorDeleteFailures = await Promise.all(
+        factIds.map(async (factId) => {
+          try {
+            await vectorDb.delete(factId);
+            return null;
+          } catch (err) {
+            return `fact ${factId} vector delete threw: ${err instanceof Error ? err.message : String(err)}`;
+          }
+        }),
+      );
+      failures.push(...vectorDeleteFailures.filter((f): f is string => f !== null));
+    }
+    for (const factId of factIds) {
       try {
         if (factsDb.delete(factId)) {
           leftover.factIds = leftover.factIds.filter((id) => id !== factId);

@@ -8,8 +8,8 @@
  * at the raw file. This module owns approve/reject state as two sibling files next to the pending
  * one, keeping auto-classifier.ts's existing read/write of the pending file untouched.
  */
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { readFile } from "node:fs/promises";
+import { atomicWriteFile } from "../utils/atomic-write.js";
 import { capturePluginError } from "./error-reporter.js";
 
 /** Sibling path for labels an operator explicitly rejected — never re-proposed after that. */
@@ -27,8 +27,10 @@ async function readStringArrayFile(path: string): Promise<string[]> {
 }
 
 async function writeStringArrayFile(path: string, values: string[]): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, JSON.stringify(values, null, 2), "utf-8");
+  // atomicWriteFile (write-to-temp + rename) so a crash mid-write can't truncate the file —
+  // readStringArrayFile() treats any parse failure as an empty array, which would otherwise
+  // silently drop the pending queue or a prior reject decision.
+  atomicWriteFile(path, JSON.stringify(values, null, 2));
 }
 
 /** Labels currently pending operator review. */
