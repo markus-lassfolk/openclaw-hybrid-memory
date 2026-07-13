@@ -6,8 +6,8 @@ import { CrystallizationStore } from "../backends/crystallization-store.js";
 import { ProposalsDB } from "../backends/proposals-db.js";
 import { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { HybridMemoryConfig } from "../config.js";
+import { formatTimestampUtc, parseTimestamp } from "../utils/dates.js";
 import { pluginLogger } from "../utils/logger.js";
-import { formatTimestampUtc } from "../utils/dates.js";
 import { summarizeSkillProposalValidation } from "./generated-skill-validation.js";
 import { personaRuleRoutingMetrics } from "./persona-rule-router.js";
 
@@ -214,7 +214,11 @@ export type PendingQueueAgeHygiene = {
  * not just a number — batch approve/reject/defer tooling is explicitly deferred (#2098), so this
  * stays informational rather than offering an action this digest can't yet perform.
  */
-function computeQueueAgeHygiene(ageDaysList: number[], queueLabel: string, reviewCommand: string): PendingQueueAgeHygiene {
+function computeQueueAgeHygiene(
+  ageDaysList: number[],
+  queueLabel: string,
+  reviewCommand: string,
+): PendingQueueAgeHygiene {
   const ageBuckets = { d0_1: 0, d1_7: 0, d7_30: 0, d30plus: 0 };
   for (const age of ageDaysList) {
     if (age <= 1) ageBuckets.d0_1++;
@@ -242,7 +246,7 @@ function computeQueueAgeHygiene(ageDaysList: number[], queueLabel: string, revie
   return { ageBuckets, oldestAgeDays, newestAgeDays, recommendedNextAction };
 }
 
-function relativeTime(epochSec: number, nowSec = Math.floor(Date.now() / 1000)): string {
+function _relativeTime(epochSec: number, nowSec = Math.floor(Date.now() / 1000)): string {
   const diffSec = Math.max(0, nowSec - epochSec);
   if (diffSec < 60) return "just now";
   const mins = Math.floor(diffSec / 60);
@@ -317,8 +321,11 @@ export function buildPendingReviewDigestReport(opts: {
   };
 
   function ageDaysFromIso(iso: string): number {
-    const createdSec = Math.floor(new Date(iso).getTime() / 1000);
-    if (!Number.isFinite(createdSec)) return 0;
+    // parseTimestamp (not raw `new Date()`) — same helper services/unified-proposals.ts uses for
+    // these exact tool/crystallization createdAt fields, handling timestamp shapes (compact-date
+    // digits, numeric epoch strings) a plain Date parse would silently reject as 0-age.
+    const createdSec = parseTimestamp(iso);
+    if (createdSec === null) return 0;
     return Math.max(0, Math.floor((nowSec - createdSec) / 86400));
   }
   const personaAgeDays = personaPending.map((p) => Math.max(0, Math.floor((nowSec - p.createdAt) / 86400)));
@@ -419,7 +426,11 @@ export function buildPendingReviewDigestReport(opts: {
         declineCommand: `memory_crystallize_reject id=${p.id}`,
         validation: summarizeSkillProposalValidation(p.validationResult),
       })),
-      ageHygiene: computeQueueAgeHygiene(crystalAgeDays, "crystallization proposals", "openclaw hybrid-mem skills queue"),
+      ageHygiene: computeQueueAgeHygiene(
+        crystalAgeDays,
+        "crystallization proposals",
+        "openclaw hybrid-mem skills queue",
+      ),
     },
     verifiedFacts: {
       pendingReview: pendingReview.verified,
@@ -481,7 +492,10 @@ export function renderPendingReviewDigestMarkdown(report: PendingReviewDigestRep
     "- Defer: leave validated procedures unpromoted",
     "",
   );
-  lines.push(`## Tool proposals (${report.toolProposals.proposed})`, ...formatAgeHygieneLines(report.toolProposals.ageHygiene));
+  lines.push(
+    `## Tool proposals (${report.toolProposals.proposed})`,
+    ...formatAgeHygieneLines(report.toolProposals.ageHygiene),
+  );
   if (report.toolProposals.proposedEntries.length === 0) lines.push("No pending tool proposals.");
   report.toolProposals.proposedEntries.forEach((p, i) => {
     lines.push(`${i + 1}. [pending ${p.ageDays}d] ${p.name} — ${p.description}`);

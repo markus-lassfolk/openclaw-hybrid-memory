@@ -1,7 +1,7 @@
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { EmbeddingProvider } from "./embeddings.js";
 import { nowIso } from "../utils/dates.js";
+import type { EmbeddingProvider } from "./embeddings.js";
 import { appendVectorLifecycleAuditEvent } from "./vector-lifecycle-audit.js";
 import { reconcileOrphanVectors, storeCanonicalVectorForFact } from "./vector-maintenance.js";
 
@@ -99,7 +99,10 @@ export async function runStorageRepairPipeline(args: {
     });
     report.reconcile.vectorOrphans = reconcileResult.orphansFound;
     report.reconcile.vectorOrphansDeleted = reconcileResult.orphanVectorsRemoved;
-    const sqliteIds = new Set(args.factsDb.getAllIds());
+    // listExpectedVectorFactIds() (not getAllIds()) — same expected-vector population contract
+    // storage-sync-diagnostics.ts uses (#2080), so structured (key/value) facts, which are never
+    // meant to have a vector, aren't misclassified as orphans here and repaired unnecessarily.
+    const sqliteIds = new Set(args.factsDb.listExpectedVectorFactIds());
     const sqliteOrphans = Array.from(sqliteIds).filter((id) => !vectorIdSet.has(id));
     report.reconcile.sqliteOrphans = sqliteOrphans.length;
 

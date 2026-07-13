@@ -112,4 +112,37 @@ describe("runStorageRepairPipeline vectorless reembed (#2083)", () => {
     const match = results.find((r) => r.entry.id === stored.id);
     expect(match?.entry.importance).toBeCloseTo(0.42, 5);
   });
+
+  it("does not treat a vectorless structured (keyed) fact as a sqliteOrphan (#2080 QA follow-up)", async () => {
+    // Structured key/value facts are intentionally excluded from the expected-vector population
+    // (#2080) — a structured fact without a Lance row is not drift and must not be reconciled.
+    factsDb.store({
+      text: "structured-key-value-fact",
+      category: "fact",
+      importance: 0.5,
+      entity: "widget",
+      key: "status",
+      value: "active",
+      source: "test",
+    });
+    const unstructured = factsDb.store({
+      text: "a genuinely vectorless unstructured fact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    const embeddings = makeEmbeddings();
+    const report = await runStorageRepairPipeline({ factsDb, vectorDb, embeddings, skipReembed: true });
+
+    // Only the unstructured fact should be counted/rebuilt — the structured fact must be invisible
+    // to this reconcile pass, matching storage-sync-diagnostics.ts's contract for the same query.
+    expect(report.reconcile.sqliteOrphans).toBe(1);
+    expect(report.reconcile.sqliteOrphansRebuilt).toBe(1);
+    expect(embeddings.embed).toHaveBeenCalledTimes(1);
+    expect(embeddings.embed).toHaveBeenCalledWith(unstructured.text);
+  });
 });

@@ -1,6 +1,5 @@
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import { normalizeVectorId } from "../utils/vector-id.js";
 import { findOrphanVectorIds } from "./vector-maintenance.js";
 
 export type StorageSyncSnapshot = {
@@ -80,12 +79,7 @@ export function analyzeStorageSyncFromIds(args: {
 export async function collectStorageSyncSnapshot(
   factsDb: Pick<
     FactsDB,
-    | "getCount"
-    | "getAllIds"
-    | "filterActiveFactIds"
-    | "countCanonicalEmbeddings"
-    | "countExpectedVectorFacts"
-    | "listExpectedVectorFactIds"
+    "getCount" | "getAllIds" | "filterActiveFactIds" | "countCanonicalEmbeddings" | "listExpectedVectorFactIds"
   >,
   vectorDb: Pick<VectorDB, "count" | "getAllIds"> & Partial<Pick<VectorDB, "isLanceDbAvailable">>,
 ): Promise<StorageSyncSnapshot | null> {
@@ -94,12 +88,21 @@ export async function collectStorageSyncSnapshot(
   }
 
   const sqliteActiveFacts = factsDb.getCount();
-  const expectedVectorFacts = factsDb.countExpectedVectorFacts();
+  // Single listExpectedVectorFactIds() scan instead of a separate countExpectedVectorFacts()
+  // COUNT(*) — both run the identical WHERE clause over `facts` (stats.ts), so the count is
+  // always just the id list's length.
+  const expectedVectorFactIds = factsDb.listExpectedVectorFactIds();
+  const expectedVectorFacts = expectedVectorFactIds.length;
   const lanceRowCount = await vectorDb.count();
   const lanceIdList = await vectorDb.getAllIds();
-  const lanceIdSet = new Set(lanceIdList.map((id) => normalizeVectorId(id)));
+  // Case-insensitive comparison for BOTH UUID and slug ids, matching sibling comparisons in this
+  // same drift pipeline (findOrphanVectorIds -> filterActiveFactIds, which always lowercases).
+  // normalizeVectorId() only lowercases UUID-shaped ids (it must never mutate stored slug ids —
+  // that's a write-path contract), so using it alone here left a legacy slug row whose LanceDB id
+  // differs only in case from facts.id falsely reported as a sqliteOrphan.
+  const lanceIdSet = new Set(lanceIdList.map((id) => id.trim().toLowerCase()));
   const vectorOrphans = await findOrphanVectorIds(factsDb, vectorDb);
-  const sqliteOrphans = factsDb.listExpectedVectorFactIds().filter((id) => !lanceIdSet.has(normalizeVectorId(id)));
+  const sqliteOrphans = expectedVectorFactIds.filter((id) => !lanceIdSet.has(id.trim().toLowerCase()));
   const canonicalEmbeddings = factsDb.countCanonicalEmbeddings();
 
   return analyzeStorageSyncFromIds({

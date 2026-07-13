@@ -165,4 +165,34 @@ describe("collectStorageSyncSnapshot (#2080/#2092 — structured facts excluded 
     expect(snapshot?.vectorOrphans).toEqual([]);
     expect(snapshot?.hasIdSetDrift).toBe(false);
   });
+
+  it("matches a slug-style fact id case-insensitively, not just UUID ids (QA follow-up)", async () => {
+    // normalizeVectorId() only lowercases UUID-shaped ids (write-path contract: slug ids must
+    // never be mutated) — but sqliteOrphans comparison must still be case-insensitive for slugs,
+    // matching the vectorOrphans side of the same drift pipeline, so a legacy slug row whose
+    // LanceDB id differs only in case from facts.id isn't falsely reported as missing.
+    const stored = factsDb.store({
+      text: "Unstructured fact with a slug-style id",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const slugId = "Legacy-Slug-Id-2026";
+    factsDb.getRawDb().prepare("UPDATE facts SET id = ? WHERE id = ?").run(slugId, stored.id);
+
+    await vectorDb.store({
+      id: slugId.toLowerCase(),
+      text: "Unstructured fact with a slug-style id",
+      vector: [0.1, 0.2, 0.3],
+      importance: 0.5,
+      category: "fact",
+    });
+
+    const snapshot = await collectStorageSyncSnapshot(factsDb, vectorDb);
+    expect(snapshot?.sqliteOrphans).toEqual([]);
+    expect(snapshot?.hasIdSetDrift).toBe(false);
+  });
 });

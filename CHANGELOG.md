@@ -61,7 +61,7 @@ Twenty-two issues filed after a live storage-repair incident and an extensive me
 - Added ([#2088](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2088)): `smoke e2e [--json]` — a first-class end-to-end pipeline smoke test (store → embed → recall → link → episode → forget → verify) using disposable, uniquely-tagged facts with mandatory best-effort cleanup, safe to run against a production local memory store.
 
 **De-flaking**
-- Fixed ([#2096](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2096)): hardened `tests/cron-job-bash-harness.test.ts` fixture directories against silent `mkdir` failures, and cached repeated `getProjectFacts` scans in `services/task-ledger-facts.ts` checkpoint logic to remove a source of test flakiness.
+- Fixed ([#2096](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2096)): hardened `tests/cron-job-bash-harness.test.ts` fixture directories against silent `mkdir` failures to remove a source of test flakiness. The `services/task-ledger-facts.ts` checkpoint-logic caching this issue also called for was not implemented in this release and remains open as a follow-up — `findActiveTaskCoherenceRepairs`, `loadTaskLedgerFromFactsWithMetrics`, `getLatestProjectFactCreatedAtSec`, `findLatestActiveTaskKeyFact`, `retireProjectTaskKeyFacts`, and `renderActiveTaskMarkdownFile` each still independently call `factsDb.getProjectFacts(8000, scopeFilter)`.
 
 ### Notes
 - No `schemaVersion` bump — all fixes reuse existing columns/tables.

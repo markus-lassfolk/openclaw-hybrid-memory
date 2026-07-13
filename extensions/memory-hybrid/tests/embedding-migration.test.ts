@@ -723,6 +723,61 @@ describe("runEmbeddingMaintenance — migration trigger", () => {
     expect(result.result?.migrated).toBe(2);
   });
 
+  it("backfills the fact_embeddings cache after a successful direct-mode migration (#2084 QA follow-up)", async () => {
+    // The automatic bootstrap-triggered migration path (runEmbeddingMaintenance with no
+    // targetTableName) never called backfillEmbeddingCacheFromVectorStore before this fix —
+    // only the manual CLI `storage re-index` shadow-table swap did — leaving fact_embeddings
+    // stale for every fact migrated by an automatic provider/model change.
+    const facts = [makeFact("f1"), makeFact("f2")];
+    const factsDb = makeFactsDB({
+      getAll: vi.fn().mockReturnValue(facts),
+      getEmbeddingMeta: vi.fn().mockReturnValue({ provider: "ollama", model: "nomic-embed-text" }),
+      listExpectedVectorFactIds: vi.fn().mockReturnValue(["f1", "f2"]),
+      storeEmbedding: vi.fn(),
+    });
+    const vec = Array(1536).fill(0.1);
+    const vectorDb = makeVectorDB({
+      getVectorsByFactIds: vi.fn().mockResolvedValue(
+        new Map([
+          ["f1", vec],
+          ["f2", vec],
+        ]),
+      ),
+    });
+    const embeddings = makeEmbeddings(1536, {
+      embedBatch: vi.fn().mockResolvedValue([vec, vec]),
+    });
+
+    const result = await runEmbeddingMaintenance({
+      factsDb: factsDb as any,
+      edictStore: null as any,
+      vectorDb: vectorDb as any,
+      embeddings: embeddings as any,
+      currentProvider: "openai",
+      currentModel: "text-embedding-3-small",
+      autoMigrate: true,
+      logger: silentLogger(),
+    });
+
+    expect(result.migrated).toBe(true);
+    expect(factsDb.listExpectedVectorFactIds).toHaveBeenCalled();
+    expect(factsDb.storeEmbedding).toHaveBeenCalledTimes(2);
+    expect(factsDb.storeEmbedding).toHaveBeenCalledWith(
+      "f1",
+      "test-model",
+      "canonical",
+      expect.any(Float32Array),
+      1536,
+    );
+    expect(factsDb.storeEmbedding).toHaveBeenCalledWith(
+      "f2",
+      "test-model",
+      "canonical",
+      expect.any(Float32Array),
+      1536,
+    );
+  });
+
   it("returns migrated=false (not throws) when migration itself fails", async () => {
     const factsDb = makeFactsDB({
       getAll: vi.fn().mockReturnValue([makeFact("x")]),

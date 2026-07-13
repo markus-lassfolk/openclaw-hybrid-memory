@@ -21,9 +21,10 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ToolEffectivenessConfig } from "../config/types/features.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
-import { formatDateUtc, nowSec, formatTimestampUtc } from "../utils/dates.js";
-import { capturePluginError } from "./error-reporter.js";
+import { formatDateUtc, formatTimestampUtc, nowSec } from "../utils/dates.js";
+import { embedCallWithTimeoutAndRetry } from "../utils/embed-call.js";
 import type { EmbeddingProvider } from "./embeddings.js";
+import { capturePluginError } from "./error-reporter.js";
 import { storeCanonicalVectorForFact } from "./vector-maintenance.js";
 
 // ---------------------------------------------------------------------------
@@ -737,7 +738,14 @@ export async function generateMonthlyReport(
     }
     if (vectors) {
       try {
-        const vector = await vectors.embeddings.embed(summary);
+        // Retry (not a single attempt) — this fact is keyed (line ~726), so per this function's
+        // own docstring it is excluded from every self-heal path (vectorless-backlog reembed,
+        // storage-sync sqliteOrphans/reconcile). A transient embed failure here is otherwise
+        // permanent, not "picked up by the next reembed pass".
+        const vector = await embedCallWithTimeoutAndRetry(
+          () => vectors.embeddings.embed(summary),
+          "tool-effectiveness-monthly-report",
+        );
         await storeCanonicalVectorForFact({
           vectorDb: vectors.vectorDb,
           factsDb,
@@ -749,11 +757,12 @@ export async function generateMonthlyReport(
           embeddingModel: vectors.embeddings.modelName,
         });
       } catch (vecErr) {
-        // Non-fatal: the report fact itself stored successfully; a missing vector just means
-        // it stays out of semantic search until the next reembed pass picks it up.
+        // Non-fatal: the report fact itself stored successfully. A vector failure here IS
+        // effectively permanent (see above) — logged as a warning, not silently swallowed, since
+        // there is no other repair path that will ever pick this fact up.
         capturePluginError(vecErr instanceof Error ? vecErr : new Error(String(vecErr)), {
           operation: "tool-effectiveness-monthly-report-vector",
-          severity: "info",
+          severity: "warning",
         });
       }
     }

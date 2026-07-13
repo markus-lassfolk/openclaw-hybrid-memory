@@ -14,17 +14,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { _testing } from "../index.js";
 import { explainToolEffectivenessNoData, resolveToolEffectivenessCliDbPaths } from "../cli/cmd-feedback.js";
+import { _testing } from "../index.js";
 import {
-  ToolEffectivenessStore,
-  type ToolMetrics,
   aggregateTraceRows,
   computeToolEffectiveness,
   formatToolEffectivenessReport,
   generateMonthlyReport,
   generateRecommendations,
   generateToolHint,
+  ToolEffectivenessStore,
+  type ToolMetrics,
 } from "../services/tool-effectiveness.js";
 
 const { FactsDB, VectorDB } = _testing;
@@ -972,6 +972,31 @@ describe("generateMonthlyReport", () => {
     const reports = facts.filter((f) => f.tags?.includes("monthly-report"));
     expect(reports).toHaveLength(1);
     expect(factsDb.countCanonicalEmbeddings()).toBe(0);
+
+    vectorDb.close();
+  });
+
+  it("retries the embed call instead of giving up on the first transient failure (QA follow-up)", async () => {
+    // This report fact is keyed, so per generateMonthlyReport's own docstring it is excluded from
+    // every self-heal path (vectorless-backlog reembed, storage-sync sqliteOrphans/reconcile) — a
+    // single-attempt embed failure is otherwise permanent. Assert the embed call is actually
+    // retried (not attempted once) before the vector is given up on.
+    store.upsert(makeMetrics({ tool: "exec", context: "general", compositeScore: 0.85, totalCalls: 50 }));
+    const vectorDb = new VectorDB(join(tmpDir, "lance"), 3);
+    let calls = 0;
+    const embeddings = {
+      modelName: "test-embedding-model",
+      embed: async (_text: string) => {
+        calls++;
+        if (calls < 2) throw new Error("transient rate limit");
+        return [0.1, 0.2, 0.3];
+      },
+    };
+
+    await generateMonthlyReport(store, factsDb, { embeddings, vectorDb });
+
+    expect(calls).toBeGreaterThanOrEqual(2);
+    expect(factsDb.countCanonicalEmbeddings()).toBe(1);
 
     vectorDb.close();
   });

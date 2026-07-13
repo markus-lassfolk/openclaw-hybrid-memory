@@ -8,7 +8,7 @@ This release closes a sweep of 22 issues (#2079–#2100) filed after a live stor
 - **Graph** — `facts.out_degree`/`in_degree` are now kept live on every link create/strengthen/prune instead of only refreshing once per dream cycle, which also revives the CTE hub-cap traversal guard's fast path that was silently dead code (#2085). Added a `graph health` discoverability alias next to `graph repair` (#2087). Confirmed #2086 (stale tool registrations after gateway restart) was already fixed by prior generation-delegation logic — no code change needed.
 - **Dedupe** — the five store write-paths outside the `memory_store` exemplar now resolve vector dedupe candidates before writing, instead of silently degrading to lexical-only dedupe (#2091).
 - **Maintenance** — real bounded retry-once for transient step failures, an earlier terminal ledger row that catches crashes during cron-harness setup, and `maintenance status` no longer false-positives on live runs (#2094). Maintenance coverage metrics classify per-metric as ok/warn/fail/not-configured with remediation text (#2097). `digest pending` gained a `--json` alias and per-queue age-bucket hygiene (#2098).
-- **De-flaking** — hardened cron-harness test fixtures and cached checkpoint scans that were a source of test flakiness (#2096).
+- **De-flaking** — hardened cron-harness test fixtures against silent `mkdir` failures, a source of test flakiness (#2096). The checkpoint-scan caching also planned for #2096 was not implemented in this release and remains open as a follow-up.
 
 ## Added
 
