@@ -1,7 +1,7 @@
-import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { FactsDB } from "../backends/facts-db.js";
@@ -117,6 +117,43 @@ describe("doctor FTS consistency checks", () => {
     const snapshot = factsDb.getFtsConsistencySnapshot();
     expect(snapshot.missingFactsInFts).toBe(0);
     expect(snapshot.extraFtsRows).toBe(0);
+
+    factsDb.close();
+  });
+
+  it("doctor --fix recreates a dropped facts_fts table/triggers via live migration and reindexes", async () => {
+    const { factsDb, sqlitePath, runDoctor } = setupDoctorHarness();
+
+    factsDb.store({
+      text: "structural drift fact",
+      category: "fact",
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+      importance: 0.5,
+    });
+
+    const raw = new DatabaseSync(sqlitePath);
+    raw.exec("DROP TRIGGER IF EXISTS facts_ai");
+    raw.exec("DROP TRIGGER IF EXISTS facts_ad");
+    raw.exec("DROP TRIGGER IF EXISTS facts_au");
+    raw.exec("DROP TABLE IF EXISTS facts_fts");
+    raw.close();
+
+    const snapshotBefore = factsDb.getFtsConsistencySnapshot();
+    expect(snapshotBefore.ftsTableExists).toBe(false);
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    await runDoctor({ fix: true });
+    const out = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(out).toContain("Rebuilt facts_fts table/triggers via migration");
+
+    const snapshotAfter = factsDb.getFtsConsistencySnapshot();
+    expect(snapshotAfter.ftsTableExists).toBe(true);
+    expect(snapshotAfter.missingTriggers).toHaveLength(0);
+    expect(snapshotAfter.missingFactsInFts).toBe(0);
+    expect(snapshotAfter.extraFtsRows).toBe(0);
 
     factsDb.close();
   });

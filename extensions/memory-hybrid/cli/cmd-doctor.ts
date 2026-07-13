@@ -7,6 +7,7 @@ import { existsSync, statfsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
+import { runFactsMigrations } from "../backends/migrations/facts-migrations.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import { WAL_ENTRY_SCHEMA_VERSION, type WALEntry, type WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig } from "../config.js";
@@ -623,12 +624,70 @@ export function registerDoctorCommand(
               snapshot.factsCount !== snapshot.ftsCount || snapshot.missingFactsInFts > 0 || snapshot.extraFtsRows > 0;
 
             if (structuralProblems.length > 0) {
-              checks.push({
-                name: "FTS Index/Triggers",
-                status: "fail",
-                message: structuralProblems.join("; "),
-                fix: "Restart gateway to re-run migrations. If unresolved, rebuild facts_fts from SQLite facts.",
-              });
+              if (opts?.fix) {
+                // runFactsMigrations (backends/migrations/facts-migrations.ts) is the same idempotent
+                // migration FactsDB's own constructor already runs on every open — safe to call again
+                // here. It recreates a missing facts_fts table/columns/triggers from scratch.
+                try {
+                  runFactsMigrations(factsDb.getRawDb());
+                  snapshot = factsDb.getFtsConsistencySnapshot();
+                  const stillStructural =
+                    !snapshot.ftsTableExists ||
+                    !snapshot.hasTagsColumn ||
+                    !snapshot.hasWhyColumn ||
+                    snapshot.missingTriggers.length > 0;
+                  if (stillStructural) {
+                    checks.push({
+                      name: "FTS Index/Triggers",
+                      status: "fail",
+                      message: `${structuralProblems.join("; ")} (live migration repair did not resolve it)`,
+                      fix: "Restart gateway to re-run migrations. If unresolved, rebuild facts_fts from SQLite facts.",
+                    });
+                  } else {
+                    // A freshly recreated facts_fts starts empty/out of sync — chain straight into
+                    // the population-drift repair so one --fix pass fully self-heals.
+                    try {
+                      const rebuilt = factsDb.rebuildFtsIndex();
+                      snapshot = factsDb.getFtsConsistencySnapshot();
+                      const driftAfterFix =
+                        snapshot.factsCount !== snapshot.ftsCount ||
+                        snapshot.missingFactsInFts > 0 ||
+                        snapshot.extraFtsRows > 0;
+                      checks.push({
+                        name: "FTS Index/Triggers",
+                        status: driftAfterFix ? "warn" : "pass",
+                        message: driftAfterFix
+                          ? `Rebuilt facts_fts structure via migration, but population drift persists after reindex (facts=${snapshot.factsCount}, facts_fts=${snapshot.ftsCount})`
+                          : `Rebuilt facts_fts table/triggers via migration and reindexed ${rebuilt} fact(s). If a gateway is currently running, restart it so its connection picks up the corrected schema.`,
+                        fix: driftAfterFix
+                          ? "Run with --deep for trigger probe; if still drifting, inspect DB integrity and restore from backup."
+                          : undefined,
+                      });
+                    } catch (error) {
+                      checks.push({
+                        name: "FTS Index/Triggers",
+                        status: "warn",
+                        message: `Recreated facts_fts structure via migration, but reindex failed: ${error instanceof Error ? error.message : String(error)}`,
+                        fix: "Run: openclaw hybrid-mem doctor --fix (retry), or rebuild facts_fts from SQLite facts.",
+                      });
+                    }
+                  }
+                } catch (error) {
+                  checks.push({
+                    name: "FTS Index/Triggers",
+                    status: "fail",
+                    message: `${structuralProblems.join("; ")} — live migration repair failed: ${error instanceof Error ? error.message : String(error)}`,
+                    fix: "Restart gateway to re-run migrations. If unresolved, rebuild facts_fts from SQLite facts.",
+                  });
+                }
+              } else {
+                checks.push({
+                  name: "FTS Index/Triggers",
+                  status: "fail",
+                  message: structuralProblems.join("; "),
+                  fix: "Run: openclaw hybrid-mem doctor --fix (recreates facts_fts via migration), or restart gateway to re-run migrations.",
+                });
+              }
             } else if (populationDrift) {
               if (opts?.fix) {
                 try {

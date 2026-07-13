@@ -341,6 +341,7 @@ The same contract applies to other JSON commands (`status --json`, `skills queue
 `--fix` repairs what it safely can, then re-checks and reports the real post-repair state (not just "a repair ran"):
 
 - **FTS population drift** — rebuilds `facts_fts` from `facts`.
+- **FTS structural drift** (missing `facts_fts` table/columns/triggers) — recreates it live via the same idempotent migration (`runFactsMigrations`) that already runs on every `FactsDB` open, then chains straight into a population rebuild so one `--fix` pass fully self-heals. If a gateway is currently running, restart it afterward so its own connection picks up the corrected schema.
 - **Storage structural drift** (duplicate/fragmented Lance rows, no orphans) — runs the same repair `verify --fix` uses (optimize + dedupe + rebuild), matching issue [#2103](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2103).
 - **Alias Lance index mismatch** — rebuilds the alias Lance table from SQLite (re-embeds if the dimension changed).
 - **Quarantined goal files** — restores any `.json.corrupt` goal file that still parses as valid Goal JSON.
@@ -349,7 +350,9 @@ Add **`--reconcile`** to also check for SQLite ↔ LanceDB **orphan** drift (mis
 
 `--deep` additionally runs a savepointed FTS trigger round-trip probe (insert/update/delete).
 
-Checks that need human judgement or aren't safely repairable from inside the running process stay suggestion-only: SQLite/LanceDB connection failures, missing/misconfigured embedding provider, low disk space, WAL disabled/unavailable/circuit-breaker-tripped/journal-corrupt, FTS structural problems (missing table/columns/triggers — needs a migration + restart), and stale maintenance jobs.
+Checks that need human judgement or aren't safely repairable from inside the running process stay suggestion-only: SQLite/LanceDB connection failures, missing/misconfigured embedding provider, low disk space, WAL disabled/unavailable/circuit-breaker-tripped/journal-corrupt (data-loss risk — needs root-cause investigation first), and stale maintenance jobs.
+
+`openclaw hybrid-mem doctor --fix --reconcile` runs nightly by default via the `hybrid-mem:nightly-doctor-repair` cron job (see [Maintenance cron jobs](#maintenance-cron-jobs) below) — existing installs pick it up the next time `install` or `verify --fix` runs.
 
 ---
 
@@ -577,7 +580,7 @@ store (see [PROACTIVE-RESEARCH.md](PROACTIVE-RESEARCH.md)):
 
 ## Maintenance cron jobs
 
-**Install** and **verify --fix** create or repair maintenance cron jobs in `~/.openclaw/cron/jobs.json`. The canonical list is **10 jobs** (see table). **Install/verify** also creates `~/.openclaw/logs/cron-hybrid-mem/` for first-run log paths.
+**Install** and **verify --fix** create or repair maintenance cron jobs in `~/.openclaw/cron/jobs.json`. The canonical list is **11 jobs** (see table). **Install/verify** also creates `~/.openclaw/logs/cron-hybrid-mem/` for first-run log paths.
 
 Default job **messages** embed a **bash harness**: one foreground shell (`set -euo pipefail`, `set -x`), per-step `hm_step` that **tees** to `HM_LOG` and appends `exit=<code>` lines to `HM_EXIT`, plus log headers (`HM_JOB`, `RUN_ID`, `openclaw --version`). Logs default to `~/.openclaw/logs/cron-hybrid-mem/` (fallback: `/tmp/openclaw-cron-hybrid-mem-$USER` if that directory is not writable). The message instructs the agent **not** to update the guard file after a failed step and to paste `HM_EXIT` in the reply.
 
@@ -593,6 +596,7 @@ Default job **messages** embed a **bash harness**: one foreground shell (`set -e
 | `hybrid-mem:monthly-consolidation` | 1st 05:00 | **monthly-consolidation:** consolidate → build-languages → backfill-decay → enrich-entities --limit `${HYBRID_MEM_CLI_JOB_ENRICH_LIMIT:-25}` (default 25; set env var to override). |
 | `hybrid-mem:sensor-sweep` | every 4h (configurable) | **sensor-sweep:** tier 1 + tier 2. Requires sensorSweep.enabled. |
 | `hybrid-mem:research-overnight` | 03:30 daily (`research.schedule`) | **research-overnight:** isolated heavy-model agent — `research pick` → web research → `research store`. Gated by `research.enabled` (default on); announce delivery only with explicit `research.delivery.channel` + `to`. |
+| `hybrid-mem:nightly-doctor-repair` | 03:15 daily | **nightly-doctor-repair:** `doctor --fix --reconcile` — self-heals storage structural drift, orphan vectors (with an automatic backup before deletion), alias Lance mismatches, and quarantined goal files (issue [#2103](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2103)). Runs after the night's memory-sweep/dream-cycle writes settle, before the 03:30 jobs. |
 
 - **Install:** Adds any missing jobs (does not change existing jobs or re-enable disabled ones).
 - **Verify --fix:** Adds any missing jobs and can normalize schedule/pluginJobId; does not re-enable disabled jobs by default.

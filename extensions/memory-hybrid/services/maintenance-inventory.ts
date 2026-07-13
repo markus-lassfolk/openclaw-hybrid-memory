@@ -295,6 +295,15 @@ const MAINTENANCE_JOB_CATALOG: MaintenanceJobCatalogEntry[] = [
     mutates: { sqlite: false, lancedb: false, github: false, memoryFacts: false },
   },
   {
+    jobKey: "nightly-doctor-repair",
+    name: "nightly-doctor-repair",
+    pluginJobId: "hybrid-mem:nightly-doctor-repair",
+    aliases: [],
+    lockKey: "sqlite+lancedb",
+    collisionGroups: ["sqlite-writer", "lancedb-writer", "memory-facts-writer"],
+    mutates: { sqlite: true, lancedb: true, github: false, memoryFacts: true },
+  },
+  {
     jobKey: GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID,
     name: GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID,
     pluginJobId: GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID,
