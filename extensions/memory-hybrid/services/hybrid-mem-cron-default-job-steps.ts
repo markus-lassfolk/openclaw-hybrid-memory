@@ -36,6 +36,7 @@ export const HYBRID_MEM_CRON_DEFAULT_JOB_STEPS: Record<string, string[]> = {
   "hybrid-mem:weekly-vectordb-optimize-sunday": ["vectordb-optimize"],
   "hybrid-mem:weekly-audit-health": ["audit-health"],
   "hybrid-mem:maintenance-log-analyzer": ["analyze-maintenance-logs"],
+  "hybrid-mem:nightly-doctor-repair": ["doctor-fix-reconcile"],
   "hybrid-mem:weekly-pending-digest": ["digest-pending"],
   "hybrid-mem:weekly-pending-digest-autopilot": ["digest-autopilot-cron"],
   /** Twice-daily operator reminder (#1921); same underlying command as weekly-pending-digest. */

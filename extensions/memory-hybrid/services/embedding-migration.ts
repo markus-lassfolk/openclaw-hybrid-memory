@@ -12,6 +12,7 @@ import { is403QuotaOrRateLimitLike, is429OrWrapped } from "./chat.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
+import { backfillEmbeddingCacheFromVectorStore } from "./vector-maintenance.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -528,6 +529,25 @@ export async function runEmbeddingMaintenance(opts: EmbeddingMaintenanceOptions)
         `memory-hybrid: embedding-migration: maintenance run aborted — meta not updated. ${result.migrated} embedded, ${result.skipped} skipped, ${result.errors.length} errors (processed ${result.processed}/${result.total}). Re-run maintenance or re-index to complete.`,
       );
       return { changed: true, migrated: true, result };
+    }
+    // Best-effort fact_embeddings (canonical embedding cache) backfill after a successful
+    // migration (#2084) — mirrors the CLI `storage re-index` shadow-table swap's post-swap
+    // backfill (register-storage-maintenance.ts), which this automatic direct-mode path (run from
+    // bootstrap-databases.ts on a detected provider/model change) never reached before. Failure
+    // here is non-fatal: fact_embeddings is a cache, not vector-store integrity, and would
+    // otherwise only catch up via the slower reembed-vectorless path.
+    try {
+      const cacheBackfillResult = await backfillEmbeddingCacheFromVectorStore({
+        factsDb: opts.factsDb,
+        vectorDb: opts.vectorDb,
+        embeddingModel: opts.embeddings.modelName,
+      });
+      log.info(
+        `memory-hybrid: embedding-migration: embedding cache backfill — ${cacheBackfillResult.backfilled} updated` +
+          (cacheBackfillResult.failed > 0 ? `, ${cacheBackfillResult.failed} skipped (non-fatal)` : ""),
+      );
+    } catch (err) {
+      log.warn(`memory-hybrid: embedding-migration: embedding cache backfill failed (non-fatal): ${err}`);
     }
     factsDb.setEmbeddingMeta(currentProvider, currentModel);
     return { changed: true, migrated: true, result };

@@ -320,7 +320,7 @@ openclaw hybrid-mem maintenance inventory --json
 `--auto-fix` applies **only** safe, idempotent actions implemented in [`services/maintenance-auto-fix.ts`](services/maintenance-auto-fix.ts):
 
 - **Stale scan lock files**: when a finding includes a `*.lock` absolute path and the recorded PID is not running, the lock file is removed.
-- **Retry-once marker**: for transient LLM / network rules, the finding is annotated (`auto-fixed-retry-once`) so the next cron tick can retry — **no** extra shell commands are executed.
+- **Retry-once marker**: for transient LLM / network rules, the finding is annotated (`auto-fixed-retry-once`) and a persisted per-step marker is written under `~/.openclaw/cron/guard/step--<name>.retry-once` (#2094). The orchestrator's guard check consumes this marker on the step's next evaluation, forcing exactly one run outside its normal cadence window even if the guard interval hasn't elapsed yet — **no** extra shell commands are executed.
 
 Add **`--auto-fix-all`** together with `--auto-fix` to opt into heavier remediation (still scoped to the maintenance analyzer):
 

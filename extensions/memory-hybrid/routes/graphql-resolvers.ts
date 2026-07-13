@@ -993,8 +993,10 @@ export const resolvers: GraphQLResolvers = {
       // remove a link between two other tenants' facts just by knowing/guessing its id.
       const existing = getLinkById(context.factsDb, id);
       if (!existing || !isLinkVisible(context.factsDb, existing, context.scopeFilter)) return false;
-      const result = context.factsDb.getRawDb().prepare("DELETE FROM memory_links WHERE id = ?").run(id);
-      return result.changes > 0;
+      // Routed through FactsDB.deleteLink (not raw SQL) so out_degree/in_degree stay live
+      // (#2085/#2090) — a raw DELETE here would silently leave both endpoints' denormalized
+      // degree counters inflated until the next dream-cycle refreshFactDegrees() reconciliation.
+      return context.factsDb.deleteLink(id);
     },
 
     updateLink: (_parent, args, context) => {

@@ -43,6 +43,10 @@ Execute **in order**:
    openclaw hybrid-mem audit health
    ```
 
+   `openclaw hybrid-mem graph health` is an alias for the same command, registered alongside
+   `graph repair` for operators who look for graph-consistency health checks under `graph` rather
+   than `audit` (#2087).
+
 ## Spike: vectorless auto-capture / reflection
 
 **Finding:** `audit health` counts “vectorless” as facts **without a `fact_embeddings` row** (`variant = canonical`), not “missing Lance rows”. Ingest paths (`stage-capture`, `reflection`) previously called `vectorDb.store` + `setEmbeddingModel` but **did not** call `factsDb.storeEmbedding`, so large stores looked vectorless while Lance still held vectors.

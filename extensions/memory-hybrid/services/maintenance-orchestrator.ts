@@ -15,7 +15,9 @@ import {
 import { is429OrWrapped } from "./chat.js";
 import {
   acquireStepLock,
+  consumeStepRetryOnce,
   formatStepLockDetail,
+  hasStepRetryOncePending,
   readStepGuardTimestampMs,
   readStepLockInfo,
   releaseStepLock,
@@ -29,7 +31,6 @@ import {
   reflectRulesStepSummaryIndicatesFailure,
   semanticOutcomeBlocksOrchestratorGuard,
 } from "./maintenance-job-run/semantic-outcome.js";
-import type { JobRunSemanticOutcome } from "./maintenance-job-run/types.js";
 
 export type StepTier = "cycle" | "nightly";
 export type StepLlmTier = "none" | "nano" | "maintenance" | "default" | "heavy" | "embed" | "local";
@@ -557,8 +558,22 @@ async function runStepWithHeartbeat<T>(
   const started = Date.now();
   logger.info(`maintenance-orchestrator: ${stepName} — start`);
   const heartbeat = setInterval(() => {
-    const elapsedSec = Math.floor((Date.now() - started) / 1000);
-    logger.info?.(`maintenance-orchestrator: ${stepName} — still running after ${elapsedSec}s`);
+    // Background timers must never crash the gateway process (CLAUDE.md) — this runs on the
+    // gateway-native cycle tier, so an uncaught exception here (e.g. a broken logger transport)
+    // would otherwise be fatal to the same process serving the gateway.
+    try {
+      const elapsedSec = Math.floor((Date.now() - started) / 1000);
+      logger.info?.(`maintenance-orchestrator: ${stepName} — still running after ${elapsedSec}s`);
+    } catch (err) {
+      // The fallback itself must not be able to throw uncaught — if the logger transport is
+      // broken badly enough that both .info and .warn fail, this must still not escape the
+      // setInterval callback and crash the gateway process (QA follow-up).
+      try {
+        logger.warn?.(`maintenance-orchestrator: ${stepName} — heartbeat failed (non-fatal): ${err}`);
+      } catch {
+        /* swallow — logging itself is broken, nothing more we can safely do here */
+      }
+    }
   }, ORCHESTRATOR_STEP_HEARTBEAT_MS);
   heartbeat.unref?.();
   try {
@@ -666,7 +681,14 @@ export async function runMaintenanceOrchestrator(
       }
 
       const guardMs = resolveStepGuardIntervalMs(step, cfg);
-      if (!options.force && guardMs > 0) {
+      // #2094: a pending retry-once marker (set by `analyze-maintenance-logs --auto-fix` for a
+      // transient-llm/transient-network finding) forces exactly one run outside the normal cadence
+      // guard. Peeked (not consumed) here — consuming eagerly used to burn the one forced retry on
+      // paths where the step never actually executes (missing runner, rate-limit circuit breaker,
+      // dry-run, or a concurrent-run lock below), silently defeating the bounded-retry guarantee
+      // (QA follow-up). Actually consumed just before the step runs, further down.
+      const retryOnceForced = hasStepRetryOncePending(step.name, openclawDir);
+      if (!options.force && guardMs > 0 && !retryOnceForced) {
         const guard = stepGuardEligible(step.name, guardMs, openclawDir);
         if (!guard.eligible) {
           const agoH = guard.lastRunMs ? Math.round((Date.now() - guard.lastRunMs) / HOUR_MS) : 0;
@@ -678,6 +700,15 @@ export async function runMaintenanceOrchestrator(
           });
           continue;
         }
+      } else if (retryOnceForced) {
+        // Not "consuming" — the marker is only peeked here. Several checks below (missing runner,
+        // rate-limit circuit breaker, dry-run, concurrent-run lock) can still stop this step short
+        // of actually executing, in which case the marker is correctly left pending for a future
+        // attempt. The log line at the real consumption point further down is the accurate record
+        // of whether this run's forced retry was actually used (QA follow-up).
+        logger?.info?.(
+          `maintenance-orchestrator: ${step.name} forced outside cadence guard by pending retry-once marker (#2094)`,
+        );
       }
 
       const runner = runners.get(step.name);
@@ -725,7 +756,10 @@ export async function runMaintenanceOrchestrator(
         // sleep window. acquireStepLock below only prevents *concurrent* execution — it does
         // nothing to stop this process from re-running a step that already finished sequentially
         // just before it woke up, since the lock is free again by the time it wakes.
-        if (!options.force && guardMs > 0) {
+        // !retryOnceForced here too, matching the original guard check above — otherwise a step
+        // admitted via a just-observed retry-once marker could still be skipped by normal cadence
+        // moments later (QA follow-up).
+        if (!options.force && guardMs > 0 && !retryOnceForced) {
           const recheck = stepGuardEligible(step.name, guardMs, openclawDir);
           if (!recheck.eligible) {
             const agoH = recheck.lastRunMs ? Math.round((Date.now() - recheck.lastRunMs) / HOUR_MS) : 0;
@@ -757,6 +791,13 @@ export async function runMaintenanceOrchestrator(
         continue;
       }
 
+      // The step is genuinely about to execute (past missing-runner/circuit-breaker/dry-run and
+      // the concurrent-run lock) — consume the marker now, not when it was merely observed.
+      if (retryOnceForced) {
+        consumeStepRetryOnce(step.name, openclawDir);
+        logger?.info?.(`maintenance-orchestrator: ${step.name} — consumed pending retry-once marker (#2094)`);
+      }
+
       const stepStarted = Date.now();
       try {
         const summary = await runStepWithHeartbeat(step.name, options.verbose !== false, logger, () => runner());
@@ -771,6 +812,11 @@ export async function runMaintenanceOrchestrator(
             ...meta,
             semanticOutcome: meta.semanticOutcome ?? "failed",
           });
+          // Reset here too, matching the thrown-non-rate-limit-error catch branch below — this
+          // step returned (didn't throw) but is still a real, non-rate-limit failure, so it must
+          // not let two rate-limit hits it happens to sit between still count as "consecutive"
+          // (QA follow-up).
+          consecutiveRateLimitErrors = 0;
           lastWasLlmStep = isLlmProviderStep(step.llmTier);
           continue;
         }
@@ -785,6 +831,7 @@ export async function runMaintenanceOrchestrator(
             durationMs: Date.now() - stepStarted,
             ...meta,
           });
+          consecutiveRateLimitErrors = 0;
           lastWasLlmStep = isLlmProviderStep(step.llmTier);
           continue;
         }
@@ -816,6 +863,10 @@ export async function runMaintenanceOrchestrator(
             durationMs: Date.now() - stepStarted,
           });
         } else {
+          // Reset here too — otherwise two rate-limit hits separated by an unrelated, non-rate-
+          // limited step failure still count as "consecutive" and can trip the circuit breaker
+          // (QA follow-up).
+          consecutiveRateLimitErrors = 0;
           logger?.warn?.(`maintenance-orchestrator: ${step.name} failed: ${message}`);
           const meta = parseStepRunnerMetadata(message);
           pushStepResult({

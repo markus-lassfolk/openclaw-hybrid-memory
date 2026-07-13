@@ -106,7 +106,8 @@ export async function runAnalyzeMaintenanceLogs(
   let findings = analyzeMaintenanceSteps(steps);
 
   if (opts?.autoFix) {
-    findings = findings.map((f) => applyMaintenanceAutoFix(f));
+    const openclawDir = join(homedir(), ".openclaw");
+    findings = findings.map((f) => applyMaintenanceAutoFix(f, openclawDir));
     if (opts.autoFixAll) {
       findings = applyHeavyMaintenanceAutoFixes({
         findings,

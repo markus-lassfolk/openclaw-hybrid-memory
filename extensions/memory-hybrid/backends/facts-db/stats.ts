@@ -119,6 +119,7 @@ export type VectorlessFactRow = {
   source: string;
   category: string;
   createdAt: number;
+  importance: number;
 };
 
 export type VectorlessBySourceRow = {
@@ -126,15 +127,45 @@ export type VectorlessBySourceRow = {
   count: number;
 };
 
-function vectorlessWhereClause(): string {
+/**
+ * Active, unstructured (no key/value) facts — the population that is expected to carry a
+ * canonical vector. Structured key/value facts (e.g. task-ledger rows) are intentionally
+ * excluded; they are addressable by key/value lookup and are not meant to be semantically
+ * searchable. Shared by {@link vectorlessWhereClause} (embedding-cache backlog) and
+ * {@link countExpectedVectorFacts}/{@link listExpectedVectorFactIds} (vector-store diagnostics)
+ * so the two "should have a vector" definitions never drift apart (#2080/#2084/#2092).
+ */
+function activeUnstructuredFactWhereClause(): string {
   return `f.superseded_at IS NULL
      AND (f.expires_at IS NULL OR f.expires_at > ?)
      AND COALESCE(f.key, '') = ''
-     AND COALESCE(f.value, '') = ''
+     AND COALESCE(f.value, '') = ''`;
+}
+
+function vectorlessWhereClause(): string {
+  return `${activeUnstructuredFactWhereClause()}
      AND NOT EXISTS (
        SELECT 1 FROM fact_embeddings e
        WHERE e.fact_id = f.id AND e.variant = 'canonical'
      )`;
+}
+
+/** Count of active, unstructured facts — the population diagnostics should compare against LanceDB. */
+export function countExpectedVectorFacts(db: DatabaseSync): number {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const row = db.prepare(`SELECT COUNT(*) AS cnt FROM facts f WHERE ${activeUnstructuredFactWhereClause()}`).get(
+    nowSec,
+  ) as { cnt: number } | undefined;
+  return Number(row?.cnt ?? 0);
+}
+
+/** IDs of active, unstructured facts — the population diagnostics should compare against LanceDB. */
+export function listExpectedVectorFactIds(db: DatabaseSync): string[] {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const rows = db.prepare(`SELECT f.id AS id FROM facts f WHERE ${activeUnstructuredFactWhereClause()}`).all(
+    nowSec,
+  ) as Array<{ id: string }>;
+  return rows.map((row) => row.id);
 }
 
 export function countVectorlessActiveFacts(db: DatabaseSync, source?: string): number {
@@ -181,19 +212,27 @@ export function listVectorlessActiveFacts(
   const rows = db
     .prepare(
       `SELECT f.id, f.text, COALESCE(NULLIF(f.source, ''), 'unknown') AS source,
-              COALESCE(f.category, 'other') AS category, f.created_at
+              COALESCE(f.category, 'other') AS category, f.created_at, f.importance
        FROM facts f
        WHERE ${where}
        ORDER BY f.created_at ASC, f.rowid ASC
        LIMIT ?`,
     )
-    .all(...params) as Array<{ id: string; text: string; source: string; category: string; created_at: number }>;
+    .all(...params) as Array<{
+    id: string;
+    text: string;
+    source: string;
+    category: string;
+    created_at: number;
+    importance: number | null;
+  }>;
   return rows.map((row) => ({
     id: row.id,
     text: row.text,
     source: row.source,
     category: row.category,
     createdAt: Number(row.created_at ?? 0),
+    importance: Number(row.importance ?? 0.5),
   }));
 }
 

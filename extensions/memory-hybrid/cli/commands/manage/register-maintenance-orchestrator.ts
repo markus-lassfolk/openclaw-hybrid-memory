@@ -237,7 +237,7 @@ export function registerMaintenanceOrchestratorCommands(maintenance: Chainable, 
       .description(
         `Run exactly one named maintenance step in isolation (bypasses that step's cadence guard). Use \`maintenance steps\` to list valid names. ` +
           `Defaults to a ${DEFAULT_STEP_MAX_RUNTIME_MIN}-minute runtime budget even with --force (#2046) — a large backlog (e.g. distill) ` +
-          `will stop partway and report a non-blocking, resumable partial result; pass --max-runtime-min <n> to clear a full backlog in one run.`,
+          "will stop partway and report a non-blocking, resumable partial result; pass --max-runtime-min <n> to clear a full backlog in one run.",
       ),
   ).action(
     withExit(async (step: string, opts, cmd?: CommanderOptsParent) => {
@@ -249,6 +249,18 @@ export function registerMaintenanceOrchestratorCommands(maintenance: Chainable, 
         for (const name of validNames) console.error(`  ${name}`);
         process.exitCode = 1;
         return;
+      }
+      // `--include`/`--exclude` are registered on this command only because commonOptions() is
+      // shared with cycle/nightly/full — `step` always overrides include to exactly the one named
+      // step below (#2028), so a user-supplied --include/--exclude value here can never take
+      // effect. Warn instead of silently discarding it (QA follow-up: the flag is advertised in
+      // --help as valid, so a passed value with zero observable effect and no diagnostic was easy
+      // to mistake for a bug in the command itself rather than a no-op-by-design combination).
+      if (opts?.include) {
+        console.error(`Note: --include is ignored by 'maintenance step' — it always runs exactly "${stepName}".`);
+      }
+      if (opts?.exclude) {
+        console.error(`Note: --exclude is ignored by 'maintenance step' — it always runs exactly "${stepName}".`);
       }
       // Force so the targeted step actually runs even if its cadence guard has not expired (this
       // command is an explicit "run this step now" diagnostic). include=[step] across both tiers

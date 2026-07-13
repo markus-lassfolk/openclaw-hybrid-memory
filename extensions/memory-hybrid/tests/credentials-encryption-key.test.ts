@@ -196,6 +196,48 @@ describe.skipIf(!hasNodeSqlite)("credentials vault key probe", () => {
     db!.close();
   });
 
+  it("getVaultStatus surfaces legacyLiteralFileKey + remediation when opened via the literal ref (#2099)", async () => {
+    const { createCredentialsDbForConfig } = await import("../services/credentials-bootstrap.js");
+
+    const ref = fileRef();
+    const legacyDb = createLegacyVaultEncryptedWithKey(dbPath, ref);
+    legacyDb.close();
+
+    vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+    const cfg = hybridConfigSchema.parse({
+      embedding: { provider: "openai", apiKey: "sk-test-key-that-is-long-enough", model: "text-embedding-3-small" },
+      credentials: { enabled: true, encryptionKey: ref },
+    });
+
+    const db = createCredentialsDbForConfig(cfg, join(tmpDir, "facts.db"));
+    expect(db).not.toBeNull();
+    const status = db!.getVaultStatus();
+    expect(status.legacyLiteralFileKey).toBe(true);
+    expect(status.legacyLiteralFileKeyRemediation).toContain("credentials rekey-vault");
+    db!.close();
+  });
+
+  it("getVaultStatus reports legacyLiteralFileKey false when opened via resolved file contents", async () => {
+    const { createCredentialsDbForConfig } = await import("../services/credentials-bootstrap.js");
+
+    writeFileSync(keyFile, TEST_KEY, "utf8");
+    const ref = fileRef();
+    const legacyDb = createLegacyVaultEncryptedWithKey(dbPath, TEST_KEY);
+    legacyDb.close();
+
+    const cfg = hybridConfigSchema.parse({
+      embedding: { provider: "openai", apiKey: "sk-test-key-that-is-long-enough", model: "text-embedding-3-small" },
+      credentials: { enabled: true, encryptionKey: ref },
+    });
+
+    const db = createCredentialsDbForConfig(cfg, join(tmpDir, "facts.db"));
+    expect(db).not.toBeNull();
+    const status = db!.getVaultStatus();
+    expect(status.legacyLiteralFileKey).toBe(false);
+    expect(status.legacyLiteralFileKeyRemediation).toBeNull();
+    db!.close();
+  });
+
   it("opens vault encrypted with file contents when file: ref is configured", async () => {
     const { probeCredentialsVaultKey, resolveCredentialsVaultKeyMaterial } = await import(
       "../services/credentials-encryption-key.js"

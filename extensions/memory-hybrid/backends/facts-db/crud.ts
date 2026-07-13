@@ -5,8 +5,8 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 
 import { type DecayClass, type MemoryCategory, type StoreConfig, TTL_DEFAULTS } from "../../config.js";
-import { applyDedupe, hasGlobalDuplicateProbe, resolveDedupeProfile } from "../../services/dedupe-policy.js";
 import { isPromptArtifactOrReasoningTrace } from "../../services/capture-utils.js";
+import { applyDedupe, hasGlobalDuplicateProbe, resolveDedupeProfile } from "../../services/dedupe-policy.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import type { MemoryEntry, MemoryTier } from "../../types/memory.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../../utils/constants.js";
@@ -15,6 +15,7 @@ import { calculateExpiry, classifyDecay } from "../../utils/decay.js";
 import { createTransaction, type SqliteTransactionBeginMode } from "../../utils/sqlite-transaction.js";
 import { normalizedHash, serializeTags } from "../../utils/tags.js";
 import { resolveEntityForeignKeys } from "./entity-layer.js";
+import { decrementFactDegreesForLink } from "./links.js";
 
 const SQLITE_BUSY_STORE_MAX_RETRIES = 3;
 const SQLITE_BUSY_STORE_BACKOFF_BASE_MS = 50;
@@ -681,7 +682,18 @@ export function refreshIndexedFacts(db: DatabaseSync, ids: string[]): void {
 export function deleteFact(db: DatabaseSync, id: string): boolean {
   const tx = createTransaction(db, () => {
     db.prepare("DELETE FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ?").run(id, id);
+    // Fetch doomed links before deleting so the surviving endpoint's out_degree/in_degree can be
+    // decremented (#2085/#2090) — decrementFactDegreesForLink is a no-op UPDATE for the id being
+    // deleted here (it no longer exists in `facts`), so it's safe to call for both endpoints.
+    const doomedLinks = db
+      .prepare(
+        "SELECT source_fact_id, target_fact_id, link_type FROM memory_links WHERE source_fact_id = ? OR target_fact_id = ?",
+      )
+      .all(id, id) as Array<{ source_fact_id: string; target_fact_id: string; link_type: string }>;
     db.prepare("DELETE FROM memory_links WHERE source_fact_id = ? OR target_fact_id = ?").run(id, id);
+    for (const link of doomedLinks) {
+      decrementFactDegreesForLink(db, link.source_fact_id, link.target_fact_id, link.link_type);
+    }
     const result = db.prepare("DELETE FROM facts WHERE id = ?").run(id);
     return result.changes > 0;
   });

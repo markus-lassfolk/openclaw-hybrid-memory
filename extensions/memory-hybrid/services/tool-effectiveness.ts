@@ -18,10 +18,14 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BaseSqliteStore } from "../backends/base-sqlite-store.js";
 import type { FactsDB } from "../backends/facts-db.js";
+import type { VectorDB } from "../backends/vector-db.js";
 import type { ToolEffectivenessConfig } from "../config/types/features.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
-import { formatDateUtc, nowSec, formatTimestampUtc } from "../utils/dates.js";
+import { formatDateUtc, formatTimestampUtc, nowSec } from "../utils/dates.js";
+import { embedCallWithTimeoutAndRetry } from "../utils/embed-call.js";
+import type { EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
+import { storeCanonicalVectorForFact } from "./vector-maintenance.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -672,8 +676,16 @@ export function generateToolHint(
  *
  * @param store    ToolEffectivenessStore with scored data.
  * @param factsDb  Facts database to store the pattern fact.
+ * @param vectors  Optional embeddings/vectorDb — when provided, the report fact gets a
+ *   canonical vector so it is semantically searchable and does not show up as permanent
+ *   storage-sync drift (#2092: keyed facts are excluded from the vectorless-backlog repair
+ *   path, so a report fact created without a vector could never self-heal).
  */
-export async function generateMonthlyReport(store: ToolEffectivenessStore, factsDb: FactsDB): Promise<void> {
+export async function generateMonthlyReport(
+  store: ToolEffectivenessStore,
+  factsDb: FactsDB,
+  vectors?: { embeddings: Pick<EmbeddingProvider, "embed" | "modelName">; vectorDb: VectorDB },
+): Promise<void> {
   try {
     const allScores = store.getAll();
 
@@ -723,6 +735,36 @@ export async function generateMonthlyReport(store: ToolEffectivenessStore, facts
     });
     if (storeResult.skipped || storeResult.newlyStored === false) {
       return;
+    }
+    if (vectors) {
+      try {
+        // Retry (not a single attempt) — this fact is keyed (line ~726), so per this function's
+        // own docstring it is excluded from every self-heal path (vectorless-backlog reembed,
+        // storage-sync sqliteOrphans/reconcile). A transient embed failure here is otherwise
+        // permanent, not "picked up by the next reembed pass".
+        const vector = await embedCallWithTimeoutAndRetry(
+          () => vectors.embeddings.embed(summary),
+          "tool-effectiveness-monthly-report",
+        );
+        await storeCanonicalVectorForFact({
+          vectorDb: vectors.vectorDb,
+          factsDb,
+          factId: storeResult.entry.id,
+          text: summary,
+          vector,
+          importance: storeResult.entry.importance,
+          category: storeResult.entry.category,
+          embeddingModel: vectors.embeddings.modelName,
+        });
+      } catch (vecErr) {
+        // Non-fatal: the report fact itself stored successfully. A vector failure here IS
+        // effectively permanent (see above) — logged as a warning, not silently swallowed, since
+        // there is no other repair path that will ever pick this fact up.
+        capturePluginError(vecErr instanceof Error ? vecErr : new Error(String(vecErr)), {
+          operation: "tool-effectiveness-monthly-report-vector",
+          severity: "warning",
+        });
+      }
     }
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {

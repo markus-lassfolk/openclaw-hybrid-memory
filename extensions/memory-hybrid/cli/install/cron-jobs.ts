@@ -468,6 +468,25 @@ const MAINTENANCE_CRON_JOBS: Array<
     minIntervalMs: MIN_INTERVAL_MS.weekly,
   },
 
+  // Daily 03:15 | nightly-doctor-repair | doctor --fix --reconcile (storage/alias/goal drift self-heal, #2103)
+  {
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}nightly-doctor-repair`,
+    sessionTarget: "isolated",
+    name: "nightly-doctor-repair",
+    schedule: { kind: "cron", expr: "15 3 * * *" },
+    channel: "system",
+    message: buildHybridMemCronTaskMessage("nightly-doctor-repair", {
+      preamble:
+        "Nightly self-heal for SQLite/LanceDB drift, after the memory-sweep/dream-cycle writes settle. Report the doctor summary (passed/warnings/failed) in your reply.",
+      steps: [{ name: "doctor-fix-reconcile", cmd: "openclaw hybrid-mem doctor --fix --reconcile" }],
+    }),
+    isolated: true,
+    modelTier: "nano",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.daily,
+    supersededByOrchestrator: false,
+  },
+
   // Daily 03:30 | maintenance-log-analyzer | analyze maintenance logs after nightly chain
   {
     pluginJobId: `${PLUGIN_JOB_ID_PREFIX}maintenance-log-analyzer`,

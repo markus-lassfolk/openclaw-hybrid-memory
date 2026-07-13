@@ -13,7 +13,6 @@ import type { SearchResult } from "../../types/memory.js";
 import {
   LANCE_NO_VECTOR_COL_MSG,
   LANCE_VECTOR_SEARCH_MAX_LIMIT,
-  UUID_REGEX,
   VECTORDB_COUNT_TIMEOUT_MS,
   VECTORDB_GET_VECTORS_TIMEOUT_MS,
   VECTORDB_INIT_MAX_RETRIES,
@@ -27,6 +26,7 @@ import {
 } from "../../utils/constants.js";
 import { pluginLogger } from "../../utils/logger.js";
 import { withTimeout } from "../../utils/timeout.js";
+import { isValidVectorId, normalizeVectorId, toSafeIdLiteral } from "../../utils/vector-id.js";
 import {
   autoOptimizePauseByPath,
   LANCE_TABLE,
@@ -38,6 +38,7 @@ import {
   type SemanticQueryCacheEntry,
   VECTOR_QUERY_MAX_RESULTS,
   VECTOR_BULK_DELETE_IN_CHUNK,
+  VECTORDB_OPTIMIZE_TIMEOUT_MS,
   type VectorDBLogger,
 } from "./constants.js";
 import { isPathInsideDir, resolvedPathOrFallback } from "./path-utils.js";
@@ -1096,6 +1097,12 @@ export class VectorDB {
     if (!this.db) {
       throw new Error("VectorDB connection not available");
     }
+    if (!isValidVectorId(entry.id)) {
+      throw new Error(
+        `memory-hybrid: cannot store vector with invalid id "${String(entry.id).slice(0, 80)}" — ` +
+          "must be a UUID or a safe slug (letters, digits, '.', '_', '-', max 256 chars).",
+      );
+    }
 
     // Cache the table handle so we don't pay an openTable() round-trip per row
     // during bulk re-index operations.
@@ -1113,8 +1120,9 @@ export class VectorDB {
       this.shadowTableCache.set(tableName, table);
     }
 
+    const normalizedId = normalizeVectorId(entry.id);
     const row = {
-      id: entry.id.toLowerCase(),
+      id: normalizedId,
       text: entry.text,
       why: entry.why ?? "",
       vector: entry.vector,
@@ -1127,8 +1135,8 @@ export class VectorDB {
       await table.add([row]);
     } catch (err) {
       // Handle duplicate ID race condition (concurrent re-index)
-      if (this.isVectorDuplicateIdError(err) && UUID_REGEX.test(entry.id)) {
-        await table.delete(`id = '${entry.id.toLowerCase()}'`);
+      if (this.isVectorDuplicateIdError(err)) {
+        await table.delete(`id = ${toSafeIdLiteral(normalizedId)}`);
         await table.add([row]);
         return;
       }
@@ -1437,9 +1445,11 @@ export class VectorDB {
       await this.waitForReindexLockRelease();
       await this.ensureInitialized();
       // LanceDB unavailable (FTS5-only fallback mode): return canonical id without storing vectors.
+      // No Lance write happens on this path, so an unvalidated id is reported as-is rather than
+      // failing the caller's store — only the real write path below enforces isValidVectorId.
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) {
         const rawId = entry.id ?? randomUUID();
-        return entry.id !== undefined && UUID_REGEX.test(entry.id) ? entry.id.toLowerCase() : rawId;
+        return entry.id !== undefined ? normalizeVectorId(entry.id) : rawId;
       }
       // Reject dimension-mismatched vectors before they reach LanceDB. Unlike search()/hasDuplicate(),
       // which can safely degrade to "no results" on a dim mismatch, a store() write has no safe
@@ -1454,9 +1464,19 @@ export class VectorDB {
       if (this.optimizePromise) {
         await this.optimizePromise;
       }
-      // Canonical lowercase UUID so LanceDB row id matches delete() and EEXIST recovery (#917 review).
+      // Reject unsafe/invalid ids before they reach LanceDB storage or predicate interpolation
+      // (#2079) — historically an invalid entry.id silently passed through unvalidated here,
+      // producing write-only orphan vectors that read/delete/reconcile paths could never see.
+      if (entry.id !== undefined && !isValidVectorId(entry.id)) {
+        throw new Error(
+          `memory-hybrid: cannot store vector with invalid id "${String(entry.id).slice(0, 80)}" — ` +
+            "must be a UUID or a safe slug (letters, digits, '.', '_', '-', max 256 chars).",
+        );
+      }
+      // Canonical id so LanceDB row id matches delete() and EEXIST recovery (#917 review).
+      // UUIDs are lowercased for canonical matching; slug ids are kept byte-identical (#2079).
       const rawId = entry.id ?? randomUUID();
-      const id = entry.id !== undefined && UUID_REGEX.test(entry.id) ? entry.id.toLowerCase() : rawId;
+      const id = entry.id !== undefined ? normalizeVectorId(entry.id) : rawId;
       const why = entry.why ?? "";
       const row = { ...entry, id, why, createdAt: Math.floor(Date.now() / 1000) };
       await this.withRetryableWriteConflictRetry("LanceDB store", async () => {
@@ -1464,11 +1484,11 @@ export class VectorDB {
           await this.getTable().add([row]);
         } catch (err) {
           // Race: concurrent re-index may delete+insert the same fact id; EEXIST must not drop the new vector.
-          if (this.isVectorDuplicateIdError(err) && entry.id && UUID_REGEX.test(entry.id)) {
+          if (this.isVectorDuplicateIdError(err) && entry.id !== undefined) {
             const lid = id;
-            if (!UUID_REGEX.test(lid))
-              throw new Error(`memory-hybrid: duplicate-id cleanup blocked for invalid UUID: ${lid}`);
-            await this.getTable().delete(`id = '${lid}'`);
+            if (!isValidVectorId(lid))
+              throw new Error(`memory-hybrid: duplicate-id cleanup blocked for invalid id: ${lid}`);
+            await this.getTable().delete(`id = ${toSafeIdLiteral(lid)}`);
             await this.getTable().add([row]);
           } else {
             throw err;
@@ -1529,12 +1549,19 @@ export class VectorDB {
    * Compact fragments and clean up old versions to reclaim disk space and reduce memory usage.
    * Should be called periodically (e.g., nightly maintenance) to prevent unbounded growth.
    *
+   * The native `table.optimize()` call is not cancellable, so this method only bounds how long
+   * the *caller* waits (#2081) — after VECTORDB_OPTIMIZE_TIMEOUT_MS the promise resolves with
+   * `timedOut: true` while the native call keeps running in the background; its own `finally`
+   * still releases the optimize/exclusive locks once it eventually settles, and
+   * `this.optimizePromise` still reflects "an optimize is in progress" for concurrent callers.
+   *
    * @param olderThanMs - Clean up versions older than this many ms (default: 7 days = 604800000)
-   * @returns Statistics about the optimization (compaction + cleanup)
+   * @returns Statistics about the optimization (compaction + cleanup); `timedOut: true` if the
+   *   caller-facing wait was abandoned before the native call finished.
    */
   async optimize(
     olderThanMs: number = 7 * 24 * 60 * 60 * 1000,
-  ): Promise<{ compacted: number; removedFragments: number; freedBytes: number }> {
+  ): Promise<{ compacted: number; removedFragments: number; freedBytes: number; timedOut?: boolean }> {
     if (!this.lanceDbAvailable && this.lanceInitFailed) return { compacted: 0, removedFragments: 0, freedBytes: 0 };
     await this.waitForReindexLockRelease();
     await this.ensureInitialized();
@@ -1596,7 +1623,18 @@ export class VectorDB {
     })();
     promiseRef = optimizePromise;
     this.optimizePromise = optimizePromise;
-    return optimizePromise;
+
+    const TIMEOUT_SENTINEL = Symbol("optimize-timeout");
+    const result = await withTimeout(VECTORDB_OPTIMIZE_TIMEOUT_MS, () => optimizePromise, TIMEOUT_SENTINEL);
+    if (result === TIMEOUT_SENTINEL) {
+      this.logWarn(
+        `memory-hybrid: optimize() timed out after ${VECTORDB_OPTIMIZE_TIMEOUT_MS}ms waiting for LanceDB ` +
+          "table.optimize() to complete; the native call continues in the background and will release its " +
+          "locks once it finishes (override with OPENCLAW_HYBRID_MEM_VECTORDB_OPTIMIZE_TIMEOUT_MS).",
+      );
+      return { compacted: 0, removedFragments: 0, freedBytes: 0, timedOut: true };
+    }
+    return result;
   }
 
   async search(vector: number[], limit = 5, minScore = 0.3): Promise<SearchResult[]> {
@@ -1730,37 +1768,26 @@ export class VectorDB {
     }
   }
 
-  /**
-   * LanceDB predicates are string-based (no parameter binding API), so UUID validation
-   * is the safety boundary before interpolation.
-   */
-  private toSafeUuidLiteral(id: string): string {
-    const normalized = String(id).toLowerCase();
-    if (!UUID_REGEX.test(normalized) || normalized.includes("'")) {
-      throw new Error("Invalid UUID for LanceDB predicate");
-    }
-    return `'${normalized}'`;
-  }
-
   async delete(id: string): Promise<boolean> {
-    // SECURITY: UUID validation is the security boundary for delete().
+    // SECURITY: id validation is the security boundary for delete().
     // LanceDB doesn't support parameterized queries, so we validate strictly before string interpolation.
-    // Regex validates UUID v1-v5 format (case-insensitive), then we normalize to lowercase before interpolation.
-    // Defensive: skip (log + return false) rather than throw on malformed UUIDs (issue #379).
+    // isValidVectorId accepts UUIDs (any case) or safe slug-style ids (#2079); normalizeVectorId
+    // lowercases only UUID-shaped ids so existing slug rows remain matchable.
+    // Defensive: skip (log + return false) rather than throw on malformed ids (issue #379).
     // logWarn is intentionally outside the try block so a logWarn failure cannot trigger capturePluginError
     // in the catch — that would contradict the graceful-skip intent for malformed input.
-    if (!UUID_REGEX.test(id)) {
+    if (!isValidVectorId(id)) {
       const safeId = String(id).slice(0, 50);
-      this.logWarn(`memory-hybrid: skipping LanceDB delete for invalid UUID: ${safeId}`);
+      this.logWarn(`memory-hybrid: skipping LanceDB delete for invalid id: ${safeId}`);
       return false;
     }
     try {
       if (!this.lanceDbAvailable && this.lanceInitFailed) return false;
       await this.ensureInitialized();
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) return false;
-      const normalizedId = id.toLowerCase();
-      if (!UUID_REGEX.test(normalizedId)) return false;
-      const idLiteral = this.toSafeUuidLiteral(normalizedId);
+      const normalizedId = normalizeVectorId(id);
+      if (!isValidVectorId(normalizedId)) return false;
+      const idLiteral = toSafeIdLiteral(normalizedId);
       if (this.optimizePromise) {
         try {
           await this.optimizePromise;
@@ -1789,7 +1816,9 @@ export class VectorDB {
    * Returns the number of IDs accepted for deletion (same semantics as repeated delete()).
    */
   async deleteMany(ids: readonly string[]): Promise<number> {
-    const normalized = [...new Set(ids.map((id) => String(id).toLowerCase()))].filter((id) => UUID_REGEX.test(id));
+    const normalized = [...new Set(ids.map((id) => normalizeVectorId(String(id))))].filter((id) =>
+      isValidVectorId(id),
+    );
     if (normalized.length === 0) return 0;
     try {
       if (!this.lanceDbAvailable && this.lanceInitFailed) return 0;
@@ -1804,7 +1833,7 @@ export class VectorDB {
           );
         }
       }
-      const literals = normalized.map((id) => this.toSafeUuidLiteral(id));
+      const literals = normalized.map((id) => toSafeIdLiteral(id));
       let deleted = 0;
       for (let i = 0; i < literals.length; i += VECTOR_BULK_DELETE_IN_CHUNK) {
         const chunk = literals.slice(i, i + VECTOR_BULK_DELETE_IN_CHUNK);
@@ -1944,7 +1973,8 @@ export class VectorDB {
   /**
    * Return all fact IDs currently stored in LanceDB.
    * Used by the reconcile command to detect orphan vectors.
-   * Only UUIDs that pass UUID_REGEX are included (malformed rows are silently skipped).
+   * Any non-empty id that is a UUID or a safe slug-style id is included (#2079); malformed rows
+   * (empty, or containing characters unsafe for LanceDB predicate interpolation) are skipped.
    */
   async getAllIds(): Promise<string[]> {
     try {
@@ -1969,8 +1999,8 @@ export class VectorDB {
 
           for (const row of rows) {
             const id = String((row as { id?: unknown }).id ?? "");
-            if (UUID_REGEX.test(id)) {
-              ids.push(id.toLowerCase());
+            if (isValidVectorId(id)) {
+              ids.push(normalizeVectorId(id));
             }
           }
 
@@ -2014,9 +2044,10 @@ export class VectorDB {
   }
 
   /**
-   * Batch-load stored embedding vectors by fact id (`id` matches SQLite fact UUID).
+   * Batch-load stored embedding vectors by fact id (`id` matches a SQLite fact id, UUID or slug).
    * Used by reflection dedupe to avoid re-embedding the entire corpus each run.
-   * Map keys are lowercase UUIDs. Unknown ids and wrong-dimension vectors are omitted.
+   * Map keys are normalized ids (UUIDs lowercased; slugs unchanged, #2079). Unknown ids and
+   * wrong-dimension vectors are omitted.
    */
   async getVectorsByFactIds(ids: string[]): Promise<Map<string, number[]>> {
     const out = new Map<string, number[]>();
@@ -2025,7 +2056,9 @@ export class VectorDB {
       await this.ensureInitialized();
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table || !this.schemaValid) return out;
 
-      const unique = [...new Set(ids.map((id) => String(id).toLowerCase()))].filter((id) => UUID_REGEX.test(id));
+      const unique = [...new Set(ids.map((id) => normalizeVectorId(String(id))))].filter((id) =>
+        isValidVectorId(id),
+      );
       const CHUNK = 300;
       const acquired = this.acquireReader();
       let timedOut = false;
@@ -2036,7 +2069,7 @@ export class VectorDB {
 
         for (let offset = 0; offset < unique.length; offset += CHUNK) {
           const chunk = unique.slice(offset, offset + CHUNK);
-          const inList = chunk.map((id) => `'${this.escapeSqlString(id)}'`).join(", ");
+          const inList = chunk.map((id) => toSafeIdLiteral(id)).join(", ");
 
           const queryPromise = table.query().where(`id IN (${inList})`).select(["id", "vector"]).toArray();
           const rows = await withTimeout(VECTORDB_GET_VECTORS_TIMEOUT_MS, () => queryPromise);
@@ -2056,8 +2089,8 @@ export class VectorDB {
           }
 
           for (const row of rows) {
-            const id = String((row as { id?: unknown }).id ?? "").toLowerCase();
-            if (!UUID_REGEX.test(id)) continue;
+            const id = normalizeVectorId(String((row as { id?: unknown }).id ?? ""));
+            if (!isValidVectorId(id)) continue;
             const vec = this.vectorColumnToNumbers((row as { vector?: unknown }).vector);
             if (vec && vec.length === this.vectorDim) out.set(id, vec);
           }
@@ -2238,6 +2271,21 @@ export class VectorDB {
       lastRemovedRows: this.semanticQueryCachePruneTelemetry.lastRemovedRows,
       lastPrunedAtEpochMs: this.semanticQueryCachePruneTelemetry.lastPrunedAtEpochMs,
     };
+  }
+
+  /**
+   * Await a currently in-flight optimize() (e.g. the fire-and-forget auto-optimize triggered by
+   * store(), #2081) with a bound, swallowing any error/timeout — callers use this to avoid
+   * racing a synchronous close() against a pending native table.optimize() call without making
+   * close() itself async. No-op when no optimize is in flight.
+   */
+  async waitForPendingOptimize(timeoutMs: number = VECTORDB_OPTIMIZE_TIMEOUT_MS): Promise<void> {
+    if (!this.optimizePromise) return;
+    try {
+      await withTimeout(timeoutMs, () => this.optimizePromise ?? Promise.resolve(null));
+    } catch {
+      // Swallow — this is a best-effort drain before close(), not a correctness requirement.
+    }
   }
 
   /** Last successful optimize() result snapshot. */

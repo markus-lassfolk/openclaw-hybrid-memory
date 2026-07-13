@@ -216,7 +216,12 @@ export function buildVectorlessSloRepairRecommendation(input: {
   const embeddedPerRun = Math.max(1, input.embeddedThisRun);
   const recommendedLimitNextRun = Math.max(input.runLimit, embeddedPerRun);
   const recommendedBatchSizeNextRun = Math.max(1, input.effectiveBatchSize ?? embeddedPerRun);
-  const estimatedRunsToReachSlo = Math.ceil(vectorlessToClearForSlo / embeddedPerRun);
+  // On a dry run (embeddedThisRun === 0), embeddedPerRun floors to 1, which made the estimate
+  // ceil(toClear / 1) == toClear runs — an internally inconsistent message alongside
+  // recommendedLimitNextRun of e.g. 100 (#2093). Use the next run's actual planned throughput
+  // (its limit) as the estimate basis whenever this run embedded nothing.
+  const estimatedRunThroughput = input.embeddedThisRun > 0 ? embeddedPerRun : recommendedLimitNextRun;
+  const estimatedRunsToReachSlo = Math.ceil(vectorlessToClearForSlo / Math.max(1, estimatedRunThroughput));
 
   return {
     sloScope,
@@ -292,7 +297,9 @@ export function isEntityEnrichmentHardFailure(input: EntityEnrichmentOutcomeInpu
 }
 
 /** Summary semantic token for enrich-entities logs (#2009, #2043). */
-export function entityEnrichmentSemanticStatus(input: EntityEnrichmentOutcomeInput): "partial" | "monitoring" | "success" {
+export function entityEnrichmentSemanticStatus(
+  input: EntityEnrichmentOutcomeInput,
+): "partial" | "monitoring" | "success" {
   if (isEntityEnrichmentHardFailure(input)) return "partial";
   const stopReason = input.stopReason ?? "completed";
   // A budget-limited stop is resumable, checkpointed work-in-progress — surface it distinctly from a

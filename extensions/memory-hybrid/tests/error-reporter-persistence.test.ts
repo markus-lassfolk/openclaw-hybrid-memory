@@ -160,3 +160,150 @@ describe("error reporter persistent pending queue", () => {
     expect(reporter.resolvePendingErrorReportCount(join(tempDir, "memory.db"))).toBe(2);
   });
 });
+
+describe("error-reports CLI helpers (#2082)", () => {
+  let tempDir: string;
+  let queuePath: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "error-reporter-cli-helpers-"));
+    queuePath = join(tempDir, ".error_reports.pending.jsonl");
+    setEnv("ERROR_REPORTING_DSN", undefined);
+    fetchMock.mockReset();
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+    vi.clearAllMocks();
+  });
+
+  function writeRecord(id: string, enqueuedAt: number, message: string, tags?: Record<string, string>): void {
+    const line = JSON.stringify({
+      id,
+      enqueuedAt,
+      event: {
+        event_id: id,
+        timestamp: enqueuedAt / 1000,
+        exception: { values: [{ type: "Error", value: message }] },
+        tags: tags ?? {},
+      },
+    });
+    const existing = existsSync(queuePath) ? readFileSync(queuePath, "utf-8") : "";
+    writeFileSync(queuePath, `${existing}${line}\n`);
+  }
+
+  it("readPendingErrorReportEntries returns [] when the queue file does not exist", async () => {
+    const reporter = (await import("../services/error-reporter.js")) as ErrorReporterModule;
+    expect(reporter.readPendingErrorReportEntries(queuePath)).toEqual([]);
+    expect(reporter.readPendingErrorReportEntries(undefined)).toEqual([]);
+  });
+
+  it("readPendingErrorReportEntries parses metadata oldest-first and honors limit", async () => {
+    const reporter = (await import("../services/error-reporter.js")) as ErrorReporterModule;
+    writeRecord("c", 3000, "third failure", { subsystem: "tests", operation: "op-c" });
+    writeRecord("a", 1000, "first failure", { subsystem: "tests", operation: "op-a" });
+    writeRecord("b", 2000, "second failure", { subsystem: "tests", operation: "op-b" });
+
+    const all = reporter.readPendingErrorReportEntries(queuePath);
+    expect(all.map((e) => e.id)).toEqual(["a", "b", "c"]);
+    expect(all[0]).toMatchObject({
+      id: "a",
+      enqueuedAt: 1000,
+      type: "Error",
+      message: "first failure",
+      subsystem: "tests",
+      operation: "op-a",
+    });
+
+    const limited = reporter.readPendingErrorReportEntries(queuePath, 2);
+    expect(limited.map((e) => e.id)).toEqual(["a", "b"]);
+  });
+
+  it("readPendingErrorReportEntries skips unparseable lines instead of throwing", async () => {
+    const reporter = (await import("../services/error-reporter.js")) as ErrorReporterModule;
+    writeRecord("a", 1000, "ok record");
+    writeFileSync(queuePath, `${readFileSync(queuePath, "utf-8")}not json\n`);
+    const entries = reporter.readPendingErrorReportEntries(queuePath);
+    expect(entries.map((e) => e.id)).toEqual(["a"]);
+  });
+
+  it("readPendingErrorReportEnqueueRange returns null when the queue is empty", async () => {
+    const reporter = (await import("../services/error-reporter.js")) as ErrorReporterModule;
+    expect(reporter.readPendingErrorReportEnqueueRange(queuePath)).toBeNull();
+  });
+
+  it("readPendingErrorReportEnqueueRange returns oldest/newest enqueuedAt across records", async () => {
+    const reporter = (await import("../services/error-reporter.js")) as ErrorReporterModule;
+    writeRecord("b", 2000, "middle");
+    writeRecord("a", 1000, "oldest");
+    writeRecord("c", 3000, "newest");
+    expect(reporter.readPendingErrorReportEnqueueRange(queuePath)).toEqual({ oldest: 1000, newest: 3000 });
+  });
+
+  it("attemptOneShotErrorReportFlush declines when reporting is disabled", async () => {
+    const reporter = (await import("../services/error-reporter.js")) as ErrorReporterModule;
+    const result = await reporter.attemptOneShotErrorReportFlush(
+      { enabled: false, mode: "community", consent: true, sampleRate: 1 },
+      queuePath,
+      "test-build",
+      500,
+    );
+    expect(result).toMatchObject({ attempted: false, pendingBefore: 0, pendingAfter: 0, flushed: false });
+    expect(result.reason).toMatch(/disabled/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("attemptOneShotErrorReportFlush declines self-hosted mode without a DSN", async () => {
+    const reporter = (await import("../services/error-reporter.js")) as ErrorReporterModule;
+    const result = await reporter.attemptOneShotErrorReportFlush(
+      { enabled: true, mode: "self-hosted", consent: true, sampleRate: 1 },
+      queuePath,
+      "test-build",
+      500,
+    );
+    expect(result.attempted).toBe(false);
+    expect(result.reason).toMatch(/DSN/);
+  });
+
+  it("attemptOneShotErrorReportFlush delivers queued records without touching module-level reporter state", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, text: async () => "" });
+    const reporter = (await import("../services/error-reporter.js")) as ErrorReporterModule;
+    writeRecord("a", 1000, "queued failure");
+
+    expect(reporter.isErrorReporterActive()).toBe(false);
+    const result = await reporter.attemptOneShotErrorReportFlush(
+      { enabled: true, dsn: "https://testkey@example.com/1", mode: "community", consent: true, sampleRate: 1 },
+      queuePath,
+      "test-build",
+      1000,
+    );
+
+    expect(result.attempted).toBe(true);
+    expect(result.pendingBefore).toBe(1);
+    expect(result.pendingAfter).toBe(0);
+    expect(result.flushed).toBe(true);
+    expect(fetchMock).toHaveBeenCalled();
+    // A one-shot flush must not initialize the module-level singleton reporter.
+    expect(reporter.isErrorReporterActive()).toBe(false);
+    expect(reporter.getPendingErrorReportCount()).toBe(0);
+  });
+
+  it("attemptOneShotErrorReportFlush reports pendingAfter unchanged when delivery fails", async () => {
+    fetchMock.mockRejectedValue(new Error("network down"));
+    const reporter = (await import("../services/error-reporter.js")) as ErrorReporterModule;
+    writeRecord("a", 1000, "queued failure");
+
+    const result = await reporter.attemptOneShotErrorReportFlush(
+      { enabled: true, dsn: "https://testkey@example.com/1", mode: "community", consent: true, sampleRate: 1 },
+      queuePath,
+      "test-build",
+      500,
+    );
+
+    expect(result.attempted).toBe(true);
+    expect(result.pendingBefore).toBe(1);
+    expect(result.pendingAfter).toBe(1);
+    expect(result.flushed).toBe(false);
+  });
+});

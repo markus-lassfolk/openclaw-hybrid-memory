@@ -351,3 +351,157 @@ describe("pending review digest (#1197)", () => {
     factsDb.close();
   });
 });
+
+describe("pending digest age hygiene (#2098)", () => {
+  const dirs: string[] = [];
+
+  afterEach(() => {
+    while (dirs.length > 0) {
+      const dir = dirs.pop();
+      if (dir) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  function newDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), "hybrid-mem-pending-digest-age-"));
+    dirs.push(dir);
+    return dir;
+  }
+
+  it("buckets persona proposals into 0-1d/1-7d/7-30d/30d+ and reports oldest/newest", () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const paths = pendingStorePaths(cfg.sqlitePath);
+    const factsDb = new FactsDB(cfg.sqlitePath);
+    const persona = new ProposalsDB(paths.proposals);
+    const now = new Date("2026-05-07T00:00:00.000Z");
+    const nowSec = Math.floor(now.getTime() / 1000);
+
+    const fresh = persona.create({
+      targetFile: "SOUL.md",
+      title: "Fresh proposal",
+      observation: "o",
+      suggestedChange: "c",
+      confidence: 0.8,
+      evidenceSessions: [],
+    });
+    const midAge = persona.create({
+      targetFile: "SOUL.md",
+      title: "Mid-age proposal",
+      observation: "o",
+      suggestedChange: "c",
+      confidence: 0.8,
+      evidenceSessions: [],
+    });
+    const stale = persona.create({
+      targetFile: "SOUL.md",
+      title: "Stale proposal",
+      observation: "o",
+      suggestedChange: "c",
+      confidence: 0.8,
+      evidenceSessions: [],
+    });
+    persona.close();
+
+    const rawDb = new DatabaseSync(paths.proposals);
+    rawDb.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run(nowSec - 3 * 86400, midAge.id);
+    rawDb.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run(nowSec - 45 * 86400, stale.id);
+    rawDb.close();
+    void fresh;
+
+    // Use a lookback wide enough (60d) so all three pending entries survive the time-window
+    // filter used for `pendingEntries`; ageHygiene itself is computed over the full backlog
+    // regardless of the lookback window.
+    const report = buildPendingReviewDigestReport({ cfg, factsDb, since: "60d", now });
+
+    expect(report.personaProposals.ageHygiene.ageBuckets).toEqual({ d0_1: 1, d1_7: 1, d7_30: 0, d30plus: 1 });
+    expect(report.personaProposals.ageHygiene.oldestAgeDays).toBe(45);
+    expect(report.personaProposals.ageHygiene.newestAgeDays).toBe(0);
+    expect(report.personaProposals.ageHygiene.recommendedNextAction).toMatch(/30d\+/);
+    expect(report.personaProposals.ageHygiene.recommendedNextAction).toContain(
+      "openclaw hybrid-mem proposals list --status pending",
+    );
+
+    factsDb.close();
+  });
+
+  it("reports an empty-backlog recommendation and null oldest/newest when a queue has nothing pending", () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const factsDb = new FactsDB(cfg.sqlitePath);
+
+    const report = buildPendingReviewDigestReport({ cfg, factsDb, now: new Date("2026-05-07T00:00:00.000Z") });
+
+    expect(report.toolProposals.ageHygiene.oldestAgeDays).toBeNull();
+    expect(report.toolProposals.ageHygiene.newestAgeDays).toBeNull();
+    expect(report.toolProposals.ageHygiene.ageBuckets).toEqual({ d0_1: 0, d1_7: 0, d7_30: 0, d30plus: 0 });
+    expect(report.toolProposals.ageHygiene.recommendedNextAction).toMatch(/empty/);
+
+    factsDb.close();
+  });
+
+  it("surfaces createdAt/ageDays on tool and crystallization pending entries", () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const paths = pendingStorePaths(cfg.sqlitePath);
+    const factsDb = new FactsDB(cfg.sqlitePath);
+    const tools = new ToolProposalStore(paths.toolProposals);
+    const crystal = new CrystallizationStore(paths.crystallization);
+
+    tools.create({
+      name: "memory_digest_sender",
+      description: "Send digest to configured channel",
+      parameters: "{}",
+      rationale: "r",
+      sourcePatterns: "[]",
+      implementationHint: "hint",
+    });
+    crystal.create({
+      patternId: "pattern-1",
+      evidenceHash: "ev1",
+      skillName: "review-backlog",
+      skillContent: "# Skill",
+      patternSnapshot: "{}",
+      validationResult: {
+        schemaVersion: 1,
+        validatedAt: "2026-05-07T00:00:00.000Z",
+        overallStatus: "passed",
+        approvalDecision: "allow",
+        staticValidation: {
+          status: "passed",
+          violations: [],
+          frontmatter: { name: "review-backlog", description: "Review backlog", category: "crystallized-workflow" },
+          safeOutputPath: "/tmp/review-backlog/SKILL.md",
+        },
+        dryLoadValidation: {
+          status: "passed",
+          violations: [],
+          discovered: { name: "review-backlog", description: "Review backlog", category: "crystallized-workflow" },
+        },
+        syntheticActivationEval: {
+          status: "passed",
+          score: 90,
+          cases: { positive: "p", negative: "n", edge: "e" },
+          results: { positiveMatched: true, negativeMatched: false, edgeMatched: true },
+          notes: [],
+        },
+        canarySession: { status: "not-run" },
+      },
+    });
+    tools.close();
+    crystal.close();
+
+    const report = buildPendingReviewDigestReport({ cfg, factsDb, now: new Date("2026-05-07T00:00:00.000Z") });
+
+    expect(report.toolProposals.proposedEntries[0]).toMatchObject({ ageDays: 0 });
+    expect(report.toolProposals.proposedEntries[0].createdAt).toBeTruthy();
+    expect(report.crystallization.pendingEntries[0]).toMatchObject({ ageDays: 0 });
+    expect(report.crystallization.pendingEntries[0].createdAt).toBeTruthy();
+
+    const md = renderPendingReviewDigestMarkdown(report);
+    expect(md).toContain("[pending 0d] memory_digest_sender");
+    expect(md).toContain("[pending 0d] review-backlog");
+
+    factsDb.close();
+  });
+});

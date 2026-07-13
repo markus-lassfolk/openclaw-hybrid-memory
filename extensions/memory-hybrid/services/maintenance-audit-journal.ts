@@ -24,7 +24,13 @@ export type OrchestratorStepJournalInput = {
   semanticOutcome?: string;
 };
 
-export type MaintenanceRunStatus = "ran" | "skipped:quiet" | "skipped:rate" | "skipped:lease" | "failed";
+export type MaintenanceRunStatus =
+  | "ran"
+  | "skipped:quiet"
+  | "skipped:rate"
+  | "skipped:lease"
+  | "skipped:missing-runner"
+  | "failed";
 
 export type MaintenanceRunInput = {
   job: string;
@@ -98,6 +104,11 @@ export function mapStepToMaintenanceRunStatus(status: OrchestratorStepStatus, su
   }
   if (status === "failed") return "failed";
   if (status === "rate_limited") return "skipped:rate";
+  // Distinct from routine "skipped:quiet" — a step with no registered runner is a persistent
+  // misconfiguration, not benign cadence-gated skipping, and must not be indistinguishable from
+  // it (QA follow-up: getStaleMaintenanceJobs below treats this status as always-flaggable,
+  // regardless of how recently it was last "checked").
+  if (status === "skipped_missing_runner") return "skipped:missing-runner";
   const lower = summary.toLowerCase();
   if (lower.includes("lease")) return "skipped:lease";
   if (lower.includes("quiet") || lower.includes("rate")) return "skipped:quiet";
@@ -110,7 +121,13 @@ export function recordMaintenanceStepRun(db: DatabaseSync, step: OrchestratorSte
     job: step.name,
     status: mapStepToMaintenanceRunStatus(step.status, step.summary),
     itemsProcessed: step.status === "ok" ? 1 : undefined,
-    errorSummary: step.status === "failed" || step.status === "rate_limited" ? step.summary : undefined,
+    // skipped_missing_runner included alongside failed/rate_limited — otherwise the journal row
+    // for a permanently unwired step carries only the bare status enum, with no free-text
+    // explanation of which runner was missing for an operator to act on (QA follow-up).
+    errorSummary:
+      step.status === "failed" || step.status === "rate_limited" || step.status === "skipped_missing_runner"
+        ? step.summary
+        : undefined,
     metadata: {
       durationMs: step.durationMs,
       orchestratorStatus: step.status,
@@ -127,7 +144,12 @@ export function getStaleMaintenanceJobs(db: DatabaseSync, hours = 48): string[] 
   const stale: string[] = [];
   for (const job of monitored) {
     const last = getLastRunForJob(db, job);
-    if (last && last.started_at < cutoff) stale.push(job);
+    if (!last) continue;
+    // A missing-runner step gets a fresh started_at on every orchestrator cycle even though it
+    // never actually executes — recency alone can never surface it, so flag it unconditionally
+    // (#2094 QA follow-up: cmd-doctor's "Maintenance health" check previously reported "pass"
+    // indefinitely for a permanently unwired step).
+    if (last.status === "skipped:missing-runner" || last.started_at < cutoff) stale.push(job);
   }
   return stale;
 }

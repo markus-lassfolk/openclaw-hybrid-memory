@@ -1,4 +1,5 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import { isHybridMemQuiet } from "./logger.js";
 
 type MachineOutputMode = "json-tee" | "value-only-strict";
 
@@ -290,6 +291,27 @@ export function wrapApiLoggerStderrForJsonCli(api: ClawdbotPluginApi): ClawdbotP
       warn: log,
       error: log,
       debug: log,
+    },
+  };
+}
+
+/**
+ * For hybrid-mem CLI runs with `OPENCLAW_HYBRID_MEM_QUIET=1` (#2095), drop info/debug plugin
+ * telemetry (startup checkpoints, "registered ..." confirmations, vault-check-OK lines) that
+ * would otherwise precede the actual command output for status/read-only commands. Warnings and
+ * errors always pass through unchanged — quiet mode trims routine progress logging, not
+ * diagnostics an operator needs to see. Applied on top of `wrapApiLoggerStderrForJsonCli` so it
+ * composes with `--json` mode's stderr redirect instead of overriding it.
+ */
+export function wrapApiLoggerQuietForCli(api: ClawdbotPluginApi): ClawdbotPluginApi {
+  if (!isHybridMemQuiet()) return api;
+  const noop = () => {};
+  return {
+    ...api,
+    logger: {
+      ...api.logger,
+      info: noop,
+      debug: noop,
     },
   };
 }

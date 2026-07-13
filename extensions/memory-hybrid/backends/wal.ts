@@ -698,7 +698,11 @@ export class WriteAheadLog {
             await this._clearInternal();
             return 1;
           }
-          pluginLogger.info(
+          // .warn (not .info): this is the direct resolution of the corruption warning just above
+          // it, not routine progress — under OPENCLAW_HYBRID_MEM_QUIET=1 (#2095), .info is
+          // suppressed but .warn is not, so an operator who saw "detected corruption" always also
+          // sees whether the repair succeeded and how many entries were recovered.
+          pluginLogger.warn(
             `memory-hybrid: WAL compactIfOversized repaired corruption, recovered ${entries.length} valid entries`,
           );
           await this.atomicRewriteEntries(entries);

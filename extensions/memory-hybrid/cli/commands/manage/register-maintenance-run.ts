@@ -2,7 +2,7 @@
  * Operator CLI for maintenance JobRun inspection (#1877).
  */
 
-import { spawnSync } from "../../../utils/process-runner.js";
+import { MaintenanceJobRun } from "../../../services/maintenance-job-run/job-run.js";
 import {
   explainJobRun,
   findMaintenanceRunById,
@@ -11,7 +11,7 @@ import {
   loadOrchestratorSummary,
   resolveRunArtifacts,
 } from "../../../services/maintenance-job-run/run-catalog.js";
-import { MaintenanceJobRun } from "../../../services/maintenance-job-run/job-run.js";
+import { spawnSync } from "../../../utils/process-runner.js";
 import { type Chainable, withExit } from "../../shared.js";
 
 export function registerMaintenanceRunCommands(maintenance: Chainable): void {
@@ -45,146 +45,141 @@ export function registerMaintenanceRunCommands(maintenance: Chainable): void {
 
   const statusCmd = runCmd.command("status").description("Show run status by id");
   statusCmd.argument?.("<id>", "Run id or unique prefix");
-  statusCmd
-    .option("--json", "Output JSON")
-    .action(
-      withExit(async (id: string, opts?: { json?: boolean }) => {
-        const listed = findMaintenanceRunById(id);
-        if (!listed) {
-          console.error(`No maintenance run found for id: ${id}`);
-          process.exitCode = 1;
-          return;
-        }
-        if (listed.kind === "orchestrator") {
-          const summary = loadOrchestratorSummary(listed.path);
-          if (opts?.json) {
-            console.log(JSON.stringify(summary, null, 2));
-            return;
-          }
-          console.log(`Orchestrator run ${summary?.runId ?? id}`);
-          console.log(`  tier=${summary?.tierLabel} exit=${summary?.exitCode} durationMs=${summary?.durationMs}`);
-          console.log(`  ${summary?.summaryLine ?? ""}`);
-          return;
-        }
-        const record = loadJobRunSummary(listed.path);
+  statusCmd.option("--json", "Output JSON").action(
+    withExit(async (id: string, opts?: { json?: boolean }) => {
+      const listed = findMaintenanceRunById(id);
+      if (!listed) {
+        console.error(`No maintenance run found for id: ${id}`);
+        process.exitCode = 1;
+        return;
+      }
+      if (listed.kind === "orchestrator") {
+        const summary = loadOrchestratorSummary(listed.path);
         if (opts?.json) {
-          console.log(JSON.stringify(record, null, 2));
+          console.log(JSON.stringify(summary, null, 2));
           return;
         }
-        console.log(`JobRun ${record?.jobRunId ?? id} command=${record?.command}`);
+        console.log(`Orchestrator run ${summary?.runId ?? id}`);
+        console.log(`  tier=${summary?.tierLabel} exit=${summary?.exitCode} durationMs=${summary?.durationMs}`);
+        console.log(`  ${summary?.summaryLine ?? ""}`);
+        return;
+      }
+      const record = loadJobRunSummary(listed.path);
+      if (opts?.json) {
+        console.log(JSON.stringify(record, null, 2));
+        return;
+      }
+      console.log(`JobRun ${record?.jobRunId ?? id} command=${record?.command}`);
+      console.log(
+        `  semantic=${record?.semanticOutcome} started=${record?.startedAt} finished=${record?.finishedAt ?? "-"}`,
+      );
+      if (record?.progress) {
         console.log(
-          `  semantic=${record?.semanticOutcome} started=${record?.startedAt} finished=${record?.finishedAt ?? "-"}`,
+          `  progress=${record.progress.completedUnits}/${record.progress.totalUnits} ${record.progress.unitLabel}`,
         );
-        if (record?.progress) {
-          console.log(
-            `  progress=${record.progress.completedUnits}/${record.progress.totalUnits} ${record.progress.unitLabel}`,
-          );
-        }
-      }),
-    );
+      }
+    }),
+  );
 
   const artifactsCmd = runCmd.command("artifacts").description("List artifact paths for a run");
   artifactsCmd.argument?.("<id>", "Run id or unique prefix");
-  artifactsCmd
-    .option("--json", "Output JSON")
-    .action(
-      withExit(async (id: string, opts?: { json?: boolean }) => {
-        const listed = findMaintenanceRunById(id);
-        if (!listed) {
-          console.error(`No maintenance run found for id: ${id}`);
-          process.exitCode = 1;
-          return;
-        }
-        const artifacts = resolveRunArtifacts(listed);
-        if (opts?.json) {
-          console.log(JSON.stringify(artifacts, null, 2));
-          return;
-        }
-        for (const [key, path] of Object.entries(artifacts)) {
-          if (path) console.log(`${key}: ${path}`);
-        }
-      }),
-    );
+  artifactsCmd.option("--json", "Output JSON").action(
+    withExit(async (id: string, opts?: { json?: boolean }) => {
+      const listed = findMaintenanceRunById(id);
+      if (!listed) {
+        console.error(`No maintenance run found for id: ${id}`);
+        process.exitCode = 1;
+        return;
+      }
+      const artifacts = resolveRunArtifacts(listed);
+      if (opts?.json) {
+        console.log(JSON.stringify(artifacts, null, 2));
+        return;
+      }
+      for (const [key, path] of Object.entries(artifacts)) {
+        if (path) console.log(`${key}: ${path}`);
+      }
+    }),
+  );
 
   const explainCmd = runCmd.command("explain").description("Concise diagnosis for a run");
   explainCmd.argument?.("<id>", "Run id or unique prefix");
-  explainCmd
-    .option("--json", "Output JSON")
-    .action(
-      withExit(async (id: string, opts?: { json?: boolean }) => {
-        const listed = findMaintenanceRunById(id);
-        if (!listed) {
-          console.error(`No maintenance run found for id: ${id}`);
-          process.exitCode = 1;
-          return;
-        }
-        if (listed.kind === "orchestrator") {
-          const summary = loadOrchestratorSummary(listed.path);
-          const failed = summary?.steps.filter((s) => s.status === "failed" || s.status === "rate_limited") ?? [];
-          const diagnosis = {
-            diagnosis: summary
-              ? `Orchestrator ${summary.tierLabel} exit=${summary.exitCode}. ${summary.summaryLine}`
-              : "Orchestrator summary unavailable.",
-            failedSteps: failed.map((s) => s.name),
-          };
-          if (opts?.json) {
-            console.log(JSON.stringify(diagnosis, null, 2));
-            return;
-          }
-          console.log(diagnosis.diagnosis);
-          if (failed.length) console.log(`Failed steps: ${failed.map((s) => s.name).join(", ")}`);
-          return;
-        }
-        const record = loadJobRunSummary(listed.path);
-        if (!record) {
-          process.exitCode = 1;
-          return;
-        }
-        const explained = explainJobRun(record, record.artifactPaths.events);
+  explainCmd.option("--json", "Output JSON").action(
+    withExit(async (id: string, opts?: { json?: boolean }) => {
+      const listed = findMaintenanceRunById(id);
+      if (!listed) {
+        console.error(`No maintenance run found for id: ${id}`);
+        process.exitCode = 1;
+        return;
+      }
+      if (listed.kind === "orchestrator") {
+        const summary = loadOrchestratorSummary(listed.path);
+        const failed = summary?.steps.filter((s) => s.status === "failed" || s.status === "rate_limited") ?? [];
+        const diagnosis = {
+          diagnosis: summary
+            ? `Orchestrator ${summary.tierLabel} exit=${summary.exitCode}. ${summary.summaryLine}`
+            : "Orchestrator summary unavailable.",
+          failedSteps: failed.map((s) => s.name),
+        };
         if (opts?.json) {
-          console.log(JSON.stringify(explained, null, 2));
+          console.log(JSON.stringify(diagnosis, null, 2));
           return;
         }
-        console.log(explained.diagnosis);
-        if (explained.lastEvent) console.log(`Last event: ${explained.lastEvent}`);
-        if (explained.resumeHint) console.log(explained.resumeHint);
-      }),
-    );
+        console.log(diagnosis.diagnosis);
+        if (failed.length) console.log(`Failed steps: ${failed.map((s) => s.name).join(", ")}`);
+        return;
+      }
+      const record = loadJobRunSummary(listed.path);
+      if (!record) {
+        console.error("JobRun summary not readable.");
+        process.exitCode = 1;
+        return;
+      }
+      const explained = explainJobRun(record, record.artifactPaths.events);
+      if (opts?.json) {
+        console.log(JSON.stringify(explained, null, 2));
+        return;
+      }
+      console.log(explained.diagnosis);
+      if (explained.lastEvent) console.log(`Last event: ${explained.lastEvent}`);
+      if (explained.resumeHint) console.log(explained.resumeHint);
+    }),
+  );
 
   const resumeCmd = runCmd.command("resume").description("Resume a partial JobRun");
   resumeCmd.argument?.("<id>", "JobRun id or unique prefix");
   resumeCmd.action(
-      withExit(async (id: string) => {
-        const listed = findMaintenanceRunById(id);
-        if (!listed || listed.kind !== "job") {
-          console.error(`No JobRun found for id: ${id}`);
-          process.exitCode = 1;
-          return;
-        }
-        const record = loadJobRunSummary(listed.path) ?? MaintenanceJobRun.load(listed.path)?.record;
-        if (!record) {
-          console.error("JobRun summary not readable.");
-          process.exitCode = 1;
-          return;
-        }
-        if (record.semanticOutcome !== "partial" && record.semanticOutcome !== "failed") {
-          console.error(`JobRun is not resumable (semanticOutcome=${record.semanticOutcome}).`);
-          process.exitCode = 1;
-          return;
-        }
-        const argv = parseMaintenanceResumeArgv(record.resumeCommand, record.command);
-        console.log(`Resuming: ${argv.join(" ")}`);
-        const result = spawnSync(argv[0], argv.slice(1), { stdio: "inherit" });
-        if (result.error) throw result.error;
-        const outcome = resolveMaintenanceResumeOutcome(result);
-        if (outcome.signalKilled) {
-          console.error(`Resume subprocess was killed by signal ${outcome.signalKilled}.`);
-        }
-        if (outcome.exitCode !== undefined) {
-          process.exitCode = outcome.exitCode;
-        }
-      }),
-    );
+    withExit(async (id: string) => {
+      const listed = findMaintenanceRunById(id);
+      if (listed?.kind !== "job") {
+        console.error(`No JobRun found for id: ${id}`);
+        process.exitCode = 1;
+        return;
+      }
+      const record = loadJobRunSummary(listed.path) ?? MaintenanceJobRun.load(listed.path)?.record;
+      if (!record) {
+        console.error("JobRun summary not readable.");
+        process.exitCode = 1;
+        return;
+      }
+      if (record.semanticOutcome !== "partial" && record.semanticOutcome !== "failed") {
+        console.error(`JobRun is not resumable (semanticOutcome=${record.semanticOutcome}).`);
+        process.exitCode = 1;
+        return;
+      }
+      const argv = parseMaintenanceResumeArgv(record.resumeCommand, record.command);
+      console.log(`Resuming: ${argv.join(" ")}`);
+      const result = spawnSync(argv[0], argv.slice(1), { stdio: "inherit" });
+      if (result.error) throw result.error;
+      const outcome = resolveMaintenanceResumeOutcome(result);
+      if (outcome.signalKilled) {
+        console.error(`Resume subprocess was killed by signal ${outcome.signalKilled}.`);
+      }
+      if (outcome.exitCode !== undefined) {
+        process.exitCode = outcome.exitCode;
+      }
+    }),
+  );
 }
 
 /**
@@ -194,10 +189,10 @@ export function registerMaintenanceRunCommands(maintenance: Chainable): void {
  * (OOM kill, external SIGTERM/SIGKILL) instead leaves `status: null` with no `error` set, which
  * previously fell through every check and silently reported success (exit 0).
  */
-export function resolveMaintenanceResumeOutcome(result: {
-  status: number | null;
-  signal: NodeJS.Signals | null;
-}): { exitCode?: number; signalKilled?: NodeJS.Signals } {
+export function resolveMaintenanceResumeOutcome(result: { status: number | null; signal: NodeJS.Signals | null }): {
+  exitCode?: number;
+  signalKilled?: NodeJS.Signals;
+} {
   if (result.signal != null) {
     return { exitCode: 1, signalKilled: result.signal };
   }

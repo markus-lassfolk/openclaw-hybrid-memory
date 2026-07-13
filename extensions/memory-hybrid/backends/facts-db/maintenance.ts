@@ -3,19 +3,19 @@
  */
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-
-import type { DecayClass, MemoryCategory } from "../../config.js";
 import { TTL_DEFAULTS } from "../../config/types/core.js";
+import type { DecayClass, MemoryCategory } from "../../config.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { effectiveHalfLifeDays } from "../../services/semantic-lifecycle.js";
 import type { MemoryEntry, MemoryTier, ScopeFilter } from "../../types/memory.js";
+import { nowIso } from "../../utils/dates.js";
 import { calculateExpiry, classifyDecay } from "../../utils/decay.js";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { parseTags } from "../../utils/tags.js";
-import { nowIso } from "../../utils/dates.js";
 import type { StoreFactInput } from "./crud.js";
 import { preserveTagsColumnExcludesFromTrimSql } from "./fact-queries.js";
 import { isLikelyGarbage } from "./fact-read-queries.js";
+import { decrementFactDegreesForLink } from "./links.js";
 import { scopeFilterClausePositional } from "./scope-sql.js";
 
 function extractFactIds(rows: Array<{ id: string }>): string[] {
@@ -37,10 +37,23 @@ function deleteLinksForFactIds(db: DatabaseSync, factIds: readonly string[]): vo
   if (factIds.length === 0) return;
   for (const batch of batchedInClauseBinds(factIds, LINK_DELETE_BATCH_SIZE)) {
     const placeholders = batch.map(() => "?").join(",");
+    // Fetch doomed links before deleting so the surviving endpoint's out_degree/in_degree can be
+    // decremented (#2085/#2090) — mirrors pruneOrphanedLinks/deleteFact's fetch-then-delete-then-
+    // decrement pattern. decrementFactDegreesForLink is a no-op UPDATE for whichever id is being
+    // pruned in this same batch, so it's safe to call for both endpoints unconditionally.
+    const doomed = db
+      .prepare(
+        `SELECT source_fact_id, target_fact_id, link_type FROM memory_links
+         WHERE source_fact_id IN (${placeholders}) OR target_fact_id IN (${placeholders})`,
+      )
+      .all(...batch, ...batch) as Array<{ source_fact_id: string; target_fact_id: string; link_type: string }>;
     db.prepare(
       `DELETE FROM memory_links
        WHERE source_fact_id IN (${placeholders}) OR target_fact_id IN (${placeholders})`,
     ).run(...batch, ...batch);
+    for (const link of doomed) {
+      decrementFactDegreesForLink(db, link.source_fact_id, link.target_fact_id, link.link_type);
+    }
   }
 }
 
@@ -711,7 +724,7 @@ export function pruneExpiredWithDetails(
           )
           .all({ "@now": nowSec }) as Array<{ id: string; decay_class: DecayClass }>;
         const reprieveStmt = db.prepare(
-          `UPDATE facts SET expires_at = ?, confidence = MAX(0.15, confidence * 0.7), decay_second_chance_at = ? WHERE id = ?`,
+          "UPDATE facts SET expires_at = ?, confidence = MAX(0.15, confidence * 0.7), decay_second_chance_at = ? WHERE id = ?",
         );
         for (const row of reprieved) {
           const ttl = TTL_DEFAULTS[row.decay_class] ?? 45 * 24 * 3600;
@@ -743,6 +756,43 @@ export function pruneExpiredWithDetails(
 
 export function pruneExpired(db: DatabaseSync, nowSec?: number, opts?: { secondChance?: boolean }): number {
   return pruneExpiredWithDetails(db, nowSec, opts).factsPruned;
+}
+
+/**
+ * Read-only preview of what `pruneExpiredWithDetails()` would actually do, using the identical
+ * predicates (pinned_at/decay_freeze_until/verified_facts exclusions, second-chance reprieve).
+ * `countExpiredFacts()` (stats.ts) is NOT a substitute for this — it has none of those exclusions
+ * and overstates what a live run would prune (dream-cycle --dry-run QA follow-up).
+ */
+export function previewPruneExpired(
+  db: DatabaseSync,
+  nowSec = Math.floor(Date.now() / 1000),
+  opts?: { secondChance?: boolean },
+): { factsPruned: number; secondChances: number } {
+  let reprievedIds = new Set<string>();
+  if (opts?.secondChance !== false) {
+    const reprieved = db
+      .prepare(
+        `SELECT id FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
+         AND pinned_at IS NULL
+         AND decay_second_chance_at IS NULL
+         AND (importance >= 0.7 OR recall_count >= 3)
+         AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
+         AND id NOT IN (SELECT fact_id FROM verified_facts)`,
+      )
+      .all({ "@now": nowSec }) as Array<{ id: string }>;
+    reprievedIds = new Set(reprieved.map((r) => r.id));
+  }
+  const rows = db
+    .prepare(
+      `SELECT id FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
+       AND pinned_at IS NULL
+       AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
+       AND id NOT IN (SELECT fact_id FROM verified_facts)`,
+    )
+    .all({ "@now": nowSec }) as Array<{ id: string }>;
+  const factsPruned = rows.filter((r) => !reprievedIds.has(r.id)).length;
+  return { factsPruned, secondChances: reprievedIds.size };
 }
 
 /** Same row filter as `pruneSessionScope` DELETE on `facts` (for vector cleanup preview/maintenance). */
@@ -808,6 +858,31 @@ export function decayConfidence(db: DatabaseSync, nowSec = Math.floor(Date.now()
   // "decayed" count.  The hard-delete count remains available via
   // decayConfidenceWithDetails(...).deletedFactIds.length.
   return decayConfidenceWithDetails(db, nowSec).factsDecayed;
+}
+
+/**
+ * Read-only preview of `decayConfidenceWithDetails()`'s `factsDecayed` count (facts whose
+ * confidence would be halved), using the identical WHERE clause as the live UPDATE.
+ * `listFactIdsToBeDeletedByDecayRun()` is a DIFFERENT, much narrower population (only facts near
+ * the 0.1 deletion floor) and must not be used as a stand-in for this count (dream-cycle
+ * --dry-run QA follow-up) — a dry run could otherwise report "0 facts would decay" while the next
+ * live cycle halves confidence on hundreds of facts nowhere near the floor.
+ */
+export function countFactsToBeDecayedByRun(db: DatabaseSync, nowSec = Math.floor(Date.now() / 1000)): number {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS cnt FROM facts
+         WHERE expires_at IS NOT NULL
+           AND expires_at > @now
+           AND last_confirmed_at IS NOT NULL
+           AND (@now - last_confirmed_at) > (expires_at - last_confirmed_at) * 0.75
+           AND confidence > 0.1
+           AND pinned_at IS NULL
+           AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
+           AND id NOT IN (SELECT fact_id FROM verified_facts)`,
+    )
+    .get({ "@now": nowSec }) as { cnt: number };
+  return row.cnt;
 }
 
 export function decayConfidenceWithDetails(

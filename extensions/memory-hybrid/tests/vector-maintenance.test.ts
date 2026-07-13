@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { deleteVectorsForFactIds, storeCanonicalVectorForFact } from "../services/vector-maintenance.js";
+import {
+  backfillEmbeddingCacheFromVectorStore,
+  deleteVectorsForFactIds,
+  storeCanonicalVectorForFact,
+} from "../services/vector-maintenance.js";
 
 describe("deleteVectorsForFactIds", () => {
   it("skips cleanup when LanceDB backend is unavailable", async () => {
@@ -170,5 +174,106 @@ describe("storeCanonicalVectorForFact", () => {
 
     expect(setEmbeddingModel).not.toHaveBeenCalled();
     expect(storeEmbedding).not.toHaveBeenCalled();
+  });
+});
+
+describe("backfillEmbeddingCacheFromVectorStore (#2084)", () => {
+  it("writes a cache row for each expected-vector fact whose vector exists in the store", async () => {
+    const storeEmbedding = vi.fn();
+    const vectors = new Map<string, number[]>([
+      ["fact-1", [0.1, 0.2]],
+      ["fact-2", [0.3, 0.4]],
+    ]);
+
+    const result = await backfillEmbeddingCacheFromVectorStore({
+      factsDb: {
+        listExpectedVectorFactIds: () => ["fact-1", "fact-2"],
+        storeEmbedding,
+      },
+      vectorDb: { getVectorsByFactIds: vi.fn().mockResolvedValue(vectors) },
+      embeddingModel: "text-embedding-test",
+    });
+
+    expect(result).toEqual({ backfilled: 2, failed: 0 });
+    expect(storeEmbedding).toHaveBeenCalledWith(
+      "fact-1",
+      "text-embedding-test",
+      "canonical",
+      new Float32Array([0.1, 0.2]),
+      2,
+    );
+    expect(storeEmbedding).toHaveBeenCalledWith(
+      "fact-2",
+      "text-embedding-test",
+      "canonical",
+      new Float32Array([0.3, 0.4]),
+      2,
+    );
+  });
+
+  it("skips (does not fail) expected-vector facts with no vector in the store", async () => {
+    const storeEmbedding = vi.fn();
+
+    const result = await backfillEmbeddingCacheFromVectorStore({
+      factsDb: {
+        listExpectedVectorFactIds: () => ["fact-1", "fact-missing"],
+        storeEmbedding,
+      },
+      vectorDb: { getVectorsByFactIds: vi.fn().mockResolvedValue(new Map([["fact-1", [0.1, 0.2]]])) },
+      embeddingModel: "text-embedding-test",
+    });
+
+    expect(result).toEqual({ backfilled: 1, failed: 0 });
+    expect(storeEmbedding).toHaveBeenCalledTimes(1);
+  });
+
+  it("counts per-fact storeEmbedding failures as failed without throwing", async () => {
+    const storeEmbedding = vi.fn().mockImplementation((id: string) => {
+      if (id === "fact-bad") throw new Error("sqlite write failed");
+    });
+
+    const result = await backfillEmbeddingCacheFromVectorStore({
+      factsDb: {
+        listExpectedVectorFactIds: () => ["fact-1", "fact-bad"],
+        storeEmbedding,
+      },
+      vectorDb: {
+        getVectorsByFactIds: vi.fn().mockResolvedValue(
+          new Map([
+            ["fact-1", [0.1, 0.2]],
+            ["fact-bad", [0.3, 0.4]],
+          ]),
+        ),
+      },
+      embeddingModel: "text-embedding-test",
+    });
+
+    expect(result).toEqual({ backfilled: 1, failed: 1 });
+  });
+
+  it("counts a whole batch as failed without throwing when getVectorsByFactIds rejects", async () => {
+    const storeEmbedding = vi.fn();
+
+    const result = await backfillEmbeddingCacheFromVectorStore({
+      factsDb: {
+        listExpectedVectorFactIds: () => ["fact-1", "fact-2"],
+        storeEmbedding,
+      },
+      vectorDb: { getVectorsByFactIds: vi.fn().mockRejectedValue(new Error("lance query timed out")) },
+      embeddingModel: "text-embedding-test",
+    });
+
+    expect(result).toEqual({ backfilled: 0, failed: 2 });
+    expect(storeEmbedding).not.toHaveBeenCalled();
+  });
+
+  it("returns zero when there are no expected-vector facts", async () => {
+    const result = await backfillEmbeddingCacheFromVectorStore({
+      factsDb: { listExpectedVectorFactIds: () => [], storeEmbedding: vi.fn() },
+      vectorDb: { getVectorsByFactIds: vi.fn() },
+      embeddingModel: "text-embedding-test",
+    });
+
+    expect(result).toEqual({ backfilled: 0, failed: 0 });
   });
 });

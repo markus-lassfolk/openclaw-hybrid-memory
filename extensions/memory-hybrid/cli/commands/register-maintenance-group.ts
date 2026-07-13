@@ -10,8 +10,9 @@ import {
   wrapChainableWithDeprecated,
   wrapChainableWithRenames,
 } from "./cli-group-utils.js";
-import { registerAnalyzeMaintenanceLogsCommand } from "./manage/register-analyze-maintenance-logs.js";
+import type { ManageBindings } from "./manage/bindings.js";
 import { registerRunAllCommand } from "./manage/register-agents-audit-runall.js";
+import { registerAnalyzeMaintenanceLogsCommand } from "./manage/register-analyze-maintenance-logs.js";
 import {
   registerBackfillMaintenanceCommands,
   registerMaintenanceCoverageCommand,
@@ -19,10 +20,9 @@ import {
 import { registerMaintenanceHealthCommands } from "./manage/register-maintenance-health.js";
 import { registerMaintenanceOrchestratorCommands } from "./manage/register-maintenance-orchestrator.js";
 import { registerMaintenanceRunCommands } from "./manage/register-maintenance-run.js";
-import { registerSensorSweepCommand } from "./manage/register-sensor-sweep.js";
 import { registerReconcileCronLedgers } from "./manage/register-reconcile-cron-ledgers.js";
+import { registerSensorSweepCommand } from "./manage/register-sensor-sweep.js";
 import { registerValidateCronExit } from "./manage/register-validate-cron-exit.js";
-import type { ManageBindings } from "./manage/bindings.js";
 
 const BACKFILL_RENAMES: Record<string, string> = {
   "backfill-recall-events": GROUPED_MAINTENANCE_COMMAND_NAMES.backfillRecallEvents,
@@ -70,6 +70,7 @@ export function registerMaintenanceGroup(mem: Chainable, b: ManageBindings, ctx:
   registerValidateCronExit(groupedCmds, {
     cfg: ctx.cfg,
     versionInfo: ctx.versionInfo,
+    resolvedSqlitePath: ctx.resolvedSqlitePath,
   });
   registerReconcileCronLedgers(groupedCmds);
 
@@ -99,7 +100,7 @@ export function registerMaintenanceGroup(mem: Chainable, b: ManageBindings, ctx:
   );
   registerValidateCronExit(
     wrapChainableWithDeprecated(mem, { "validate-cron-exit": MAINTENANCE_FLAT_PATHS["validate-cron-exit"]! }),
-    { cfg: ctx.cfg, versionInfo: ctx.versionInfo },
+    { cfg: ctx.cfg, versionInfo: ctx.versionInfo, resolvedSqlitePath: ctx.resolvedSqlitePath },
   );
   registerReconcileCronLedgers(
     wrapChainableWithDeprecated(mem, { "reconcile-cron-ledgers": MAINTENANCE_FLAT_PATHS["reconcile-cron-ledgers"]! }),

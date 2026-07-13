@@ -12,12 +12,12 @@ import { registerDemoCommand } from "./cmd-demo.js";
 import { registerDoctorCommand } from "./cmd-doctor.js";
 import { registerExamplesCommand } from "./cmd-examples.js";
 import { registerFocusCommands } from "./cmd-focus.js";
-import { registerNudgeCommands } from "./cmd-nudge.js";
-import { registerVaultCommands } from "./cmd-vaults.js";
 import { registerHealthCommand } from "./cmd-health.js";
 import { registerMineCommand } from "./cmd-mine.js";
+import { registerNudgeCommands } from "./cmd-nudge.js";
 import { registerProvidersCommand } from "./cmd-providers.js";
 import { registerSetupCommand } from "./cmd-setup.js";
+import { registerVaultCommands } from "./cmd-vaults.js";
 import type { Chainable } from "./shared.js";
 import type { ConfigCliResult } from "./types.js";
 
@@ -29,6 +29,7 @@ export interface UserFriendlyContext {
   embeddings: EmbeddingProvider;
   resolvedSqlitePath?: string;
   aliasDb?: import("../services/retrieval-aliases.js").AliasDB | null;
+  runBackup?: (opts?: { backupDir?: string }) => Promise<import("./backup.js").BackupCliResult>;
   runConfigSet?: (
     key: string,
     value: string,
@@ -75,6 +76,8 @@ export function registerUserFriendlyCommands(mem: Chainable, ctx: UserFriendlyCo
       ctx.wal ?? null,
       ctx.resolvedSqlitePath,
       ctx.aliasDb ?? null,
+      ctx.embeddings ?? null,
+      ctx.runBackup,
     ),
   );
   registerIfMissing(mem, "health", () =>

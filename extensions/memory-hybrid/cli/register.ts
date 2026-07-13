@@ -21,8 +21,8 @@ import { registerInstallIndexCommand } from "./cmd-install-index.js";
 import { executeMineCommand } from "./cmd-mine.js";
 import { registerStatusCommands } from "./cmd-status.js";
 import { registerUserFriendlyCommands, type UserFriendlyContext } from "./cmd-user-friendly.js";
-import { type DistillContext } from "./distill.js";
 import { registerAllCliGroups } from "./commands/register-cli-groups.js";
+import type { DistillContext } from "./distill.js";
 import { registerGoalCommands } from "./goals.js";
 import { type ManageContext, registerManageCommands } from "./manage.js";
 import { registerSkillsCommands } from "./skills.js";
@@ -99,6 +99,8 @@ export type HybridMemCliContext = {
   aliasDb?: AliasDB | null;
   crystallizationStore?: CrystallizationStore | null;
   changeFeed?: import("../services/change-feed.js").ChangeFeed | null;
+  provenanceService?: import("../services/provenance.js").ProvenanceService | null;
+  issueStore?: import("../backends/issue-store.js").IssueStore | null;
   versionInfo: {
     pluginVersion: string;
     memoryManagerVersion: string;
@@ -689,6 +691,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       embeddings: ctx.embeddings,
       resolvedSqlitePath: ctx.resolvedSqlitePath,
       aliasDb: ctx.aliasDb,
+      runBackup: ctx.runBackup,
       runConfigSet: ctx.runConfigSet,
       runConfigMode: ctx.runConfigMode,
       runInstall: ctx.runInstall,

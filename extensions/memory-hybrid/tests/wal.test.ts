@@ -827,6 +827,30 @@ describe("WriteAheadLog", () => {
       warnSpy.mockRestore();
       rmSync(`${walPath}.rewrite.lock`, { force: true });
     });
+
+    it("logs the corruption-repair outcome via .warn, not .info, so it survives quiet mode (#2095 QA follow-up)", async () => {
+      const recentEntry = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "Recent memory", category: "general", importance: 0.8, source: "test" },
+      };
+      await wal.write(recentEntry);
+      appendFileSync(walPath, "{not valid wal json}\n", "utf-8");
+
+      const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+      const infoSpy = vi.spyOn(pluginLogger, "info").mockImplementation(() => {});
+      const compacted = await wal.compactIfOversized(0);
+
+      expect(compacted).toBe(1);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("WAL compactIfOversized detected corruption"));
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("WAL compactIfOversized repaired corruption, recovered 1 valid entries"),
+      );
+      expect(infoSpy).not.toHaveBeenCalledWith(expect.stringContaining("repaired corruption"));
+      warnSpy.mockRestore();
+      infoSpy.mockRestore();
+    });
   });
 
   describe("readAllRecoverable", () => {

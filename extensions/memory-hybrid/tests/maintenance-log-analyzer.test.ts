@@ -1,5 +1,5 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { hostname as osHostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -14,6 +14,7 @@ vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: vi.fn(() => "event-1"),
 }));
 
+import { hasStepRetryOncePending } from "../services/cron-guard.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import {
   applyHeavyMaintenanceAutoFixes,
@@ -598,6 +599,26 @@ describe("maintenance log analyzer", () => {
     expect(steps[0].line).toContain("progress-marker=present");
   });
 
+  it("does not misclassify a NOT-stale empty-exit-after-progress step as stale, even though its own heartbeat text matches the generic staleHint regex (QA follow-up)", () => {
+    const root = tmpRoot();
+    const exitPath = join(root, "monthly-consolidation-20260517T155138Z-24030.exit.txt");
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(exitPath, "");
+    // "still running after" appears in this heartbeat text and also matches classifyOrchestrationAnomaly's
+    // generic staleHint regex — the synthesizer computes stale=false here (fresh mtime, well inside
+    // staleThresholdMs), so classification must not fall through to the generic stale-run rule.
+    writeFileSync(logPath, "memory-hybrid: build-languages — still running after 60s; stage=detect+generate");
+
+    const nowMs = Date.UTC(2026, 4, 17, 16, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
+    expect(steps).toHaveLength(1);
+    expect(steps[0].line).toContain("stale=no");
+
+    const rule = classifyMaintenanceFailure(steps[0]);
+    expect(rule.id).toBe("orchestration-empty-exit-after-progress");
+    expect(rule.suggestedAction).toContain("Dream-cycle log shows work completed");
+  });
+
   it("treats enrich-entities heartbeat lines as progress markers for empty ledgers", () => {
     const root = tmpRoot();
     const exitPath = join(root, "monthly-consolidation-20260517T155138Z-24030.exit.txt");
@@ -623,11 +644,16 @@ describe("maintenance log analyzer", () => {
         "validate-cron-exit marker missing because wrapper failed before ledger flush",
       ].join("\n"),
     );
+    // A missing .exit.txt with a FRESH .log is normal for a job still in progress (QA follow-up)
+    // — backdate the log so this scenario is genuinely stale, matching the "orchestration failure"
+    // this test asserts (not an in-progress run).
+    const staleAt = new Date("2026-05-11T02:45:00Z");
+    utimesSync(logPath, staleAt, staleAt);
 
     const nowMs = Date.UTC(2026, 4, 11, 4, 0, 0);
     const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
     expect(steps).toHaveLength(1);
-    expect(steps[0].step).toBe("orchestration-missing-exit-ledger");
+    expect(steps[0].step).toBe("orchestration-stale-missing-exit-ledger");
     expect(steps[0].line).toContain("matching .exit.txt ledger is missing");
 
     const rule = classifyMaintenanceFailure(steps[0]);
@@ -638,6 +664,32 @@ describe("maintenance log analyzer", () => {
     expect(findings).toHaveLength(1);
     expect(findings[0].classification).toBe("orchestration-bug");
     expect(findings[0].ruleId).toBe("orchestration-missing-exit-ledger");
+  });
+
+  it("does not flag a FRESH missing .exit.txt ledger — normal for a run still in progress (#2094 QA follow-up)", () => {
+    const root = tmpRoot();
+    const logPath = join(root, "nightly-memory-sweep-20260511T030000Z-555.log");
+    writeFileSync(logPath, "[nightly-memory-sweep] prune completed\n[nightly-memory-sweep] distill in progress");
+    // No utimesSync backdating — the .log's real mtime is "now", well inside staleThresholdMs of
+    // nowMs, exactly the "operator runs `maintenance status` while a job is still executing"
+    // scenario that previously reported "ATTENTION NEEDED" for a perfectly healthy run.
+    const nowMs = Date.now();
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0].step).toBe("maintenance-run-in-progress");
+    // exitCode must be 0 for a genuinely healthy in-progress run — analyzeMaintenanceSteps flags
+    // any nonzero-exitCode step as a finding regardless of classification, so a stray exitCode: 1
+    // here would still surface a false-alarm "unclassified" finding even after the classification
+    // fix (QA follow-up).
+    expect(steps[0].exitCode).toBe(0);
+
+    const rule = classifyMaintenanceFailure(steps[0]);
+    expect(rule.classification).not.toBe("orchestration-bug");
+    expect(rule.classification).toBe("unclassified");
+
+    const findings = analyzeMaintenanceSteps(steps);
+    expect(findings).toHaveLength(0);
   });
 
   it("ignores manual-qa stdout transcripts: does not report them as missing-exit-ledger", () => {
@@ -686,11 +738,14 @@ describe("maintenance log analyzer", () => {
     const root = tmpRoot();
     const logPath = join(root, "nightly-memory-sweep-20260511.cron.log");
     writeFileSync(logPath, "[nightly-memory-sweep] run started\n");
+    // Backdate so this is genuinely stale, not a normal in-progress run (QA follow-up).
+    const staleAt = new Date("2026-05-11T02:45:00Z");
+    utimesSync(logPath, staleAt, staleAt);
 
     const nowMs = Date.UTC(2026, 4, 11, 4, 0, 0);
     const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
     expect(steps).toHaveLength(1);
-    expect(steps[0].step).toBe("orchestration-missing-exit-ledger");
+    expect(steps[0].step).toBe("orchestration-stale-missing-exit-ledger");
     expect(steps[0].job).toBe("nightly-memory-sweep");
   });
 
@@ -713,7 +768,7 @@ describe("maintenance log analyzer", () => {
     const nowMs = Date.UTC(2026, 6, 5, 5, 0, 0);
     const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
     // The aggregate .cron.log must not be reported as missing-exit-ledger — its run has a real ledger.
-    expect(steps.some((s) => s.step === "orchestration-missing-exit-ledger")).toBe(false);
+    expect(steps.some((s) => s.step.includes("missing-exit-ledger"))).toBe(false);
     const findings = analyzeMaintenanceSteps(steps);
     expect(findings.some((f) => f.ruleId === "orchestration-missing-exit-ledger")).toBe(false);
   });
@@ -731,7 +786,7 @@ describe("maintenance log analyzer", () => {
 
     const nowMs = Date.UTC(2026, 6, 5, 5, 0, 0);
     const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
-    const missing = steps.find((s) => s.step === "orchestration-missing-exit-ledger");
+    const missing = steps.find((s) => s.step === "orchestration-stale-missing-exit-ledger");
     expect(missing).toBeDefined();
     expect(missing?.job).toBe("hybrid-mem-backup");
     expect(missing?.line).toContain("run_id=20260705T040001Z-30251");
@@ -814,11 +869,14 @@ describe("maintenance log analyzer", () => {
     // Filename as produced by runPendingDigestAutopilotCron (ISO datetime, colons/dots → dashes, no PID)
     const logPath = join(dayDir, "weekly-pending-digest-autopilot-2026-05-13T08-20-00-000Z.log");
     writeFileSync(logPath, "run.start job=weekly-pending-digest-autopilot\n");
+    // Backdate so this is genuinely stale, not a normal in-progress run (QA follow-up).
+    const staleAt = new Date("2026-05-13T08:00:00Z");
+    utimesSync(logPath, staleAt, staleAt);
 
     const nowMs = Date.UTC(2026, 4, 13, 9, 0, 0);
     const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
     expect(steps).toHaveLength(1);
-    expect(steps[0].step).toBe("orchestration-missing-exit-ledger");
+    expect(steps[0].step).toBe("orchestration-stale-missing-exit-ledger");
     expect(steps[0].job).toBe("weekly-pending-digest-autopilot");
     expect(steps[0].logPath).toBe(logPath);
   });
@@ -1183,11 +1241,9 @@ describe("maintenance log analyzer", () => {
 
     const outPath = join(root, "report.json");
     const findingsPath = join(root, "maintenance-findings.db");
-    const persistSpy = vi
-      .spyOn(maintenanceLogAnalyzerModule, "persistMaintenanceFindings")
-      .mockImplementation(() => {
-        throw new Error("disk full");
-      });
+    const persistSpy = vi.spyOn(maintenanceLogAnalyzerModule, "persistMaintenanceFindings").mockImplementation(() => {
+      throw new Error("disk full");
+    });
 
     const result = await runAnalyzeMaintenanceLogs(
       { root, since: "7d", format: "json", out: outPath, persist: findingsPath },
@@ -1206,10 +1262,10 @@ describe("maintenance log analyzer", () => {
   it("rejects --auto-fix-all without --auto-fix instead of silently doing nothing", async () => {
     const root = tmpRoot();
     await expect(
-      runAnalyzeMaintenanceLogs(
-        { root, since: "7d", autoFixAll: true },
-        { cfg: { sqlitePath: "" }, factsDb: {} as never } as unknown as ManageBindings,
-      ),
+      runAnalyzeMaintenanceLogs({ root, since: "7d", autoFixAll: true }, {
+        cfg: { sqlitePath: "" },
+        factsDb: {} as never,
+      } as unknown as ManageBindings),
     ).rejects.toThrow(/--auto-fix-all requires --auto-fix/);
   });
 
@@ -1245,18 +1301,25 @@ describe("maintenance log analyzer", () => {
 
   it("clearStaleLock removes dead PID locks and applyMaintenanceAutoFix clears sqlite-busy paths", () => {
     const dir = mkdtempSync(join(tmpdir(), "hm-lock-"));
+    // Real cron-guard.ts lock files are JSON payloads ({lockedAtMs,pid,hostname}), not bare PID
+    // numbers — clearStaleLock must parse the same format acquireStepLock writes.
+    const deadLockPayload = (pid: number): string =>
+      JSON.stringify({ lockedAtMs: Date.now(), pid, hostname: osHostname() });
     const lock = join(dir, "scan.lock");
-    writeFileSync(lock, "999999999\n");
+    writeFileSync(lock, deadLockPayload(999999999));
     const cleared = clearStaleLock(lock);
     expect(cleared.ok).toBe(true);
+    expect(cleared.cleared).toBe(true);
     expect(existsSync(lock)).toBe(false);
 
     const live = join(dir, "live.lock");
-    writeFileSync(live, `${process.pid}\n`);
-    expect(clearStaleLock(live).ok).toBe(false);
+    writeFileSync(live, deadLockPayload(process.pid));
+    const liveResult = clearStaleLock(live);
+    expect(liveResult.ok).toBe(false);
+    expect(liveResult.cleared).toBe(false);
 
     const stalePath = join(dir, "stale.lock");
-    writeFileSync(stalePath, "999999998\n");
+    writeFileSync(stalePath, deadLockPayload(999999998));
     const fixed = applyMaintenanceAutoFix({
       id: "x",
       occurredAt: 1,
@@ -1277,11 +1340,69 @@ describe("maintenance log analyzer", () => {
     expect(existsSync(stalePath)).toBe(false);
   });
 
+  it("applyMaintenanceAutoFix persists a retry-once marker for transient-llm/transient-network findings (#2094)", () => {
+    const openclawDir = mkdtempSync(join(tmpdir(), "hm-retry-marker-"));
+    const makeFinding = (ruleId: string, step: string): Parameters<typeof applyMaintenanceAutoFix>[0] => ({
+      id: "x",
+      occurredAt: 1,
+      job: "maintenance-nightly",
+      step,
+      exitCode: 1,
+      classification: ruleId === "llm-rate-limit" ? "transient-llm" : "transient-network",
+      ruleId,
+      fingerprint: "fp",
+      logExcerpt: "429 Too Many Requests",
+      logPath: "/tmp/x.log",
+      pluginVersion: null,
+      actionTaken: "retry-once",
+      suggestedAction: "retry",
+      severity: "medium",
+    });
+
+    const llmFixed = applyMaintenanceAutoFix(makeFinding("llm-rate-limit", "insight-synthesis"), openclawDir);
+    expect(llmFixed.actionTaken).toBe("auto-fixed-retry-once");
+    expect(hasStepRetryOncePending("insight-synthesis", openclawDir)).toBe(true);
+
+    const networkFixed = applyMaintenanceAutoFix(
+      makeFinding("gateway-network", "contradiction-candidates"),
+      openclawDir,
+    );
+    expect(networkFixed.actionTaken).toBe("auto-fixed-retry-once");
+    expect(hasStepRetryOncePending("contradiction-candidates", openclawDir)).toBe(true);
+
+    // A step whose rule isn't retry-once related must not get a marker.
+    expect(hasStepRetryOncePending("prune", openclawDir)).toBe(false);
+  });
+
+  it("recordRetryOnce is idempotent: re-annotating an already-fixed finding does not re-throw or duplicate", () => {
+    const openclawDir = mkdtempSync(join(tmpdir(), "hm-retry-marker-"));
+    const already: Parameters<typeof applyMaintenanceAutoFix>[0] = {
+      id: "x",
+      occurredAt: 1,
+      job: "maintenance-nightly",
+      step: "insight-synthesis",
+      exitCode: 1,
+      classification: "transient-llm",
+      ruleId: "llm-rate-limit",
+      fingerprint: "fp",
+      logExcerpt: "429",
+      logPath: "/tmp/x.log",
+      pluginVersion: null,
+      actionTaken: "auto-fixed-retry-once",
+      suggestedAction: "retry [auto-fix: marked retry-once for next maintenance run]",
+      severity: "medium",
+    };
+    const result = applyMaintenanceAutoFix(already, openclawDir);
+    expect(result).toEqual(already);
+    // No marker written this time — the finding was already annotated, so recordRetryOnce short-circuits.
+    expect(hasStepRetryOncePending("insight-synthesis", openclawDir)).toBe(false);
+  });
+
   it("clearStaleLock keeps a live-but-unsignalable lock (EPERM must not be treated as dead, loop iteration 26 regression)", () => {
     const dir = mkdtempSync(join(tmpdir(), "hm-lock-eperm-"));
     const lock = join(dir, "eperm.lock");
     const otherUsersPid = 123456;
-    writeFileSync(lock, `${otherUsersPid}\n`);
+    writeFileSync(lock, JSON.stringify({ lockedAtMs: Date.now(), pid: otherUsersPid, hostname: osHostname() }));
 
     const killSpy = vi.spyOn(process, "kill").mockImplementation((pid) => {
       if (pid === otherUsersPid) {
@@ -1294,6 +1415,7 @@ describe("maintenance log analyzer", () => {
     try {
       const result = clearStaleLock(lock);
       expect(result.ok).toBe(false);
+      expect(result.cleared).toBe(false);
       expect(existsSync(lock)).toBe(true);
     } finally {
       killSpy.mockRestore();

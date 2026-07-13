@@ -780,8 +780,11 @@ export function initializeDatabases(
     try {
       const loaded = JSON.parse(readFileSync(discoveredPath, "utf-8")) as string[];
       if (Array.isArray(loaded) && loaded.length > 0) {
+        // #2100: point at the review workflow directly instead of leaving the operator to
+        // inspect the raw JSON file with no obvious next step.
         api.logger.info(
-          `memory-hybrid: ${loaded.length} proposed categories pending operator review (${discoveredPath})`,
+          `memory-hybrid: ${loaded.length} proposed categories pending operator review (${discoveredPath}). ` +
+            "Run `openclaw hybrid-mem categories discovered` to list, approve, or reject them.",
         );
       }
     } catch (err) {

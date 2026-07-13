@@ -7,6 +7,7 @@
 
 import { dirname } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import { resolveWriteVectorCandidates } from "../../cli/vector-dedupe-helpers.js";
 import { getCronModelConfig, getDefaultCronModel } from "../../config/index.js";
 import type { MemoryCategory } from "../../config.js";
 import "../../config.js";
@@ -214,16 +215,22 @@ export async function runCapture(
           modelTag: humCfg.modelTag,
           skillTag: humCfg.skillTag,
         });
-        const storeResult = ctx.factsDb.storeWithResult({
-          text: entryText,
-          category: "quality_loop",
-          importance: 0.6,
-          entity: null,
-          key: null,
-          value: null,
-          source: "humanizer",
-          decayClass: "normal",
-        });
+        const storeResult = ctx.factsDb.storeWithResult(
+          {
+            text: entryText,
+            category: "quality_loop",
+            importance: 0.6,
+            entity: null,
+            key: null,
+            value: null,
+            source: "humanizer",
+            decayClass: "normal",
+          },
+          // This path never embeds quality-loop scoring entries (no vectorDb.store call follows),
+          // so vector-cosine dedupe structurally cannot run here — suppress the "no vector
+          // candidates" warning rather than spamming it on every humanizer score (#2091).
+          { suppressVectorFallbackWarning: true },
+        );
         if (!storeResult.skipped) {
           await cleanupEvictedVector({
             vectorDb: ctx.vectorDb,
@@ -601,26 +608,33 @@ export async function runCapture(
                       continue;
                     }
                     const nowSec = Math.floor(Date.now() / 1000);
-                    const storeResult = ctx.factsDb.storeWithResult({
-                      text: textToStore,
-                      category,
-                      importance: finalImportance,
-                      entity: extracted.entity || oldFact.entity,
-                      key: extracted.key || oldFact.key,
-                      value: extracted.value || oldFact.value,
-                      source: "auto-capture",
-                      decayClass: oldFact.decayClass,
-                      summary,
-                      tags: extractTags(textToStore, extracted.entity),
-                      validFrom: nowSec,
-                      supersedesId: classification.targetId,
-                      scope: preservedScope,
-                      scopeTarget: preservedScopeTarget,
-                      provenanceSession: captureProvenance.sessionId,
-                      sourceTurn: candidate.sourceTurn,
-                      extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
-                      extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
-                    });
+                    const storeResult = ctx.factsDb.storeWithResult(
+                      {
+                        text: textToStore,
+                        category,
+                        importance: finalImportance,
+                        entity: extracted.entity || oldFact.entity,
+                        key: extracted.key || oldFact.key,
+                        value: extracted.value || oldFact.value,
+                        source: "auto-capture",
+                        decayClass: oldFact.decayClass,
+                        summary,
+                        tags: extractTags(textToStore, extracted.entity),
+                        validFrom: nowSec,
+                        supersedesId: classification.targetId,
+                        scope: preservedScope,
+                        scopeTarget: preservedScopeTarget,
+                        provenanceSession: captureProvenance.sessionId,
+                        sourceTurn: candidate.sourceTurn,
+                        extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
+                        extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
+                      },
+                      // Explicit supersede target: vector-cosine dedupe would match the supersede
+                      // target itself and silently drop the intended update, so it must not run
+                      // here (mirrors register-store-tools.ts's `!supersedes?.trim()` guard).
+                      // Suppress the warning rather than spamming it on every auto-capture UPDATE (#2091).
+                      { suppressVectorFallbackWarning: true },
+                    );
                     if (storeResult.skipped) {
                       if (walEntryId) await ctx.walRemove(walEntryId, api.logger);
                       continue;
@@ -810,24 +824,47 @@ export async function runCapture(
             continue;
           }
 
-          const txResult = runCaptureStoreWithDedupWindow(ctx.factsDb, dedupWindow, dedupInput, () =>
-            ctx.factsDb.storeWithResult({
-              text: textToStore,
-              category,
-              importance: CLI_STORE_IMPORTANCE,
-              entity: extracted.entity,
-              key: extracted.key,
-              value: extracted.value,
+          // Plumb vector neighbour candidates into write-time dedupe so a configured
+          // vectorThreshold actually runs on the auto-capture ADD path instead of silently
+          // degrading to lexical-only (#2091). Reuses the embedding already computed above.
+          // Resolved before runCaptureStoreWithDedupWindow because its callback runs
+          // synchronously inside a DB transaction — it cannot itself await.
+          let autoCaptureVectorCandidates: ReadonlyArray<{ id: string; score: number }> | undefined;
+          if (ctx.cfg.store.fuzzyDedupe && vector) {
+            const resolvedCandidates = await resolveWriteVectorCandidates({
+              fuzzyDedupe: true,
+              vector,
+              vectorDb: ctx.vectorDb,
+              factsDb: ctx.factsDb,
               source: "auto-capture",
-              summary,
-              tags: extractTags(textToStore, extracted.entity),
-              provenanceSession: captureProvenance.sessionId,
-              sourceTurn: candidate.sourceTurn,
-              extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
-              extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
-              scope: autoCaptureScope,
-              scopeTarget: autoCaptureScopeTarget,
-            }),
+              embeddingModelName: typeof ctx.embeddings.modelName === "string" ? ctx.embeddings.modelName : null,
+              candidateScope: autoCaptureScope,
+              candidateScopeTarget: autoCaptureScopeTarget,
+            });
+            autoCaptureVectorCandidates = resolvedCandidates.vectorCandidates;
+          }
+
+          const txResult = runCaptureStoreWithDedupWindow(ctx.factsDb, dedupWindow, dedupInput, () =>
+            ctx.factsDb.storeWithResult(
+              {
+                text: textToStore,
+                category,
+                importance: CLI_STORE_IMPORTANCE,
+                entity: extracted.entity,
+                key: extracted.key,
+                value: extracted.value,
+                source: "auto-capture",
+                summary,
+                tags: extractTags(textToStore, extracted.entity),
+                provenanceSession: captureProvenance.sessionId,
+                sourceTurn: candidate.sourceTurn,
+                extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
+                extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
+                scope: autoCaptureScope,
+                scopeTarget: autoCaptureScopeTarget,
+              },
+              { vectorCandidates: autoCaptureVectorCandidates, warnContext: "auto-capture" },
+            ),
           );
           if (txResult.skipped) {
             if (walEntryId) await ctx.walRemove(walEntryId, api.logger);

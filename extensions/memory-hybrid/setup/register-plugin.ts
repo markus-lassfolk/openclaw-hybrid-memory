@@ -1,47 +1,56 @@
 import { dirname, join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
+import { clearRuntimeTimers, createTimers, type PluginRuntime } from "../api/plugin-runtime.js";
 import { AgentHealthStore, agentHealthDbPathForMemorySqlite } from "../backends/agent-health-store.js";
 import { AuditStore, auditDbPathForMemorySqlite } from "../backends/audit-store.js";
 import { EventBus } from "../backends/event-bus.js";
 import { LearningsDB } from "../backends/learnings-db.js";
-import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
-import { type PluginRuntime, clearRuntimeTimers, createTimers } from "../api/plugin-runtime.js";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
-import { createPendingLLMWarnings } from "../services/chat.js";
 import { getMemoryTriggers } from "../services/auto-capture.js";
 import { detectCategory as detectCategoryUtil, shouldCapture as shouldCaptureUtil } from "../services/capture-utils.js";
+import { ChangeFeed } from "../services/change-feed.js";
+import { createPendingLLMWarnings } from "../services/chat.js";
 import { ContextualVariantGenerator, VariantGenerationQueue } from "../services/contextual-variants.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { wirePostStoreEnrichment } from "../services/post-store-enrichment.js";
-import { ChangeFeed } from "../services/change-feed.js";
-import { runReflection, runReflectionMeta, runReflectionRules } from "../services/reflection.js";
-import { PythonBridge } from "../services/python-bridge.js";
-import { findSimilarByEmbedding } from "../services/vector-search.js";
 import { warnGraphRecallConfigMisconfiguration } from "../services/graph-recall-config.js";
+import { wirePostStoreEnrichment } from "../services/post-store-enrichment.js";
+import { PythonBridge } from "../services/python-bridge.js";
+import { runReflection, runReflectionMeta, runReflectionRules } from "../services/reflection.js";
 import { resetStartupMemoryAttribution } from "../services/startup-memory-attribution.js";
-import { startEventLoopLagMonitor, stopEventLoopLagMonitor } from "../utils/event-loop-health.js";
 import { createVaultRegistry } from "../services/vault-registry.js";
+import { findSimilarByEmbedding } from "../services/vector-search.js";
 import { walRemove, walWrite } from "../services/wal-helpers.js";
+import { startEventLoopLagMonitor, stopEventLoopLagMonitor } from "../utils/event-loop-health.js";
 import { registerHybridMemCliMetadataOnly } from "./cli-context/metadata.js";
-import { registerHybridMemCliHelpOnlyWithApi } from "./cli-context/register-help.js";
 import { registerHybridMemCliCredentialsOnlyWithApi } from "./cli-context/register-credentials-only.js";
+import { registerHybridMemCliWithApi } from "./cli-context/register-full.js";
+import { registerHybridMemCliHelpOnlyWithApi } from "./cli-context/register-help.js";
 import { registerHybridMemCliUpgradeOnlyWithApi } from "./cli-context/register-upgrade-only.js";
 import { registerHybridMemCliVersionOnlyWithApi } from "./cli-context/register-version-only.js";
-import { registerHybridMemCliWithApi } from "./cli-context/register-full.js";
 import { parseHybridMemPluginConfig } from "./parse-plugin-config.js";
 import "./cli-context.js";
 import { closeOldDatabases, createReusedDatabaseBootstrap, initializeDatabases } from "./bootstrap-databases.js";
 import "./init-databases.js";
-import { createPluginService } from "./plugin-service.js";
+import { isHybridMemCredentialsOnlyInvocation } from "../index-credentials-cli.js";
+import { isHybridMemHelpInvocation } from "../index-help.js";
+import { isHybridMemUpgradeOnlyInvocation } from "../index-upgrade-cli.js";
+import { isHybridMemVersionOnlyInvocation } from "../index-version-cli.js";
+import { PLUGIN_ID } from "../utils/constants.js";
 import {
-  canReuseDatabasesOnReregister,
-  databaseContextFromRuntime,
-  recordReregisterDatabaseReuse,
-  recordReregisterFullTeardown,
-  recordReregisterRegistration,
-  resetReregisterPolicyForTests,
-  resolveReregisterPolicy,
-} from "./reregister-policy.js";
+  restoreStdoutAfterJsonCli,
+  wrapApiLoggerQuietForCli,
+  wrapApiLoggerStderrForJsonCli,
+} from "../utils/hybrid-mem-json-cli.js";
+import {
+  getCategoryDecisionRegex,
+  getCategoryEntityRegex,
+  getCategoryFactRegex,
+  getCategoryPreferenceRegex,
+} from "../utils/language-keywords.js";
+import { initPluginLogger, pluginLogger } from "../utils/logger.js";
+import { buildToolScopeFilter } from "../utils/scope-filter.js";
+import { versionInfo } from "../versionInfo.js";
 import {
   getHybridMemoryRegistrationState,
   resetHybridMemoryRegistrationStateForTests,
@@ -52,30 +61,24 @@ import {
   drainOldBootstrap,
   drainOldRecall,
   isTeardownDrainedForGeneration,
-  listTeardownPromisesForGeneration,
   resetReloadTeardownChainForTests,
   schedulePluginTeardown,
   TEARDOWN_SOFT_WAIT_MS,
   TEARDOWN_WAIT_MS,
 } from "./hybrid-memory-reload-coordinator.js";
+import { createPluginService } from "./plugin-service.js";
 import { registerContextEngineBestEffort } from "./register-context-engine.js";
 import { registerLifecycleHooks } from "./register-hooks.js";
 import { registerTools } from "./register-tools.js";
-import { PLUGIN_ID } from "../utils/constants.js";
-import { isHybridMemHelpInvocation } from "../index-help.js";
-import { isHybridMemCredentialsOnlyInvocation } from "../index-credentials-cli.js";
-import { isHybridMemUpgradeOnlyInvocation } from "../index-upgrade-cli.js";
-import { isHybridMemVersionOnlyInvocation } from "../index-version-cli.js";
-import { wrapApiLoggerStderrForJsonCli, restoreStdoutAfterJsonCli } from "../utils/hybrid-mem-json-cli.js";
 import {
-  getCategoryDecisionRegex,
-  getCategoryEntityRegex,
-  getCategoryFactRegex,
-  getCategoryPreferenceRegex,
-} from "../utils/language-keywords.js";
-import { initPluginLogger } from "../utils/logger.js";
-import { buildToolScopeFilter } from "../utils/scope-filter.js";
-import { versionInfo } from "../versionInfo.js";
+  canReuseDatabasesOnReregister,
+  databaseContextFromRuntime,
+  recordReregisterDatabaseReuse,
+  recordReregisterFullTeardown,
+  recordReregisterRegistration,
+  resetReregisterPolicyForTests,
+  resolveReregisterPolicy,
+} from "./reregister-policy.js";
 
 /** Wrappers for extracted helper functions that need access to per-instance config via runtimeRef. */
 function shouldCapture(text: string): boolean {
@@ -142,12 +145,29 @@ async function performHybridMemCliTeardown(): Promise<void> {
       operation: "hybrid-mem-teardown:close-vaults",
     });
   }
+  // Best-effort: give a fire-and-forget auto-optimize (#2081) a short window to finish before
+  // close() tears the connection down under it. Bounded so a slow/hung native optimize can never
+  // block one-shot CLI process exit. The 5s window only covers the short internal auto-optimize
+  // triggered by store() — an explicit `vectordb-optimize`/`storage repair` run can legitimately
+  // still be in progress after 5s (optimize() itself waits up to VECTORDB_OPTIMIZE_TIMEOUT_MS,
+  // 10min by default). If one is still running, skip the synchronous vectorDb.close() rather than
+  // yanking the connection out from under an in-flight native compaction — the native call
+  // releases its own locks once it finishes, exactly as optimize()'s own timeout-path log message
+  // promises; every other store still closes normally.
+  await r.vectorDb?.waitForPendingOptimize?.(5_000);
+  const vectorDbStillOptimizing = r.vectorDb?.isOptimizing?.() ?? false;
+  if (vectorDbStillOptimizing) {
+    pluginLogger.warn(
+      "memory-hybrid: skipping vectorDb.close() at CLI teardown — a native optimize is still running in the " +
+        "background and will release its locks once it finishes",
+    );
+  }
   try {
     closeOldDatabases({
       factsDb: r.factsDb,
       edictStore: r.edictStore,
       narrativesDb: r.narrativesDb,
-      vectorDb: r.vectorDb,
+      vectorDb: vectorDbStillOptimizing ? null : r.vectorDb,
       credentialsDb: r.credentialsDb,
       proposalsDb: r.proposalsDb,
       identityReflectionStore: r.identityReflectionStore,
@@ -316,7 +336,9 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
 function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
   // Issue #1230 / #1234 / #1882: machine-output CLI must not write plugin telemetry to stdout.
   // Wrap api.logger to stderr before bootstrap; keep pluginLogger on that same logger delegate.
-  const logApi = wrapApiLoggerStderrForJsonCli(api);
+  // Issue #2095: OPENCLAW_HYBRID_MEM_QUIET=1 further drops info/debug bootstrap noise; composed
+  // on top so it still respects the --json stderr redirect when both are set.
+  const logApi = wrapApiLoggerQuietForCli(wrapApiLoggerStderrForJsonCli(api));
   initPluginLogger(logApi.logger, false);
 
   // Reopen guard: ensure any previous instance is closed before creating new one (avoids duplicate
@@ -832,6 +854,7 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
         eventLog: runtime.eventLog,
         verificationStore: runtime.verificationStore,
         provenanceService: runtime.provenanceService,
+        issueStore: runtime.issueStore ?? null,
         costTracker: runtime.costTracker,
         eventBus: runtime.eventBus,
         resolvedSqlitePath: runtime.resolvedSqlitePath,
@@ -986,7 +1009,7 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
   }
 }
 
-export { runtimeRef, shouldCapture, detectCategory, performHybridMemCliTeardown };
+export { detectCategory, performHybridMemCliTeardown, runtimeRef, shouldCapture };
 
 /** Reset plugin singleton state between vitest cases (runtime, reload chain, generation). */
 export function resetPluginRegistrationStateForTests(): void {

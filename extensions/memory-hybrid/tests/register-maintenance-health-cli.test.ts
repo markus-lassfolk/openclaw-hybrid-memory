@@ -183,6 +183,44 @@ describe("maintenance status folds in analyze-maintenance-logs strict findings (
     expect(lines.some((l) => l.includes("Log health") && l.includes("strict findings"))).toBe(true);
   });
 
+  it("prints an unambiguous Overall verdict line distinguishing scheduler cadence from log health (#2094)", async () => {
+    writeHealthyNightlyJob();
+    writeStrictFailingMaintenanceLog();
+
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((a) => String(a)).join(" "));
+    });
+    const mem = makeProgram();
+
+    await mem.parseAsync(["maintenance", "status"], { from: "user" });
+
+    // Cron cadence is fresh (scheduler OK) but maintenance is semantically failing (log health
+    // strict findings) — the bottom-line verdict must call this out explicitly, not just leave
+    // the two individual lines above for the reader to reconcile themselves.
+    const overallLine = lines.find((l) => l.includes("Overall:"));
+    expect(overallLine).toBeDefined();
+    expect(overallLine).toContain("ATTENTION NEEDED");
+    expect(overallLine).toMatch(/cadence is fresh, but maintenance is semantically failing/);
+  });
+
+  it("prints a healthy Overall verdict when both scheduler cadence and log health are clean", async () => {
+    writeHealthyNightlyJob();
+
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((a) => String(a)).join(" "));
+    });
+    const mem = makeProgram();
+
+    await mem.parseAsync(["maintenance", "status"], { from: "user" });
+
+    const overallLine = lines.find((l) => l.includes("Overall:"));
+    expect(overallLine).toBeDefined();
+    expect(overallLine).toContain("healthy");
+    expect(overallLine).not.toContain("ATTENTION NEEDED");
+  });
+
   it("reports ok:false and logHealth.strictFailed in --json mode", async () => {
     writeHealthyNightlyJob();
     writeStrictFailingMaintenanceLog();

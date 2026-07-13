@@ -85,6 +85,15 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
           console.log("⚠  Migration required: vault is plaintext but an encryption key is configured.");
           console.log("   Run: openclaw hybrid-mem credentials encrypt-vault --backup --verify --yes");
         }
+        if (status.legacyLiteralFileKey) {
+          console.log("⚠  Legacy key material: vault was opened using the literal file:/path ref as the passphrase");
+          console.log(
+            "   itself, not the file's contents. New installs should use file contents via file:/path/to/key.",
+          );
+          if (status.legacyLiteralFileKeyRemediation) {
+            console.log(`   ${status.legacyLiteralFileKeyRemediation}`);
+          }
+        }
       }),
     );
 

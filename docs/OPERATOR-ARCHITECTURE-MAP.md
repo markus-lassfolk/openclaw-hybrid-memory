@@ -95,7 +95,7 @@ Reference points:
 | Surface | Primary command(s) | What it is for | Primary implementation |
 |---|---|---|---|
 | Verify | `openclaw hybrid-mem verify [--fix] [--test-llm] [--reconcile]` | Canonical runtime/storage/config validation and guided fixes | [`../extensions/memory-hybrid/cli/verify.ts`](../extensions/memory-hybrid/cli/verify.ts), [`../extensions/memory-hybrid/cli/verify/sections/`](../extensions/memory-hybrid/cli/verify/sections/) |
-| Doctor | `openclaw hybrid-mem doctor [--fix] [--dry-run]` | Guided install+verify flow for onboarding/remediation | [`../extensions/memory-hybrid/cli/verify.ts`](../extensions/memory-hybrid/cli/verify.ts) |
+| Doctor | `openclaw hybrid-mem doctor [--fix] [--reconcile] [--deep]` | Health diagnostics (🟢🟡🔴) with in-place repair for storage/FTS/alias/goal drift | [`../extensions/memory-hybrid/cli/cmd-doctor.ts`](../extensions/memory-hybrid/cli/cmd-doctor.ts) |
 | Health home | `openclaw hybrid-mem status [--json]` | Unified operational summary + Mission Control URL | [`../extensions/memory-hybrid/cli/cmd-status.ts`](../extensions/memory-hybrid/cli/cmd-status.ts) |
 | Quick health | `openclaw hybrid-mem health [--json]` | Traffic-light quick checks | [`../extensions/memory-hybrid/cli/cmd-health.ts`](../extensions/memory-hybrid/cli/cmd-health.ts) |
 | Mission Control | `openclaw hybrid-mem dashboard` | Dashboard URL and server surface | [`../extensions/memory-hybrid/routes/dashboard/server.ts`](../extensions/memory-hybrid/routes/dashboard/server.ts) |

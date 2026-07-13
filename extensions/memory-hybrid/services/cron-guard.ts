@@ -23,7 +23,9 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { homedir, hostname as osHostname } from "node:os";
 import { join } from "node:path";
 
+import { atomicWriteFile } from "../utils/atomic-write.js";
 import { readOpenClawCronStore, writeOpenClawCronStore } from "./openclaw-cron-store.js";
+import { isPidAlive } from "./task-queue-watchdog.js";
 
 /** Subdirectory (relative to openclawDir) where guard files are kept. */
 export const GUARD_SUBDIR = join("cron", "guard");
@@ -53,7 +55,11 @@ export function readStepGuardTimestampMs(stepName: string, openclawDir?: string)
 export function writeStepGuardTimestampMs(stepName: string, timestampMs: number, openclawDir?: string): void {
   const guardDir = getGuardDir(openclawDir);
   mkdirSync(guardDir, { recursive: true });
-  writeFileSync(getStepGuardFilePath(stepName, openclawDir), String(timestampMs), "utf-8");
+  // atomicWriteFile (write-temp + rename), not a plain writeFileSync — a crash mid-write (the
+  // orchestrator's own runtime-budget kill is a plausible trigger) must never leave a truncated
+  // guard timestamp, which readStepGuardTimestampMs would then misread as "never run" and
+  // re-trigger the step early (QA follow-up).
+  atomicWriteFile(getStepGuardFilePath(stepName, openclawDir), String(timestampMs));
 }
 
 /** Per-step in-progress lock file: `step--{name}.lock` — a real cross-process mutex. */
@@ -126,6 +132,16 @@ export function acquireStepLock(stepName: string, openclawDir?: string, nowMs = 
       if (!payload || nowMs - payload.lockedAtMs <= STEP_LOCK_STALE_MS) {
         return false; // held by a live (or recent) run, or unreadable — fail closed
       }
+      // Past the time-based staleness window doesn't mean abandoned — a legitimately long-running
+      // step (e.g. a slow local-LLM-tier step) can still be genuinely alive and holding this lock.
+      // Only reclaim without a liveness check when we can't verify it (no pid recorded, a legacy
+      // bare-timestamp lock file, or the owner ran on a different host we can't signal); when the
+      // recorded owner is on THIS host, confirm it's actually dead before stealing its lock
+      // (QA follow-up — a purely time-based reclaim let a second invocation run the same step
+      // concurrently with a still-alive first one).
+      if (payload.pid !== undefined && payload.hostname === osHostname() && isPidAlive(payload.pid)) {
+        return false; // recorded owner is alive on this host — not actually abandoned
+      }
     } catch {
       return false; // couldn't read the lock file — fail closed, don't run concurrently
     }
@@ -142,8 +158,21 @@ export function acquireStepLock(stepName: string, openclawDir?: string, nowMs = 
 }
 
 export function releaseStepLock(stepName: string, openclawDir?: string): void {
+  const lockPath = getStepLockFilePath(stepName, openclawDir);
   try {
-    rmSync(getStepLockFilePath(stepName, openclawDir), { force: true });
+    // Verify this process still owns the lock before deleting it. acquireStepLock's stale-reclaim
+    // path can let a second process take over a lock this process still believes it holds (e.g. a
+    // legitimately long-running step past STEP_LOCK_STALE_MS, reclaimed from a different host or
+    // via a legacy pid-less lock with no liveness check available). An unconditional delete here
+    // would then remove that second process's ACTIVE lock out from under it, opening a window for
+    // a third invocation to run the same step concurrently (QA follow-up). Only skip when we have
+    // positive evidence of a different owner — an unreadable/legacy lock still gets cleared, same
+    // as before.
+    const info = readLockInfoAtPath(lockPath);
+    if (info && (info.pid !== process.pid || info.hostname !== osHostname())) {
+      return;
+    }
+    rmSync(lockPath, { force: true });
   } catch {
     /* non-fatal — worst case a stale lock sits until STEP_LOCK_STALE_MS passes */
   }
@@ -162,13 +191,23 @@ export interface StepLockInfo {
 /** Read a single step's lock metadata, if a lock file is currently present (#2031). */
 export function readStepLockInfo(stepName: string, openclawDir?: string, nowMs = Date.now()): StepLockInfo | null {
   const lockPath = getStepLockFilePath(stepName, openclawDir);
+  const info = readLockInfoAtPath(lockPath, nowMs);
+  return info ? { stepName, ...info } : null;
+}
+
+/**
+ * Same as {@link readStepLockInfo} but for an arbitrary lock file path not necessarily tied to a
+ * known step name — e.g. one extracted from a log excerpt by the maintenance auto-fix tooling.
+ * Shares the same JSON-or-legacy-bare-number parsing `readStepLockInfo` uses, so a caller with a
+ * raw path doesn't need its own (and potentially incompatible) lock-file parser.
+ */
+export function readLockInfoAtPath(lockPath: string, nowMs = Date.now()): Omit<StepLockInfo, "stepName"> | null {
   if (!existsSync(lockPath)) return null;
   try {
     const payload = parseLockPayload(readFileSync(lockPath, "utf-8"));
     if (!payload) return null;
     const ageMs = Math.max(0, nowMs - payload.lockedAtMs);
     return {
-      stepName,
       lockPath,
       lockedAtMs: payload.lockedAtMs,
       ageMs,
@@ -212,6 +251,47 @@ export function listActiveStepLocks(openclawDir?: string, nowMs = Date.now()): S
 export function formatStepLockDetail(info: StepLockInfo | null): string {
   if (!info) return "lock metadata unavailable";
   return `pid=${info.pid ?? "unknown"} host=${info.hostname ?? "unknown"} held=${Math.round(info.ageMs / 1000)}s stale=${info.stale} lock=${info.lockPath}`;
+}
+
+/** Per-step "retry once" marker file: `step--{name}.retry-once`. */
+function getStepRetryOnceMarkerPath(stepName: string, openclawDir?: string): string {
+  return join(getGuardDir(openclawDir), `step--${stepName}.retry-once`);
+}
+
+/**
+ * Mark a step for one forced run outside its normal cadence guard (#2094). Set by
+ * analyze-maintenance-logs --auto-fix when a finding is classified transient-llm/transient-network
+ * with the retry-once action; consumed by the orchestrator's guard check on the step's next
+ * evaluation (forced or scheduled), so a transient failure gets one automatic bounded retry instead
+ * of silently waiting out the full cadence window.
+ */
+export function markStepRetryOnce(stepName: string, openclawDir?: string): void {
+  const guardDir = getGuardDir(openclawDir);
+  mkdirSync(guardDir, { recursive: true });
+  // atomicWriteFile, not a plain writeFileSync — see writeStepGuardTimestampMs above for why.
+  atomicWriteFile(getStepRetryOnceMarkerPath(stepName, openclawDir), String(Date.now()));
+}
+
+/** Whether a retry-once marker is currently pending for this step, without consuming it. */
+export function hasStepRetryOncePending(stepName: string, openclawDir?: string): boolean {
+  return existsSync(getStepRetryOnceMarkerPath(stepName, openclawDir));
+}
+
+/**
+ * Consume (delete) a pending retry-once marker, if present. Returns whether one existed. Always
+ * call this as soon as a pending marker is observed — regardless of whether the bypass it grants
+ * ends up mattering for this particular guard check — so the marker can never grant more than one
+ * extra chance, and never lingers to retroactively affect an unrelated future guard evaluation.
+ */
+export function consumeStepRetryOnce(stepName: string, openclawDir?: string): boolean {
+  const markerPath = getStepRetryOnceMarkerPath(stepName, openclawDir);
+  if (!existsSync(markerPath)) return false;
+  try {
+    rmSync(markerPath, { force: true });
+  } catch {
+    // Non-fatal — worst case this step gets one more forced retry than intended on a future tick.
+  }
+  return true;
 }
 
 export function stepGuardEligible(

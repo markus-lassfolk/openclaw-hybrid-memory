@@ -38,6 +38,7 @@ vi.mock("../services/error-reporter.js", async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, capturePluginError: vi.fn() };
 });
+
 import { capturePluginError } from "../services/error-reporter.js";
 
 const { FactsDB, EventLog } = _testing;
@@ -1444,6 +1445,122 @@ describe("runDreamCycle", () => {
       pruneLogTables.mockRestore();
       rmSync(artifactDir, { recursive: true, force: true });
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // Dry-run preview mode (#2089)
+  // -------------------------------------------------------------------------
+  describe("dryRun", () => {
+    const openaiStub = {
+      chat: { completions: { create: vi.fn().mockRejectedValue(new Error("no key")) } },
+    } as never;
+    const embeddingsStub = { embed: vi.fn().mockRejectedValue(new Error("no key")) } as never;
+
+    it("previews expired-fact pruning without deleting anything", async () => {
+      const nowSec = Math.floor(Date.now() / 1000);
+      factsDb.store({
+        text: "Expired fact about old news",
+        category: "fact",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "test",
+        decayClass: "session",
+        expiresAt: nowSec - 100,
+      });
+      expect(factsDb.count()).toBe(1);
+
+      const result = await runDreamCycle(
+        factsDb,
+        {} as never,
+        embeddingsStub,
+        openaiStub,
+        null,
+        { ...baseConfig, pruneMode: "expired", dryRun: true },
+        silentLogger,
+      );
+
+      expect(result.dryRun).toBe(true);
+      expect(result.factsPruned).toBe(1); // accurate preview via countExpired()
+      expect(factsDb.count()).toBe(1); // but nothing was actually deleted
+      expect(result.digestSummary).toContain("[DRY RUN");
+    });
+
+    it("does not consolidate episodic events or delete them from the event log", async () => {
+      const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+      eventLog.append({
+        sessionId: "s1",
+        timestamp: oldTs,
+        eventType: "fact_learned",
+        content: { text: "Old event that should survive dry-run" },
+      });
+
+      const result = await runDreamCycle(
+        factsDb,
+        {} as never,
+        embeddingsStub,
+        openaiStub,
+        eventLog,
+        { ...baseConfig, dryRun: true },
+        silentLogger,
+      );
+
+      expect(result.eventsConsolidated).toBe(0);
+      expect(result.factsCreated).toBe(0);
+      expect(eventLog.getUnconsolidated(0)).toHaveLength(1);
+      expect(factsDb.count()).toBe(0); // no consolidated fact was created
+    });
+
+    it("does not prune orphaned links, run FTS optimize, vacuum, or write the memory index", async () => {
+      const result = await runDreamCycle(
+        factsDb,
+        {} as never,
+        embeddingsStub,
+        openaiStub,
+        null,
+        { ...baseConfig, dryRun: true, vacuumOnCycle: true, logRetentionDays: 30 },
+        silentLogger,
+      );
+
+      expect(result.dryRun).toBe(true);
+      expect(result.linksPruned).toBe(0);
+      expect(result.logRowsPruned).toBe(0);
+      expect(result.vacuumRan).toBe(false);
+      expect(result.orphanVectorsRemoved).toBe(0);
+      expect(result.success).toBe(true);
+      expect(result.failedStages).toEqual([]);
+    });
+
+    it("real (non-dry-run) cycles are unaffected by the dryRun plumbing — default behavior unchanged", async () => {
+      const nowSec = Math.floor(Date.now() / 1000);
+      factsDb.store({
+        text: "Expired fact for a real run",
+        category: "fact",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "test",
+        decayClass: "session",
+        expiresAt: nowSec - 100,
+      });
+
+      const result = await runDreamCycle(
+        factsDb,
+        {} as never,
+        embeddingsStub,
+        openaiStub,
+        null,
+        { ...baseConfig, pruneMode: "expired" },
+        silentLogger,
+      );
+
+      expect(result.dryRun).toBe(false);
+      expect(result.factsPruned).toBe(1);
+      expect(factsDb.count()).toBe(0);
+      expect(result.digestSummary).not.toContain("[DRY RUN");
+    });
   });
 });
 

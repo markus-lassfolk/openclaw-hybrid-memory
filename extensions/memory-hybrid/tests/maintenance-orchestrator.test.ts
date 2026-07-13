@@ -3,7 +3,13 @@ import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { HybridMemoryConfig } from "../config.js";
-import { acquireStepLock, readStepGuardTimestampMs, writeStepGuardTimestampMs } from "../services/cron-guard.js";
+import {
+  acquireStepLock,
+  hasStepRetryOncePending,
+  markStepRetryOnce,
+  readStepGuardTimestampMs,
+  writeStepGuardTimestampMs,
+} from "../services/cron-guard.js";
 import {
   MAINTENANCE_STEPS,
   runMaintenanceOrchestrator,
@@ -38,6 +44,42 @@ describe("maintenance-orchestrator", () => {
     const prune = result.steps.find((s) => s.name === "prune");
     expect(prune?.status).toBe("skipped_guard");
     expect(result.exitCode).toBe(0);
+  });
+
+  it("bypasses an unexpired guard exactly once when a retry-once marker is pending, then consumes it (#2094)", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    writeStepGuardTimestampMs("prune", Date.now(), openclawDir);
+    markStepRetryOnce("prune", openclawDir);
+    const runners = new Map<string, () => Promise<string>>([["prune", async () => "ok"]]);
+
+    const first = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["cycle"], verbose: false, include: ["prune"] },
+    );
+    const prune = first.steps.find((s) => s.name === "prune");
+    expect(prune?.status).toBe("ok");
+    expect(hasStepRetryOncePending("prune", openclawDir)).toBe(false);
+
+    // The marker is consumed — a second run inside the same guard window is skipped normally.
+    const second = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["cycle"], verbose: false, include: ["prune"] },
+    );
+    expect(second.steps.find((s) => s.name === "prune")?.status).toBe("skipped_guard");
+  });
+
+  it("consumes a retry-once marker even when the step was already guard-eligible, so it cannot linger stale", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    // No guard timestamp written — the step is naturally eligible without needing the marker.
+    markStepRetryOnce("prune", openclawDir);
+    const runners = new Map<string, () => Promise<string>>([["prune", async () => "ok"]]);
+
+    await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["cycle"], verbose: false, include: ["prune"] },
+    );
+
+    expect(hasStepRetryOncePending("prune", openclawDir)).toBe(false);
   });
 
   it("surfaces lock owner metadata (pid/host/held) in the skipped_guard summary when a step is locked (#2031)", async () => {
@@ -119,6 +161,55 @@ describe("maintenance-orchestrator", () => {
     expect(distillCalls).toBe(1);
     expect(result.steps.find((s) => s.name === "self-correction-run")?.status).toBe("deferred");
     expect(result.exitCode).toBe(2);
+  });
+
+  it("resets the rate-limit counter after a semantic-outcome-driven failure, not just a thrown one (QA follow-up)", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const rateLimitErr = Object.assign(new Error("429"), { status: 429 });
+    let reflectCalls = 0;
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "distill",
+        async () => {
+          throw rateLimitErr;
+        },
+      ],
+      // Returns (does not throw) a summary whose semantic token blocks guard advancement —
+      // exercises the non-throwing "failed" path that previously never reset the counter.
+      ["resolve-contradictions", async () => "matched=1 semantic=partial"],
+      [
+        "self-correction-run",
+        async () => {
+          throw rateLimitErr;
+        },
+      ],
+      [
+        "reflect",
+        async () => {
+          reflectCalls++;
+          return "ok";
+        },
+      ],
+    ]);
+    // rateLimitMaxRetries=2: if the counter incorrectly stays elevated across the semantic-failure
+    // step in between, the second rate-limit hit reaches 2 and trips the circuit breaker, deferring
+    // "reflect". If the counter correctly resets, two isolated single rate-limit hits never trip it.
+    const cfg = {
+      maintenance: { orchestrator: { rateLimitMaxRetries: 2, llmCooldownBetweenStepsMs: 0 } },
+    } as HybridMemoryConfig;
+    const result = await runMaintenanceOrchestrator(
+      { cfg, runners, openclawDir },
+      {
+        tiers: ["nightly"],
+        force: true,
+        verbose: false,
+        include: ["distill", "resolve-contradictions", "self-correction-run", "reflect"],
+      },
+    );
+
+    expect(result.steps.find((s) => s.name === "resolve-contradictions")?.status).toBe("failed");
+    expect(reflectCalls).toBe(1);
+    expect(result.steps.find((s) => s.name === "reflect")?.status).toBe("ok");
   });
 
   it("respects dependency gates", async () => {

@@ -2274,6 +2274,50 @@ describe("FactsDB.pruneOrphanedLinks", () => {
     expect(deleted).toBe(1); // only the orphaned link deleted
     expect(db.linksCount()).toBe(linksBefore - 1); // valid a→b link still present
   });
+
+  it("decrements the surviving endpoint's out_degree when pruning an orphaned link (#2085)", () => {
+    const a = db.store({
+      text: "Fact A (degree decrement test)",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "permanent",
+    });
+    const b = db.store({
+      text: "Fact B (degree decrement test, will be force-deleted)",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "permanent",
+    });
+    db.createLink(a.id, b.id, "RELATED_TO");
+
+    const rawDb = (
+      db as unknown as {
+        liveDb: {
+          prepare: (s: string) => { get: (...args: unknown[]) => unknown; run: (...args: unknown[]) => void };
+        };
+      }
+    ).liveDb;
+    const outDegreeOf = (id: string) =>
+      (rawDb.prepare("SELECT out_degree FROM facts WHERE id = ?").get(id) as { out_degree: number }).out_degree;
+    expect(outDegreeOf(a.id)).toBe(1);
+
+    // Delete fact B directly (no CASCADE on target_fact_id), leaving the a→b link orphaned.
+    rawDb.prepare("DELETE FROM facts WHERE id = ?").run(b.id);
+    const deleted = db.pruneOrphanedLinks();
+    expect(deleted).toBe(1);
+
+    // a's out_degree must be decremented back to 0 now that its only link was pruned as orphaned —
+    // otherwise a would be permanently misreported as more connected than it actually is.
+    expect(outDegreeOf(a.id)).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -64,6 +64,25 @@ Discovery uses `autoClassify.model` (e.g. `gpt-4o-mini`).
 
 ---
 
+## Reviewing discovered categories (issue #2100)
+
+Discovered categories are already added and in use as soon as the threshold is reached (step 4 above) — there's no gate before that. `categories discovered` gives operators a way to review the queue after the fact:
+
+```bash
+openclaw hybrid-mem categories discovered              # list pending + previously-rejected labels
+openclaw hybrid-mem categories discovered approve food  # acknowledge — prints manual promotion steps
+openclaw hybrid-mem categories discovered reject food   # remove from the queue; never re-proposed
+```
+
+- **`list`** (the default with no subcommand) prints every pending label plus any labels previously rejected, with the exact `approve`/`reject` commands to run next.
+- **`approve <label>`** removes the label from the pending queue and prints the manual steps to make it a first-class config category (add it to `categories` in your plugin config, then `openclaw hybrid-mem categories remap --from other --to <label> --apply` for any facts that should move). Approving does **not** auto-apply anything — discovery already reclassified the qualifying facts; this command is a review/acknowledgement step, not a promotion trigger.
+- **`reject <label>`** removes the label from the pending queue **and** records it in a sibling `.discovered-categories-rejected.json` file so a future discovery run never re-proposes the same label.
+- Add `--json` to any of the above for machine-readable output.
+
+The bootstrap warning ("N proposed categories pending operator review") points at this command instead of the raw JSON file.
+
+---
+
 ## Related docs
 
 - [FEATURES.md](FEATURES.md) — Categories and classification pipeline

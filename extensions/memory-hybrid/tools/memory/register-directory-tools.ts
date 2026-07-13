@@ -12,8 +12,8 @@ import { AllEmbeddingProvidersFailed } from "../../services/embeddings.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { mergeResults } from "../../services/merge-results.js";
 import type { SearchResult } from "../../types/memory.js";
-import { UUID_REGEX } from "../../utils/constants.js";
 import { embedCallWithTimeoutAndRetry } from "../../utils/embed-call.js";
+import { isValidVectorId } from "../../utils/vector-id.js";
 import type { MemoryToolRuntime } from "./runtime.js";
 import { resolveToolVaultBackends } from "./vault-resolve.js";
 
@@ -323,14 +323,16 @@ export function registerDirectoryTools(runtime: MemoryToolRuntime): void {
               }
             }
 
-            // Validate that resolvedId is a proper UUID before attempting deletion.
-            // LLMs sometimes pass memory text content as the ID instead of the UUID.
-            if (!UUID_REGEX.test(resolvedId)) {
+            // Validate that resolvedId is a well-formed memory id before attempting deletion.
+            // LLMs sometimes pass memory text content as the ID instead of the real id. Fact ids
+            // are either UUIDs or safe slug-style ids (#2079) — both are accepted here so
+            // slug-id facts remain forgettable through this tool.
+            if (!isValidVectorId(resolvedId)) {
               return {
                 content: [
                   {
                     type: "text",
-                    text: `"${memoryId}" is not a valid memory ID. Use memory_recall to find the memory and get its UUID, then pass the UUID to memory_forget.`,
+                    text: `"${memoryId}" is not a valid memory ID. Use memory_recall to find the memory and get its ID, then pass that ID to memory_forget.`,
                   },
                 ],
                 details: { action: "invalid_id", originalId: memoryId },

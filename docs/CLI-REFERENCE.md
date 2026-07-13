@@ -24,6 +24,7 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | Category | Commands |
 |----------|----------|
 | **Setup & installation** | `install` (`setup`), `verify [--fix]` (`preflight`), `doctor [--fix]`, `status`, `dashboard`, `config` (`settings`) |
+| **Smoke testing** | `smoke e2e [--json]` |
 | **Maintenance** | `run-all`, `compact`, `prune`, `checkpoint`, `backfill-decay`, `backfill`, `dream-cycle`, `resolve-contradictions` |
 | **Stats & query** | `stats [--efficiency]`, `test`, `context-audit`, `search <query>`, `lookup <id>`, `forget <id> [--yes]`, `list [--limit, --category, --tier]`, `show <id>`, `categories` |
 | **Proposals & corrections** | `proposals list|show|approve|reject <id>`, `corrections list`, `corrections approve-all`, `review` |
@@ -33,7 +34,12 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | **Self-correction** | `self-correction-extract`, `self-correction-run` |
 | **Export & config** | `export`, `config`, `config-mode <mode>` (`mode`), `config-set <key> <value>` (`set`) |
 | **Credentials & scope** | `credentials migrate-to-vault`, `scope list|stats|prune|promote` |
+| **Error-reporter queue** | `error-reports status [--json]`, `error-reports peek [--limit N] [--json]`, `error-reports flush [--timeout ms] [--json]` |
 | **Contacts** | `contacts list`, `contacts suggest-merges`, `contacts merge <fromId> <intoId>`, `contacts import --from <file>`, `contacts sync --from <file>` |
+| **Graph & audit** | `graph repair --collapse-event-hubs [--apply]`, `graph health` / `audit health [--json] [--strict\|--strict-errors] [--output <path>]`, `graph get <factId>`, `graph path <fromFactOrEntity> <toFactOrEntity>`, `audit log` |
+| **Links** | `link create <sourceFactId> <targetFactId> --type <type> [--strength N]`, `link list <factId>`, `link delete <linkId>` |
+| **Issues** | `issues create <title> --symptoms <list>`, `issues update <id>`, `issues list`, `issues search <query>`, `issues show <id>`, `issues link-fact <issueId> <factId>` |
+| **Provenance** | `provenance <factId> [--json]` |
 | **Plugin lifecycle** | `upgrade [version]`, `uninstall` |
 | **Goals & working memory** | `goals …`, `goals config`, `active-tasks`, `active-tasks config`, `active-tasks complete <label>`, `active-tasks stale`, `active-tasks reconcile`, `active-tasks hygiene [--dry-run|--apply] [--older-than <duration>]`, `active-tasks add <label> <desc>`, `active-tasks render`, `task-queue-status`, `task-queue-touch` |
 
@@ -58,8 +64,25 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | `backfill-decay` | Backfill decay classes for existing rows. |
 | `build-languages [--dry-run] [--model M]` | Detect top 3 languages from fact samples, generate multilingual trigger/category/decay keywords via LLM, write `.language-keywords.json`. See [MULTILINGUAL-SUPPORT.md](MULTILINGUAL-SUPPORT.md). |
 | `enrich-entities [--limit N] [--all] [--dry-run] [--model M] [--adaptive-catch-up] [--batch-size N] [--batch-delay-ms N] [--time-budget-sec N] [--max-concurrency N] [--provider-pressure-budget N] [--json]` | Backfill **PERSON**/**ORG** extraction for facts that have no stored entity-mention rows yet (same franc + LLM pipeline as store-time enrichment when `graph.enabled`). Queue priority is `hot → warm → structural → cold`, then recent access, recall/access counts, importance, and created-at. Use `--limit` for bounded catch-up batches or `--all` for one-shot exhaustive backfill. Add `--adaptive-catch-up` to automatically ramp throughput after consecutive successful batches and back off on pressure/rate-limit signals (429/retry hints/transient failures), starting from the provided `--batch-size`/`--batch-delay-ms` baseline. With adaptive mode, `--time-budget-sec` stops cleanly between facts/batches, `--max-concurrency` bounds parallel LLM calls per batch, `--provider-pressure-budget` stops after cumulative rate-limit/timeout pressure, and `--json` emits issue #1791 telemetry (`avgSecPerFact`, `provider429s`, `timeouts`, `nextRecommendedLimit`, `nextRecommendedTimeoutSec`, etc.). |
+| `graph repair --collapse-event-hubs [--apply] [--threshold N] [--json]` | Repair historical graph pathologies: collapse legacy dream-cycle/session-heartbeat `DERIVED_FROM` mega-hubs into `provenance_json` and delete the eligible links. Dry-run by default; `--apply` performs the migration. |
+| `graph health [--json] [--strict\|--strict-errors] [--timeout-ms N] [--output <path>]` | Alias for `audit health` (below), grouped under `graph` alongside `graph repair` for discoverability. |
+| `graph get <factId> [--json]` | Show a fact plus its outgoing/incoming graph links (#2090). |
+| `graph path <fromFactOrEntity> <toFactOrEntity> [--max-depth N] [--json]` | Shortest path between two facts by id or entity name via bidirectional BFS over the memory graph; exits 1 when no path is found within `--max-depth` (default 5) (#2090). |
+| `link create <sourceFactId> <targetFactId> --type <type> [--strength N] [--json]` | Create a typed link between two facts (SUPERSEDES, CAUSED_BY, PART_OF, RELATED_TO, DEPENDS_ON, CONTRADICTS, INSTANCE_OF, PRECEDED_BY). `CONTRADICTS` records a bidirectional contradiction and reduces confidence instead of a plain link. CLI parity for `memory_link` (#2090). |
+| `link list <factId> [--json]` | List a fact's outgoing and incoming links (#2090). |
+| `link delete <linkId> [--json]` | Delete a link by id; decrements graph degree counters where applicable. Exits 1 if the id doesn't exist (#2090). |
+| `issues create <title> --symptoms <list> [--severity <sev>] [--tags <list>] [--json]` | Create a tracked issue (lifecycle: open → diagnosed → fix-attempted → resolved → verified, or wont-fix). CLI parity for `memory_issue_create` (#2090). |
+| `issues update <id> [--status <status>] [--root-cause <text>] [--fix <text>] [--rollback <text>] [--symptoms <list>] [--json]` | Update fields and/or advance status; `--status` validates the allowed transition (#2090). |
+| `issues list [--status <list>] [--severity <list>] [--tags <list>] [--limit N] [--json]` | List tracked issues with optional filters (#2090). |
+| `issues search <query> [--json]` | Search issues by title/symptoms (LIKE-based text matching) (#2090). |
+| `issues show <id> [--json]` | Show one issue (#2090). |
+| `issues link-fact <issueId> <factId>` | Associate a memory fact with an issue for cross-referencing (#2090). |
+| `provenance <factId> [--json]` | Show a fact's provenance chain: source session/turn plus DERIVED_FROM/CONSOLIDATED_FROM/REFLECTED_FROM edges. Requires `provenance.enabled: true`. CLI parity for `memory_provenance` (#2090). |
+| `audit health [--json] [--strict\|--strict-errors] [--timeout-ms N] [--output <path>]` | One-shot non-destructive hybrid-memory health report: storage, categories, decay, graph hub-degree guard stats, entity-enrichment backlog, credentials status, warnings/remediation. `--strict` exits 2 on any warning/error/partial status; `--strict-errors` exits 2 only on errors/degraded status. `--output` writes the JSON artifact atomically instead of stdout. |
+| `audit log [--hours N] [--agent <id>] [--outcome <o>] [--target <t>] [--format lines\|summary\|timeline]` | Cross-agent audit trail (issue #790): query logged memory operations. |
 | `classify [--dry-run] [--limit N] [--model M]` | Auto-classify "other" facts using LLM. Progress bar in TTY. |
 | `categories` | List all configured categories with per-category fact counts. |
+| `categories discovered [list\|approve <label>\|reject <label>] [--json]` | Review labels proposed by category discovery (see [AUTOMATIC-CATEGORIES.md](AUTOMATIC-CATEGORIES.md)) before they're promoted into config. `list` (default) shows pending + previously-rejected labels; `approve`/`reject` remove a label from the pending queue — `approve` prints the manual promotion steps (discovery is advisory-only, it never auto-applies), `reject` also records the label so future discovery runs never re-propose it (#2100). |
 | `list <type> [--limit N] [--status s]` | List items by type: **patterns**, **rules**, **directives**, **procedures**, **proposals**, or **corrections**. `--limit` caps output (default 50). For proposals/corrections, `--status` filters (e.g. pending). See [List, show, and review](#list-show-and-review-issue-56) below. |
 | `show <id>` | Show full details of a fact, procedure, or persona proposal by ID. |
 | `proposals list [--status s]` | List persona proposals (pending, approved, rejected, applied). |
@@ -108,7 +131,7 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | `maintenance run list\|status\|artifacts\|explain\|resume` | Inspect orchestrator / JobRun artifacts (#1877). See [maintenance-job-runs.md](maintenance-job-runs.md). |
 | `maintenance nightly\|cycle\|full [--json] [--summary-out <path>]` | Orchestrator tiers; `--json` / `--summary-out` emit machine-readable run summary. |
 | `run-all [--dry-run] [--verbose] [--force\|--full]` | Run all maintenance tasks in optimal order: backfill-decay (once), prune, compact, distill, extract-daily, extract-directives, extract-reinforcement, extract-procedures, generate-auto-skills, reflect, reflect-rules, reflect-meta, generate-proposals, self-correction-run, build-languages. `--force` / `--full` propagate to scan-style steps (distill, extract-*, self-correction-run). See [MAINTENANCE-TASKS-MATRIX.md](MAINTENANCE-TASKS-MATRIX.md). |
-| `dream-cycle` | Nightly pipeline: prune expired facts, consolidate event log into facts, reflect, reflect-rules. Requires `nightlyCycle.enabled`. Cron: nightly-dream-cycle. |
+| `dream-cycle [--dry-run] [--json]` | Nightly pipeline: prune expired facts, consolidate event log into facts, reflect, reflect-rules. Requires `nightlyCycle.enabled`. Cron: nightly-dream-cycle. `--dry-run` (#2089) previews what would be pruned/decayed/consolidated/reflected without mutating facts, links, episodes, proposals, or files — every follow-up stage after the core cycle (verification, tool effectiveness, crystallization, cost-log prune, ...) is skipped entirely since none of them have a preview mode. `--json` is only supported together with `--dry-run` and emits the full result object on stdout. |
 | `resolve-contradictions` | Resolve conflicting/superseded facts. Use `--auto --dry-run` / `--auto --apply` for the autonomous pipeline, `--export-review` / `--apply-review` for the manual queue, and `--llm [--model ...]` for opt-in adjudication. Cron: step 4 of nightly-memory-sweep. |
 | `credentials migrate-to-vault` | Move credential facts from memory into vault and redact originals. |
 | `credentials list [--service <pattern>]` | List vault entries (service, type, url; no values). Use `--service` to filter by substring (e.g. `--service unifi`). |
@@ -261,6 +284,25 @@ This adds:
 
 ---
 
+## Smoke testing
+
+`openclaw hybrid-mem smoke e2e [--json]` runs a first-class end-to-end pipeline check (issue [#2088](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2088)): store → embed → recall → link → episode → forget → verify, using two disposable, uniquely-tagged test facts. Unlike `verify`/`doctor` (which check config/connectivity), `smoke e2e` proves new memories actually flow through every intended feature:
+
+1. Store two facts (`decayClass: "ephemeral"`, tagged with a unique run id) and confirm the SQLite rows.
+2. Store canonical vectors and confirm the `fact_embeddings` cache row (model + dimensions).
+3. Confirm the LanceDB vector row exists with the expected dimension.
+4. Keyword recall (FTS5) finds the fact.
+5. Semantic recall finds the fact for a paraphrased query.
+6. Create an explicit `RELATED_TO` graph link; confirm it's readable both directions and that `out_degree`/`in_degree` incremented.
+7. Record and search an episode.
+8. Forget/delete everything created (facts, embeddings cache rows, LanceDB vectors, the link, the episode) — always attempted, regardless of which earlier step failed.
+9. Verify no leftover rows in SQLite, LanceDB, links, the embedding cache, or episodes.
+10. Verify the storage-sync drift state (see [`verify`](#verify-and-doctor) below) didn't regress.
+
+Safe to run against a production local memory store — every artifact is uniquely tagged and cleanup is mandatory, not opt-in. `--json` emits the full structured result (`runId`, `overall`, per-step `{name, status, detail, durationMs}`, and `leftover` artifact ids). Without `--json`, a failed run whose cleanup could not fully complete prints exact commands (`link delete <id>`, `forget <id> --yes`) to remove leftovers manually. Exits `1` when any step fails.
+
+---
+
 ## Verify and doctor
 
 `openclaw hybrid-mem verify` checks config, DBs, and embedding API. Feature toggles are shown as **true** / **false** to match `openclaw.json`. It checks:
@@ -294,13 +336,25 @@ openclaw hybrid-mem verify --json 2>verify-human.log | jq '.ok'
 
 The same contract applies to other JSON commands (`status --json`, `skills queue --json`, `config` when emitting JSON, etc.): do not parse stdout as JSON if you did not pass `--json`, and avoid mixing log lines into stdout in custom wrappers.
 
-`openclaw hybrid-mem doctor` adds a guided onboarding wrapper around install + verify:
+`openclaw hybrid-mem doctor` runs a standalone set of health diagnostics (🟢 pass, 🟡 warn, 🔴 fail) covering SQLite/LanceDB connectivity, the embedding provider, config validity, SQLite ↔ LanceDB sync, the alias Lance index (if aliases are enabled), disk space, WAL health, FTS index/trigger consistency, retrieval/recall stats, maintenance job staleness, the error-reporter queue, and quarantined goal files (if goal stewardship is enabled). Exit code is `1` if any check fails.
 
-- step 1: checks/applies recommended defaults (`install`)
-- step 2: runs runtime/storage checks (`verify`)
-- step 3: prints remediation summary and next actions
+`--fix` repairs what it safely can, then re-checks and reports the real post-repair state (not just "a repair ran"):
 
-Use `--fix` to apply install defaults and verify repairs, or `--dry-run` to preview changes.
+- **FTS population drift** — rebuilds `facts_fts` from `facts`.
+- **FTS structural drift** (missing `facts_fts` table/columns/triggers) — recreates it live via the same idempotent migration (`runFactsMigrations`) that already runs on every `FactsDB` open, then chains straight into a population rebuild so one `--fix` pass fully self-heals. If a gateway is currently running, restart it afterward so its own connection picks up the corrected schema.
+- **Storage structural drift** (duplicate/fragmented Lance rows, no orphans) — runs the same repair `verify --fix` uses (optimize + dedupe + rebuild), matching issue [#2103](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2103).
+- **Alias Lance index mismatch** — rebuilds the alias Lance table from SQLite (re-embeds if the dimension changed).
+- **Quarantined goal files** — restores any `.json.corrupt` goal file that still parses as valid Goal JSON.
+
+Add **`--reconcile`** to also check for SQLite ↔ LanceDB **orphan** drift (mismatched ID sets; issue [#904](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/904)). `--reconcile` alone is report-only; combine with `--fix` (`doctor --fix --reconcile`) to actually delete vector-side orphans and rebuild missing SQLite-side vectors — the one destructive repair in scope, so doctor takes a checkpoint backup first and aborts the repair (leaving the drift untouched) if the backup fails. `--reconcile-policy <conservative|balanced|aggressive>` (default `balanced`) and `--reconcile-max-fixes <n>` bound how much rebuild work runs, mirroring `verify --reconcile --fix`.
+
+`--deep` additionally runs a savepointed FTS trigger round-trip probe (insert/update/delete).
+
+Checks that need human judgement or aren't safely repairable from inside the running process stay suggestion-only: SQLite/LanceDB connection failures, missing/misconfigured embedding provider, low disk space, WAL disabled/unavailable/circuit-breaker-tripped/journal-corrupt (data-loss risk — needs root-cause investigation first), and stale maintenance jobs.
+
+**`--json`:** prints the full check list and summary as a single JSON object to stdout instead of the human-readable banner/icon lines — `{ overall: "healthy"|"degraded"|"unhealthy", checks: [{ name, status, message, fix? }], summary: { passed, warnings, failed }, durationMs, timestamp }`. `overall` is `"unhealthy"` (and the process exits `1`) if any check failed, `"degraded"` if only warnings are present, else `"healthy"`. Composes with `--fix`/`--reconcile`/`--deep` — the repairs still run, only the output format changes. Useful for scripting/monitoring the nightly `hybrid-mem:nightly-doctor-repair` cron job (see [Maintenance cron jobs](#maintenance-cron-jobs)) without having to parse the human-readable text: check `checks` for the `"Database Sync"`/`"FTS Index/Triggers"`/`"Alias Lance Index"`/`"Goal registry quarantine"` entries specifically before treating an unrelated failing check (e.g. embedding provider down) as a reconcile failure.
+
+`openclaw hybrid-mem doctor --fix --reconcile` runs nightly by default via the `hybrid-mem:nightly-doctor-repair` cron job (see [Maintenance cron jobs](#maintenance-cron-jobs) below) — existing installs pick it up the next time `install` or `verify --fix` runs.
 
 ---
 
@@ -315,6 +369,15 @@ Several commands support **`--json`**. Follow these rules when automating:
 | **Exit codes** | See per-command sections (e.g. verify: `0` / `1` / `2`). |
 
 Commands that register plugin config during startup must not print non-JSON lines to stdout when you use JSON mode (for example corrections/config registration during `config --json`). If `jq` fails with “parse error”, check stderr for the real message and upgrade to **2026.5.190+** if you hit legacy stdout pollution.
+
+**Quiet mode (`OPENCLAW_HYBRID_MEM_QUIET=1`, issue [#2095](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2095)):** By default, `hybrid-mem` commands print plugin bootstrap telemetry (startup checkpoints, `registered ...` confirmations, credential-vault-OK lines) before the command's real output, which can bury the result in a smoke suite or cron harness. Set the env var to `1` to drop that info/debug boilerplate:
+
+```bash
+OPENCLAW_HYBRID_MEM_QUIET=1 openclaw hybrid-mem maintenance status
+OPENCLAW_HYBRID_MEM_QUIET=1 openclaw hybrid-mem digest pending --json
+```
+
+Warnings and errors are never suppressed by quiet mode — only routine progress logging is trimmed. `--help` invocations are already quiet (they short-circuit before the plugin/storage stack bootstraps) and are unaffected by this flag. Quiet mode composes with `--json`: bootstrap `warn`/`error` lines still route to stderr as usual, just without the `info`/`debug` noise ahead of them. Note: the `[plugins] loading ...` lines the OpenClaw host itself prints before the plugin registers are outside this plugin's control.
 
 ---
 
@@ -519,7 +582,7 @@ store (see [PROACTIVE-RESEARCH.md](PROACTIVE-RESEARCH.md)):
 
 ## Maintenance cron jobs
 
-**Install** and **verify --fix** create or repair maintenance cron jobs in `~/.openclaw/cron/jobs.json`. The canonical list is **10 jobs** (see table). **Install/verify** also creates `~/.openclaw/logs/cron-hybrid-mem/` for first-run log paths.
+**Install** and **verify --fix** create or repair maintenance cron jobs in `~/.openclaw/cron/jobs.json`. The canonical list is **11 jobs** (see table). **Install/verify** also creates `~/.openclaw/logs/cron-hybrid-mem/` for first-run log paths.
 
 Default job **messages** embed a **bash harness**: one foreground shell (`set -euo pipefail`, `set -x`), per-step `hm_step` that **tees** to `HM_LOG` and appends `exit=<code>` lines to `HM_EXIT`, plus log headers (`HM_JOB`, `RUN_ID`, `openclaw --version`). Logs default to `~/.openclaw/logs/cron-hybrid-mem/` (fallback: `/tmp/openclaw-cron-hybrid-mem-$USER` if that directory is not writable). The message instructs the agent **not** to update the guard file after a failed step and to paste `HM_EXIT` in the reply.
 
@@ -535,6 +598,7 @@ Default job **messages** embed a **bash harness**: one foreground shell (`set -e
 | `hybrid-mem:monthly-consolidation` | 1st 05:00 | **monthly-consolidation:** consolidate → build-languages → backfill-decay → enrich-entities --limit `${HYBRID_MEM_CLI_JOB_ENRICH_LIMIT:-25}` (default 25; set env var to override). |
 | `hybrid-mem:sensor-sweep` | every 4h (configurable) | **sensor-sweep:** tier 1 + tier 2. Requires sensorSweep.enabled. |
 | `hybrid-mem:research-overnight` | 03:30 daily (`research.schedule`) | **research-overnight:** isolated heavy-model agent — `research pick` → web research → `research store`. Gated by `research.enabled` (default on); announce delivery only with explicit `research.delivery.channel` + `to`. |
+| `hybrid-mem:nightly-doctor-repair` | 03:15 daily | **nightly-doctor-repair:** `doctor --fix --reconcile` — self-heals storage structural drift, orphan vectors (with an automatic backup before deletion), alias Lance mismatches, and quarantined goal files (issue [#2103](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2103)). Runs after the night's memory-sweep/dream-cycle writes settle, before the 03:30 jobs. |
 
 - **Install:** Adds any missing jobs (does not change existing jobs or re-enable disabled ones).
 - **Verify --fix:** Adds any missing jobs and can normalize schedule/pluginJobId; does not re-enable disabled jobs by default.

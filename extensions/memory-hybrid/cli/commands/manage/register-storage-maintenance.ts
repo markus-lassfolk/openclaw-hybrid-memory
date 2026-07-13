@@ -24,7 +24,11 @@ import {
   type VectorBackendObservability,
 } from "../../../services/vector-backend-observability.js";
 import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
-import { deleteVectorsForFactIds, reconcileOrphanVectors } from "../../../services/vector-maintenance.js";
+import {
+  backfillEmbeddingCacheFromVectorStore,
+  deleteVectorsForFactIds,
+  reconcileOrphanVectors,
+} from "../../../services/vector-maintenance.js";
 import { runStorageRepairPipeline } from "../../../services/storage-repair-pipeline.js";
 import type { MemoryEntry } from "../../../types/memory.js";
 import { embedCallWithTimeoutAndRetry } from "../../../utils/embed-call.js";
@@ -312,13 +316,22 @@ function registerManageStorageMaintenanceOnParent(
               const stats = await runMaintenanceHeartbeat("vectordb-optimize", verbose, () =>
                 vectorDb.optimize(olderThanMs),
               );
-              // Record timestamp after successful optimization
-              if (ctx.resolvedSqlitePath) {
-                recordMaintenanceTimestamp(ctx.resolvedSqlitePath, ".vectordb_optimize_last_run");
+              if (stats.timedOut) {
+                console.log(
+                  "LanceDB: optimize() timed out waiting for native table.optimize() to complete; " +
+                    "it continues running in the background. Re-run later to confirm completion, or set " +
+                    "OPENCLAW_HYBRID_MEM_VECTORDB_OPTIMIZE_TIMEOUT_MS to wait longer.",
+                );
+                process.exitCode = 2;
+              } else {
+                // Record timestamp after successful optimization
+                if (ctx.resolvedSqlitePath) {
+                  recordMaintenanceTimestamp(ctx.resolvedSqlitePath, ".vectordb_optimize_last_run");
+                }
+                console.log(
+                  `LanceDB: compacted ${stats.compacted} fragments, pruned ${stats.removedFragments} fragment(s), freed ${stats.freedBytes} bytes`,
+                );
               }
-              console.log(
-                `LanceDB: compacted ${stats.compacted} fragments, pruned ${stats.removedFragments} fragment(s), freed ${stats.freedBytes} bytes`,
-              );
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                 subsystem: "cli",
@@ -1516,6 +1529,21 @@ function registerManageStorageMaintenanceOnParent(
                 }
               }
 
+              // Best-effort fact_embeddings (canonical embedding cache) backfill, post-swap only
+              // (#2084). fact_embeddings is a cache, not vector-store integrity (#2080), so a
+              // failure here never fails the re-index — it just leaves the cache to catch up via
+              // the normal reembed-vectorless path.
+              console.log("Re-index: backfilling embedding cache (fact_embeddings) from the live vector store...");
+              const cacheBackfillResult = await backfillEmbeddingCacheFromVectorStore({
+                factsDb,
+                vectorDb,
+                embeddingModel: embeddings.modelName,
+              });
+              console.log(
+                `Re-index: embedding cache backfill — ${cacheBackfillResult.backfilled} updated` +
+                  (cacheBackfillResult.failed > 0 ? `, ${cacheBackfillResult.failed} skipped (non-fatal)` : ""),
+              );
+
               if (ctx.resolvedSqlitePath) {
                 appendVectorLifecycleAuditEvent(ctx.resolvedSqlitePath, {
                   event: "reindex_completed",
@@ -1648,7 +1676,10 @@ function registerManageStorageMaintenanceOnParent(
             console.log(`  policy=${report.policy} maxFixes=${report.maxFixes}`);
             console.log(`  vectorless: before=${report.vectorlessBefore} after=${report.vectorlessAfter}`);
             console.log(
-              `  optimize: compacted=${report.optimize.compacted} removedFragments=${report.optimize.removedFragments} freedBytes=${report.optimize.freedBytes}`,
+              `  optimize: compacted=${report.optimize.compacted} removedFragments=${report.optimize.removedFragments} freedBytes=${report.optimize.freedBytes}` +
+                (report.optimize.timedOut
+                  ? " timedOut=true (native compaction is still running in the background; re-run later to confirm it finished)"
+                  : ""),
             );
             console.log(
               `  reconcile: vectorOrphans=${report.reconcile.vectorOrphans} deleted=${report.reconcile.vectorOrphansDeleted}; sqliteOrphans=${report.reconcile.sqliteOrphans} rebuilt=${report.reconcile.sqliteOrphansRebuilt} skipped=${report.reconcile.sqliteOrphansSkipped}`,

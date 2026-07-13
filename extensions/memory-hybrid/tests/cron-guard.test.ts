@@ -4,8 +4,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   acquireStepLock,
+  consumeStepRetryOnce,
   getStepGuardFilePath,
+  hasStepRetryOncePending,
   listActiveStepLocks,
+  markStepRetryOnce,
   readStepGuardTimestampMs,
   readStepLockInfo,
   releaseStepLock,
@@ -123,5 +126,45 @@ describe("cron-guard step lock owner metadata (#2031)", () => {
   it("listActiveStepLocks returns an empty array when the guard dir doesn't exist", () => {
     openclawDir = join(tmpdir(), `hm-guard-nonexistent-${Date.now()}`);
     expect(listActiveStepLocks(openclawDir)).toEqual([]);
+  });
+});
+
+describe("cron-guard retry-once marker (#2094)", () => {
+  let openclawDir: string;
+
+  afterEach(() => {
+    if (openclawDir) rmSync(openclawDir, { recursive: true, force: true });
+  });
+
+  it("hasStepRetryOncePending is false when no marker was written", () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-guard-retry-"));
+    expect(hasStepRetryOncePending("insight-synthesis", openclawDir)).toBe(false);
+  });
+
+  it("markStepRetryOnce sets a marker that hasStepRetryOncePending observes", () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-guard-retry-"));
+    markStepRetryOnce("insight-synthesis", openclawDir);
+    expect(hasStepRetryOncePending("insight-synthesis", openclawDir)).toBe(true);
+  });
+
+  it("consumeStepRetryOnce returns true exactly once and clears the marker", () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-guard-retry-"));
+    markStepRetryOnce("contradiction-candidates", openclawDir);
+
+    expect(consumeStepRetryOnce("contradiction-candidates", openclawDir)).toBe(true);
+    expect(hasStepRetryOncePending("contradiction-candidates", openclawDir)).toBe(false);
+    expect(consumeStepRetryOnce("contradiction-candidates", openclawDir)).toBe(false);
+  });
+
+  it("consumeStepRetryOnce returns false when no marker was ever set", () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-guard-retry-"));
+    expect(consumeStepRetryOnce("never-marked-step", openclawDir)).toBe(false);
+  });
+
+  it("markers are per-step and do not cross-contaminate", () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-guard-retry-"));
+    markStepRetryOnce("insight-synthesis", openclawDir);
+    expect(hasStepRetryOncePending("contradiction-candidates", openclawDir)).toBe(false);
+    expect(hasStepRetryOncePending("insight-synthesis", openclawDir)).toBe(true);
   });
 });

@@ -3,20 +3,31 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
+import { createCipheriv, createDecipheriv, pbkdf2Sync, randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { createCipheriv, createDecipheriv, pbkdf2Sync, randomBytes } from "node:crypto";
-import { isValidCategory } from "../../../config.js";
 import { DASHBOARD_TIER_FILTER } from "../../../backends/facts-db/stats.js";
+import { hasAnyScopeFilter } from "../../../backends/scope-filter-sql.js";
+import { isValidCategory } from "../../../config.js";
 import { buildAuditFailureArtifact, buildAuditHealthExitInfo } from "../../../services/audit-health-exit-info.js";
 import { listDumpTypeAliases, runSqliteTableDump } from "../../../services/cli-sql-dump.js";
+import {
+  decideDiscoveredCategory,
+  readPendingDiscoveredCategories,
+  readRejectedDiscoveredCategories,
+} from "../../../services/discovered-categories.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { repairEventHubs } from "../../../services/event-hub-repair.js";
-import { hasAnyScopeFilter } from "../../../backends/scope-filter-sql.js";
-import { getEnv } from "../../../utils/env-manager.js";
+import {
+  findShortestPath,
+  formatPath,
+  resolveInput,
+  type ShortestPathLookup,
+} from "../../../services/shortest-path.js";
 import { atomicWriteFile } from "../../../utils/atomic-write.js";
-import { nowIso, formatTimestampUtcFromMs } from "../../../utils/dates.js";
+import { formatTimestampUtcFromMs, nowIso } from "../../../utils/dates.js";
+import { getEnv } from "../../../utils/env-manager.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
@@ -119,7 +130,14 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
     );
 
   const runAuditHealth = async (
-    opts?: { json?: boolean; format?: string; strict?: boolean; strictErrors?: boolean; timeoutMs?: string; output?: string },
+    opts?: {
+      json?: boolean;
+      format?: string;
+      strict?: boolean;
+      strictErrors?: boolean;
+      timeoutMs?: string;
+      output?: string;
+    },
     cmd?: CommanderOptsParent,
   ) => {
     const parsedTimeoutMs = Number.parseInt(String(opts?.timeoutMs ?? "30000"), 10);
@@ -134,7 +152,7 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
     // #1809: warn in audit-health when personaProposals is enabled but scopeFilter is not configured.
     if (cfg.personaProposals.enabled && !hasAnyScopeFilter(cfg.autoRecall?.scopeFilter)) {
       preReportWarnings.push(
-        `personaProposals is enabled but autoRecall.scopeFilter is not set; generate-proposals will include facts from all scopes. Set autoRecall.scopeFilter (e.g. agentId/userId) to restrict proposals to a specific user/agent and avoid cross-scope contamination. For multi-agent hosts, also consider setting personaProposals.requireScopeFilter: true to hard-fail when scopeFilter is absent.`,
+        "personaProposals is enabled but autoRecall.scopeFilter is not set; generate-proposals will include facts from all scopes. Set autoRecall.scopeFilter (e.g. agentId/userId) to restrict proposals to a specific user/agent and avoid cross-scope contamination. For multi-agent hosts, also consider setting personaProposals.requireScopeFilter: true to hard-fail when scopeFilter is absent.",
       );
     }
     // #1832: warn when credentials vault is plaintext but an encryption key is configured.
@@ -155,7 +173,7 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
     if (credentialsStatus?.migrationRequired) {
       preReportWarnings.push(
         `Credentials vault is plaintext (kdf_version=${credentialsStatus.kdfVersion}) but an encryption key is configured. ` +
-          `Encrypt the vault: run \`openclaw hybrid-mem credentials encrypt-vault --backup --verify --yes\` (see docs/CREDENTIALS.md).`,
+          "Encrypt the vault: run `openclaw hybrid-mem credentials encrypt-vault --backup --verify --yes` (see docs/CREDENTIALS.md).",
       );
     }
     const withTimeout = async <T>(promise: Promise<T>, section: string): Promise<T | undefined> => {
@@ -357,6 +375,109 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
       "Write JSON artifact atomically to this path (tmp+rename) instead of stdout. Always written even on strict failure (#1823).",
     )
     .action(withExit(runAuditHealth));
+
+  // Discoverability alias (#2087): the health report is graph-consistency-relevant (out_degree/
+  // in_degree drift, hub pathologies) and its canonical home is `audit health`, but operators
+  // reasonably look for it under `graph` alongside `graph repair`. Delegates to the exact same
+  // handler as `audit health` — no behavior differences, just a second entry point.
+  graph
+    .command("health")
+    .description("Alias for `audit health` — one-shot non-destructive hybrid-memory health report (JSON or markdown)")
+    .option("--json", "Emit versioned JSON instead of markdown")
+    .option("--format <format>", "Output format: markdown or json", "markdown")
+    .option("--timeout-ms <n>", "Overall audit budget in milliseconds (default: 30000)", "30000")
+    .option(
+      "--strict",
+      "Exit 2 when warnings/errors or partial/failed status are present. JSON includes exitCode/exitReason/strictFailureReason.",
+    )
+    .option(
+      "--strict-errors",
+      "Exit 2 only on errors or degraded status — warnings are informational (#1955). JSON includes exitCode/exitReason/strictFailureReason.",
+    )
+    .option(
+      "--output <path>",
+      "Write JSON artifact atomically to this path (tmp+rename) instead of stdout. Always written even on strict failure (#1823).",
+    )
+    .action(withExit(runAuditHealth));
+
+  // CLI parity for graph capabilities that previously only existed as agent tools (#2090).
+  graph
+    .command("get <factId>")
+    .description("Show a fact plus its outgoing/incoming graph links")
+    .option("--json", "Output as JSON")
+    .action(
+      withExit(async (factId: string, opts?: { json?: boolean }) => {
+        const fact = factsDb.getById(factId);
+        if (!fact) {
+          console.error(`error: no fact found for id "${factId}"`);
+          process.exitCode = 1;
+          return;
+        }
+        const outgoing = factsDb.getLinksFrom(factId);
+        const incoming = factsDb.getLinksTo(factId);
+        if (opts?.json) {
+          console.log(JSON.stringify({ fact, outgoing, incoming }, null, 2));
+          return;
+        }
+        console.log(`[${fact.category}] ${fact.text}`);
+        console.log(`  id: ${fact.id}`);
+        if (fact.supersededAt) console.log(`  superseded_at: ${fact.supersededAt}`);
+        console.log(`  outgoing links (${outgoing.length}):`);
+        for (const link of outgoing) {
+          console.log(`    ${link.linkType} -> ${link.targetFactId} (strength=${link.strength}, id=${link.id})`);
+        }
+        console.log(`  incoming links (${incoming.length}):`);
+        for (const link of incoming) {
+          console.log(`    ${link.linkType} <- ${link.sourceFactId} (strength=${link.strength}, id=${link.id})`);
+        }
+      }),
+    );
+
+  graph
+    .command("path <fromFactOrEntity> <toFactOrEntity>")
+    .description("Find the shortest path between two facts (by id or entity name) via the memory graph")
+    .option("--max-depth <n>", "Maximum path length in edges", "5")
+    .option("--json", "Output as JSON")
+    .action(
+      withExit(async (fromArg: string, toArg: string, opts?: { maxDepth?: string; json?: boolean }) => {
+        const maxDepth = Number.parseInt(opts?.maxDepth ?? "5", 10);
+        if (!Number.isFinite(maxDepth) || maxDepth < 0) {
+          throw new Error(`Invalid --max-depth value: ${opts?.maxDepth}`);
+        }
+        const lookup: ShortestPathLookup = {
+          getById: (id) => factsDb.getById(id),
+          getLinksFrom: (id) => factsDb.getLinksFrom(id),
+          getLinksTo: (id) => factsDb.getLinksTo(id),
+          lookup: (entity) => factsDb.lookup(entity),
+        };
+        const fromId = resolveInput(lookup, fromArg);
+        const toId = resolveInput(lookup, toArg);
+        if (!fromId || !toId) {
+          const missing = !fromId ? fromArg : toArg;
+          console.error(`error: could not resolve "${missing}" to an active fact id or entity`);
+          process.exitCode = 1;
+          return;
+        }
+        const result = findShortestPath(lookup, fromId, toId, { maxDepth });
+        if (!result) {
+          if (opts?.json) {
+            console.log(JSON.stringify({ found: false, fromFactId: fromId, toFactId: toId, maxDepth }, null, 2));
+          } else {
+            console.log(`No path found between ${fromId} and ${toId} within ${maxDepth} hop(s).`);
+          }
+          process.exitCode = 1;
+          return;
+        }
+        if (opts?.json) {
+          console.log(JSON.stringify({ found: true, ...result }, null, 2));
+          return;
+        }
+        console.log(`${result.hops} hop(s): ${formatPath(result.steps)}`);
+        for (const step of result.steps) {
+          console.log(`  ${step.fromFactId} -[${step.linkType}, strength=${step.strength}]-> ${step.toFactId}`);
+        }
+      }),
+    );
 
   audit
     .command("log")
@@ -909,6 +1030,87 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
         if (!report.apply) {
           console.log("Dry-run only. Re-run with --apply to update facts.");
         }
+      }),
+    );
+
+  // #2100: the bootstrap warning ("N proposed categories pending operator review") pointed only
+  // at a raw JSON file with no way to list/act on it. `discovered` is deliberately separate from
+  // `propose` above — propose reads `category-suggested:*` fact tags; discovered reads
+  // .discovered-categories.json, written by the auto-classifier's LLM-driven discovery pass.
+  // Resolved lazily (inside each handler, not at registration time) — some ManageBindings
+  // fixtures (existing tests, minimal CLI wiring) omit cfg.sqlitePath entirely, and this command
+  // group must not break every other `categories` subcommand just by being registered alongside them.
+  const getDiscoveredCategoriesPath = (): string =>
+    join(dirname(ctx.resolvedSqlitePath ?? cfg.sqlitePath ?? "."), ".discovered-categories.json");
+  const printDiscoveredCategories = async (opts?: { json?: boolean }): Promise<void> => {
+    const discoveredCategoriesPath = getDiscoveredCategoriesPath();
+    const [pending, rejected] = await Promise.all([
+      readPendingDiscoveredCategories(discoveredCategoriesPath),
+      readRejectedDiscoveredCategories(discoveredCategoriesPath),
+    ]);
+    if (opts?.json) {
+      console.log(JSON.stringify({ path: discoveredCategoriesPath, pending, rejected }, null, 2));
+      return;
+    }
+    if (pending.length === 0) {
+      console.log("No discovered categories pending review.");
+    } else {
+      console.log(`Discovered categories pending review (${pending.length}): ${pending.join(", ")}`);
+      console.log("");
+      console.log("These are advisory-only — facts still write to their existing category until promoted.");
+      console.log("  Approve (add to config, then apply): openclaw hybrid-mem categories discovered approve <label>");
+      console.log("  Reject (dismiss, never re-proposed):  openclaw hybrid-mem categories discovered reject <label>");
+    }
+    if (rejected.length > 0) {
+      console.log(`Previously rejected (never re-proposed): ${rejected.join(", ")}`);
+    }
+  };
+  const discoveredCommand = categoriesCommand
+    .command("discovered")
+    .description("Review categories the auto-classifier's discovery pass proposed but has not yet been approved")
+    .option("--json", "Emit JSON")
+    .action(withExit(printDiscoveredCategories));
+
+  discoveredCommand
+    .command("list")
+    .description("Same as `categories discovered` with no subcommand")
+    .option("--json", "Emit JSON")
+    .action(withExit(printDiscoveredCategories));
+
+  discoveredCommand
+    .command("approve <label>")
+    .description("Remove a discovered label from the pending queue and print the config command to promote it")
+    .action(
+      withExit(async (label: string) => {
+        const decision = await decideDiscoveredCategory(getDiscoveredCategoriesPath(), label, "approve");
+        if (decision === "not-pending") {
+          console.error(`error: "${label}" is not in the pending discovered-categories queue`);
+          process.exitCode = 1;
+          return;
+        }
+        console.log(`Approved "${label}" — removed from the pending queue.`);
+        console.log("This does not add it to config automatically. To promote it:");
+        console.log(
+          `  1. Add "${label}" to plugin config \`categories\` (see openclaw hybrid-mem config-set categories).`,
+        );
+        console.log(
+          `  2. Remap existing facts into it: openclaw hybrid-mem categories remap --from other --to ${label} --apply`,
+        );
+      }),
+    );
+
+  discoveredCommand
+    .command("reject <label>")
+    .description("Dismiss a discovered label — it will not be re-proposed by future discovery runs")
+    .action(
+      withExit(async (label: string) => {
+        const decision = await decideDiscoveredCategory(getDiscoveredCategoriesPath(), label, "reject");
+        if (decision === "not-pending") {
+          console.error(`error: "${label}" is not in the pending discovered-categories queue`);
+          process.exitCode = 1;
+          return;
+        }
+        console.log(`Rejected "${label}" — removed from the pending queue and will not be re-proposed.`);
       }),
     );
 

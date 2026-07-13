@@ -31,6 +31,10 @@ export type ManageContext = {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   aliasDb?: import("../services/retrieval-aliases.js").AliasDB | null;
+  /** Issue lifecycle store backing memory_issue_* tools and the `issues` CLI (#2090). */
+  issueStore?: import("../backends/issue-store.js").IssueStore | null;
+  /** Provenance chain store backing memory_provenance and the `provenance` CLI (#2090). */
+  provenanceService?: import("../services/provenance.js").ProvenanceService | null;
   versionInfo: { pluginVersion: string; memoryManagerVersion: string; schemaVersion: number };
   embeddings: EmbeddingProvider;
   mergeResults: typeof mergeResults;
@@ -361,7 +365,10 @@ export type ManageContext = {
     jobRunId?: string;
     semanticOutcome?: string;
   }>;
-  runDreamCycle?: (opts?: { verbose?: boolean }) => Promise<import("../services/dream-cycle.js").DreamCycleResult>;
+  runDreamCycle?: (opts?: {
+    verbose?: boolean;
+    dryRun?: boolean;
+  }) => Promise<import("../services/dream-cycle.js").DreamCycleResult>;
   runContinuousVerification?: (opts?: {
     verbose?: boolean;
   }) => Promise<import("../services/continuous-verifier.js").VerificationCycleResult>;

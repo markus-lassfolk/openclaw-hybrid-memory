@@ -25,6 +25,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.215] - 2026-07-12
+
+### Fixed — Open issue sweep from a live storage-repair incident and memory smoke sweep (#2079–#2100)
+
+Twenty-two issues filed after a live storage-repair incident and an extensive memory smoke sweep against v2026.7.212, fixed together in one PR because most share root causes across the vector/storage/graph layers.
+
+**Vector backend & storage sync**
+- Fixed ([#2079](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2079)): `VectorDB` rejected slug-style (non-UUID) fact ids on read/delete/getAllIds/getVectorsByFactIds after accepting them on write, leaving permanent invisible orphan vectors — the root mechanism behind the reported repair loop. New `utils/vector-id.ts` predicate accepts UUIDs and safe slugs uniformly across every vector-db entry point; no lowercasing, no data migration (existing orphans become visible and self-heal via reconcile).
+- Fixed ([#2081](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2081)): `vectorDb.optimize()` had no timeout and could hang the `vectordb-optimize`/`repair` CLI commands indefinitely; now bounded with a clean nonzero exit and remediation hint, and the auto-optimize fire-and-forget path is tracked so `close()` never leaves it dangling.
+- Fixed ([#2083](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2083), [#2092](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2092)): `storage-repair-pipeline` and the tool-effectiveness monthly report wrote vectors with a bare `vectorDb.store()` that never touched the `fact_embeddings` cache, so `vectorlessAfter` could never actually drop. Both now go through the canonical `storeCanonicalVectorForFact` writer.
+- Fixed ([#2080](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2080)): storage-sync diagnostics compared raw incomparable counts (all facts vs. all Lance rows) instead of ID-set drift over the *expected-vector* population, producing false-positive "corruption" for stores with structured key/value facts (which never get vectors by design). Adopted contract: `fact_embeddings` is a cache — divergence is coverage info, never corruption; drift is now genuine ID-set symmetric difference.
+- Fixed ([#2084](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2084), [#2093](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2093)): documented the embedding-cache contract (new [EMBEDDING-CACHE-CONTRACT.md](docs/EMBEDDING-CACHE-CONTRACT.md)) and added best-effort post-swap cache backfill during embedding-model migration; fixed a divide-by-zero-adjacent ETA calculation in adaptive entity enrichment's dry-run throughput estimate.
+
+**Graph**
+- Fixed ([#2085](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2085)): `facts.out_degree`/`in_degree` were only ever refreshed by the periodic dream-cycle reconciler, so any fact linked since the last cycle read as degree-0 — silently disabling the CTE hub-cap traversal guard's denormalized fast path (`... IS NOT NULL` on `NOT NULL DEFAULT 0` columns is always true, so the live `COUNT(*)` fallback never ran either). Both link creation/strengthening/pruning and the CTE's cap condition now keep the counters live and correct.
+- Fixed ([#2087](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2087)): `hybrid-mem audit health` existed and was correctly wired all along — the report was against a stale installed build. Added a `graph health` discoverability alias next to `graph repair` so operators find it where they look.
+- No code change needed ([#2086](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2086)): stale tool registrations after a gateway restart were already fixed by generation-delegation logic in `setup/register-tools.ts`, verified by `tests/tool-registration-generation-guard.test.ts`.
+
+**Dedupe**
+- Fixed ([#2091](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2091)): the five store write-paths outside the exemplar `memory_store` tool never resolved vector dedupe candidates before writing, so fuzzy-dedupe silently degraded to lexical-only on those paths. All five now resolve candidates before `storeWithResult`, mirroring the exemplar.
+
+**Maintenance**
+- Fixed ([#2094](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2094)): three sub-fixes — a real bounded retry-once for transient maintenance-step failures (the prior `recordRetryOnce` was annotation-only, with no consumer); a terminal ledger row written early enough to catch crashes during cron-harness setup, before any trap existed; and `maintenance status` no longer false-positives `orchestration-stale-empty-exit` on genuinely live runs.
+- Fixed ([#2097](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2097)): maintenance coverage metrics now classify as `ok`/`warn`/`fail`/`not-configured` per metric (with remediation text) instead of one ambiguous pass/fail, distinguishing "directory absent" from "present but zero" for daily-log coverage.
+- Fixed ([#2098](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2098)): `digest pending` gained a `--json` alias and per-queue age-bucket hygiene (0-1d/1-7d/7-30d/30d+, oldest/newest, recommended next action) for tool and crystallization queues.
+
+**CLI surface**
+- Added ([#2082](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2082)): `error-reports status|peek|flush` gives operators a cheap, focused way to inspect and drain the error-reporter's persistent pending-telemetry queue instead of running the much broader `verify`/`doctor` or restarting the gateway. `flush` reuses a live in-process reporter when available, otherwise builds an isolated one-shot reporter scoped to that single command.
+- Added ([#2089](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2089)): `dream-cycle --dry-run [--json]` previews what the nightly cycle would prune/decay/consolidate/reflect without mutating anything. Every mutating stage is either given a genuine zero-write preview (reusing existing read-only helpers, or the `reclassifyDecayClasses`/`runReflection`/`runReflectionRules` dry-run modes those services already supported) or skipped entirely and reported as such; the CLI also skips the whole mutating follow-up pipeline (verification, tool effectiveness, crystallization, cost-log prune) in dry-run mode.
+- Added ([#2090](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2090)): CLI parity for capabilities that previously only existed as agent tools — `link create|list|delete`, `issues create|update|list|search|show|link-fact`, `provenance <factId>`, `graph get <factId>`, `graph path <a> <b>` — so operators have a fallback when Tool Search wrappers are stale after a gateway restart. `backends/facts-db/links.ts` gained a proper `deleteLink()` (there was previously no delete helper at all; the only prior path was raw SQL inline in a GraphQL resolver).
+- Added ([#2095](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2095)): `OPENCLAW_HYBRID_MEM_QUIET=1` suppresses info/debug bootstrap noise (startup checkpoints, "registered ..." confirmations, vault-check-OK lines) so status/read-only commands aren't buried under boilerplate. `--help` already short-circuited before bootstrap and needed no change; the host's own `[plugins] loading ...` lines are out of this plugin's control.
+- Added ([#2099](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2099)): `credentials vault-status` now surfaces legacy-literal-file-key detection (when the vault was opened using the literal `file:/path` ref string as the passphrase itself, not the file's contents) with remediation.
+- Added ([#2100](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2100)): `categories discovered [list|approve <label>|reject <label>]` gives operators a review workflow for `.discovered-categories.json` instead of just a raw-file bootstrap warning; `reject` persists so a label is never silently re-proposed by a future discovery run.
+- Added ([#2088](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2088)): `smoke e2e [--json]` — a first-class end-to-end pipeline smoke test (store → embed → recall → link → episode → forget → verify) using disposable, uniquely-tagged facts with mandatory best-effort cleanup, safe to run against a production local memory store.
+
+**De-flaking**
+- Fixed ([#2096](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2096)): hardened `tests/cron-job-bash-harness.test.ts` fixture directories against silent `mkdir` failures to remove a source of test flakiness. The `services/task-ledger-facts.ts` checkpoint-logic caching this issue also called for was not implemented in this release and remains open as a follow-up — `findActiveTaskCoherenceRepairs`, `loadTaskLedgerFromFactsWithMetrics`, `getLatestProjectFactCreatedAtSec`, `findLatestActiveTaskKeyFact`, `retireProjectTaskKeyFacts`, and `renderActiveTaskMarkdownFile` each still independently call `factsDb.getProjectFacts(8000, scopeFilter)`.
+
+### Notes
+- No `schemaVersion` bump — all fixes reuse existing columns/tables.
+- No agent-tool schema changes — the new CLI commands are thin wrappers over existing service-layer functions.
+- Operators may see diagnostics counts shift once slug-style vectors become visible under the #2079 fix, and repair now genuinely reduces vectorless counts under #2083 — both are expected, not regressions.
+
 ## [2026.7.214] - 2026-07-12
 
 ### Fixed — `verify --fix` could downgrade a newer managed plugin install ([#2077](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2077))

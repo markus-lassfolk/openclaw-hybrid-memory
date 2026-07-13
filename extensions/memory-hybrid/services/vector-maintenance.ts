@@ -1,7 +1,9 @@
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
+import { normalizeVectorId } from "../utils/vector-id.js";
 
 const ORPHAN_RECONCILE_VECTOR_BATCH = 1000;
+const CACHE_BACKFILL_BATCH = 300;
 
 /**
  * Return LanceDB vector IDs with no corresponding active SQLite fact.
@@ -195,4 +197,43 @@ export async function storeCanonicalVectorForFact(options: {
     }
   }
   return storedId;
+}
+
+/**
+ * Best-effort fact_embeddings (canonical embedding cache) backfill, reading vectors back from
+ * the live vector store rather than re-embedding (#2084). Only covers the expected-vector
+ * (active, unstructured) population — structured facts are never expected to have a cache row
+ * (#2080). Callers should only invoke this after a shadow-table swap has already succeeded:
+ * fact_embeddings is a best-effort cache, so writing it before the swap commits would risk
+ * SQLite claiming an embedding state the active Lance table doesn't actually have yet. Per-fact
+ * and per-batch failures are swallowed — a partial backfill is still useful, and the normal
+ * reembed-vectorless path will pick up anything this pass misses.
+ */
+export async function backfillEmbeddingCacheFromVectorStore(options: {
+  factsDb: Pick<FactsDB, "listExpectedVectorFactIds" | "storeEmbedding">;
+  vectorDb: Pick<VectorDB, "getVectorsByFactIds">;
+  embeddingModel: string;
+}): Promise<{ backfilled: number; failed: number }> {
+  const expectedVectorIds = options.factsDb.listExpectedVectorFactIds();
+  let backfilled = 0;
+  let failed = 0;
+  for (let i = 0; i < expectedVectorIds.length; i += CACHE_BACKFILL_BATCH) {
+    const idBatch = expectedVectorIds.slice(i, i + CACHE_BACKFILL_BATCH);
+    try {
+      const vectors = await options.vectorDb.getVectorsByFactIds(idBatch);
+      for (const id of idBatch) {
+        const vec = vectors.get(normalizeVectorId(id));
+        if (!vec) continue;
+        try {
+          options.factsDb.storeEmbedding(id, options.embeddingModel, "canonical", new Float32Array(vec), vec.length);
+          backfilled++;
+        } catch {
+          failed++;
+        }
+      }
+    } catch {
+      failed += idBatch.length;
+    }
+  }
+  return { backfilled, failed };
 }
