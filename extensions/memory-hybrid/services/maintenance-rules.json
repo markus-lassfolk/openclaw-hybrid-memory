@@ -25,7 +25,7 @@
   },
   {
     "id": "embedding-auth",
-    "pattern": "EmbeddingError.*(401|Unauthorized)|(401|Unauthorized).*EmbeddingError|401 Unauthorized|Unauthorized",
+    "pattern": "EmbeddingError[^\\n]*(\\b401\\b|Unauthorized)|(\\b401\\b|Unauthorized)[^\\n]*EmbeddingError|401 Unauthorized|Unauthorized",
     "classification": "provider-auth",
     "defaultAction": "escalate-user",
     "severity": "high",
@@ -33,7 +33,7 @@
   },
   {
     "id": "disk-full",
-    "pattern": "disk full|ENOSPC|no space left|disk space",
+    "pattern": "disk full|ENOSPC|no space left|disk space[^\\n]*(full|exhaust|critical|insufficient)",
     "classification": "env-misconfig",
     "defaultAction": "escalate-user-urgent",
     "severity": "critical",
@@ -73,7 +73,7 @@
   },
   {
     "id": "guard-not-updated",
-    "pattern": "guard not updated|guard.*not.*success|success.*guard.*missing",
+    "pattern": "guard not updated|guard[^\\n]*\\bnot\\b[^\\n]*success|success[^\\n]*guard[^\\n]*missing",
     "classification": "orchestration-bug",
     "defaultAction": "glitchtip+digest",
     "severity": "high",

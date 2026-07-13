@@ -13,6 +13,7 @@ import {
   type CronRunLedgerEntry,
   extractArtifactPathsFromSummary,
   findMaintenanceArtifacts,
+  mergeReconciledEntriesWithFreshRead,
   parseCronRunLedger,
   reconcileAllCronRunLedgers,
   reconcileCronRunLedger,
@@ -90,6 +91,57 @@ describe("writeCronRunLedger", () => {
     expect(lines).toHaveLength(2);
     expect(JSON.parse(lines[0]).ts).toBe(1000);
     expect(JSON.parse(lines[1]).status).toBe("ok");
+  });
+});
+
+describe("mergeReconciledEntriesWithFreshRead", () => {
+  it("appends rows a concurrent writer added after the original read, instead of dropping them (QA follow-up)", () => {
+    const original: CronRunLedgerEntry[] = [
+      { ts: 1000, jobId: "test", action: "started" },
+      { ts: 1000, jobId: "test", action: "finished", status: "ok" },
+    ];
+    const originalJson = original.map((e) => JSON.stringify(e));
+
+    // Simulate correcting entry[1] in place, as reconcileCronRunLedger's loop does.
+    const corrected: CronRunLedgerEntry[] = [original[0], { ...original[1], status: "error" }];
+
+    // A concurrent writer appended a third row to the ledger between the original read and the
+    // pre-write re-read — the first two rows are untouched (byte-identical to the original read).
+    const freshEntries: CronRunLedgerEntry[] = [...original, { ts: 1100, jobId: "test", action: "started" }];
+
+    const merged = mergeReconciledEntriesWithFreshRead(corrected, originalJson, freshEntries);
+
+    expect(merged).toHaveLength(3);
+    expect(merged[1].status).toBe("error");
+    expect(merged[2]).toEqual(freshEntries[2]);
+  });
+
+  it("falls back to the corrected-only entries when the fresh read's prefix has changed unexpectedly", () => {
+    const original: CronRunLedgerEntry[] = [{ ts: 1000, jobId: "test", action: "finished", status: "ok" }];
+    const originalJson = original.map((e) => JSON.stringify(e));
+    const corrected: CronRunLedgerEntry[] = [{ ...original[0], status: "error" }];
+
+    // Fresh read's first row no longer matches what was originally examined (e.g. an external
+    // rewrite) — the merge must not blindly trust freshEntries' tail in this case.
+    const freshEntries: CronRunLedgerEntry[] = [
+      { ts: 1000, jobId: "test", action: "finished", status: "ok", summary: "rewritten externally" },
+    ];
+
+    const merged = mergeReconciledEntriesWithFreshRead(corrected, originalJson, freshEntries);
+    expect(merged).toEqual(corrected);
+  });
+
+  it("falls back when the fresh read has fewer rows than originally examined", () => {
+    const original: CronRunLedgerEntry[] = [
+      { ts: 1000, jobId: "test", action: "started" },
+      { ts: 1000, jobId: "test", action: "finished", status: "ok" },
+    ];
+    const originalJson = original.map((e) => JSON.stringify(e));
+    const corrected: CronRunLedgerEntry[] = [original[0], { ...original[1], status: "error" }];
+    const freshEntries: CronRunLedgerEntry[] = [original[0]];
+
+    const merged = mergeReconciledEntriesWithFreshRead(corrected, originalJson, freshEntries);
+    expect(merged).toEqual(corrected);
   });
 });
 

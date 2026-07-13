@@ -412,6 +412,12 @@ function buildOrchestrationSyntheticStep(params: {
     line = "orchestration anomaly: log shows dream-cycle progress/completions but exit ledger is empty";
   }
 
+  // A genuinely healthy in-progress run (fresh, not stale) must report exitCode 0 — otherwise
+  // analyzeMaintenanceSteps still surfaces it as a low-severity "unclassified" finding via its
+  // generic `exitCode !== 0` gate, reintroducing the same false-alarm noise the classification
+  // fix above was meant to eliminate, just one layer downstream (QA follow-up).
+  const syntheticExitCode = step === "maintenance-run-in-progress" ? 0 : 1;
+
   const markerBits: string[] = [];
   markerBits.push(`validate-marker=${hasValidate ? "present" : "missing"}`);
   markerBits.push(`progress-marker=${hasProgress ? "present" : "missing"}`);
@@ -423,7 +429,7 @@ function buildOrchestrationSyntheticStep(params: {
     iso,
     job,
     step,
-    exitCode: 1,
+    exitCode: syntheticExitCode,
     exitPath,
     logPath,
     logContent,
@@ -747,7 +753,7 @@ function classifyOrchestrationAnomaly(
     };
   }
 
-  if (stepName === "orchestration-stale-running" || stepName === "orchestration-stale-empty-exit" || staleHint) {
+  if (stepName === "orchestration-stale-running" || stepName === "orchestration-stale-empty-exit") {
     return {
       id: "orchestration-stale-maintenance-run",
       pattern: "",
@@ -768,6 +774,22 @@ function classifyOrchestrationAnomaly(
       severity: "high",
       suggestedAction:
         "Dream-cycle log shows work completed but HM_EXIT has no parseable rows. Validate trap/ledger writes and missing validate-cron-exit markers; do not treat this run as successful.",
+    };
+  }
+
+  // Generic text-based staleness fallback — checked only after every step-name-specific branch
+  // above, so a step the synthesizer explicitly computed as NOT stale (e.g.
+  // orchestration-empty-exit-after-progress, whose own log text can still incidentally match
+  // "still running after") never gets overridden by this broader heuristic (QA follow-up).
+  if (staleHint) {
+    return {
+      id: "orchestration-stale-maintenance-run",
+      pattern: "",
+      classification: "orchestration-bug",
+      defaultAction: "glitchtip+digest",
+      severity: "high",
+      suggestedAction:
+        "Maintenance appears stale with no recent progress updates. Confirm whether a live process still owns the run; if not, treat as hung orchestration, preserve logs, and rerun after fixing cron harness exit/validation handling.",
     };
   }
 

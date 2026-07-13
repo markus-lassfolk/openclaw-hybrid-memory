@@ -1,12 +1,12 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import {
-  HYBRID_MEM_CRON_ENV_SANITIZER_MARKER,
   buildHybridMemCronBashBody,
   buildHybridMemCronTaskMessage,
+  HYBRID_MEM_CRON_ENV_SANITIZER_MARKER,
 } from "../services/cron-job-bash-harness.js";
 
 describe("cron-job-bash-harness", () => {
@@ -30,7 +30,11 @@ describe("cron-job-bash-harness", () => {
     expect(bash).toContain('HM_SUMMARY="${DAY_DIR}/${HM_JOB}-${RUN_ID}.summary.json"');
     expect(bash).toContain('HM_REQUIRED_STEPS=("prune")');
     expect(bash).toContain('local step_ec="${PIPESTATUS[0]}"');
-    expect(bash).toContain("failed(?:_[A-Za-z0-9_-]+)?");
+    // A plain capturing group, not `(?:...)` — grep -E is POSIX ERE, which has no non-capturing
+    // group syntax; the PCRE form silently never matched, truncating every failed_<reason> status
+    // to the bare word "failed" (QA follow-up regression test below covers the actual behavior).
+    expect(bash).toContain("failed(_[A-Za-z0-9_-]+)?");
+    expect(bash).not.toContain("failed(?:_[A-Za-z0-9_-]+)?");
     expect(bash).toContain('hm_step "prune" openclaw hybrid-mem prune --verbose');
     expect(bash).toContain('local timeout_raw="${STEP_TIMEOUT_SECONDS:-0}"');
     expect(bash).toContain('if [ "$timeout_secs" -gt 0 ]; then');
@@ -534,6 +538,52 @@ exit 2
     expect(exitPath).toBeDefined();
     const exitContents = readFileSync(exitPath, "utf-8");
     expect(exitContents).toContain("self-correct exit=1 status=failed reason=failed");
+  });
+
+  it("captures the full failed_<reason> suffix in HM_EXIT, not just the bare word 'failed' (QA follow-up)", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
+    const bin = join(tmp, "bin");
+    const home = join(tmp, "oc-home");
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(home, { recursive: true });
+    const fakeOpenclaw = join(bin, "openclaw");
+    writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "self-correction-run" ]; then
+  echo "Error: simulated partial batch failure status=failed_partial"
+  exit 1
+fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
+  echo '{"maintenanceStatus":"failed"}'
+  exit 1
+fi
+echo "unexpected openclaw args: $*" >&2
+exit 2
+`,
+    );
+    chmodSync(fakeOpenclaw, 0o755);
+
+    const bash = buildHybridMemCronBashBody("nightly-self-correction", [
+      { name: "self-correct", cmd: "openclaw hybrid-mem self-correction-run" },
+    ]);
+    const result = spawnSync("bash", ["-c", bash], {
+      encoding: "utf-8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, OPENCLAW_HOME: home },
+    });
+
+    expect(result.status).toBe(1);
+    const exitDir = join(home, "logs", "cron-hybrid-mem");
+    const exitPath = readdirSync(exitDir)
+      .filter((name) => name.endsWith(".exit.txt"))
+      .map((name) => join(exitDir, name))[0];
+    expect(exitPath).toBeDefined();
+    const exitContents = readFileSync(exitPath, "utf-8");
+    // Before the fix, the PCRE `(?:...)` non-capturing group silently never matched under grep -E
+    // (POSIX ERE), truncating this to "reason=failed" and losing the "_partial" detail entirely.
+    expect(exitContents).toContain("self-correct exit=1 status=failed reason=failed_partial");
   });
 
   it("skips timeout wrapper when STEP_TIMEOUT_SECONDS=0", () => {

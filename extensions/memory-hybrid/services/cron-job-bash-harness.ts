@@ -206,7 +206,13 @@ export function buildHybridMemCronBashBody(
     '  local hm_reason=""',
     '  local reported_status=""',
     '  local strict_semantic_reason=""',
-    '  reported_status="$(grep -Eo \'status=(success_[A-Za-z0-9_-]+|skipped_[A-Za-z0-9_-]+|failed(?:_[A-Za-z0-9_-]+)?)\' "$step_output" | tail -n1 | cut -d= -f2 || true)"',
+    // `(?:...)` is PCRE, not POSIX ERE — `grep -E` doesn't understand non-capturing groups (GNU
+    // grep warns "? at start of expression" and matches the literal text "?:" instead, which never
+    // occurs in real step output, so this alternative silently never matched and every
+    // `failed_<reason>` status was truncated to the bare word "failed"). A plain capturing group
+    // `(...)` is fully POSIX-ERE-supported and produces the identical match here since the
+    // group's own capture isn't used — only the whole match, via grep -Eo (QA follow-up).
+    '  reported_status="$(grep -Eo \'status=(success_[A-Za-z0-9_-]+|skipped_[A-Za-z0-9_-]+|failed(_[A-Za-z0-9_-]+)?)\' "$step_output" | tail -n1 | cut -d= -f2 || true)"',
     '  if [ "$step_ec" -eq 0 ] && [ "${HYBRID_MEM_STRICT_SEMANTICS:-0}" = "1" ]; then',
     '    strict_semantic_reason="$(grep -Eo \'status=(no_candidates|no_changes|degraded)\' "$step_output" | tail -n1 | cut -d= -f2 || true)"',
     '    if [ -z "$strict_semantic_reason" ] && grep -Eq \'Status:[[:space:]]+cursorAdvanced=false\' "$step_output"; then',

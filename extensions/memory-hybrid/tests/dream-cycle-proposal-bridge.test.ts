@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -277,5 +277,88 @@ describe("dream-cycle proposal bridge", () => {
     expect(result.crystallizationProposalsCreated).toBe(1);
     expect(result.skillWorkshopBridged).toBe(0);
     crystallizationStore.close();
+  });
+
+  describe("skill-workshop fallback (crystallization disabled)", () => {
+    let prevStateDir: string | undefined;
+    let stateDir: string;
+
+    beforeEach(() => {
+      prevStateDir = process.env.OPENCLAW_STATE_DIR;
+      stateDir = mkdtempSync(join(tmpdir(), "dream-bridge-skill-workshop-"));
+      process.env.OPENCLAW_STATE_DIR = stateDir;
+    });
+
+    afterEach(() => {
+      if (prevStateDir !== undefined) process.env.OPENCLAW_STATE_DIR = prevStateDir;
+      else delete process.env.OPENCLAW_STATE_DIR;
+      rmSync(stateDir, { recursive: true, force: true });
+    });
+
+    it("stops bridging once the skill-workshop proposal directory count reaches the configured cap (QA follow-up)", () => {
+      // Pre-populate one existing skill-workshop proposal directory to sit at the (deliberately
+      // low) cap — the cap must be enforced against the actual filesystem tree, not against the
+      // unrelated persona/crystallization/tool pending counts (which are all zero here).
+      mkdirSync(join(stateDir, "skill-workshop", "proposals", "existing-proposal"), { recursive: true });
+
+      const pattern = factsDb.store({
+        text: "When debugging CI, always inspect the failing check logs before pushing fixes.",
+        category: "pattern",
+        importance: 0.7,
+        entity: null,
+        key: null,
+        value: null,
+        source: "dream-cycle-test",
+      });
+      const result = runDreamCycleProposalBridge({
+        cfg: { ...cfg, workshop: { maxPending: 1 } } as HybridMemoryConfig,
+        factsDb,
+        proposalsDb,
+        patternsStored: 1,
+        rulesGenerated: 0,
+        newPatternFactIds: [pattern.id],
+        logger: { info: () => {}, warn: () => {} },
+        workspaceRoot: tmpDir,
+        api: { getTool: () => ({}) },
+      });
+
+      expect(result.skillWorkshopBridged).toBe(0);
+      // Only the pre-existing directory should be present — nothing new was written.
+      expect(existsSync(join(stateDir, "skill-workshop", "proposals", pattern.id))).toBe(false);
+    });
+
+    it("does not re-bridge a pattern that already has a skill-workshop proposal directory (QA follow-up)", () => {
+      const pattern = factsDb.store({
+        text: "When debugging CI, always inspect the failing check logs before pushing fixes.",
+        category: "pattern",
+        importance: 0.7,
+        entity: null,
+        key: null,
+        value: null,
+        source: "dream-cycle-test",
+      });
+      // Pre-create the proposal directory this pattern would bridge to, simulating an already-
+      // bridged pattern (e.g. a prior dream-cycle run, or a retry with the same pattern id).
+      const proposalDir = join(stateDir, "skill-workshop", "proposals", pattern.id);
+      mkdirSync(proposalDir, { recursive: true });
+      writeFileSync(join(proposalDir, "PROPOSAL.md"), "# existing\n\noriginal content\n", "utf-8");
+
+      const result = runDreamCycleProposalBridge({
+        cfg: { ...cfg, workshop: { maxPending: 50 } } as HybridMemoryConfig,
+        factsDb,
+        proposalsDb,
+        patternsStored: 1,
+        rulesGenerated: 0,
+        newPatternFactIds: [pattern.id],
+        logger: { info: () => {}, warn: () => {} },
+        workspaceRoot: tmpDir,
+        api: { getTool: () => ({}) },
+      });
+
+      expect(result.skillWorkshopBridged).toBe(0);
+      // The pre-existing proposal content must survive untouched — no silent overwrite/re-notify.
+      const content = readFileSync(join(proposalDir, "PROPOSAL.md"), "utf-8");
+      expect(content).toContain("original content");
+    });
   });
 });

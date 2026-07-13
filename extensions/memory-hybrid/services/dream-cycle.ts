@@ -427,13 +427,14 @@ export async function runEpisodicConsolidation(
   eventTypeFilter?: EpisodicConsolidationEventTypeFilter | null,
   vectorDb?: VectorDB | null,
   embeddings?: EmbeddingProvider | null,
-): Promise<{ eventsConsolidated: number; factsCreated: number }> {
+): Promise<{ eventsConsolidated: number; factsCreated: number; internalFailures: number }> {
   const events = eventLog.getUnconsolidated(consolidateAfterDays);
   if (events.length === 0) {
-    return { eventsConsolidated: 0, factsCreated: 0 };
+    return { eventsConsolidated: 0, factsCreated: 0, internalFailures: 0 };
   }
 
   let eventsConsolidated = 0;
+  let internalFailures = 0;
   const skippedTextEvents = events.filter(shouldSkipEpisodicConsolidation);
   if (skippedTextEvents.length > 0) {
     try {
@@ -471,7 +472,7 @@ export async function runEpisodicConsolidation(
     (event) => !shouldSkipEpisodicConsolidationByEventType(event, eventTypeFilter),
   );
   if (consolidatableEvents.length === 0) {
-    return { eventsConsolidated, factsCreated: 0 };
+    return { eventsConsolidated, factsCreated: 0, internalFailures };
   }
 
   const groups = groupEventsByEntity(consolidatableEvents);
@@ -602,6 +603,7 @@ export async function runEpisodicConsolidation(
         }
       }
     } catch (err) {
+      internalFailures++;
       logger.warn(`memory-hybrid: dream-cycle — failed to store consolidated fact for entity "${entity}": ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "dream-cycle-consolidate",
@@ -650,6 +652,7 @@ export async function runEpisodicConsolidation(
         }
       }
     } catch (err) {
+      internalFailures++;
       logger.warn(`memory-hybrid: dream-cycle — failed to mark events as consolidated: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "dream-cycle-mark-consolidated",
@@ -658,6 +661,14 @@ export async function runEpisodicConsolidation(
       try {
         if (consolidatedFact && factNewlyStored) factsDb.delete(consolidatedFact.id);
       } catch (cleanupErr) {
+        // The consolidated fact is now permanently orphaned (write succeeded, mark-consolidated
+        // failed, and the rollback delete also failed) — capture it distinctly so it surfaces
+        // in telemetry instead of only a warning log line.
+        capturePluginError(cleanupErr instanceof Error ? cleanupErr : new Error(String(cleanupErr)), {
+          operation: "dream-cycle-orphaned-consolidated-fact",
+          subsystem: "facts-db",
+          tags: { factId: consolidatedFact?.id ?? "unknown" },
+        });
         logger.warn(
           `memory-hybrid: dream-cycle — failed to delete consolidated fact after mark failure: ${cleanupErr}`,
         );
@@ -702,7 +713,7 @@ export async function runEpisodicConsolidation(
     );
   }
 
-  return { eventsConsolidated, factsCreated };
+  return { eventsConsolidated, factsCreated, internalFailures };
 }
 
 // ---------------------------------------------------------------------------
@@ -1139,11 +1150,7 @@ export async function runDreamCycle(
         );
       }
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "maintenance",
-        operation: "contradiction-repair",
-        phase: "dream-cycle",
-      });
+      recordStageFailure("episode causal link decay + undetected contradiction repair", err);
       logger.warn(`memory-hybrid: dream-cycle — episode causal/dec contradiction maintenance failed: ${err}`);
     }
   }
@@ -1175,6 +1182,11 @@ export async function runDreamCycle(
       );
       eventsConsolidated = consolidationResult.eventsConsolidated;
       factsCreated = consolidationResult.factsCreated;
+      if (consolidationResult.internalFailures > 0) {
+        stageEventLogError ??= new Error(
+          `episodic consolidation had ${consolidationResult.internalFailures} internal write failure(s); see logs for detail`,
+        );
+      }
     } catch (err) {
       stageEventLogError ??= err;
       // Not recordStageFailure() here too — the unconditional wrap-up below already records this
@@ -1190,7 +1202,7 @@ export async function runDreamCycle(
   }
 
   // ── Step 2b: Archive stale event log entries ─────────────────────────────
-  if (!dryRun && eventLog && config.eventLogArchivalDays > 0) {
+  if (!dryRun && eventLog && config.eventLogArchivalDays > 0 && !config.walFlushFailed) {
     eventLogPhase = "archive-consolidated";
     try {
       const result = await eventLog.archiveConsolidated(config.eventLogArchivalDays, config.eventLogArchivePath);
@@ -1207,6 +1219,10 @@ export async function runDreamCycle(
         subsystem: "event-log",
       });
     }
+  } else if (!dryRun && eventLog && config.walFlushFailed && config.eventLogArchivalDays > 0 && v) {
+    logger.info(
+      "memory-hybrid: dream-cycle — skipping archiveConsolidated (WAL pre-flush failed; consolidated status may be stale)",
+    );
   }
 
   // ── Step 2c: Clean up old unconsolidated events ──────────────────────────
@@ -1248,12 +1264,7 @@ export async function runDreamCycle(
   }
 
   // ── Stage 3: Reflection (patterns) ────────────────────────────────────────
-  const patternIdsBeforeReflection = new Set(
-    factsDb
-      .getAll()
-      .filter((f) => f.category === "pattern" && !f.supersededAt)
-      .map((f) => f.id),
-  );
+  const patternIdsBeforeReflection = new Set(factsDb.getByCategory("pattern").map((f) => f.id));
   let patternsFound = 0;
   let stageReflectionError: unknown;
   const stageReflection = beginStage("reflection (patterns)", {
@@ -1286,7 +1297,9 @@ export async function runDreamCycle(
     logger.info(`memory-hybrid: dream-cycle — reflection complete: ${patternsFound} patterns stored`);
   } catch (err) {
     stageReflectionError ??= err;
-    recordStageFailure("reflection (patterns)", err);
+    // Not recordStageFailure() here too — the unconditional wrap-up below already records this
+    // failure once; calling it here as well double-counted one root cause (duplicate
+    // capturePluginError reports for a single failure).
     logger.warn(`memory-hybrid: dream-cycle — reflection step failed: ${err}`);
   }
   {
@@ -1302,12 +1315,7 @@ export async function runDreamCycle(
   const patternGateForRules = Math.max(patternsFound, livePatternCountForRules);
 
   // ── Stage 4: Reflect-rules (optional) ─────────────────────────────────────
-  const ruleIdsBeforeReflectRules = new Set(
-    factsDb
-      .getAll()
-      .filter((f) => f.category === "rule" && !f.supersededAt)
-      .map((f) => f.id),
-  );
+  const ruleIdsBeforeReflectRules = new Set(factsDb.getByCategory("rule").map((f) => f.id));
   let rulesGenerated = 0;
   let reflectionRulesDiagnostics: DreamCycleResult["reflectionRulesDiagnostics"];
   const enableReflectionRules = config.enableReflectionRules !== false; // default: true
@@ -1398,12 +1406,12 @@ export async function runDreamCycle(
     } else {
       try {
         const newPatternFactIds = factsDb
-          .getAll()
-          .filter((f) => f.category === "pattern" && !f.supersededAt && !patternIdsBeforeReflection.has(f.id))
+          .getByCategory("pattern")
+          .filter((f) => !patternIdsBeforeReflection.has(f.id))
           .map((f) => f.id);
         const newRuleFactIds = factsDb
-          .getAll()
-          .filter((f) => f.category === "rule" && !f.supersededAt && !ruleIdsBeforeReflectRules.has(f.id))
+          .getByCategory("rule")
+          .filter((f) => !ruleIdsBeforeReflectRules.has(f.id))
           .map((f) => f.id);
         const bridgeResult = runDreamCycleProposalBridge({
           cfg: bridge.cfg,
@@ -1569,11 +1577,51 @@ export async function runDreamCycle(
 
   const success = failedStages.length === 0;
   const totalElapsedSec = Math.floor((Date.now() - cycleStartedAt) / 1000);
-  if (success) {
-    logger.info(`memory-hybrid: dream-cycle — complete in ${totalElapsedSec}s. ${digestSummary}`);
+
+  // Optional: Ingest dream cycle findings into facts for wiki surface. Runs before the
+  // change-feed emit below so a late ingest failure is reflected in the success/digest state
+  // that gets reported, instead of the emit firing on stale pre-ingest state.
+  let dreamFindingsIngested = 0;
+  let dreamIngestSuccess = true;
+  if (config.ingestDreamFindings && config.stageArtifactDir && success) {
+    if (dryRun) {
+      skipForDryRun("dream findings ingest");
+    } else {
+      try {
+        const { ingestDreamFindings } = await import("./wiki-dream-ingester.js");
+        const ingesterResult = await ingestDreamFindings({
+          factsDb,
+          dreamCycleLogDir: config.stageArtifactDir.replace(/\/[^/]+$/, ""),
+          verbose: !!config.verbose,
+        });
+        dreamFindingsIngested = ingesterResult.findingsIngested;
+        if (ingesterResult.errors.length > 0) {
+          dreamIngestSuccess = false;
+          logger.warn(
+            `memory-hybrid: dream-cycle — dream findings ingest errors: ${ingesterResult.errors.slice(0, 3).join("; ")}`,
+          );
+        } else if (ingesterResult.findingsIngested > 0) {
+          logger.info(
+            `memory-hybrid: dream-cycle — ingested ${ingesterResult.findingsIngested} finding(s) from ${ingesterResult.runsProcessed} run(s)`,
+          );
+        }
+      } catch (err) {
+        dreamIngestSuccess = false;
+        logger.warn?.(`memory-hybrid: dream-cycle — dream findings ingest failed: ${err}`);
+      }
+    }
+  }
+
+  const finalSuccess = success && dreamIngestSuccess;
+  const finalFailedStages =
+    dreamIngestSuccess || !config.ingestDreamFindings ? failedStages : [...failedStages, "dream-findings-ingest"];
+  const finalDigestSummary = dreamIngestSuccess ? digestSummary : `${digestSummary} Dream-findings ingest failed.`;
+
+  if (finalSuccess) {
+    logger.info(`memory-hybrid: dream-cycle — complete in ${totalElapsedSec}s. ${finalDigestSummary}`);
   } else {
     logger.warn(
-      `memory-hybrid: dream-cycle — finished with ${failedStages.length} failed stage(s) in ${totalElapsedSec}s. ${digestSummary}`,
+      `memory-hybrid: dream-cycle — finished with ${finalFailedStages.length} failed stage(s) in ${totalElapsedSec}s. ${finalDigestSummary}`,
     );
   }
 
@@ -1613,50 +1661,14 @@ export async function runDreamCycle(
         }
       }
       emitDreamCycleComplete(bridge.changeFeed, bridge.cfg, {
-        success,
-        digestSummary,
+        success: finalSuccess,
+        digestSummary: finalDigestSummary,
         personaProposalsCreated: bridgePersonaCreated,
         crystallizationProposalsCreated: bridgeCrystallizationCreated,
         skillWorkshopBridged: bridgeSkillBridged,
       });
     }
   }
-
-  // Optional: Ingest dream cycle findings into facts for wiki surface
-  let dreamFindingsIngested = 0;
-  let dreamIngestSuccess = true;
-  if (config.ingestDreamFindings && config.stageArtifactDir && success) {
-    if (dryRun) {
-      skipForDryRun("dream findings ingest");
-    } else {
-      try {
-        const { ingestDreamFindings } = await import("./wiki-dream-ingester.js");
-        const ingesterResult = await ingestDreamFindings({
-          factsDb,
-          dreamCycleLogDir: config.stageArtifactDir.replace(/\/[^/]+$/, ""),
-          verbose: !!config.verbose,
-        });
-        dreamFindingsIngested = ingesterResult.findingsIngested;
-        if (ingesterResult.errors.length > 0) {
-          dreamIngestSuccess = false;
-          logger.warn(
-            `memory-hybrid: dream-cycle — dream findings ingest errors: ${ingesterResult.errors.slice(0, 3).join("; ")}`,
-          );
-        } else if (ingesterResult.findingsIngested > 0) {
-          logger.info(
-            `memory-hybrid: dream-cycle — ingested ${ingesterResult.findingsIngested} finding(s) from ${ingesterResult.runsProcessed} run(s)`,
-          );
-        }
-      } catch (err) {
-        dreamIngestSuccess = false;
-        logger.warn?.(`memory-hybrid: dream-cycle — dream findings ingest failed: ${err}`);
-      }
-    }
-  }
-
-  const finalSuccess = success && dreamIngestSuccess;
-  const finalFailedStages =
-    dreamIngestSuccess || !config.ingestDreamFindings ? failedStages : [...failedStages, "dream-findings-ingest"];
 
   return {
     factsPruned,
@@ -1671,7 +1683,7 @@ export async function runDreamCycle(
     vacuumRan,
     decayReclassified,
     orphanVectorsRemoved,
-    digestSummary,
+    digestSummary: finalDigestSummary,
     dreamFindingsIngested,
     skipped: false,
     success: finalSuccess,

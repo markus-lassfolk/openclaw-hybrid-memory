@@ -2,14 +2,13 @@
  * Optional bridge to OpenClaw Skill Workshop proposal filesystem (Phase 5).
  */
 
-import { existsSync, mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-
-import { getEnv } from "../utils/env-manager.js";
+import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { atomicWriteFile } from "../utils/atomic-write.js";
 import { nowIso } from "../utils/dates.js";
+import { getEnv } from "../utils/env-manager.js";
 
 export type SkillWorkshopBridgeInput = {
   name: string;
@@ -33,6 +32,26 @@ function escapeYamlDoubleQuoted(value: string): string {
 function skillWorkshopRoot(): string {
   const state = getEnv("OPENCLAW_STATE_DIR") ?? join(homedir(), ".openclaw");
   return join(state, "skill-workshop", "proposals");
+}
+
+/**
+ * Count existing skill-workshop proposal directories. This filesystem tree isn't modeled in
+ * unified-proposals.ts's pending-count query, so callers that need to bound how many proposals
+ * this bridge writes must count it directly rather than via enforceMaxPendingCap.
+ */
+export function countSkillWorkshopProposals(): number {
+  try {
+    return readdirSync(skillWorkshopRoot(), { withFileTypes: true }).filter((entry) => entry.isDirectory()).length;
+  } catch {
+    return 0;
+  }
+}
+
+/** Whether a skill-workshop proposal directory already exists for the given id. */
+export function hasSkillWorkshopProposal(proposalId: string): boolean {
+  const id = proposalId.trim();
+  if (!id) return false;
+  return existsSync(join(skillWorkshopRoot(), id));
 }
 
 export function writeSkillWorkshopProposal(

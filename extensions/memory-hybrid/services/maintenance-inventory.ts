@@ -1,14 +1,13 @@
-import { execSync } from "../utils/process-runner.js";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
-
 import { relativeTime } from "../cli/shared.js";
-import { describeCronStoreLocation, readOpenClawCronStore } from "./openclaw-cron-store.js";
-import { getGuardFilePath, readGuardTimestampMs } from "./cron-guard.js";
+import { formatTimestampUtcFromMs, nowIso } from "../utils/dates.js";
+import { execSync } from "../utils/process-runner.js";
 import { readExitLedger, validateMaintenanceExecution } from "./cron-exit-validator.js";
+import { getGuardFilePath, readGuardTimestampMs } from "./cron-guard.js";
 import { HYBRID_MEM_CRON_DEFAULT_JOB_STEPS } from "./hybrid-mem-cron-default-job-steps.js";
 import { isCanonicalMaintenanceLog, isUnderAuxiliaryDir } from "./maintenance-log-analyzer.js";
-import { nowIso, formatTimestampUtc, formatTimestampUtcFromMs } from "../utils/dates.js";
+import { describeCronStoreLocation, readOpenClawCronStore } from "./openclaw-cron-store.js";
 
 const HYBRID_MEM_PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
 const GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID = "goal-stewardship-heartbeat";
@@ -41,6 +40,10 @@ export interface MaintenanceInventoryJob {
   logRoot?: string;
   collisionGroups: string[];
   lockKey?: string;
+  /** Count of additional raw cron-store registrations that collapsed into this same job (set only
+   * when > 0) — a genuine duplicate registration (not an alias/canonical pair, which intentionally
+   * collapses), previously dropped with no signal anywhere in the report. */
+  duplicateRawRegistrations?: number;
   mutates: {
     sqlite: boolean;
     lancedb: boolean;
@@ -65,6 +68,10 @@ export interface MaintenanceInventoryReport {
   crontabError?: string;
   cronStoreStatus: CronStoreStatus;
   cronStoreError?: string;
+  /** Count of readdir/stat failures during the artifact scan (set only when > 0) — distinguishes
+   * a genuine mid-scan IO/permission error from "this job has no logs," which otherwise look
+   * identical downstream. */
+  artifactScanErrors?: number;
   jobs: MaintenanceInventoryJob[];
   collisionGroups: MaintenanceInventoryCollisionGroup[];
 }
@@ -354,13 +361,24 @@ function extractRunIdFromFilename(file: string): string | null {
   if (isoExitMatch) return isoExitMatch[2];
   const isoLogMatch = file.match(/^(.+)-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)\.log$/);
   if (isoLogMatch) return isoLogMatch[2];
+  // Aggregate cron logs (<job>-YYYYMMDD.cron.log, or a single dateless <job>.cron.log) never carry
+  // a per-run id in their filename — the file itself IS the run history (or one day's worth of
+  // it), and extractMaintenanceJobName already strips this exact suffix pattern. Without a
+  // matching branch here, every such file returned null and was silently dropped, so a job whose
+  // only artifact format is .cron.log always showed as "never run" (QA follow-up).
+  const dailyCronMatch = file.match(/^(.+)-(\d{8})\.cron\.log$/);
+  if (dailyCronMatch) return `cron-${dailyCronMatch[2]}`;
+  if (/\.cron\.log$/.test(file)) return "cron-aggregate";
   return null;
 }
 
-function scanLatestMaintenanceArtifacts(logRoot: string): Map<string, MaintenanceArtifacts> {
+function scanLatestMaintenanceArtifacts(logRoot: string): {
+  artifacts: Map<string, MaintenanceArtifacts>;
+  scanErrors: number;
+} {
   const artifacts = new Map<string, MaintenanceArtifacts>();
   if (!existsSync(logRoot)) {
-    return artifacts;
+    return { artifacts, scanErrors: 0 };
   }
 
   const runPairs = new Map<
@@ -368,6 +386,7 @@ function scanLatestMaintenanceArtifacts(logRoot: string): Map<string, Maintenanc
     Map<string, { exitPath?: string; exitMtime?: number; logPath?: string; logMtime?: number }>
   >();
 
+  let scanErrors = 0;
   const stack = [logRoot];
   while (stack.length > 0) {
     const dir = stack.pop();
@@ -376,6 +395,10 @@ function scanLatestMaintenanceArtifacts(logRoot: string): Map<string, Maintenanc
     try {
       entries = readdirSync(dir);
     } catch {
+      // Silent by design where the directory simply doesn't exist yet, but an IO/permission error
+      // partway through the scan looks identical to "this job has no logs" downstream — track it
+      // so the report can distinguish the two instead of always reading as healthy (QA follow-up).
+      scanErrors++;
       continue;
     }
     for (const entry of entries) {
@@ -384,6 +407,7 @@ function scanLatestMaintenanceArtifacts(logRoot: string): Map<string, Maintenanc
       try {
         stat = statSync(path);
       } catch {
+        scanErrors++;
         continue;
       }
       if (stat.isDirectory()) {
@@ -422,30 +446,47 @@ function scanLatestMaintenanceArtifacts(logRoot: string): Map<string, Maintenanc
   }
 
   for (const [jobName, jobRuns] of runPairs) {
+    // A fully paired run (known exit status) is always preferred over a newer-but-unpaired one —
+    // an in-progress or crashed run with no exit code yet is a less useful "last known state" than
+    // an older run whose actual outcome is known. Only fall back to the best available unpaired
+    // run when the job has NO paired run at all (its very first run is still in progress, or its
+    // only artifact format — e.g. an aggregate .cron.log — never produces a sibling .exit.txt) so
+    // such a job still surfaces as having run at all, instead of always reading as "never" (QA
+    // follow-up).
     let latestPair: MaintenanceArtifacts | undefined;
-    let latestMtime = -1;
+    let latestPairMtime = -1;
+    let latestAny: MaintenanceArtifacts | undefined;
+    let latestAnyMtime = -1;
 
     for (const run of jobRuns.values()) {
-      if (run.exitPath && run.logPath) {
-        const runMtime = Math.max(run.exitMtime ?? 0, run.logMtime ?? 0);
-        if (runMtime > latestMtime) {
-          latestMtime = runMtime;
-          latestPair = {
-            latestExitPath: run.exitPath,
-            latestExitMtimeMs: run.exitMtime,
-            latestLogPath: run.logPath,
-            latestLogMtimeMs: run.logMtime,
-          };
-        }
+      const runMtime = Math.max(run.exitMtime ?? 0, run.logMtime ?? 0);
+      if (runMtime > latestAnyMtime) {
+        latestAnyMtime = runMtime;
+        latestAny = {
+          latestExitPath: run.exitPath,
+          latestExitMtimeMs: run.exitMtime,
+          latestLogPath: run.logPath,
+          latestLogMtimeMs: run.logMtime,
+        };
+      }
+      if (run.exitPath && run.logPath && runMtime > latestPairMtime) {
+        latestPairMtime = runMtime;
+        latestPair = {
+          latestExitPath: run.exitPath,
+          latestExitMtimeMs: run.exitMtime,
+          latestLogPath: run.logPath,
+          latestLogMtimeMs: run.logMtime,
+        };
       }
     }
 
-    if (latestPair) {
-      artifacts.set(jobName, latestPair);
+    const latest = latestPair ?? latestAny;
+    if (latest) {
+      artifacts.set(jobName, latest);
     }
   }
 
-  return artifacts;
+  return { artifacts, scanErrors };
 }
 
 function resolveCatalogEntry(...candidates: Array<string | undefined>): MaintenanceJobCatalogEntry | null {
@@ -603,6 +644,7 @@ function parseGatewayJobs(
   const cronStoreDisplayPath = describeCronStoreLocation(openclawDir);
   const jobsByInventoryId = new Map<string, MaintenanceInventoryJob>();
   const rawPluginJobIdByInventoryId = new Map<string, string | undefined>();
+  const duplicateCountByInventoryId = new Map<string, number>();
   for (const rawJob of rawJobs) {
     if (!rawJob || typeof rawJob !== "object") continue;
     const job = rawJob as Record<string, unknown>;
@@ -639,12 +681,20 @@ function parseGatewayJobs(
       const existingIsCanonical = existingRawPluginJobId === entry.pluginJobId;
       const isEnabled = job.enabled !== false;
       const existingIsEnabled = existing.enabled;
+      // A tie on BOTH enabled-state and canonical-ness (as opposed to an alias losing to its
+      // canonical counterpart, which is intentional) means two raw registrations are genuinely
+      // indistinguishable duplicates — track it instead of silently dropping the second one with
+      // no signal anywhere in the report (QA follow-up).
+      if (isEnabled === existingIsEnabled && isCanonical === existingIsCanonical) {
+        duplicateCountByInventoryId.set(inventoryId, (duplicateCountByInventoryId.get(inventoryId) ?? 0) + 1);
+      }
       const shouldReplace =
         (isEnabled && !existingIsEnabled) || (isEnabled === existingIsEnabled && isCanonical && !existingIsCanonical);
       if (!shouldReplace) continue;
     }
 
     rawPluginJobIdByInventoryId.set(inventoryId, pluginJobId);
+    const duplicateCount = duplicateCountByInventoryId.get(inventoryId);
     jobsByInventoryId.set(inventoryId, {
       inventoryId,
       jobKey: entry.jobKey,
@@ -668,6 +718,7 @@ function parseGatewayJobs(
       logRoot: join(openclawDir, "logs", "cron-hybrid-mem"),
       collisionGroups: [...entry.collisionGroups],
       lockKey: entry.lockKey,
+      duplicateRawRegistrations: duplicateCount && duplicateCount > 0 ? duplicateCount : undefined,
       mutates: { ...entry.mutates },
     });
   }
@@ -804,7 +855,7 @@ export function collectMaintenanceInventory(
     }
   }
 
-  const artifacts = scanLatestMaintenanceArtifacts(logRoot);
+  const { artifacts, scanErrors } = scanLatestMaintenanceArtifacts(logRoot);
   const hostJobs = crontab.status === "present" ? parseHostCrontab(openclawDir, crontab.text, artifacts) : [];
   const gatewayJobs = parseGatewayJobs(openclawDir, cronStoreJobs, artifacts);
   const jobs = [...hostJobs, ...gatewayJobs].sort((a, b) => {
@@ -822,6 +873,7 @@ export function collectMaintenanceInventory(
     crontabError: crontab.error,
     cronStoreStatus,
     cronStoreError,
+    artifactScanErrors: scanErrors > 0 ? scanErrors : undefined,
     jobs,
     collisionGroups: buildCollisionGroups(jobs),
   };

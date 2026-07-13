@@ -163,6 +163,55 @@ describe("maintenance-orchestrator", () => {
     expect(result.exitCode).toBe(2);
   });
 
+  it("resets the rate-limit counter after a semantic-outcome-driven failure, not just a thrown one (QA follow-up)", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const rateLimitErr = Object.assign(new Error("429"), { status: 429 });
+    let reflectCalls = 0;
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "distill",
+        async () => {
+          throw rateLimitErr;
+        },
+      ],
+      // Returns (does not throw) a summary whose semantic token blocks guard advancement —
+      // exercises the non-throwing "failed" path that previously never reset the counter.
+      ["resolve-contradictions", async () => "matched=1 semantic=partial"],
+      [
+        "self-correction-run",
+        async () => {
+          throw rateLimitErr;
+        },
+      ],
+      [
+        "reflect",
+        async () => {
+          reflectCalls++;
+          return "ok";
+        },
+      ],
+    ]);
+    // rateLimitMaxRetries=2: if the counter incorrectly stays elevated across the semantic-failure
+    // step in between, the second rate-limit hit reaches 2 and trips the circuit breaker, deferring
+    // "reflect". If the counter correctly resets, two isolated single rate-limit hits never trip it.
+    const cfg = {
+      maintenance: { orchestrator: { rateLimitMaxRetries: 2, llmCooldownBetweenStepsMs: 0 } },
+    } as HybridMemoryConfig;
+    const result = await runMaintenanceOrchestrator(
+      { cfg, runners, openclawDir },
+      {
+        tiers: ["nightly"],
+        force: true,
+        verbose: false,
+        include: ["distill", "resolve-contradictions", "self-correction-run", "reflect"],
+      },
+    );
+
+    expect(result.steps.find((s) => s.name === "resolve-contradictions")?.status).toBe("failed");
+    expect(reflectCalls).toBe(1);
+    expect(result.steps.find((s) => s.name === "reflect")?.status).toBe("ok");
+  });
+
   it("respects dependency gates", async () => {
     openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
     const runners = new Map<string, () => Promise<string>>([["reflect-rules", async () => "ok"]]);

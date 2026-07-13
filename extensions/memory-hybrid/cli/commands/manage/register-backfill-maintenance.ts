@@ -1,12 +1,15 @@
 /**
  * Backfill maintenance data gaps from session JSONL + coverage CLI.
  */
-import { WorkflowStore } from "../../../backends/workflow-store.js";
+
+import { readFileSync } from "node:fs";
+import { basename } from "node:path";
 import type { FactsDB } from "../../../backends/facts-db.js";
-import { resolveExtractSessionFilePaths } from "../../../services/extract-session-paths.js";
-import { backfillRecallEventsFromSessionFile } from "../../../services/recall-events.js";
+import { WorkflowStore } from "../../../backends/workflow-store.js";
+import type { HybridMemoryConfig } from "../../../config.js";
 import { synthesizeDailyLogFromSessionFile } from "../../../services/daily-log-synthesizer.js";
-import { scanSessionFileForMetadata } from "../../../services/session-metadata.js";
+import { capturePluginError } from "../../../services/error-reporter.js";
+import { resolveExtractSessionFilePaths } from "../../../services/extract-session-paths.js";
 import {
   buildMaintenanceCoverageReport,
   defaultFactsDbPath,
@@ -14,17 +17,15 @@ import {
   defaultWorkflowDbPath,
   formatMaintenanceCoverageReport,
 } from "../../../services/maintenance-coverage.js";
+import { backfillRecallEventsFromSessionFile } from "../../../services/recall-events.js";
+import { scanSessionFileForMetadata } from "../../../services/session-metadata.js";
 import { parseSessionMessagesFromLines } from "../../../services/session-signal-context.js";
-import { parseDaysFlag } from "../../distill.js";
 import { collectWorkflowToolsFromSessionFile } from "../../../services/session-v3-parser.js";
-import { readFileSync } from "node:fs";
-import { basename } from "node:path";
-import { redactMaintenancePrivateText } from "../../../utils/maintenance-privacy.js";
-import { capturePluginError } from "../../../services/error-reporter.js";
 import { extractUserWorkflowGoal, isSystemWorkflowGoal } from "../../../services/workflow-goal-classifier.js";
 import { inferWorkflowOutcomeFromMessages } from "../../../services/workflow-message-utils.js";
+import { redactMaintenancePrivateText } from "../../../utils/maintenance-privacy.js";
+import { parseDaysFlag } from "../../distill.js";
 import { type Chainable, withExit } from "../../shared.js";
-import type { HybridMemoryConfig } from "../../../config.js";
 import type { ManageBindings } from "./bindings.js";
 
 function backfillReflectionWatermark(factsDb: FactsDB): number {
@@ -246,7 +247,13 @@ export function registerBackfillMaintenanceCommands(
             failedFiles.push(`${filePath}: ${err instanceof Error ? err.message : String(err)}`);
           }
         }
-        const report = { files: paths.length, recallEventsInserted: inserted, failed: failedFiles.length, days };
+        const report = {
+          files: paths.length,
+          recallEventsInserted: inserted,
+          failed: failedFiles.length,
+          failedFiles: failedFiles.slice(0, 10),
+          days,
+        };
         if (opts?.json) console.log(JSON.stringify(report, null, 2));
         else
           console.log(
@@ -291,7 +298,13 @@ export function registerBackfillMaintenanceCommands(
             failedFiles.push(`${filePath}: ${err instanceof Error ? err.message : String(err)}`);
           }
         }
-        const report = { files: paths.length, dailyLogsWritten: written, failed: failedFiles.length, days };
+        const report = {
+          files: paths.length,
+          dailyLogsWritten: written,
+          failed: failedFiles.length,
+          failedFiles: failedFiles.slice(0, 10),
+          days,
+        };
         if (opts?.json) console.log(JSON.stringify(report, null, 2));
         else
           console.log(
@@ -323,7 +336,13 @@ export function registerBackfillMaintenanceCommands(
             failedFiles.push(`${filePath}: ${err instanceof Error ? err.message : String(err)}`);
           }
         }
-        const report = { files: paths.length, sessionMetadataRows: rows, failed: failedFiles.length, days };
+        const report = {
+          files: paths.length,
+          sessionMetadataRows: rows,
+          failed: failedFiles.length,
+          failedFiles: failedFiles.slice(0, 10),
+          days,
+        };
         if (opts?.json) console.log(JSON.stringify(report, null, 2));
         else
           console.log(
@@ -357,7 +376,13 @@ export function registerBackfillMaintenanceCommands(
               failedFiles.push(`${filePath}: ${err instanceof Error ? err.message : String(err)}`);
             }
           }
-          const report = { files: paths.length, workflowTraces: traces, failed: failedFiles.length, days };
+          const report = {
+            files: paths.length,
+            workflowTraces: traces,
+            failed: failedFiles.length,
+            failedFiles: failedFiles.slice(0, 10),
+            days,
+          };
           if (opts?.json) console.log(JSON.stringify(report, null, 2));
           else
             console.log(

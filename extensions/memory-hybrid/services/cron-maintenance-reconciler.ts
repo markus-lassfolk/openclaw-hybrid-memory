@@ -113,6 +113,27 @@ export function parseCronRunLedger(ledgerPath: string): CronRunLedgerEntry[] {
 }
 
 /**
+ * Merge in-memory corrections onto a freshly re-read ledger, so a concurrent writer's rows
+ * appended after the original read aren't silently dropped by an unconditional overwrite.
+ *
+ * Safe only when the freshly-read ledger still starts with byte-identical copies of every row
+ * the caller examined (`originalEntryJson`, captured before any in-place mutation) — new rows may
+ * only have been appended after them by another process; nothing already present may have been
+ * removed, reordered, or independently modified. When that invariant doesn't hold (an unexpected
+ * external rewrite), returns `correctedEntries` unchanged rather than risk corrupting/losing data.
+ */
+export function mergeReconciledEntriesWithFreshRead(
+  correctedEntries: CronRunLedgerEntry[],
+  originalEntryJson: string[],
+  freshEntries: CronRunLedgerEntry[],
+): CronRunLedgerEntry[] {
+  const prefixUnchanged =
+    freshEntries.length >= correctedEntries.length &&
+    originalEntryJson.every((json, i) => JSON.stringify(freshEntries[i]) === json);
+  return prefixUnchanged ? [...correctedEntries, ...freshEntries.slice(correctedEntries.length)] : correctedEntries;
+}
+
+/**
  * Write ledger entries back to a JSONL file.
  */
 export function writeCronRunLedger(ledgerPath: string, entries: CronRunLedgerEntry[]): void {
@@ -258,6 +279,10 @@ export function reconcileCronRunLedger(
 
   // Parse existing ledger
   const entries = parseCronRunLedger(ledgerPath);
+  // Snapshot each entry's original serialized form before the loop below mutates entry.status/
+  // entry.summary in place, so the write-back step can detect whether anything else changed these
+  // same rows out from under it (see the re-read-before-write merge there).
+  const originalEntryJson = entries.map((e) => JSON.stringify(e));
   let modified = false;
 
   // Infer jobId from filename (e.g., "hybrid-mem:nightly-dream-cycle.jsonl" -> "hybrid-mem:nightly-dream-cycle")
@@ -354,7 +379,13 @@ export function reconcileCronRunLedger(
 
   // Write back if modified
   if (modified && !dryRun) {
-    writeCronRunLedger(ledgerPath, entries);
+    // Re-read immediately before writing and merge these corrections onto the fresh read, instead
+    // of blindly overwriting with the stale in-memory array captured at the top of this function.
+    // A live cron runner can append new rows to this same ledger between that read and this write;
+    // atomicWriteFile only prevents a torn file, not this lost-update race (QA follow-up).
+    const freshEntries = parseCronRunLedger(ledgerPath);
+    const toWrite = mergeReconciledEntriesWithFreshRead(entries, originalEntryJson, freshEntries);
+    writeCronRunLedger(ledgerPath, toWrite);
   }
 
   return result;

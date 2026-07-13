@@ -121,7 +121,13 @@ export function recordMaintenanceStepRun(db: DatabaseSync, step: OrchestratorSte
     job: step.name,
     status: mapStepToMaintenanceRunStatus(step.status, step.summary),
     itemsProcessed: step.status === "ok" ? 1 : undefined,
-    errorSummary: step.status === "failed" || step.status === "rate_limited" ? step.summary : undefined,
+    // skipped_missing_runner included alongside failed/rate_limited — otherwise the journal row
+    // for a permanently unwired step carries only the bare status enum, with no free-text
+    // explanation of which runner was missing for an operator to act on (QA follow-up).
+    errorSummary:
+      step.status === "failed" || step.status === "rate_limited" || step.status === "skipped_missing_runner"
+        ? step.summary
+        : undefined,
     metadata: {
       durationMs: step.durationMs,
       orchestratorStatus: step.status,

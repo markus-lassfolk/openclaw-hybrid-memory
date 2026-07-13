@@ -67,7 +67,7 @@ export function registerMaintenanceHealthCommands(maintenance: Chainable, cfg: H
         const openclawDir = join(homedir(), ".openclaw");
         const staleThresholdMs = (cfg.maintenance?.cronReliability?.staleThresholdHours ?? 28) * 60 * 60 * 1000;
         const nightlyCronExpr = cfg.maintenance?.cronReliability?.nightlyCron ?? "0 3 * * *";
-        const weeklyBackupCronExpr = cfg.maintenance?.cronReliability?.weeklyBackupCron ?? "0 4 * * 0";
+        const _weeklyBackupCronExpr = cfg.maintenance?.cronReliability?.weeklyBackupCron ?? "0 4 * * 0";
         const useConsolidatedCron = cfg.maintenance?.orchestrator?.consolidatedCronJobs !== false;
 
         type JobStatus = {
@@ -118,7 +118,13 @@ export function registerMaintenanceHealthCommands(maintenance: Chainable, cfg: H
         const jobs = Array.isArray(cronStore.jobs) ? (cronStore.jobs as Array<Record<string, unknown>>) : [];
 
         for (const wanted of jobsOfInterest) {
-          const found = jobs.find((j) => j && (j.pluginJobId === wanted.id || String(j.name ?? "") === wanted.label));
+          // jobMatchesPluginJobId, not a bare `j.pluginJobId === id` check (#2050, matching
+          // cron-health below): SQLite-backed cron stores (2026.6.8+) never populate
+          // `pluginJobId` on the raw job record, only `id`/`name`, so this fell through to
+          // name-only matching on every modern install — exactly the false-positive risk
+          // jobMatchesPluginJobId was written to avoid (an unrelated user-created cron job with
+          // the same display name would satisfy a bare name check).
+          const found = jobs.find((j) => j && jobMatchesPluginJobId(j as Record<string, unknown>, wanted.id));
 
           if (!found) {
             results.push({
@@ -340,7 +346,16 @@ export function registerMaintenanceHealthCommands(maintenance: Chainable, cfg: H
             continue;
           }
           const state = job.state as { lastRunAtMs?: number; lastStatus?: string } | undefined;
-          if (state?.lastRunAtMs != null && Date.now() - state.lastRunAtMs > staleThresholdMs) {
+          if (state?.lastRunAtMs == null) {
+            // Distinct from staleness below — a job that exists, is enabled, but has never fired
+            // at all (e.g. the cron daemon crashed right after install) previously fell through
+            // this check silently and reported healthy, unlike `status` in this same file, which
+            // already flags "never run" explicitly (QA follow-up).
+            console.warn(`⚠ Maintenance job has never run: ${id}. Check cron daemon is running.`);
+            healthy = false;
+            continue;
+          }
+          if (Date.now() - state.lastRunAtMs > staleThresholdMs) {
             const h = Math.floor((Date.now() - state.lastRunAtMs) / 3600000);
             console.warn(`⚠ Stale maintenance job: ${id} (last run ${h}h ago). Check cron daemon.`);
             healthy = false;

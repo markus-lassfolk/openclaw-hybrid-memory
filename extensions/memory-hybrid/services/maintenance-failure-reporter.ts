@@ -1,8 +1,9 @@
-import type { HybridMemoryConfig } from "../config.js";
-import { capturePluginError, flushErrorReporter, initErrorReporter, isErrorReporterActive } from "./error-reporter.js";
-import type { MaintenanceTelemetryIssue } from "./cron-exit-validator.js";
-import { getEnv } from "../utils/env-manager.js";
+import { dirname, join } from "node:path";
 import type { MaintenanceFailureReportingConfig } from "../config/types/maintenance.js";
+import type { HybridMemoryConfig } from "../config.js";
+import { getEnv } from "../utils/env-manager.js";
+import type { MaintenanceTelemetryIssue } from "./cron-exit-validator.js";
+import { capturePluginError, flushErrorReporter, initErrorReporter, isErrorReporterActive } from "./error-reporter.js";
 
 export const MAINTENANCE_FAILURE_REPORTING_DISABLE_ENV = "HYBRID_MEMORY_DISABLE_MAINTENANCE_ERROR_REPORTING";
 const MAINTENANCE_REPORTER_FLUSH_TIMEOUT_MS = 750;
@@ -16,6 +17,14 @@ type MaintenanceReporterContext = {
   };
   pluginVersion: string;
   logger?: Pick<Console, "debug" | "info" | "warn">;
+  /**
+   * When set (and not ":memory:"), a durable on-disk retry queue is derived from it, matching
+   * setup/plugin-service.ts's own errorReportQueuePath convention — without this, a report sent
+   * right before this one-shot CLI process exits has no on-disk fallback if the network POST
+   * doesn't complete within the flush timeout (#validate-cron-exit runs in a short-lived process
+   * with no next-startup drain to recover it).
+   */
+  resolvedSqlitePath?: string;
 };
 
 function envDisablesMaintenanceFailureReporting(env?: Record<string, string | undefined>): boolean {
@@ -34,6 +43,11 @@ export function shouldReportMaintenanceFailures(
   return cfg.errorReporting.enabled === true && cfg.errorReporting.consent === true;
 }
 
+function resolveErrorReportQueuePath(resolvedSqlitePath?: string): string | undefined {
+  if (!resolvedSqlitePath || resolvedSqlitePath === ":memory:") return undefined;
+  return join(dirname(resolvedSqlitePath), ".error_reports.pending.jsonl");
+}
+
 async function ensureMaintenanceReporterReady(context: MaintenanceReporterContext): Promise<boolean> {
   if (isErrorReporterActive()) return true;
   await initErrorReporter(
@@ -48,6 +62,7 @@ async function ensureMaintenanceReporterReady(context: MaintenanceReporterContex
       botId: context.cfg.errorReporting.botId,
       botName: context.cfg.errorReporting.botName,
       resolvedIssues: context.cfg.errorReporting.resolvedIssues,
+      pendingQueuePath: resolveErrorReportQueuePath(context.resolvedSqlitePath),
     },
     context.pluginVersion,
     context.logger,

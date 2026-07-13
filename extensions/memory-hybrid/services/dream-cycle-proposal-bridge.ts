@@ -21,7 +21,12 @@ import {
   emitPersonaProposed,
   emitSkillWorkshopProposed,
 } from "./change-feed-emit.js";
-import { isSkillWorkshopPluginActive, writeSkillWorkshopProposal } from "./skill-workshop-bridge.js";
+import {
+  countSkillWorkshopProposals,
+  hasSkillWorkshopProposal,
+  isSkillWorkshopPluginActive,
+  writeSkillWorkshopProposal,
+} from "./skill-workshop-bridge.js";
 import { enforceMaxPendingCap, makeUnifiedKey, resolveWorkshopMaxPending } from "./unified-proposals.js";
 
 export type DreamCycleProposalBridgeInput = {
@@ -227,13 +232,17 @@ export function runDreamCycleProposalBridge(input: DreamCycleProposalBridgeInput
           `memory-hybrid: dream-cycle auto-proposed crystallization skill ${makeUnifiedKey("crystallization", created.id)}`,
         );
       } else if (isSkillWorkshopPluginActive(input.api)) {
-        // Same cap check the persona/crystallization branches above use — without it this branch
-        // was the one proposal path with no pending-count guard, accumulating new skill-workshop
-        // proposal directories on disk unboundedly night after night.
-        const cap = enforceMaxPendingCap(capStores, resolveWorkshopMaxPending(input.cfg));
-        if (!cap.ok) {
+        if (hasSkillWorkshopProposal(id)) {
+          continue;
+        }
+        // Skill-workshop proposals live on the filesystem, not in any of the stores
+        // enforceMaxPendingCap/unified-proposals.ts knows about — count the directory tree
+        // directly, or this branch's own writes never move the count it's checking against.
+        const maxPending = resolveWorkshopMaxPending(input.cfg);
+        const pending = countSkillWorkshopProposals();
+        if (pending >= maxPending) {
           input.logger.warn(
-            `memory-hybrid: dream-cycle skill-workshop auto-propose stopped (${cap.error}, pending=${cap.pending})`,
+            `memory-hybrid: dream-cycle skill-workshop auto-propose stopped (pending cap reached, pending=${pending})`,
           );
           break;
         }

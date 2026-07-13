@@ -158,8 +158,21 @@ export function acquireStepLock(stepName: string, openclawDir?: string, nowMs = 
 }
 
 export function releaseStepLock(stepName: string, openclawDir?: string): void {
+  const lockPath = getStepLockFilePath(stepName, openclawDir);
   try {
-    rmSync(getStepLockFilePath(stepName, openclawDir), { force: true });
+    // Verify this process still owns the lock before deleting it. acquireStepLock's stale-reclaim
+    // path can let a second process take over a lock this process still believes it holds (e.g. a
+    // legitimately long-running step past STEP_LOCK_STALE_MS, reclaimed from a different host or
+    // via a legacy pid-less lock with no liveness check available). An unconditional delete here
+    // would then remove that second process's ACTIVE lock out from under it, opening a window for
+    // a third invocation to run the same step concurrently (QA follow-up). Only skip when we have
+    // positive evidence of a different owner — an unreadable/legacy lock still gets cleared, same
+    // as before.
+    const info = readLockInfoAtPath(lockPath);
+    if (info && (info.pid !== process.pid || info.hostname !== osHostname())) {
+      return;
+    }
+    rmSync(lockPath, { force: true });
   } catch {
     /* non-fatal — worst case a stale lock sits until STEP_LOCK_STALE_MS passes */
   }
@@ -178,13 +191,23 @@ export interface StepLockInfo {
 /** Read a single step's lock metadata, if a lock file is currently present (#2031). */
 export function readStepLockInfo(stepName: string, openclawDir?: string, nowMs = Date.now()): StepLockInfo | null {
   const lockPath = getStepLockFilePath(stepName, openclawDir);
+  const info = readLockInfoAtPath(lockPath, nowMs);
+  return info ? { stepName, ...info } : null;
+}
+
+/**
+ * Same as {@link readStepLockInfo} but for an arbitrary lock file path not necessarily tied to a
+ * known step name — e.g. one extracted from a log excerpt by the maintenance auto-fix tooling.
+ * Shares the same JSON-or-legacy-bare-number parsing `readStepLockInfo` uses, so a caller with a
+ * raw path doesn't need its own (and potentially incompatible) lock-file parser.
+ */
+export function readLockInfoAtPath(lockPath: string, nowMs = Date.now()): Omit<StepLockInfo, "stepName"> | null {
   if (!existsSync(lockPath)) return null;
   try {
     const payload = parseLockPayload(readFileSync(lockPath, "utf-8"));
     if (!payload) return null;
     const ageMs = Math.max(0, nowMs - payload.lockedAtMs);
     return {
-      stepName,
       lockPath,
       lockedAtMs: payload.lockedAtMs,
       ageMs,

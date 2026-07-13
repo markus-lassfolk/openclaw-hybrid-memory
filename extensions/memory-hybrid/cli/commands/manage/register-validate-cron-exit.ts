@@ -6,20 +6,22 @@
  */
 
 import type { HybridMemoryConfig } from "../../../config.js";
-import { reportMaintenanceFailureIssues } from "../../../services/maintenance-failure-reporter.js";
-import { type Chainable, withExit } from "../../shared.js";
 import {
-  validateMaintenanceExecution,
-  validateFromSummaryJson,
+  type ExitValidationResult,
   generateCronStatusReport,
   resolveValidateCronExitCode,
-  type ExitValidationResult,
+  validateFromSummaryJson,
+  validateMaintenanceExecution,
 } from "../../../services/cron-exit-validator.js";
+import { reportMaintenanceFailureIssues } from "../../../services/maintenance-failure-reporter.js";
+import { type Chainable, withExit } from "../../shared.js";
 
 export interface ValidateCronExitContext {
   cfg: Pick<HybridMemoryConfig, "errorReporting" | "maintenance">;
   versionInfo: { pluginVersion: string };
   logger?: Pick<Console, "debug" | "info" | "warn">;
+  /** Enables a durable on-disk retry queue for reportMaintenanceFailureIssues (see there for why). */
+  resolvedSqlitePath?: string;
 }
 
 export function registerValidateCronExit(hybrid: Chainable, context?: ValidateCronExitContext): void {
@@ -66,6 +68,7 @@ export function registerValidateCronExit(hybrid: Chainable, context?: ValidateCr
               cfg: context.cfg,
               pluginVersion: context.versionInfo.pluginVersion,
               logger: context.logger,
+              resolvedSqlitePath: context.resolvedSqlitePath,
             });
           }
 

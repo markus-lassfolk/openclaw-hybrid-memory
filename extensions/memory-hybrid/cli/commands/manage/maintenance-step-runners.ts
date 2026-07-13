@@ -714,8 +714,16 @@ export function buildCliMaintenanceRunners(
     });
     const deadlineHit = truncatedAt >= 0;
     const reconcile = await reconcileOrphanVectors(b.factsDb, b.vectorDb, { operation: "orchestrator-repair-vectors" });
-    const partial = failures > 0 || reconcile.failed > 0 || deadlineHit;
-    const summary = `reembedded=${reembedded}/${candidates.length} failures=${failures} orphans=${reconcile.orphansFound} orphan_cleanup_failed=${reconcile.failed} deadlineHit=${deadlineHit} semantic=${partial ? "partial" : "success"}`;
+    const hardFailure = failures > 0 || reconcile.failed > 0;
+    // "partial" on any hard failure; a clean deadline-only truncation (zero failures, budget
+    // exhausted) is "monitoring" — resumable, checkpointed work-in-progress, not a bug — matching
+    // entityEnrichmentSemanticStatus's precedent. semanticOutcomeBlocksOrchestratorGuard treats
+    // "partial" as unconditionally blocking (only "monitoring" is exempt), so simply removing the
+    // throw below without also fixing this token left the orchestrator marking the step "failed"
+    // regardless — the earlier fix's removed throw had no actual effect on observed behavior
+    // (QA follow-up).
+    const semantic = hardFailure ? "partial" : deadlineHit ? "monitoring" : "success";
+    const summary = `reembedded=${reembedded}/${candidates.length} failures=${failures} orphans=${reconcile.orphansFound} orphan_cleanup_failed=${reconcile.failed} deadlineHit=${deadlineHit} semantic=${semantic}`;
     // Only a genuine embedding failure is a hard failure. A clean deadline-only truncation
     // (failures=0) is a graceful, safe stop at the time budget, not a bug — throwing here mapped
     // it to orchestrator status "failed"/exitCode 1 indistinguishable from a real provider outage,
@@ -906,7 +914,13 @@ export function buildCliMaintenanceRunners(
       }
     });
     const deadlineHit = truncatedAt >= 0;
-    const summary = `embedded=${embedded}/${candidates.length} failures=${failures} deadlineHit=${deadlineHit} semantic=${failures > 0 || deadlineHit ? "partial" : "success"}`;
+    // See repair-vectors above: "partial" on any hard failure; a clean deadline-only truncation is
+    // "monitoring", not "partial" — semanticOutcomeBlocksOrchestratorGuard treats "partial" as
+    // unconditionally blocking and only exempts "monitoring", so leaving this as "partial" made
+    // the earlier removed-throw fix have no actual effect on orchestrator-observed behavior
+    // (QA follow-up).
+    const semantic = failures > 0 ? "partial" : deadlineHit ? "monitoring" : "success";
+    const summary = `embedded=${embedded}/${candidates.length} failures=${failures} deadlineHit=${deadlineHit} semantic=${semantic}`;
     // See repair-vectors above — a clean deadline-only truncation (failures=0) is a graceful stop
     // at the time budget, not a bug; only a genuine embedding failure should be a hard failure
     // (QA follow-up).
