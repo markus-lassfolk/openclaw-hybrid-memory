@@ -3,9 +3,13 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
-
-import type { MemoryEntry, ProcedureEntry, ScopeFilter } from "../../types/memory.js";
-import type { GeneratedSkillLifecycleState, GeneratedSkillTelemetryEntry } from "../../types/memory.js";
+import type {
+  GeneratedSkillLifecycleState,
+  GeneratedSkillTelemetryEntry,
+  MemoryEntry,
+  ProcedureEntry,
+  ScopeFilter,
+} from "../../types/memory.js";
 import {
   filterActiveFactIds as filterActiveFactIdsImpl,
   getAllIds as getAllIdsImpl,
@@ -25,11 +29,11 @@ import {
 } from "./fact-read-queries.js";
 import { FactsDBLayer1 } from "./facts-db-layer1.js";
 import {
+  buildGeneratedSkillTelemetryReport as buildGeneratedSkillTelemetryReportImpl,
+  type GeneratedSkillDoctorReport,
   type GeneratedSkillLifecyclePolicy,
   type GeneratedSkillTelemetryRecordInput,
   type GeneratedSkillTelemetryReport,
-  type GeneratedSkillDoctorReport,
-  buildGeneratedSkillTelemetryReport as buildGeneratedSkillTelemetryReportImpl,
   getGeneratedSkillByName as getGeneratedSkillByNameImpl,
   listGeneratedSkillProcedures as listGeneratedSkillProceduresImpl,
   listGeneratedSkillTelemetry as listGeneratedSkillTelemetryImpl,
@@ -42,8 +46,9 @@ import {
 import {
   backfillDecayClasses as backfillDecayClassesImpl,
   confirmFact as confirmFactImpl,
-  decayConfidence as decayConfidenceImpl,
+  countFactsToBeDecayedByRun as countFactsToBeDecayedByRunImpl,
   decayConfidenceHalfLifeWithDetails as decayConfidenceHalfLifeWithDetailsImpl,
+  decayConfidence as decayConfidenceImpl,
   decayConfidenceWithDetails as decayConfidenceWithDetailsImpl,
   expireBySourcePattern as expireBySourcePatternImpl,
   lifecycleEntityReport as lifecycleEntityReportImpl,
@@ -51,6 +56,7 @@ import {
   listFactIdsToBeDeletedByDecayRun as listFactIdsToBeDeletedByDecayRunImpl,
   listLowConfidenceFactIdsPendingPrune as listLowConfidenceFactIdsPendingPruneImpl,
   listSessionFactIdsPendingPrune as listSessionFactIdsPendingPruneImpl,
+  previewPruneExpired as previewPruneExpiredImpl,
   promoteScope as promoteScopeImpl,
   promoteScopeToGlobalWithOutcome as promoteScopeToGlobalWithOutcomeImpl,
   pruneExpired as pruneExpiredImpl,
@@ -65,9 +71,9 @@ import {
   getNegativeProceduresMatching as getNegativeProceduresMatchingImpl,
   getProcedureById as getProcedureByIdImpl,
   getProcedureFailures as getProcedureFailuresImpl,
-  getProcedureVersions as getProcedureVersionsImpl,
   getProceduresForAudit as getProceduresForAuditImpl,
   getProceduresReadyForSkill as getProceduresReadyForSkillImpl,
+  getProcedureVersions as getProcedureVersionsImpl,
   getStaleProcedures as getStaleProceduresImpl,
   listProcedures as listProceduresImpl,
   listProceduresUpdatedInLastNDays as listProceduresUpdatedInLastNDaysImpl,
@@ -95,17 +101,17 @@ import { getSupersededTextsSnapshot } from "./search.js";
 import {
   auditCategories as auditCategoriesImpl,
   cleanEntityStopwords as cleanEntityStopwordsImpl,
+  countExpectedVectorFacts as countExpectedVectorFactsImpl,
   countExpiredFacts as countExpiredFactsImpl,
   countFacts as countFactsImpl,
-  countExpectedVectorFacts as countExpectedVectorFactsImpl,
   countVectorlessActiveFacts as countVectorlessActiveFactsImpl,
   directivesCount as directivesCountImpl,
   entityCount as entityCountImpl,
   estimateStoredTokensByTier as estimateStoredTokensByTierImpl,
   estimateStoredTokens as estimateStoredTokensImpl,
   linksCount as linksCountImpl,
-  listForDashboard as listForDashboardImpl,
   listExpectedVectorFactIds as listExpectedVectorFactIdsImpl,
+  listForDashboard as listForDashboardImpl,
   listVectorlessActiveFacts as listVectorlessActiveFactsImpl,
   metaPatternsCount as metaPatternsCountImpl,
   proposedCategories as proposedCategoriesImpl,
@@ -232,6 +238,14 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     return pruneExpiredWithDetailsImpl(this.liveDb, nowSec, opts);
   }
 
+  /** Read-only preview of pruneExpiredWithDetails() using the identical predicates (dry-run). */
+  previewPruneExpired(
+    nowSec?: number,
+    opts?: { secondChance?: boolean },
+  ): { factsPruned: number; secondChances: number } {
+    return previewPruneExpiredImpl(this.liveDb, nowSec, opts);
+  }
+
   /** Session-scoped fact ids that `pruneSessionScope(sessionId)` would delete. */
   listSessionFactIdsPendingPrune(sessionId: string): string[] {
     return listSessionFactIdsPendingPruneImpl(this.liveDb, sessionId);
@@ -261,6 +275,11 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
 
   decayConfidenceWithDetails(nowSec?: number): { factsDecayed: number; deletedFactIds: string[] } {
     return decayConfidenceWithDetailsImpl(this.liveDb, nowSec);
+  }
+
+  /** Read-only preview of decayConfidenceWithDetails()'s factsDecayed count (dry-run). */
+  countFactsToBeDecayedByRun(nowSec?: number): number {
+    return countFactsToBeDecayedByRunImpl(this.liveDb, nowSec);
   }
 
   /** Continuous per-content-type half-life decay (living-memory P1.3; default prune mode). */

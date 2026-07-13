@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -14,13 +14,13 @@ vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: vi.fn(() => "event-1"),
 }));
 
+import { hasStepRetryOncePending } from "../services/cron-guard.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import {
   applyHeavyMaintenanceAutoFixes,
   applyMaintenanceAutoFix,
   clearStaleLock,
 } from "../services/maintenance-auto-fix.js";
-import { hasStepRetryOncePending } from "../services/cron-guard.js";
 import * as maintenanceLogAnalyzerModule from "../services/maintenance-log-analyzer.js";
 import {
   analyzeMaintenanceSteps,
@@ -624,11 +624,16 @@ describe("maintenance log analyzer", () => {
         "validate-cron-exit marker missing because wrapper failed before ledger flush",
       ].join("\n"),
     );
+    // A missing .exit.txt with a FRESH .log is normal for a job still in progress (QA follow-up)
+    // — backdate the log so this scenario is genuinely stale, matching the "orchestration failure"
+    // this test asserts (not an in-progress run).
+    const staleAt = new Date("2026-05-11T02:45:00Z");
+    utimesSync(logPath, staleAt, staleAt);
 
     const nowMs = Date.UTC(2026, 4, 11, 4, 0, 0);
     const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
     expect(steps).toHaveLength(1);
-    expect(steps[0].step).toBe("orchestration-missing-exit-ledger");
+    expect(steps[0].step).toBe("orchestration-stale-missing-exit-ledger");
     expect(steps[0].line).toContain("matching .exit.txt ledger is missing");
 
     const rule = classifyMaintenanceFailure(steps[0]);
@@ -639,6 +644,27 @@ describe("maintenance log analyzer", () => {
     expect(findings).toHaveLength(1);
     expect(findings[0].classification).toBe("orchestration-bug");
     expect(findings[0].ruleId).toBe("orchestration-missing-exit-ledger");
+  });
+
+  it("does not flag a FRESH missing .exit.txt ledger — normal for a run still in progress (#2094 QA follow-up)", () => {
+    const root = tmpRoot();
+    const logPath = join(root, "nightly-memory-sweep-20260511T030000Z-555.log");
+    writeFileSync(logPath, "[nightly-memory-sweep] prune completed\n[nightly-memory-sweep] distill in progress");
+    // No utimesSync backdating — the .log's real mtime is "now", well inside staleThresholdMs of
+    // nowMs, exactly the "operator runs `maintenance status` while a job is still executing"
+    // scenario that previously reported "ATTENTION NEEDED" for a perfectly healthy run.
+    const nowMs = Date.now();
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0].step).toBe("maintenance-run-in-progress");
+
+    const rule = classifyMaintenanceFailure(steps[0]);
+    expect(rule.classification).not.toBe("orchestration-bug");
+    expect(rule.classification).toBe("unclassified");
+
+    const findings = analyzeMaintenanceSteps(steps);
+    expect(findings.some((f) => f.classification === "orchestration-bug")).toBe(false);
   });
 
   it("ignores manual-qa stdout transcripts: does not report them as missing-exit-ledger", () => {
@@ -687,11 +713,14 @@ describe("maintenance log analyzer", () => {
     const root = tmpRoot();
     const logPath = join(root, "nightly-memory-sweep-20260511.cron.log");
     writeFileSync(logPath, "[nightly-memory-sweep] run started\n");
+    // Backdate so this is genuinely stale, not a normal in-progress run (QA follow-up).
+    const staleAt = new Date("2026-05-11T02:45:00Z");
+    utimesSync(logPath, staleAt, staleAt);
 
     const nowMs = Date.UTC(2026, 4, 11, 4, 0, 0);
     const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
     expect(steps).toHaveLength(1);
-    expect(steps[0].step).toBe("orchestration-missing-exit-ledger");
+    expect(steps[0].step).toBe("orchestration-stale-missing-exit-ledger");
     expect(steps[0].job).toBe("nightly-memory-sweep");
   });
 
@@ -714,7 +743,7 @@ describe("maintenance log analyzer", () => {
     const nowMs = Date.UTC(2026, 6, 5, 5, 0, 0);
     const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
     // The aggregate .cron.log must not be reported as missing-exit-ledger — its run has a real ledger.
-    expect(steps.some((s) => s.step === "orchestration-missing-exit-ledger")).toBe(false);
+    expect(steps.some((s) => s.step.includes("missing-exit-ledger"))).toBe(false);
     const findings = analyzeMaintenanceSteps(steps);
     expect(findings.some((f) => f.ruleId === "orchestration-missing-exit-ledger")).toBe(false);
   });
@@ -732,7 +761,7 @@ describe("maintenance log analyzer", () => {
 
     const nowMs = Date.UTC(2026, 6, 5, 5, 0, 0);
     const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
-    const missing = steps.find((s) => s.step === "orchestration-missing-exit-ledger");
+    const missing = steps.find((s) => s.step === "orchestration-stale-missing-exit-ledger");
     expect(missing).toBeDefined();
     expect(missing?.job).toBe("hybrid-mem-backup");
     expect(missing?.line).toContain("run_id=20260705T040001Z-30251");
@@ -815,11 +844,14 @@ describe("maintenance log analyzer", () => {
     // Filename as produced by runPendingDigestAutopilotCron (ISO datetime, colons/dots → dashes, no PID)
     const logPath = join(dayDir, "weekly-pending-digest-autopilot-2026-05-13T08-20-00-000Z.log");
     writeFileSync(logPath, "run.start job=weekly-pending-digest-autopilot\n");
+    // Backdate so this is genuinely stale, not a normal in-progress run (QA follow-up).
+    const staleAt = new Date("2026-05-13T08:00:00Z");
+    utimesSync(logPath, staleAt, staleAt);
 
     const nowMs = Date.UTC(2026, 4, 13, 9, 0, 0);
     const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
     expect(steps).toHaveLength(1);
-    expect(steps[0].step).toBe("orchestration-missing-exit-ledger");
+    expect(steps[0].step).toBe("orchestration-stale-missing-exit-ledger");
     expect(steps[0].job).toBe("weekly-pending-digest-autopilot");
     expect(steps[0].logPath).toBe(logPath);
   });
@@ -1184,11 +1216,9 @@ describe("maintenance log analyzer", () => {
 
     const outPath = join(root, "report.json");
     const findingsPath = join(root, "maintenance-findings.db");
-    const persistSpy = vi
-      .spyOn(maintenanceLogAnalyzerModule, "persistMaintenanceFindings")
-      .mockImplementation(() => {
-        throw new Error("disk full");
-      });
+    const persistSpy = vi.spyOn(maintenanceLogAnalyzerModule, "persistMaintenanceFindings").mockImplementation(() => {
+      throw new Error("disk full");
+    });
 
     const result = await runAnalyzeMaintenanceLogs(
       { root, since: "7d", format: "json", out: outPath, persist: findingsPath },
@@ -1207,10 +1237,10 @@ describe("maintenance log analyzer", () => {
   it("rejects --auto-fix-all without --auto-fix instead of silently doing nothing", async () => {
     const root = tmpRoot();
     await expect(
-      runAnalyzeMaintenanceLogs(
-        { root, since: "7d", autoFixAll: true },
-        { cfg: { sqlitePath: "" }, factsDb: {} as never } as unknown as ManageBindings,
-      ),
+      runAnalyzeMaintenanceLogs({ root, since: "7d", autoFixAll: true }, {
+        cfg: { sqlitePath: "" },
+        factsDb: {} as never,
+      } as unknown as ManageBindings),
     ).rejects.toThrow(/--auto-fix-all requires --auto-fix/);
   });
 

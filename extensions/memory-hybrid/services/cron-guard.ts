@@ -23,7 +23,9 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { homedir, hostname as osHostname } from "node:os";
 import { join } from "node:path";
 
+import { atomicWriteFile } from "../utils/atomic-write.js";
 import { readOpenClawCronStore, writeOpenClawCronStore } from "./openclaw-cron-store.js";
+import { isPidAlive } from "./task-queue-watchdog.js";
 
 /** Subdirectory (relative to openclawDir) where guard files are kept. */
 export const GUARD_SUBDIR = join("cron", "guard");
@@ -53,7 +55,11 @@ export function readStepGuardTimestampMs(stepName: string, openclawDir?: string)
 export function writeStepGuardTimestampMs(stepName: string, timestampMs: number, openclawDir?: string): void {
   const guardDir = getGuardDir(openclawDir);
   mkdirSync(guardDir, { recursive: true });
-  writeFileSync(getStepGuardFilePath(stepName, openclawDir), String(timestampMs), "utf-8");
+  // atomicWriteFile (write-temp + rename), not a plain writeFileSync — a crash mid-write (the
+  // orchestrator's own runtime-budget kill is a plausible trigger) must never leave a truncated
+  // guard timestamp, which readStepGuardTimestampMs would then misread as "never run" and
+  // re-trigger the step early (QA follow-up).
+  atomicWriteFile(getStepGuardFilePath(stepName, openclawDir), String(timestampMs));
 }
 
 /** Per-step in-progress lock file: `step--{name}.lock` — a real cross-process mutex. */
@@ -125,6 +131,16 @@ export function acquireStepLock(stepName: string, openclawDir?: string, nowMs = 
       const payload = parseLockPayload(raw);
       if (!payload || nowMs - payload.lockedAtMs <= STEP_LOCK_STALE_MS) {
         return false; // held by a live (or recent) run, or unreadable — fail closed
+      }
+      // Past the time-based staleness window doesn't mean abandoned — a legitimately long-running
+      // step (e.g. a slow local-LLM-tier step) can still be genuinely alive and holding this lock.
+      // Only reclaim without a liveness check when we can't verify it (no pid recorded, a legacy
+      // bare-timestamp lock file, or the owner ran on a different host we can't signal); when the
+      // recorded owner is on THIS host, confirm it's actually dead before stealing its lock
+      // (QA follow-up — a purely time-based reclaim let a second invocation run the same step
+      // concurrently with a still-alive first one).
+      if (payload.pid !== undefined && payload.hostname === osHostname() && isPidAlive(payload.pid)) {
+        return false; // recorded owner is alive on this host — not actually abandoned
       }
     } catch {
       return false; // couldn't read the lock file — fail closed, don't run concurrently
@@ -229,7 +245,8 @@ function getStepRetryOnceMarkerPath(stepName: string, openclawDir?: string): str
 export function markStepRetryOnce(stepName: string, openclawDir?: string): void {
   const guardDir = getGuardDir(openclawDir);
   mkdirSync(guardDir, { recursive: true });
-  writeFileSync(getStepRetryOnceMarkerPath(stepName, openclawDir), String(Date.now()), "utf-8");
+  // atomicWriteFile, not a plain writeFileSync — see writeStepGuardTimestampMs above for why.
+  atomicWriteFile(getStepRetryOnceMarkerPath(stepName, openclawDir), String(Date.now()));
 }
 
 /** Whether a retry-once marker is currently pending for this step, without consuming it. */

@@ -36,7 +36,7 @@ import { runFactsPruneStep } from "../../../services/prune-step.js";
 import { runResearchTrigger } from "../../../services/research-trigger.js";
 import { runRoutineMining } from "../../../services/routine-miner.js";
 import { sweepAll } from "../../../services/sensor-sweep.js";
-import { deleteVectorsForFactIds, reconcileOrphanVectors } from "../../../services/vector-maintenance.js";
+import { reconcileOrphanVectors } from "../../../services/vector-maintenance.js";
 import { nowIso } from "../../../utils/dates.js";
 import {
   formatRemainingMaintenanceRunSecLabel,
@@ -716,7 +716,12 @@ export function buildCliMaintenanceRunners(
     const reconcile = await reconcileOrphanVectors(b.factsDb, b.vectorDb, { operation: "orchestrator-repair-vectors" });
     const partial = failures > 0 || reconcile.failed > 0 || deadlineHit;
     const summary = `reembedded=${reembedded}/${candidates.length} failures=${failures} orphans=${reconcile.orphansFound} orphan_cleanup_failed=${reconcile.failed} deadlineHit=${deadlineHit} semantic=${partial ? "partial" : "success"}`;
-    if (failures > 0 || deadlineHit) {
+    // Only a genuine embedding failure is a hard failure. A clean deadline-only truncation
+    // (failures=0) is a graceful, safe stop at the time budget, not a bug — throwing here mapped
+    // it to orchestrator status "failed"/exitCode 1 indistinguishable from a real provider outage,
+    // on every night the vectorless backlog is large enough to run past maxRuntimeMinutes
+    // (QA follow-up).
+    if (failures > 0) {
       throw new Error(`repair-vectors partial failure (${summary})`);
     }
     assertVectorCleanupNotPartial("repair-vectors", [reconcile], summary);
@@ -902,7 +907,10 @@ export function buildCliMaintenanceRunners(
     });
     const deadlineHit = truncatedAt >= 0;
     const summary = `embedded=${embedded}/${candidates.length} failures=${failures} deadlineHit=${deadlineHit} semantic=${failures > 0 || deadlineHit ? "partial" : "success"}`;
-    if (failures > 0 || deadlineHit) {
+    // See repair-vectors above — a clean deadline-only truncation (failures=0) is a graceful stop
+    // at the time budget, not a bug; only a genuine embedding failure should be a hard failure
+    // (QA follow-up).
+    if (failures > 0) {
       throw new Error(`reembed-vectorless partial failure (${summary})`);
     }
     return summary;
@@ -977,8 +985,9 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
   });
 
   if (deps.runCompaction) {
+    const runCompaction = deps.runCompaction;
     runners.set("compact", async () => {
-      const c = await deps.runCompaction!();
+      const c = await runCompaction();
       return `hot=${c.hot} warm=${c.warm} cold=${c.cold} semantic=success`;
     });
   }
@@ -1034,22 +1043,26 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
   });
 
   if (deps.runAnalyzeLogs) {
+    const runAnalyzeLogs = deps.runAnalyzeLogs;
     runners.set("analyze-maintenance-logs", async () =>
-      assertAnalyzeMaintenanceLogsSummaryDoesNotBlock(await deps.runAnalyzeLogs!()),
+      assertAnalyzeMaintenanceLogsSummaryDoesNotBlock(await runAnalyzeLogs()),
     );
   }
   if (deps.runLifecycleSync) {
-    runners.set("lifecycle-sync", async () => assertLifecycleSyncSummaryDoesNotBlock(await deps.runLifecycleSync!()));
+    const runLifecycleSync = deps.runLifecycleSync;
+    runners.set("lifecycle-sync", async () => assertLifecycleSyncSummaryDoesNotBlock(await runLifecycleSync()));
   }
   if (deps.runPassiveObserverOnce) {
+    const runPassiveObserverOnce = deps.runPassiveObserverOnce;
     runners.set("passive-observer", async () =>
-      assertPassiveObserverSummaryDoesNotBlock(await deps.runPassiveObserverOnce!()),
+      assertPassiveObserverSummaryDoesNotBlock(await runPassiveObserverOnce()),
     );
   }
 
   if (deps.proposalsDb) {
+    const proposalsDb = deps.proposalsDb;
     runners.set("proposals-prune", async () => {
-      const n = deps.proposalsDb!.pruneExpired();
+      const n = proposalsDb.pruneExpired();
       return `pruned=${n} semantic=success`;
     });
   }
@@ -1059,15 +1072,17 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
   }
 
   if (deps.runCredentialsPrune) {
+    const runCredentialsPrune = deps.runCredentialsPrune;
     runners.set("credentials-prune", async () => {
-      const r = await Promise.resolve(deps.runCredentialsPrune!());
+      const r = await Promise.resolve(runCredentialsPrune());
       return `removed=${r.removed ?? 0} semantic=success`;
     });
   }
 
   if (deps.runActiveTasksMaintain) {
+    const runActiveTasksMaintain = deps.runActiveTasksMaintain;
     runners.set("active-tasks-maintain", async () =>
-      assertActiveTasksMaintainSummaryDoesNotBlock(await deps.runActiveTasksMaintain!()),
+      assertActiveTasksMaintainSummaryDoesNotBlock(await runActiveTasksMaintain()),
     );
   }
 

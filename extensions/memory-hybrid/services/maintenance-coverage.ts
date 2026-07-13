@@ -163,7 +163,16 @@ function tableExists(db: DatabaseSync, name: string): boolean {
   return !!row;
 }
 
+// Table/column identifiers this helper is allowed to interpolate into SQL (CLAUDE.md: SQL string
+// interpolation is a blocking review issue). All current call sites already pass fixed literals;
+// this allowlist is the guard rail against a future caller passing a less-trusted identifier.
+const COUNT_TABLE_SINCE_ALLOWED_TABLES = new Set(["proposal_runs", "implicit_signals", "feedback_trajectories"]);
+const COUNT_TABLE_SINCE_ALLOWED_TIME_COLS = new Set(["run_at", "created_at"]);
+
 function countTableSince(db: DatabaseSync, table: string, timeCol: string, sinceSec: number): number {
+  if (!COUNT_TABLE_SINCE_ALLOWED_TABLES.has(table) || !COUNT_TABLE_SINCE_ALLOWED_TIME_COLS.has(timeCol)) {
+    throw new Error(`countTableSince: unrecognized table/column identifier (table=${table}, timeCol=${timeCol})`);
+  }
   if (!tableExists(db, table)) return 0;
   const row = db.prepare(`SELECT COUNT(*) AS cnt FROM ${table} WHERE ${timeCol} >= ?`).get(sinceSec) as
     | { cnt: number }

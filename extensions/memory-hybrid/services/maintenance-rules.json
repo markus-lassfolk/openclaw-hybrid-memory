@@ -9,7 +9,7 @@
   },
   {
     "id": "llm-rate-limit",
-    "pattern": "429|TooManyRequests|RateLimit|too many requests|rate limit",
+    "pattern": "\\b429\\b|TooManyRequests|RateLimit|too many requests|rate limit",
     "classification": "transient-llm",
     "defaultAction": "retry-once",
     "severity": "medium",

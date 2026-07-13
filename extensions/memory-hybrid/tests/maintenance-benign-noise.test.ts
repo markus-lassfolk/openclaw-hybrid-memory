@@ -39,6 +39,20 @@ describe("maintenance-benign-noise", () => {
     expect(stepHasActionableFailureSignal({ logContent: "Unhandled exception: parser timeout" })).toBe(true);
   });
 
+  it("preserves a real error concatenated onto the same physical line as benign noise (QA follow-up)", () => {
+    const mergedLine = `${registerContextEngineLine} SQLITE_BUSY: database is locked, aborting`;
+    // Whole-line removal would have dropped the real SQLITE_BUSY error along with the benign
+    // notice; only the noise substring should be stripped.
+    expect(sanitizeMaintenanceLogText(mergedLine)).toContain("SQLITE_BUSY");
+    expect(stepHasActionableFailureSignal({ logContent: mergedLine })).toBe(true);
+    expect(
+      isBenignNoiseOnlyMaintenanceStep({
+        exitCode: 1,
+        logContent: mergedLine,
+      }),
+    ).toBe(false);
+  });
+
   it("aggregates noise warnings by pattern/job/step/log path", () => {
     const warnings = collectMaintenanceNoiseWarnings([
       {

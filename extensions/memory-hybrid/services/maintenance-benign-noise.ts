@@ -17,8 +17,12 @@ export const MAINTENANCE_BENIGN_NOISE_PATTERNS: MaintenanceBenignNoisePattern[] 
   {
     id: "codex-unsupported-project-local-config",
     label: "Codex app-server ignored unsupported project-local config keys",
+    // Consumes an optional leading log-level label (e.g. "ERROR codex_app_server: ...", as
+    // actually emitted by the wrapper) so sanitizeMaintenanceLogText's substring-only removal
+    // (not whole-line removal, QA follow-up) doesn't leave a bare "ERROR" behind that would
+    // itself then match ACTIONABLE_FAILURE_SIGNAL.
     pattern:
-      /codex_app_server:\s*Ignored unsupported project-local config keys in .*\.codex\/config\.toml:\s*(?:model_provider|model_providers|profiles)/i,
+      /(?:ERROR|WARN|INFO)?\s*codex_app_server:\s*Ignored unsupported project-local config keys in .*\.codex\/config\.toml:\s*(?:model_provider|model_providers|profiles)\.?/i,
   },
 ];
 
@@ -52,12 +56,23 @@ export function logContainsMaintenanceBenignNoise(text: string): boolean {
   return text.split("\n").some((line) => lineMatchesMaintenanceBenignNoise(line) !== null);
 }
 
-/** Remove known benign noise lines before classifying or excerpting actionable failures. */
+/** Remove known benign noise substrings before classifying or excerpting actionable failures. */
 export function sanitizeMaintenanceLogText(text: string): string {
   if (!text) return "";
   return text
     .split("\n")
-    .filter((line) => lineMatchesMaintenanceBenignNoise(line) === null)
+    .map((line) => {
+      // Strip only the matched benign-noise substring, not the whole line — a genuine error
+      // concatenated onto the same physical line as a benign notice (e.g. merged stdout/stderr)
+      // must survive for the actionable-failure-signal check below, or the real failure is
+      // silently dropped along with the noise (QA follow-up).
+      let sanitized = line;
+      for (const entry of MAINTENANCE_BENIGN_NOISE_PATTERNS) {
+        const flags = entry.pattern.flags.includes("g") ? entry.pattern.flags : `${entry.pattern.flags}g`;
+        sanitized = sanitized.replace(new RegExp(entry.pattern.source, flags), "");
+      }
+      return sanitized;
+    })
     .join("\n");
 }
 

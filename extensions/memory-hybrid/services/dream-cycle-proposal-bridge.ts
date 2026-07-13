@@ -14,15 +14,15 @@ import { inferTargetFile } from "../cli/cmd-store.js";
 import { resolvePipelineProposalTarget } from "../cli/proposals.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { getEnv } from "../utils/env-manager.js";
-import { enforceMaxPendingCap, makeUnifiedKey, resolveWorkshopMaxPending } from "./unified-proposals.js";
+import type { ChangeFeed } from "./change-feed.js";
 import {
+  BROADCAST_CHANGE_SESSION_KEY,
   emitCrystallizationProposed,
   emitPersonaProposed,
   emitSkillWorkshopProposed,
-  BROADCAST_CHANGE_SESSION_KEY,
 } from "./change-feed-emit.js";
-import type { ChangeFeed } from "./change-feed.js";
 import { isSkillWorkshopPluginActive, writeSkillWorkshopProposal } from "./skill-workshop-bridge.js";
+import { enforceMaxPendingCap, makeUnifiedKey, resolveWorkshopMaxPending } from "./unified-proposals.js";
 
 export type DreamCycleProposalBridgeInput = {
   cfg: HybridMemoryConfig;
@@ -154,13 +154,23 @@ export function runDreamCycleProposalBridge(input: DreamCycleProposalBridgeInput
       });
       pendingChanges.add(text);
       personaProposalsCreated++;
-      emitPersonaProposed(input.changeFeed, input.cfg, {
-        sessionKey: BROADCAST_CHANGE_SESSION_KEY,
-        proposalId: created.id,
-        title: created.title,
-        targetFile: resolved.targetFile,
-        detail: "Auto-proposed from dream-cycle reflect-rules output",
-      });
+      try {
+        emitPersonaProposed(input.changeFeed, input.cfg, {
+          sessionKey: BROADCAST_CHANGE_SESSION_KEY,
+          proposalId: created.id,
+          title: created.title,
+          targetFile: resolved.targetFile,
+          detail: "Auto-proposed from dream-cycle reflect-rules output",
+        });
+      } catch (emitErr) {
+        // The proposal itself already committed above — losing the live change-feed notification
+        // is far less severe than losing the rest of this loop. An uncaught throw here used to
+        // propagate out of the whole bridge function, silently dropping every remaining rule this
+        // cycle and zeroing the reported personaProposalsCreated count in the caller's digest.
+        input.logger.warn(
+          `memory-hybrid: dream-cycle — persona-proposed change-feed emit failed (non-fatal): ${emitErr}`,
+        );
+      }
       input.logger.info(
         `memory-hybrid: dream-cycle auto-proposed persona rule ${makeUnifiedKey("persona", created.id)}`,
       );
@@ -179,8 +189,9 @@ export function runDreamCycleProposalBridge(input: DreamCycleProposalBridgeInput
       const slug = `dream-pattern-${id.slice(0, 8)}`;
       const skillContent = `# ${slug}\n\n${text}\n`;
 
-      if (crystallizationEnabled) {
-        if (input.crystallizationStore!.hasPendingOrApprovedForPattern(id)) {
+      if (crystallizationEnabled && input.crystallizationStore) {
+        const store = input.crystallizationStore;
+        if (store.hasPendingOrApprovedForPattern(id)) {
           continue;
         }
         const cap = enforceMaxPendingCap(capStores, resolveWorkshopMaxPending(input.cfg));
@@ -190,7 +201,7 @@ export function runDreamCycleProposalBridge(input: DreamCycleProposalBridgeInput
           );
           break;
         }
-        const created = input.crystallizationStore!.create({
+        const created = store.create({
           patternId: id,
           evidenceHash: dreamPatternEvidenceHash(id, text),
           skillName: slug,
@@ -200,16 +211,32 @@ export function runDreamCycleProposalBridge(input: DreamCycleProposalBridgeInput
           confidence: 0.75,
         });
         crystallizationProposalsCreated++;
-        emitCrystallizationProposed(input.changeFeed, input.cfg, {
-          sessionKey: BROADCAST_CHANGE_SESSION_KEY,
-          proposalId: created.id,
-          skillName: created.skillName,
-          detail: "Auto-proposed from dream-cycle pattern output",
-        });
+        try {
+          emitCrystallizationProposed(input.changeFeed, input.cfg, {
+            sessionKey: BROADCAST_CHANGE_SESSION_KEY,
+            proposalId: created.id,
+            skillName: created.skillName,
+            detail: "Auto-proposed from dream-cycle pattern output",
+          });
+        } catch (emitErr) {
+          input.logger.warn(
+            `memory-hybrid: dream-cycle — crystallization-proposed change-feed emit failed (non-fatal): ${emitErr}`,
+          );
+        }
         input.logger.info(
           `memory-hybrid: dream-cycle auto-proposed crystallization skill ${makeUnifiedKey("crystallization", created.id)}`,
         );
       } else if (isSkillWorkshopPluginActive(input.api)) {
+        // Same cap check the persona/crystallization branches above use — without it this branch
+        // was the one proposal path with no pending-count guard, accumulating new skill-workshop
+        // proposal directories on disk unboundedly night after night.
+        const cap = enforceMaxPendingCap(capStores, resolveWorkshopMaxPending(input.cfg));
+        if (!cap.ok) {
+          input.logger.warn(
+            `memory-hybrid: dream-cycle skill-workshop auto-propose stopped (${cap.error}, pending=${cap.pending})`,
+          );
+          break;
+        }
         const bridged = writeSkillWorkshopProposal({
           name: slug,
           description: text.slice(0, 160),
@@ -218,11 +245,17 @@ export function runDreamCycleProposalBridge(input: DreamCycleProposalBridgeInput
         });
         if (bridged.ok) {
           skillWorkshopBridged++;
-          emitSkillWorkshopProposed(input.changeFeed, input.cfg, {
-            proposalId: id,
-            skillName: slug,
-            detail: text.slice(0, 200),
-          });
+          try {
+            emitSkillWorkshopProposed(input.changeFeed, input.cfg, {
+              proposalId: id,
+              skillName: slug,
+              detail: text.slice(0, 200),
+            });
+          } catch (emitErr) {
+            input.logger.warn(
+              `memory-hybrid: dream-cycle — skill-workshop-proposed change-feed emit failed (non-fatal): ${emitErr}`,
+            );
+          }
           input.logger.info(`memory-hybrid: bridged skill workshop proposal at ${bridged.path}`);
         }
       }

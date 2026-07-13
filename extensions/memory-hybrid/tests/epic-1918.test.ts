@@ -2,47 +2,39 @@
  * Epic #1918 unit tests — Retrieval v2, context boundary, agent verbs, lifecycle, mine, feedback, DX.
  */
 
-import { describe, expect, it, beforeEach } from "vitest";
-import { classifyIntentHeuristic, clearIntentSessionCache } from "../services/intent-classifier.js";
-import {
-  computeCompositeScore,
-  computeLengthNorm,
-  computeQualityMultiplier,
-  computeFrequencyBoost,
-} from "../services/composite-score.js";
-import { jaccardBigramSimilarity, applyDiversityDemotion } from "../services/diversity.js";
-import { evaluateBm25Bypass, applyRetrievalV2, DEFAULT_RETRIEVAL_V2_CONFIG } from "../services/retrieval-v2.js";
-import { scanInjectionFilter, filterFactTextsForInjection } from "../services/injection-filter.js";
-import { buildVaultContextBlock, extractPromptNgrams } from "../services/vault-context.js";
-import { getHalfLifeForContentType, effectiveHalfLifeDays } from "../services/semantic-lifecycle.js";
-import {
-  parseChatGptExport,
-  parsePlainTextTranscript,
-  parseSlackExport,
-  redactSecretsInText,
-  hashConversation,
-} from "../services/transcript-importers/index.js";
-import { mapStepToMaintenanceRunStatus } from "../services/maintenance-audit-journal.js";
-import { checkPinQuota, DEFAULT_PIN_QUOTA } from "../services/fact-lifecycle-verbs.js";
-import { checkEntityContamination, isDuplicateDraft } from "../services/contamination-guard.js";
-import { computeCrossDomainBoost, isNeverReferencedCandidate } from "../services/recall-signals.js";
-import { buildMemoryNudge, resetNudgeState } from "../services/memory-nudge.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { beforeEach, describe, expect, it } from "vitest";
+import { computeStatusHeadline } from "../cli/cmd-status.js";
 import { validateVaultPath } from "../config/vaults.js";
-import { positionAwareAlpha, blendRerankScores } from "../services/cross-encoder-reranker.js";
+import { checkCaptureDedupWindow, computeCaptureDedupHash } from "../services/capture-dedup.js";
+import { computeCompositeScore, computeFrequencyBoost, computeLengthNorm } from "../services/composite-score.js";
+import { checkEntityContamination, isDuplicateDraft } from "../services/contamination-guard.js";
+import { positionAwareAlpha } from "../services/cross-encoder-reranker.js";
+import { applyDiversityDemotion, jaccardBigramSimilarity } from "../services/diversity.js";
+import { checkPinQuota, DEFAULT_PIN_QUOTA } from "../services/fact-lifecycle-verbs.js";
+import { getFocusTopicFromDir, setFocusTopicInDir } from "../services/focus-topic.js";
+import { filterFactTextsForInjection, scanInjectionFilter } from "../services/injection-filter.js";
+import { classifyIntentHeuristic, clearIntentSessionCache } from "../services/intent-classifier.js";
+import { mapStepToMaintenanceRunStatus } from "../services/maintenance-audit-journal.js";
+import { computeCrossDomainBoost, isNeverReferencedCandidate } from "../services/recall-signals.js";
 import {
-  resetRecallStats,
-  recordRecallStageTiming,
   getRecallStatsSnapshot,
   recordBypassDecision,
+  recordRecallStageTiming,
+  resetRecallStats,
 } from "../services/recall-timing-stats.js";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { checkCaptureDedupWindow, computeCaptureDedupHash } from "../services/capture-dedup.js";
-import { computeStatusHeadline } from "../cli/cmd-status.js";
-import type { SearchResult } from "../types/memory.js";
-import type { MemoryEntry } from "../types/memory.js";
-import { setFocusTopicInDir, getFocusTopicFromDir } from "../services/focus-topic.js";
+import { applyRetrievalV2, DEFAULT_RETRIEVAL_V2_CONFIG, evaluateBm25Bypass } from "../services/retrieval-v2.js";
+import { effectiveHalfLifeDays, getHalfLifeForContentType } from "../services/semantic-lifecycle.js";
+import {
+  hashConversation,
+  parseChatGptExport,
+  parsePlainTextTranscript,
+  redactSecretsInText,
+} from "../services/transcript-importers/index.js";
+import { buildVaultContextBlock, extractPromptNgrams } from "../services/vault-context.js";
+import type { MemoryEntry, SearchResult } from "../types/memory.js";
 
 describe("intent classifier (#1910)", () => {
   it("classifies WHY queries", () => {
@@ -295,6 +287,39 @@ describe("maintenance journal (#1913)", () => {
     expect(mapStepToMaintenanceRunStatus("ok", "ran")).toBe("ran");
     expect(mapStepToMaintenanceRunStatus("rate_limited", "429")).toBe("skipped:rate");
     expect(mapStepToMaintenanceRunStatus("skipped_guard", "quiet window")).toBe("skipped:quiet");
+  });
+
+  it("maps skipped_missing_runner distinctly from routine quiet skips (#2094 QA follow-up)", () => {
+    expect(mapStepToMaintenanceRunStatus("skipped_missing_runner", "no runner registered")).toBe(
+      "skipped:missing-runner",
+    );
+  });
+
+  it("flags a step whose runner was never wired up as stale regardless of recency (#2094 QA follow-up)", async () => {
+    const { DatabaseSync } = await import("node:sqlite");
+    const { insertMaintenanceRun, getStaleMaintenanceJobs } = await import("../services/maintenance-audit-journal.js");
+    const db = new DatabaseSync(":memory:");
+    db.exec(`
+      CREATE TABLE maintenance_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        ended_at INTEGER,
+        status TEXT NOT NULL,
+        items_processed INTEGER,
+        cost_estimate REAL,
+        cost_actual REAL,
+        error_summary TEXT,
+        metadata_json TEXT
+      )
+    `);
+
+    // Every orchestrator cycle records a fresh "just checked" row for a missing-runner step —
+    // recency alone must never be able to hide this from getStaleMaintenanceJobs.
+    insertMaintenanceRun(db, { job: "prune", status: "skipped:missing-runner" });
+
+    expect(getStaleMaintenanceJobs(db, 48)).toContain("prune");
+    db.close();
   });
 });
 

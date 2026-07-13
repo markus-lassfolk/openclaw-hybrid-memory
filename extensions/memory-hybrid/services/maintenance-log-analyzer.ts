@@ -1,20 +1,20 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, sep } from "node:path";
-import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from "node:url";
+import { formatTimestampUtc, formatTimestampUtcFromMs, nowIso } from "../utils/dates.js";
 import { extractAuditHealthJsonFromLog } from "./audit-health-json.js";
 import { normalizeExitStepName } from "./cron-exit-validator.js";
-import { resolveMaintenanceExitPathForSummary } from "./maintenance-artifact-paths.js";
-import { parseSemanticTokenFromSummary, semanticOutcomeBlocksOrchestratorGuard } from "./maintenance-job-run/index.js";
 import { capturePluginError } from "./error-reporter.js";
-import { nowIso, formatTimestampUtc, formatTimestampUtcFromMs } from "../utils/dates.js";
+import { resolveMaintenanceExitPathForSummary } from "./maintenance-artifact-paths.js";
 import {
   collectMaintenanceNoiseWarnings,
   isBenignNoiseOnlyMaintenanceStep,
-  sanitizeMaintenanceLogText,
   type MaintenanceNoiseWarning,
+  sanitizeMaintenanceLogText,
 } from "./maintenance-benign-noise.js";
+import { parseSemanticTokenFromSummary, semanticOutcomeBlocksOrchestratorGuard } from "./maintenance-job-run/index.js";
 
 export type MaintenanceClassification =
   | "env-misconfig"
@@ -386,8 +386,21 @@ function buildOrchestrationSyntheticStep(params: {
   let step = "orchestration-empty-exit";
   let line = "orchestration anomaly: exit ledger exists but has no parseable step rows";
   if (kind === "missing-exit-ledger") {
-    step = "orchestration-missing-exit-ledger";
-    line = "orchestration anomaly: log exists but matching .exit.txt ledger is missing";
+    // Gated on staleness, matching the "empty-exit" kind below — a .log with no sibling .exit.txt
+    // yet is completely normal for a job that's still running (the ledger is written at
+    // completion). Unconditionally flagging this as orchestration-bug (a STRICT class) made
+    // `maintenance status`, run from a separate process with no way to see the other process's
+    // env vars, report "ATTENTION NEEDED" for perfectly healthy in-progress runs (QA follow-up).
+    if (stale && hasStillRunningHeartbeat) {
+      step = "orchestration-stale-running";
+      line = `orchestration anomaly: stale live run heartbeat with no exit ledger (no progress for ${staleSec}s)`;
+    } else if (stale) {
+      step = "orchestration-stale-missing-exit-ledger";
+      line = `orchestration anomaly: log exists but matching .exit.txt ledger is missing and stale (no mtime/progress updates for ${staleSec}s)`;
+    } else {
+      step = "maintenance-run-in-progress";
+      line = "log exists but matching .exit.txt ledger not yet written — run appears to still be in progress";
+    }
   } else if (stale && hasStillRunningHeartbeat) {
     step = "orchestration-stale-running";
     line = `orchestration anomaly: stale live run heartbeat with no completed ledger row (no progress for ${staleSec}s)`;
@@ -441,7 +454,7 @@ function parseRunIdTimestampMs(runId: string): number {
 
 /** Extract `HM_RUN_SUMMARY` run entries from an aggregate cron log (#2025). */
 export function parseCronAggregateRuns(logContent: string): CronAggregateRun[] {
-  if (!logContent || !logContent.includes("HM_RUN_SUMMARY")) return [];
+  if (!logContent?.includes("HM_RUN_SUMMARY")) return [];
   const runs: CronAggregateRun[] = [];
   for (const line of logContent.split("\n")) {
     if (!line.includes("HM_RUN_SUMMARY")) continue;
@@ -722,7 +735,7 @@ function classifyOrchestrationAnomaly(
 
   const staleHint = /stale=yes|appears stale|still running after/i.test(`${line ?? ""}\n${logContent ?? ""}`);
 
-  if (stepName === "orchestration-missing-exit-ledger") {
+  if (stepName === "orchestration-missing-exit-ledger" || stepName === "orchestration-stale-missing-exit-ledger") {
     return {
       id: "orchestration-missing-exit-ledger",
       pattern: "",
@@ -730,7 +743,7 @@ function classifyOrchestrationAnomaly(
       defaultAction: "glitchtip+digest",
       severity: "high",
       suggestedAction:
-        "A maintenance log exists but its matching .exit.txt ledger is missing. Treat as orchestration failure, inspect cron harness/traps, and ensure validate-cron-exit writes status before guard updates.",
+        "A maintenance log exists but its matching .exit.txt ledger is missing, with no recent progress. Treat as orchestration failure, inspect cron harness/traps, and ensure validate-cron-exit writes status before guard updates.",
     };
   }
 
@@ -975,10 +988,10 @@ export function persistMaintenanceFindings(dbPath: string, findings: Maintenance
       CREATE INDEX IF NOT EXISTS idx_maintenance_finding_fingerprint ON maintenance_finding(fingerprint);
     `);
     try {
-      const checkCol = db.prepare(`SELECT occurrence_count FROM maintenance_finding LIMIT 0`);
+      const checkCol = db.prepare("SELECT occurrence_count FROM maintenance_finding LIMIT 0");
       checkCol.all();
     } catch {
-      db.exec(`ALTER TABLE maintenance_finding ADD COLUMN occurrence_count INTEGER NOT NULL DEFAULT 1`);
+      db.exec("ALTER TABLE maintenance_finding ADD COLUMN occurrence_count INTEGER NOT NULL DEFAULT 1");
     }
     const stmt = db.prepare(
       `INSERT OR IGNORE INTO maintenance_finding
@@ -1012,10 +1025,10 @@ function loadPersistedMaintenanceFindingLedger(dbPath: string): Map<string, Pers
   try {
     // Ensure occurrence_count column exists before querying it (schema migration for older DBs).
     try {
-      const checkCol = db.prepare(`SELECT occurrence_count FROM maintenance_finding LIMIT 0`);
+      const checkCol = db.prepare("SELECT occurrence_count FROM maintenance_finding LIMIT 0");
       checkCol.all();
     } catch {
-      db.exec(`ALTER TABLE maintenance_finding ADD COLUMN occurrence_count INTEGER NOT NULL DEFAULT 1`);
+      db.exec("ALTER TABLE maintenance_finding ADD COLUMN occurrence_count INTEGER NOT NULL DEFAULT 1");
     }
     const rows = db
       .prepare(

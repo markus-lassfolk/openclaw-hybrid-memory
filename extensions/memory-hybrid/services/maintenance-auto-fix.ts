@@ -48,8 +48,16 @@ export function recordRetryOnce(finding: MaintenanceFinding, openclawDir?: strin
   if (finding.actionTaken === "auto-fixed-retry-once") return finding;
   try {
     markStepRetryOnce(finding.step, openclawDir);
-  } catch {
-    // Best-effort — the finding is still annotated even if the marker write fails (e.g. read-only fs).
+  } catch (err) {
+    // Report honestly instead of claiming "auto-fixed-retry-once" — a swallowed write failure
+    // here previously left the digest showing the transient failure as remediated even though no
+    // marker file exists, so the orchestrator's hasStepRetryOncePending() check never sees it and
+    // the step never gets its forced retry (defeats #2094's bounded-retry guarantee silently).
+    return {
+      ...finding,
+      actionTaken: "reported",
+      suggestedAction: `${finding.suggestedAction} [auto-fix failed: could not write retry-once marker: ${err instanceof Error ? err.message : String(err)}]`,
+    };
   }
   return {
     ...finding,
@@ -66,6 +74,11 @@ export function applyMaintenanceAutoFix(finding: MaintenanceFinding, openclawDir
 
   if (id === "sqlite-busy" || id === "scan-lock-present") {
     const text = `${finding.logExcerpt}\n${finding.logPath}`;
+    // Try every extracted lock path, not just the first — a log excerpt can legitimately mention
+    // more than one .lock-suffixed path (e.g. an unrelated path in a stack trace ahead of the
+    // real stale lock), and giving up after the first non-clearable match could skip a later,
+    // genuinely stale and clearable lock in the same text.
+    let lastFailure: { path: string; detail: string } | undefined;
     for (const m of text.matchAll(LOCK_PATH_RE)) {
       const p = m[1];
       if (!p) continue;
@@ -77,10 +90,13 @@ export function applyMaintenanceAutoFix(finding: MaintenanceFinding, openclawDir
           suggestedAction: `${finding.suggestedAction} Auto-fix: ${r.detail} (${p}).`,
         };
       }
+      lastFailure = { path: p, detail: r.detail };
+    }
+    if (lastFailure) {
       return {
         ...finding,
         actionTaken: "reported",
-        suggestedAction: `${finding.suggestedAction} Auto-fix skipped: ${r.detail} (${p}).`,
+        suggestedAction: `${finding.suggestedAction} Auto-fix skipped: ${lastFailure.detail} (${lastFailure.path}).`,
       };
     }
     return finding;

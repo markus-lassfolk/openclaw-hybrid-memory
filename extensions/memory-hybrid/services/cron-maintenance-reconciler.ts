@@ -6,8 +6,9 @@
  * shows missing required steps or failures.
  */
 
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { basename, join } from "node:path";
+import { atomicWriteFile } from "../utils/atomic-write.js";
 import {
   type ExitValidationResult,
   validateFromSummaryJson,
@@ -116,7 +117,10 @@ export function parseCronRunLedger(ledgerPath: string): CronRunLedgerEntry[] {
  */
 export function writeCronRunLedger(ledgerPath: string, entries: CronRunLedgerEntry[]): void {
   const content = `${entries.map((e) => JSON.stringify(e)).join("\n")}\n`;
-  writeFileSync(ledgerPath, content, "utf-8");
+  // atomicWriteFile, not a plain writeFileSync — this rewrites the WHOLE ledger to correct a
+  // false-OK entry; a crash or concurrent read mid-write could otherwise leave the ledger
+  // truncated or interleaved, losing entries for runs unrelated to the one being corrected.
+  atomicWriteFile(ledgerPath, content);
 }
 
 /** Ledger "finished" ts is often near run end; run-id time is start — allow long jobs and small clock skew. */

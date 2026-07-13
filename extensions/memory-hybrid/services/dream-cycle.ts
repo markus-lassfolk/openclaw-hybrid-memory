@@ -15,7 +15,6 @@ import { join } from "node:path";
 import type OpenAI from "openai";
 import type { EventLog, EventLogEntry, EventType } from "../backends/event-log.js";
 import type { FactsDB } from "../backends/facts-db.js";
-import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryCategory, MemoryEntry } from "../types/memory.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
@@ -808,11 +807,18 @@ export async function runDreamCycle(
     let heartbeat: ReturnType<typeof setInterval> | undefined;
     if (v && opts?.heartbeat === true) {
       heartbeat = setInterval(() => {
-        const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
-        const progress = opts?.progressSupplier?.();
-        logger.info(
-          `memory-hybrid: dream-cycle — stage ${stageNumber} still running after ${elapsedSec}s: ${label}${progress ? `; ${progress}` : ""}`,
-        );
+        // Background timers must never crash the gateway process (CLAUDE.md) — an uncaught
+        // exception in progressSupplier() or logger.info() here would otherwise be fatal to the
+        // Node process, unlike every other failure path in this file.
+        try {
+          const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+          const progress = opts?.progressSupplier?.();
+          logger.info(
+            `memory-hybrid: dream-cycle — stage ${stageNumber} still running after ${elapsedSec}s: ${label}${progress ? `; ${progress}` : ""}`,
+          );
+        } catch (err) {
+          logger.warn(`memory-hybrid: dream-cycle — stage ${stageNumber} heartbeat failed (non-fatal): ${err}`);
+        }
       }, DREAM_STAGE_HEARTBEAT_MS);
       heartbeat.unref?.();
     }
@@ -871,11 +877,14 @@ export async function runDreamCycle(
   if (config.pruneMode === "expired" || config.pruneMode === "both") {
     if (dryRun) {
       try {
-        factsPruned = factsDb.countExpired();
+        // previewPruneExpired() (not countExpired()) — mirrors pruneExpiredWithDetails()'s exact
+        // pinned_at/decay_freeze_until/verified_facts exclusions and second-chance reprieve, so
+        // the preview count matches what a live run would actually prune (QA follow-up).
+        factsPruned = factsDb.previewPruneExpired().factsPruned;
         logger.info(`memory-hybrid: dream-cycle [dry-run] — would prune ${factsPruned} expired fact(s)`);
       } catch (err) {
         stageCoreError ??= err;
-        logger.warn(`memory-hybrid: dream-cycle [dry-run] — countExpired failed: ${err}`);
+        logger.warn(`memory-hybrid: dream-cycle [dry-run] — previewPruneExpired failed: ${err}`);
       }
     } else {
       try {
@@ -941,11 +950,16 @@ export async function runDreamCycle(
     if (dryRun) {
       try {
         const decayNowSec = Math.floor(Date.now() / 1000);
-        factsDecayed = factsDb.listFactIdsToBeDeletedByDecayRun(decayNowSec).length;
-        logger.info(`memory-hybrid: dream-cycle [dry-run] — would decay/delete ${factsDecayed} fact(s)`);
+        // countFactsToBeDecayedByRun() (not listFactIdsToBeDeletedByDecayRun()) — the latter is a
+        // much narrower population (only facts near the 0.1 deletion floor) meant for vector
+        // cleanup prediction, not a stand-in for the confidence-halving count the live run
+        // actually reports as "decayed" (QA follow-up) — using it here could report "0 facts
+        // would decay" while the live cycle halves confidence on hundreds of facts.
+        factsDecayed = factsDb.countFactsToBeDecayedByRun(decayNowSec);
+        logger.info(`memory-hybrid: dream-cycle [dry-run] — would decay ${factsDecayed} fact(s)`);
       } catch (err) {
         stageCoreError ??= err;
-        logger.warn(`memory-hybrid: dream-cycle [dry-run] — listFactIdsToBeDeletedByDecayRun failed: ${err}`);
+        logger.warn(`memory-hybrid: dream-cycle [dry-run] — countFactsToBeDecayedByRun failed: ${err}`);
       }
     } else {
       try {
@@ -1163,7 +1177,10 @@ export async function runDreamCycle(
       factsCreated = consolidationResult.factsCreated;
     } catch (err) {
       stageEventLogError ??= err;
-      recordStageFailure("episodic consolidation", err);
+      // Not recordStageFailure() here too — the unconditional wrap-up below already records this
+      // failure once under "episodic consolidation + event log maintenance" for all three
+      // substeps (consolidation, archive-consolidated, archive-old); recording it again here with
+      // a different label string double-counted one root cause in failedStages/the digest.
       logger.warn(`memory-hybrid: dream-cycle — consolidation step failed: ${err}`);
     }
   } else if (eventLog && config.walFlushFailed && v) {

@@ -28,7 +28,11 @@ import { runInsightSynthesis } from "../../services/insight-synthesis.js";
 import { runBuildLanguageKeywords } from "../../services/language-keywords-build.js";
 import { mergeResults } from "../../services/merge-results.js";
 import { runPassiveObserver } from "../../services/passive-observer.js";
-import { requireWalFlushBeforeMutation, runPreConsolidationFlush } from "../../services/pre-consolidation-flush.js";
+import {
+  requireWalFlushBeforeMutation,
+  runPreConsolidationFlush,
+  type WalFlushResult,
+} from "../../services/pre-consolidation-flush.js";
 import { runReflection, runReflectionMeta, runReflectionRules } from "../../services/reflection.js";
 import { parseSourceDate } from "../../utils/dates.js";
 import { getEnv } from "../../utils/env-manager.js";
@@ -515,18 +519,29 @@ export function buildCliContextServices(
       pluginLogger.info(
         `memory-hybrid: dream-cycle fallback chain = [${fallbackModels && fallbackModels.length > 0 ? fallbackModels.join(", ") : ""}]`,
       );
-      if (verbose) {
-        pluginLogger.info("memory-hybrid: dream-cycle — pre-cycle WAL flush (replay pending writes)…");
-      }
-      const flush = await runPreConsolidationFlush(
-        { wal, factsDb, vectorDb, embeddings },
-        api.logger,
-        "dream_cycle_consolidation",
-      );
-      if (verbose) {
-        pluginLogger.info(
-          `memory-hybrid: dream-cycle — WAL flush done (committed=${flush.committed}, skipped=${flush.skipped}, failed=${flush.failed})`,
+      // guardWalUnlessDryRun's own pattern, inlined here (not the shared helper) because this
+      // caller wants the flush result for verbose logging — dryRun must skip this real mutation
+      // just like every sibling command (runConsolidate, runReflection, ...) does, or --dry-run
+      // silently commits pending WAL entries into FactsDB/VectorDB (QA follow-up).
+      let flush: WalFlushResult = { committed: 0, skipped: 0, failed: false };
+      if (dryRun) {
+        if (verbose) {
+          pluginLogger.info("memory-hybrid: dream-cycle [dry-run] — skipping pre-cycle WAL flush (would replay)");
+        }
+      } else {
+        if (verbose) {
+          pluginLogger.info("memory-hybrid: dream-cycle — pre-cycle WAL flush (replay pending writes)…");
+        }
+        flush = await runPreConsolidationFlush(
+          { wal, factsDb, vectorDb, embeddings },
+          api.logger,
+          "dream_cycle_consolidation",
         );
+        if (verbose) {
+          pluginLogger.info(
+            `memory-hybrid: dream-cycle — WAL flush done (committed=${flush.committed}, skipped=${flush.skipped}, failed=${flush.failed})`,
+          );
+        }
       }
       const runId = makeDreamCycleRunId();
       return runDreamCycle(
