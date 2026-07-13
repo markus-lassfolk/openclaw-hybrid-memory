@@ -50,6 +50,18 @@ import { type Chainable, withExit } from "./shared.js";
  */
 const DOCTOR_CHECK_TIMEOUT_MS = 15_000;
 const DOCTOR_CHECK_TIMED_OUT = Symbol("doctor-check-timed-out");
+
+/**
+ * Bound for `--fix`'s own repair calls (structural repair, orphan reconcile, alias rebuild, goal
+ * repair), which can touch the same wedged-LanceDB-lock scenario `DOCTOR_CHECK_TIMEOUT_MS` exists
+ * for — but 15s is far too short here: a legitimate repair re-embeds up to `maxFixes` (aggressive:
+ * up to 2000) facts against a real embedding API, which can genuinely take minutes. This bound only
+ * needs to catch a *hung* repair (a lock that never releases), not a *slow* one, so it's set high
+ * enough to never false-positive on real work — this matters more now that `--fix --reconcile` runs
+ * unattended every night via the `hybrid-mem:nightly-doctor-repair` cron job, where a hang would
+ * otherwise block that isolated session indefinitely with no operator present to notice.
+ */
+const DOCTOR_REPAIR_TIMEOUT_MS = 10 * 60_000;
 const doctorTimeoutFix =
   "Check for a stuck `openclaw hybrid-mem maintenance`/distill process (ps/top) holding a SQLite/LanceDB lock; stop it, then retry.";
 
@@ -265,29 +277,49 @@ export function registerDoctorCommand(
                 // see storage-sync-diagnostics.ts) is safe/idempotent to repair unconditionally under
                 // plain --fix, mirroring verify's applyStorageStructuralFixIfNeeded.
                 try {
-                  const { optimize, repair, errors } = await runStorageStructuralRepair({
-                    factsDb,
-                    vectorDb,
-                    embeddings,
-                    resolvedSqlitePath,
-                    policy: "balanced",
-                    maxFixes: 200,
-                  });
-                  snapshot = (await collectStorageSyncSnapshot(factsDb, vectorDb)) ?? snapshot;
-                  const stillDrifting = snapshot.hasIdSetDrift || snapshot.hasRowCountDrift;
-                  if (errors.length === 0 && !stillDrifting) {
+                  const structuralResult = await withTimeout(
+                    DOCTOR_REPAIR_TIMEOUT_MS,
+                    () =>
+                      runStorageStructuralRepair({
+                        factsDb,
+                        vectorDb,
+                        embeddings,
+                        resolvedSqlitePath,
+                        policy: reconcilePolicy,
+                        maxFixes: reconcileMaxFixes,
+                      }),
+                    DOCTOR_CHECK_TIMED_OUT,
+                  );
+                  if (structuralResult === DOCTOR_CHECK_TIMED_OUT) {
                     checks.push({
                       name: "Database Sync",
-                      status: "pass",
-                      message: `Structural drift repaired (compacted=${optimize.compacted}, removedFragments=${optimize.removedFragments}, deduplicated=${repair?.dedupe.deduplicated ?? 0}); ${formatStorageSyncSummary(snapshot)}`,
+                      status: "fail",
+                      message: `Structural repair timed out after ${DOCTOR_REPAIR_TIMEOUT_MS / 60_000}m`,
+                      fix: doctorTimeoutFix,
                     });
                   } else {
-                    checks.push({
-                      name: "Database Sync",
-                      status: "warn",
-                      message: `Structural repair ${errors.length > 0 ? `hit ${errors.length} error(s)` : "left drift"} — ${formatStorageSyncSummary(snapshot)}`,
-                      fix: `Run: ${STORAGE_OPTIMIZE_REMEDIATION} then ${STORAGE_REPAIR_REMEDIATION}`,
-                    });
+                    const { optimize, repair, errors } = structuralResult;
+                    const refreshed = await withTimeout(
+                      DOCTOR_CHECK_TIMEOUT_MS,
+                      () => collectStorageSyncSnapshot(factsDb, vectorDb),
+                      DOCTOR_CHECK_TIMED_OUT,
+                    );
+                    if (refreshed !== DOCTOR_CHECK_TIMED_OUT && refreshed) snapshot = refreshed;
+                    const stillDrifting = snapshot.hasIdSetDrift || snapshot.hasRowCountDrift;
+                    if (errors.length === 0 && !stillDrifting) {
+                      checks.push({
+                        name: "Database Sync",
+                        status: "pass",
+                        message: `Structural drift repaired (compacted=${optimize.compacted}, removedFragments=${optimize.removedFragments}, deduplicated=${repair?.dedupe.deduplicated ?? 0}); ${formatStorageSyncSummary(snapshot)}`,
+                      });
+                    } else {
+                      checks.push({
+                        name: "Database Sync",
+                        status: "warn",
+                        message: `Structural repair ${errors.length > 0 ? `hit ${errors.length} error(s)` : "left drift"} — ${formatStorageSyncSummary(snapshot)}`,
+                        fix: `Run: ${STORAGE_OPTIMIZE_REMEDIATION} then ${STORAGE_REPAIR_REMEDIATION}`,
+                      });
+                    }
                   }
                 } catch (error) {
                   checks.push({
@@ -301,44 +333,81 @@ export function registerDoctorCommand(
                 // ID-set (orphan) drift repair deletes vector-side orphans — destructive, so it stays
                 // gated behind the explicit --reconcile opt-in (matches `verify --reconcile --fix`),
                 // and only proceeds after a checkpoint backup so a bad reconcile pass is recoverable.
-                const backupResult = await runBackup({}).catch((err) => ({
-                  ok: false as const,
-                  error: err instanceof Error ? err.message : String(err),
-                }));
-                if (!backupResult.ok) {
+                const backupOutcome = await withTimeout(
+                  DOCTOR_REPAIR_TIMEOUT_MS,
+                  () =>
+                    runBackup({}).catch((err) => ({
+                      ok: false as const,
+                      error: err instanceof Error ? err.message : String(err),
+                    })),
+                  DOCTOR_CHECK_TIMED_OUT,
+                );
+                const backupResult =
+                  backupOutcome === DOCTOR_CHECK_TIMED_OUT
+                    ? { ok: false as const, error: `backup timed out after ${DOCTOR_REPAIR_TIMEOUT_MS / 60_000}m` }
+                    : backupOutcome;
+                // A backup that "succeeded" against an already-corrupt source (VACUUM INTO doesn't
+                // fail just because PRAGMA integrity_check did) is not a real safety net — it's a
+                // snapshot of the corruption. Treat that the same as a failed backup: abort the
+                // destructive delete rather than proceed on a false sense of having a restore point.
+                const backupIntegrityFailed = backupResult.ok && backupResult.integrityOk === false;
+                if (!backupResult.ok || backupIntegrityFailed) {
+                  const reason = backupResult.ok
+                    ? "source SQLite failed PRAGMA integrity_check — the backup is a snapshot of the corruption, not a valid restore point"
+                    : backupResult.error;
                   checks.push({
                     name: "Database Sync",
                     status: "warn",
-                    message: `Storage drift — ID-set drift: vectorOrphans=${snapshot.vectorOrphans.length} sqliteOrphans=${snapshot.sqliteOrphans.length} (${formatStorageSyncSummary(snapshot)}); auto-backup before reconcile failed, repair aborted: ${backupResult.error}`,
-                    fix: "Run: openclaw hybrid-mem backup, then openclaw hybrid-mem verify --reconcile --fix",
+                    message: `Storage drift — ID-set drift: vectorOrphans=${snapshot.vectorOrphans.length} sqliteOrphans=${snapshot.sqliteOrphans.length} (${formatStorageSyncSummary(snapshot)}); auto-backup before reconcile failed, repair aborted: ${reason}`,
+                    fix: "Run: openclaw hybrid-mem backup verify, restore/repair the database, then openclaw hybrid-mem verify --reconcile --fix",
                   });
                 } else {
                   try {
-                    const report = await runStorageRepairPipeline({
-                      factsDb,
-                      vectorDb,
-                      embeddings,
-                      resolvedSqlitePath,
-                      policy: reconcilePolicy,
-                      maxFixes: reconcileMaxFixes,
-                      operation: "doctor-reconcile",
-                      skipReembed: true,
-                    });
-                    snapshot = (await collectStorageSyncSnapshot(factsDb, vectorDb)) ?? snapshot;
-                    const stillDrifting = snapshot.hasIdSetDrift || snapshot.hasRowCountDrift;
-                    if (report.errors.length === 0 && !stillDrifting) {
+                    const reconcileResult = await withTimeout(
+                      DOCTOR_REPAIR_TIMEOUT_MS,
+                      () =>
+                        runStorageRepairPipeline({
+                          factsDb,
+                          vectorDb,
+                          embeddings,
+                          resolvedSqlitePath,
+                          policy: reconcilePolicy,
+                          maxFixes: reconcileMaxFixes,
+                          operation: "doctor-reconcile",
+                          skipReembed: true,
+                        }),
+                      DOCTOR_CHECK_TIMED_OUT,
+                    );
+                    if (reconcileResult === DOCTOR_CHECK_TIMED_OUT) {
                       checks.push({
                         name: "Database Sync",
-                        status: "pass",
-                        message: `Orphan drift reconciled (deleted=${report.reconcile.vectorOrphansDeleted}, rebuilt=${report.reconcile.sqliteOrphansRebuilt}); ${formatStorageSyncSummary(snapshot)}`,
+                        status: "fail",
+                        message: `Orphan reconcile timed out after ${DOCTOR_REPAIR_TIMEOUT_MS / 60_000}m`,
+                        fix: doctorTimeoutFix,
                       });
                     } else {
-                      checks.push({
-                        name: "Database Sync",
-                        status: "warn",
-                        message: `Reconcile ${report.errors.length > 0 ? `hit ${report.errors.length} error(s)` : "left drift"} (deleted=${report.reconcile.vectorOrphansDeleted}, rebuilt=${report.reconcile.sqliteOrphansRebuilt}); ${formatStorageSyncSummary(snapshot)}`,
-                        fix: "Re-run: openclaw hybrid-mem doctor --fix --reconcile --reconcile-policy aggressive",
-                      });
+                      const report = reconcileResult;
+                      const refreshed = await withTimeout(
+                        DOCTOR_CHECK_TIMEOUT_MS,
+                        () => collectStorageSyncSnapshot(factsDb, vectorDb),
+                        DOCTOR_CHECK_TIMED_OUT,
+                      );
+                      if (refreshed !== DOCTOR_CHECK_TIMED_OUT && refreshed) snapshot = refreshed;
+                      const stillDrifting = snapshot.hasIdSetDrift || snapshot.hasRowCountDrift;
+                      if (report.errors.length === 0 && !stillDrifting) {
+                        checks.push({
+                          name: "Database Sync",
+                          status: "pass",
+                          message: `Orphan drift reconciled (deleted=${report.reconcile.vectorOrphansDeleted}, rebuilt=${report.reconcile.sqliteOrphansRebuilt}); ${formatStorageSyncSummary(snapshot)}`,
+                        });
+                      } else {
+                        checks.push({
+                          name: "Database Sync",
+                          status: "warn",
+                          message: `Reconcile ${report.errors.length > 0 ? `hit ${report.errors.length} error(s)` : "left drift"} (deleted=${report.reconcile.vectorOrphansDeleted}, rebuilt=${report.reconcile.sqliteOrphansRebuilt}); ${formatStorageSyncSummary(snapshot)}`,
+                          fix: "Re-run: openclaw hybrid-mem doctor --fix --reconcile --reconcile-policy aggressive",
+                        });
+                      }
                     }
                   } catch (error) {
                     checks.push({
@@ -395,24 +464,50 @@ export function registerDoctorCommand(
                 });
               } else if (opts?.fix && embeddings) {
                 try {
-                  const result = await aliasDb.rebuildLanceFromSqlite(embeddings, {
-                    reEmbed: aliasDiag.lanceDim != null && aliasDiag.lanceDim !== aliasDiag.configuredDim,
-                  });
-                  aliasDiag = await aliasDb.getLanceDiagnostics();
-                  if (aliasDiag.schemaValid && aliasDiag.lanceDim === aliasDiag.configuredDim) {
+                  // Narrow into a const before capturing in the withTimeout closure below — TS
+                  // control-flow narrowing on a `let` (excluding the timeout sentinel) doesn't
+                  // survive into a nested closure.
+                  const currentAliasDiag = aliasDiag;
+                  const rebuildResult = await withTimeout(
+                    DOCTOR_REPAIR_TIMEOUT_MS,
+                    () =>
+                      aliasDb.rebuildLanceFromSqlite(embeddings, {
+                        reEmbed:
+                          currentAliasDiag.lanceDim != null &&
+                          currentAliasDiag.lanceDim !== currentAliasDiag.configuredDim,
+                      }),
+                    DOCTOR_CHECK_TIMED_OUT,
+                  );
+                  if (rebuildResult === DOCTOR_CHECK_TIMED_OUT) {
                     checks.push({
                       name: "Alias Lance Index",
-                      status: "pass",
-                      message: `Alias Lance rebuilt (stored=${result.stored}, reEmbedded=${result.reEmbedded}); dim=${aliasDiag.configuredDim}, rows=${aliasDiag.sqliteAliasRows}`,
+                      status: "fail",
+                      message: `Alias Lance rebuild timed out after ${DOCTOR_REPAIR_TIMEOUT_MS / 60_000}m`,
+                      fix: doctorTimeoutFix,
                     });
                   } else {
-                    const lanceDim = aliasDiag.lanceDim == null ? "unknown" : String(aliasDiag.lanceDim);
-                    checks.push({
-                      name: "Alias Lance Index",
-                      status: "warn",
-                      message: `Alias Lance mismatch persists after rebuild (configured=${aliasDiag.configuredDim}, lance=${lanceDim}, sqliteRows=${aliasDiag.sqliteAliasRows})`,
-                      fix: `Run: ${STORAGE_REBUILD_ALIASES_REMEDIATION} --re-embed`,
-                    });
+                    const result = rebuildResult;
+                    const refreshedDiag = await withTimeout(
+                      DOCTOR_CHECK_TIMEOUT_MS,
+                      () => aliasDb.getLanceDiagnostics(),
+                      DOCTOR_CHECK_TIMED_OUT,
+                    );
+                    if (refreshedDiag !== DOCTOR_CHECK_TIMED_OUT) aliasDiag = refreshedDiag;
+                    if (aliasDiag.schemaValid && aliasDiag.lanceDim === aliasDiag.configuredDim) {
+                      checks.push({
+                        name: "Alias Lance Index",
+                        status: "pass",
+                        message: `Alias Lance rebuilt (stored=${result.stored}, reEmbedded=${result.reEmbedded}); dim=${aliasDiag.configuredDim}, rows=${aliasDiag.sqliteAliasRows}`,
+                      });
+                    } else {
+                      const lanceDim = aliasDiag.lanceDim == null ? "unknown" : String(aliasDiag.lanceDim);
+                      checks.push({
+                        name: "Alias Lance Index",
+                        status: "warn",
+                        message: `Alias Lance mismatch persists after rebuild (configured=${aliasDiag.configuredDim}, lance=${lanceDim}, sqliteRows=${aliasDiag.sqliteAliasRows})`,
+                        fix: `Run: ${STORAGE_REBUILD_ALIASES_REMEDIATION} --re-embed`,
+                      });
+                    }
                   }
                 } catch (error) {
                   const lanceDim = aliasDiag.lanceDim == null ? "unknown" : String(aliasDiag.lanceDim);
@@ -667,9 +762,12 @@ export function registerDoctorCommand(
                           : undefined,
                       });
                     } catch (error) {
+                      // "fail", not "warn" — matches the pre-existing population-drift-only branch's
+                      // own rebuildFtsIndex() catch below, which reports the identical failure mode
+                      // (the reindex call itself throwing) as "fail".
                       checks.push({
                         name: "FTS Index/Triggers",
-                        status: "warn",
+                        status: "fail",
                         message: `Recreated facts_fts structure via migration, but reindex failed: ${error instanceof Error ? error.message : String(error)}`,
                         fix: "Run: openclaw hybrid-mem doctor --fix (retry), or rebuild facts_fts from SQLite facts.",
                       });
@@ -880,23 +978,37 @@ export function registerDoctorCommand(
               });
             } else if (opts?.fix) {
               try {
-                const results = await repairAllQuarantinedGoals(goalsDir, { dryRun: false });
-                const restored = results.filter((r) => r.action === "restored").length;
-                const failed = results.filter((r) => r.action === "failed");
-                quarantined = listQuarantinedGoalIds(goalsDir);
-                if (quarantined.length === 0) {
+                const repairResult = await withTimeout(
+                  DOCTOR_REPAIR_TIMEOUT_MS,
+                  () => repairAllQuarantinedGoals(goalsDir, { dryRun: false }),
+                  DOCTOR_CHECK_TIMED_OUT,
+                );
+                if (repairResult === DOCTOR_CHECK_TIMED_OUT) {
                   checks.push({
                     name: "Goal registry quarantine",
-                    status: "pass",
-                    message: `Restored ${restored} quarantined goal file(s)`,
+                    status: "fail",
+                    message: `Goal repair timed out after ${DOCTOR_REPAIR_TIMEOUT_MS / 60_000}m`,
+                    fix: doctorTimeoutFix,
                   });
                 } else {
-                  checks.push({
-                    name: "Goal registry quarantine",
-                    status: "warn",
-                    message: `Restored ${restored}, ${quarantined.length} still quarantined (invalid JSON)${failed.length > 0 ? `: ${failed.map((f) => f.goalId).join(", ")}` : ""}`,
-                    fix: "Inspect and manually repair the remaining .json.corrupt file(s); invalid schema cannot be auto-restored.",
-                  });
+                  const results = repairResult;
+                  const restored = results.filter((r) => r.action === "restored").length;
+                  const failed = results.filter((r) => r.action === "failed");
+                  quarantined = listQuarantinedGoalIds(goalsDir);
+                  if (quarantined.length === 0) {
+                    checks.push({
+                      name: "Goal registry quarantine",
+                      status: "pass",
+                      message: `Restored ${restored} quarantined goal file(s)`,
+                    });
+                  } else {
+                    checks.push({
+                      name: "Goal registry quarantine",
+                      status: "warn",
+                      message: `Restored ${restored}, ${quarantined.length} still quarantined (invalid JSON)${failed.length > 0 ? `: ${failed.map((f) => f.goalId).join(", ")}` : ""}`,
+                      fix: "Inspect and manually repair the remaining .json.corrupt file(s); invalid schema cannot be auto-restored.",
+                    });
+                  }
                 }
               } catch (error) {
                 checks.push({

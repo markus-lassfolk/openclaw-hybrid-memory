@@ -38,6 +38,7 @@ describe("doctor FTS consistency checks", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    process.exitCode = undefined;
     for (const root of tmpRoots.splice(0)) {
       rmSync(root, { recursive: true, force: true });
     }
@@ -154,6 +155,43 @@ describe("doctor FTS consistency checks", () => {
     expect(snapshotAfter.missingTriggers).toHaveLength(0);
     expect(snapshotAfter.missingFactsInFts).toBe(0);
     expect(snapshotAfter.extraFtsRows).toBe(0);
+
+    factsDb.close();
+  });
+
+  it("reports fail (not warn) when the reindex throws after a successful structural migration (QA follow-up)", async () => {
+    const { factsDb, sqlitePath, runDoctor } = setupDoctorHarness();
+
+    factsDb.store({
+      text: "structural drift fact",
+      category: "fact",
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+      importance: 0.5,
+    });
+
+    const raw = new DatabaseSync(sqlitePath);
+    raw.exec("DROP TRIGGER IF EXISTS facts_ai");
+    raw.exec("DROP TRIGGER IF EXISTS facts_ad");
+    raw.exec("DROP TRIGGER IF EXISTS facts_au");
+    raw.exec("DROP TABLE IF EXISTS facts_fts");
+    raw.close();
+
+    // Migration itself succeeds (recreates the table/triggers), but the immediately-chained
+    // reindex hard-fails — must report the same "fail" severity as the pre-existing
+    // population-drift-only branch's own rebuildFtsIndex() failure, not a downgraded "warn".
+    vi.spyOn(factsDb, "rebuildFtsIndex").mockImplementation(() => {
+      throw new Error("disk full");
+    });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    await runDoctor({ fix: true });
+    const out = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(out).toContain("🔴 FTS Index/Triggers");
+    expect(out).toContain("reindex failed");
+    expect(process.exitCode).toBe(1);
 
     factsDb.close();
   });

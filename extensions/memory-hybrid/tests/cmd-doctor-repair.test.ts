@@ -191,6 +191,34 @@ describe("doctor repair (--fix / --reconcile)", () => {
     await vectorDb.close();
   });
 
+  it("aborts orphan reconcile when the backup succeeds but fails its own integrity check (QA follow-up)", async () => {
+    // runBackup() returns ok:true even when PRAGMA integrity_check failed on the source (VACUUM
+    // INTO doesn't fail just because the source was already corrupt) — a backup like that is a
+    // snapshot of the corruption, not a real restore point, and must not green-light the delete.
+    const runBackup = vi.fn(async () => ({
+      ok: true as const,
+      integrityOk: false,
+      backupDir: "/tmp/fake-backup",
+      sqliteSize: 0,
+      lancedbSize: 0,
+      durationMs: 0,
+      snapshotSkewMs: 0,
+    }));
+    const { factsDb, vectorDb, runDoctor } = setupHarness({ embeddings: makeEmbeddings(), runBackup });
+
+    const orphanId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    await vectorDb.store({ id: orphanId, text: "orphan", vector: [0.1, 0.2, 0.3], importance: 0.5, category: "fact" });
+
+    const out = await runAndCapture(runDoctor, { fix: true, reconcile: true });
+    expect(out).toContain("auto-backup before reconcile failed");
+    expect(out).toContain("integrity_check");
+    expect(runBackup).toHaveBeenCalledTimes(1);
+    expect(await vectorDb.getAllIds()).toContain(orphanId);
+
+    factsDb.close();
+    await vectorDb.close();
+  });
+
   it("repairs alias Lance mismatch under --fix when aliasDb + embeddings are wired in", async () => {
     // Doctor's own repair orchestration is under test here (call rebuildLanceFromSqlite when a
     // mismatch is seen, then re-check) — not AliasDB's internals, which have their own test suite.

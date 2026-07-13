@@ -28,7 +28,7 @@ export type StorageRepairReport = {
    * orphan reconcile above only removes rows for ids with no matching active fact, so a duplicate
    * for a still-valid id survives untouched without this pass.
    */
-  dedupe: { duplicateIds: number; deduplicated: number };
+  dedupe: { duplicateIds: number; deduplicated: number; skipped: number };
   vectorlessAfter: number;
   errors: string[];
 };
@@ -66,7 +66,7 @@ export async function runStorageRepairPipeline(args: {
       sqliteOrphansRebuilt: 0,
       sqliteOrphansSkipped: 0,
     },
-    dedupe: { duplicateIds: 0, deduplicated: 0 },
+    dedupe: { duplicateIds: 0, deduplicated: 0, skipped: 0 },
     vectorlessAfter: 0,
     errors: [],
   };
@@ -153,13 +153,28 @@ export async function runStorageRepairPipeline(args: {
       .map(([id]) => id);
     report.dedupe.duplicateIds = duplicateIds.length;
 
-    const dedupeLimit = Math.min(resolveStorageRepairBudget(policy, maxFixes), duplicateIds.length);
+    // Share the same per-invocation budget with the sqliteOrphans rebuild above (both consume one
+    // embed-API call per item) rather than getting an independent `maxFixes` allowance — otherwise
+    // a single invocation could perform up to 2x the documented cap's worth of embedding calls.
+    const consumedSoFar = report.reembedded + report.reconcile.sqliteOrphansRebuilt;
+    const dedupeBudget = Math.max(0, resolveStorageRepairBudget(policy, maxFixes) - consumedSoFar);
+    const dedupeLimit = Math.min(dedupeBudget, duplicateIds.length);
     for (const id of duplicateIds.slice(0, dedupeLimit)) {
       try {
         const fact = args.factsDb.getById(id);
-        if (!fact) continue;
-        await args.vectorDb.delete(id); // predicate delete removes every row sharing this id
+        if (!fact) {
+          // No matching active fact — the vector-orphan reconcile above already deleted every row
+          // sharing this id (computed from the pre-reconcile `vectorIds` snapshot), so this slot is
+          // a no-op; still counted as skipped, matching the sqliteOrphansSkipped convention below.
+          report.dedupe.skipped++;
+          continue;
+        }
+        // Embed BEFORE deleting the duplicate rows: if embed() throws (embedding-provider timeout/
+        // rate-limit/network error), the harmless duplicate is left untouched for the next repair
+        // pass instead of being deleted with nothing to replace it — a transient embed failure must
+        // never turn "too many vectors" into "zero vectors" for this fact.
         const vec = await args.embeddings.embed(fact.text);
+        await args.vectorDb.delete(id); // predicate delete removes every row sharing this id
         await storeCanonicalVectorForFact({
           vectorDb: args.vectorDb,
           factsDb: args.factsDb,
@@ -175,6 +190,7 @@ export async function runStorageRepairPipeline(args: {
         report.errors.push(`dedupe ${id}: ${String(err)}`);
       }
     }
+    report.dedupe.skipped += Math.max(0, duplicateIds.length - dedupeLimit);
   } catch (err) {
     report.errors.push(`reconcile: ${String(err)}`);
   }

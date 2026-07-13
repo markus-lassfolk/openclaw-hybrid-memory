@@ -156,6 +156,107 @@ describe("runStorageRepairPipeline vectorless reembed (#2083)", () => {
     expect(idsAfter.filter((id) => id === stored.id)).toHaveLength(1);
   });
 
+  it("leaves a duplicate untouched (does not delete) when embedding fails, instead of losing the vector (QA follow-up)", async () => {
+    const stored = factsDb.store({
+      text: "a fact whose dedupe embed will fail",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    await vectorDb.store({
+      id: stored.id,
+      text: stored.text,
+      vector: [0.1, 0.2, 0.3],
+      importance: 0.5,
+      category: "fact",
+    });
+    await vectorDb.store({
+      id: stored.id,
+      text: stored.text,
+      vector: [0.4, 0.5, 0.6],
+      importance: 0.5,
+      category: "fact",
+    });
+    expect((await vectorDb.getAllIds()).filter((id) => id === stored.id)).toHaveLength(2);
+
+    const embeddings = {
+      modelName: "test-embedding-model",
+      dimensions: DIM,
+      embed: vi.fn(async () => {
+        throw new Error("embedding provider timed out");
+      }),
+      embedBatch: vi.fn(async (texts: string[]) => texts.map(() => [0.1, 0.2, 0.3])),
+    };
+    const report = await runStorageRepairPipeline({ factsDb, vectorDb, embeddings, skipReembed: true });
+
+    expect(report.dedupe.duplicateIds).toBe(1);
+    expect(report.dedupe.deduplicated).toBe(0);
+    expect(report.errors.some((e) => e.includes(stored.id))).toBe(true);
+
+    // The core regression: a failed re-embed must not have deleted the (harmless) duplicate rows
+    // first — the fact must still have at least one vector, not zero.
+    const idsAfter = await vectorDb.getAllIds();
+    expect(idsAfter.filter((id) => id === stored.id).length).toBeGreaterThan(0);
+  });
+
+  it("shares one repair budget between sqliteOrphans rebuild and dedupe instead of doubling it (QA follow-up)", async () => {
+    // Two facts: one is a genuine sqliteOrphan (missing from Lance), one has a duplicate Lance row.
+    // maxFixes=1 should cap the combined embed-consuming work at 1 total, not 1 per phase.
+    const orphanFact = factsDb.store({
+      text: "orphan fact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    factsDb.setEmbeddingModel(orphanFact.id, "test-embedding-model");
+    factsDb.storeEmbedding(orphanFact.id, "test-embedding-model", "canonical", new Float32Array([0.1, 0.2, 0.3]), DIM);
+
+    const dupFact = factsDb.store({
+      text: "duplicated fact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    await vectorDb.store({
+      id: dupFact.id,
+      text: dupFact.text,
+      vector: [0.1, 0.2, 0.3],
+      importance: 0.5,
+      category: "fact",
+    });
+    await vectorDb.store({
+      id: dupFact.id,
+      text: dupFact.text,
+      vector: [0.4, 0.5, 0.6],
+      importance: 0.5,
+      category: "fact",
+    });
+
+    const embeddings = makeEmbeddings();
+    const report = await runStorageRepairPipeline({
+      factsDb,
+      vectorDb,
+      embeddings,
+      skipReembed: true,
+      maxFixes: 1,
+      policy: "balanced",
+    });
+
+    // Exactly one of the two repair-worthy items gets fixed — combined work is capped at maxFixes,
+    // not maxFixes per phase (which would let both through).
+    const totalFixed = report.reconcile.sqliteOrphansRebuilt + report.dedupe.deduplicated;
+    expect(totalFixed).toBe(1);
+  });
+
   it("does not treat a vectorless structured (keyed) fact as a sqliteOrphan (#2080 QA follow-up)", async () => {
     // Structured key/value facts are intentionally excluded from the expected-vector population
     // (#2080) — a structured fact without a Lance row is not drift and must not be reconciled.
