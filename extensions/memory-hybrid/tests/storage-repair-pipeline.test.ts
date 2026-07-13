@@ -113,6 +113,49 @@ describe("runStorageRepairPipeline vectorless reembed (#2083)", () => {
     expect(match?.entry.importance).toBeCloseTo(0.42, 5);
   });
 
+  it("deduplicates a duplicate live Lance row for a still-active fact id (structural drift repair)", async () => {
+    // VectorDB.store()'s EEXIST-recovery path only fires on an actual LanceDB write error, but
+    // LanceDB never rejects a second add() for a pre-existing id — a plain add() silently appends
+    // a second live row instead. Reproduce that directly (bypassing the FactsDB store path) so the
+    // repair pipeline sees a genuine duplicate-id structural drift, not an ID-set orphan.
+    const stored = factsDb.store({
+      text: "a fact whose vector got duplicated",
+      category: "fact",
+      importance: 0.6,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    await vectorDb.store({
+      id: stored.id,
+      text: stored.text,
+      vector: [0.1, 0.2, 0.3],
+      importance: 0.6,
+      category: "fact",
+    });
+    await vectorDb.store({
+      id: stored.id,
+      text: stored.text,
+      vector: [0.4, 0.5, 0.6],
+      importance: 0.6,
+      category: "fact",
+    });
+
+    const idsBefore = await vectorDb.getAllIds();
+    expect(idsBefore.filter((id) => id === stored.id)).toHaveLength(2);
+
+    const embeddings = makeEmbeddings();
+    const report = await runStorageRepairPipeline({ factsDb, vectorDb, embeddings, skipReembed: true });
+
+    expect(report.dedupe.duplicateIds).toBe(1);
+    expect(report.dedupe.deduplicated).toBe(1);
+    expect(report.errors).toEqual([]);
+
+    const idsAfter = await vectorDb.getAllIds();
+    expect(idsAfter.filter((id) => id === stored.id)).toHaveLength(1);
+  });
+
   it("does not treat a vectorless structured (keyed) fact as a sqliteOrphan (#2080 QA follow-up)", async () => {
     // Structured key/value facts are intentionally excluded from the expected-vector population
     // (#2080) — a structured fact without a Lance row is not drift and must not be reconciled.

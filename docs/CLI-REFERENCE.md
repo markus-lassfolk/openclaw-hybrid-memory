@@ -336,13 +336,20 @@ openclaw hybrid-mem verify --json 2>verify-human.log | jq '.ok'
 
 The same contract applies to other JSON commands (`status --json`, `skills queue --json`, `config` when emitting JSON, etc.): do not parse stdout as JSON if you did not pass `--json`, and avoid mixing log lines into stdout in custom wrappers.
 
-`openclaw hybrid-mem doctor` adds a guided onboarding wrapper around install + verify:
+`openclaw hybrid-mem doctor` runs a standalone set of health diagnostics (🟢 pass, 🟡 warn, 🔴 fail) covering SQLite/LanceDB connectivity, the embedding provider, config validity, SQLite ↔ LanceDB sync, the alias Lance index (if aliases are enabled), disk space, WAL health, FTS index/trigger consistency, retrieval/recall stats, maintenance job staleness, the error-reporter queue, and quarantined goal files (if goal stewardship is enabled). Exit code is `1` if any check fails.
 
-- step 1: checks/applies recommended defaults (`install`)
-- step 2: runs runtime/storage checks (`verify`)
-- step 3: prints remediation summary and next actions
+`--fix` repairs what it safely can, then re-checks and reports the real post-repair state (not just "a repair ran"):
 
-Use `--fix` to apply install defaults and verify repairs, or `--dry-run` to preview changes.
+- **FTS population drift** — rebuilds `facts_fts` from `facts`.
+- **Storage structural drift** (duplicate/fragmented Lance rows, no orphans) — runs the same repair `verify --fix` uses (optimize + dedupe + rebuild), matching issue [#2103](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2103).
+- **Alias Lance index mismatch** — rebuilds the alias Lance table from SQLite (re-embeds if the dimension changed).
+- **Quarantined goal files** — restores any `.json.corrupt` goal file that still parses as valid Goal JSON.
+
+Add **`--reconcile`** to also check for SQLite ↔ LanceDB **orphan** drift (mismatched ID sets; issue [#904](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/904)). `--reconcile` alone is report-only; combine with `--fix` (`doctor --fix --reconcile`) to actually delete vector-side orphans and rebuild missing SQLite-side vectors — the one destructive repair in scope, so doctor takes a checkpoint backup first and aborts the repair (leaving the drift untouched) if the backup fails. `--reconcile-policy <conservative|balanced|aggressive>` (default `balanced`) and `--reconcile-max-fixes <n>` bound how much rebuild work runs, mirroring `verify --reconcile --fix`.
+
+`--deep` additionally runs a savepointed FTS trigger round-trip probe (insert/update/delete).
+
+Checks that need human judgement or aren't safely repairable from inside the running process stay suggestion-only: SQLite/LanceDB connection failures, missing/misconfigured embedding provider, low disk space, WAL disabled/unavailable/circuit-breaker-tripped/journal-corrupt, FTS structural problems (missing table/columns/triggers — needs a migration + restart), and stale maintenance jobs.
 
 ---
 

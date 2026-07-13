@@ -2,6 +2,8 @@
  * Unified SQLite ↔ LanceDB sync diagnostics and verify/doctor auto-repair.
  */
 
+import { capturePluginError } from "../../../services/error-reporter.js";
+import { runStorageRepairPipeline, runStorageStructuralRepair } from "../../../services/storage-repair-pipeline.js";
 import {
   collectStorageSyncSnapshot,
   formatStorageSyncSummary,
@@ -10,8 +12,6 @@ import {
   STORAGE_REPAIR_REMEDIATION,
   type StorageSyncSnapshot,
 } from "../../../services/storage-sync-diagnostics.js";
-import { runStorageRepairPipeline, runStorageStructuralRepair } from "../../../services/storage-repair-pipeline.js";
-import { capturePluginError } from "../../../services/error-reporter.js";
 import type { VerifyRunState } from "../verify-run-state.js";
 
 /**
@@ -144,7 +144,7 @@ export async function applyStorageStructuralFixIfNeeded(
     reconcileMaxFixes: state.opts.reconcileMaxFixes ?? 200,
   };
 
-  log(`\n───── Storage structural repair (--fix) ─────`);
+  log("\n───── Storage structural repair (--fix) ─────");
   try {
     const { optimize, repair, errors } = await runStorageStructuralRepair({
       factsDb: state.factsDb,
@@ -159,7 +159,7 @@ export async function applyStorageStructuralFixIfNeeded(
     );
     if (repair) {
       log(
-        `  → repair: vectorOrphansDeleted=${repair.reconcile.vectorOrphansDeleted} sqliteOrphansRebuilt=${repair.reconcile.sqliteOrphansRebuilt} reembedded=${repair.reembedded}`,
+        `  → repair: vectorOrphansDeleted=${repair.reconcile.vectorOrphansDeleted} sqliteOrphansRebuilt=${repair.reconcile.sqliteOrphansRebuilt} reembedded=${repair.reembedded} deduplicated=${repair.dedupe.deduplicated}`,
       );
     }
     if (errors.length > 0) {

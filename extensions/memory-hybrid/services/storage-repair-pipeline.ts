@@ -21,6 +21,14 @@ export type StorageRepairReport = {
     sqliteOrphansRebuilt: number;
     sqliteOrphansSkipped: number;
   };
+  /**
+   * Duplicate live Lance rows for a still-active fact id (structural drift). VectorDB.store()'s
+   * EEXIST-recovery path only fires on an actual LanceDB write error, but LanceDB never rejects a
+   * second add() for a pre-existing id — it silently appends a second live row instead. The vector-
+   * orphan reconcile above only removes rows for ids with no matching active fact, so a duplicate
+   * for a still-valid id survives untouched without this pass.
+   */
+  dedupe: { duplicateIds: number; deduplicated: number };
   vectorlessAfter: number;
   errors: string[];
 };
@@ -58,6 +66,7 @@ export async function runStorageRepairPipeline(args: {
       sqliteOrphansRebuilt: 0,
       sqliteOrphansSkipped: 0,
     },
+    dedupe: { duplicateIds: 0, deduplicated: 0 },
     vectorlessAfter: 0,
     errors: [],
   };
@@ -131,6 +140,41 @@ export async function runStorageRepairPipeline(args: {
       }
     }
     report.reconcile.sqliteOrphansSkipped += Math.max(0, sqliteOrphans.length - rebuildLimit);
+
+    // Duplicate live rows for an id that still has a matching active fact — see the `dedupe`
+    // field doc comment above for why the store()-level EEXIST recovery never catches these.
+    // Computed from the pre-reconcile `vectorIds` snapshot; ids with no active fact are excluded
+    // below (skip, don't count) since the vector-orphan delete above already cleared every row
+    // sharing that id, so there's nothing left here to deduplicate.
+    const idCounts = new Map<string, number>();
+    for (const id of vectorIds) idCounts.set(id, (idCounts.get(id) ?? 0) + 1);
+    const duplicateIds = Array.from(idCounts.entries())
+      .filter(([, count]) => count > 1)
+      .map(([id]) => id);
+    report.dedupe.duplicateIds = duplicateIds.length;
+
+    const dedupeLimit = Math.min(resolveStorageRepairBudget(policy, maxFixes), duplicateIds.length);
+    for (const id of duplicateIds.slice(0, dedupeLimit)) {
+      try {
+        const fact = args.factsDb.getById(id);
+        if (!fact) continue;
+        await args.vectorDb.delete(id); // predicate delete removes every row sharing this id
+        const vec = await args.embeddings.embed(fact.text);
+        await storeCanonicalVectorForFact({
+          vectorDb: args.vectorDb,
+          factsDb: args.factsDb,
+          factId: fact.id,
+          text: fact.text,
+          vector: vec,
+          importance: fact.importance ?? 0.5,
+          category: fact.category,
+          embeddingModel: args.embeddings.modelName,
+        });
+        report.dedupe.deduplicated++;
+      } catch (err) {
+        report.errors.push(`dedupe ${id}: ${String(err)}`);
+      }
+    }
   } catch (err) {
     report.errors.push(`reconcile: ${String(err)}`);
   }
