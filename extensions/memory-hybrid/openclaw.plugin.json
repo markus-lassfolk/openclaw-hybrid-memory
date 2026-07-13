@@ -15,6 +15,11 @@
       "credential_delete",
       "credential_get",
       "credential_list",
+      "credential_revision_get",
+      "credential_revision_list",
+      "credential_revision_pin",
+      "credential_revision_purge",
+      "credential_revision_restore",
       "credential_store",
       "diary_read",
       "diary_write",
@@ -1164,6 +1169,18 @@
           "revealInContent": {
             "type": "boolean",
             "description": "When true, include the raw credential value in the plain-text tool content. Default: false. Only enable for explicit local debugging — content is commonly persisted in transcripts, logs, and memory-extraction pipelines."
+          },
+          "revisionsEnabled": {
+            "type": "boolean",
+            "description": "Keep a replaced credential's previous value as a historical revision instead of discarding it immediately (default: true)."
+          },
+          "revisionTtlDays": {
+            "type": "number",
+            "description": "Retention window in days for a replaced credential's historical revision (default: 30)."
+          },
+          "revisionAccessRefresh": {
+            "type": "boolean",
+            "description": "When true (default), retrieving a specific revision extends its retention TTL from now."
           }
         },
         "description": "Credential vault: enabled=true. Optionally set encryptionKey (or env:OPENCLAW_CRED_KEY) for encryption; omit for plaintext vault."

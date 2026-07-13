@@ -141,6 +141,11 @@ Full bootstrap (DB init, vault open, doctor/config checks) logs a lot of `info`-
 | `credentials get --service <name> [--type <type>] [--value-only] [--show-value]` | Retrieve a credential value. Use `--type` when multiple types exist for the service. `--value-only`: print only the secret (for piping). `--show-value`: reveal the secret in the default (metadata) output. |
 | `credentials audit [--json]` | Flag suspicious entries (natural language, long service names, duplicates). |
 | `credentials prune [--yes] [--only-flags ...]` | Remove flagged entries (default: dry-run; use `--yes` to apply). |
+| `credentials revisions list --service <name> --type <type> [--json]` | List historical revisions kept when a credential is overwritten (issue #2104) — metadata only, no values. |
+| `credentials revisions get --service <name> --type <type> --revision <id> [--show-value\|--value-only] [--json]` | Retrieve a specific revision's value intentionally. Masked by default. |
+| `credentials revisions restore --service <name> --type <type> --revision <id> [--yes]` | Restore/promote a revision back to current (default: dry-run; use `--yes` to apply). The value it replaces is itself kept as a new revision. |
+| `credentials revisions purge --service <name> --type <type> [--revision <id>\|--all] [--yes]` | Hard-delete revision(s) — cannot be undone (default: dry-run; use `--yes` to apply). |
+| `credentials revisions pin --service <name> --type <type> --revision <id> [--unpin]` | Pin a revision so it never expires, or `--unpin` to re-expose it to normal TTL expiry. |
 | `contacts list [--prefix <name>] [--limit <n>] [--json]` | List contacts (id, name, role, org, email). Issue #2014. |
 | `contacts suggest-merges [--json]` | List unambiguous partial-name duplicate candidates (e.g. "Daniel" vs. "Daniel Thunberg"). |
 | `contacts merge <fromId> <intoId>` | Merge `fromId` into `intoId` (each arg accepts a contact id **or** a name): repoints NER mentions and `entity_contact_id` FKs, folds in profile fields (manual wins conflicts), deletes `fromId`. |

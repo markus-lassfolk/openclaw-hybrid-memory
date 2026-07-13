@@ -345,6 +345,84 @@ export function runCredentialsGetForCli(
 // credentials prune
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// credentials revisions (#2104)
+// ---------------------------------------------------------------------------
+
+/** CLI-originated revision operations are attributed to this actor in the audit trail. */
+const CLI_REVISION_ACTOR = "cli";
+
+/** List historical revisions (metadata only) for a service/type. Returns null when vault is disabled. */
+export function runCredentialRevisionListForCli(
+  ctx: HandlerContext,
+  opts: { service: string; type: CredentialType },
+): import("../backends/credentials-db.js").CredentialRevisionMeta[] | null {
+  const { credentialsDb } = ctx;
+  if (!credentialsDb) return null;
+  return credentialsDb.listRevisions(opts.service.trim(), opts.type);
+}
+
+/** Retrieve a specific revision's decrypted value intentionally. Returns null when not found/disabled. */
+export function runCredentialRevisionGetForCli(
+  ctx: HandlerContext,
+  opts: { service: string; type: CredentialType; revision: string },
+): import("../backends/credentials-db.js").CredentialRevisionEntry | null {
+  const { credentialsDb, cfg } = ctx;
+  if (!credentialsDb) return null;
+  return credentialsDb.getRevision(opts.service.trim(), opts.type, opts.revision.trim(), {
+    refreshAccess: cfg.credentials.revisionAccessRefresh !== false,
+    revisionTtlDays: cfg.credentials.revisionTtlDays,
+    actor: CLI_REVISION_ACTOR,
+  });
+}
+
+/** Restore/promote a revision back to current. Returns null when not found/disabled. */
+export function runCredentialRevisionRestoreForCli(
+  ctx: HandlerContext,
+  opts: { service: string; type: CredentialType; revision: string },
+): import("../backends/credentials-db.js").CredentialEntry | null {
+  const { credentialsDb, cfg } = ctx;
+  if (!credentialsDb) return null;
+  return credentialsDb.restoreRevision(opts.service.trim(), opts.type, opts.revision.trim(), {
+    revisionsEnabled: cfg.credentials.revisionsEnabled !== false,
+    revisionTtlDays: cfg.credentials.revisionTtlDays,
+    actor: CLI_REVISION_ACTOR,
+  });
+}
+
+/** Hard-delete one revision (or every revision for the service/type when `all` is true). */
+export function runCredentialRevisionPurgeForCli(
+  ctx: HandlerContext,
+  opts: { service: string; type: CredentialType; revision?: string; all?: boolean },
+): { purged: number } | null {
+  const { credentialsDb } = ctx;
+  if (!credentialsDb) return null;
+  const service = opts.service.trim();
+  if (opts.all) {
+    return { purged: credentialsDb.purgeAllRevisions(service, opts.type, { actor: CLI_REVISION_ACTOR }) };
+  }
+  if (!opts.revision) return { purged: 0 };
+  const purged = credentialsDb.purgeRevision(service, opts.type, opts.revision.trim(), { actor: CLI_REVISION_ACTOR });
+  return { purged: purged ? 1 : 0 };
+}
+
+/** Pin (never expire) or unpin a revision. Returns null when vault is disabled. */
+export function runCredentialRevisionPinForCli(
+  ctx: HandlerContext,
+  opts: { service: string; type: CredentialType; revision: string; pinned: boolean },
+): { changed: boolean } | null {
+  const { credentialsDb } = ctx;
+  if (!credentialsDb) return null;
+  const changed = credentialsDb.pinRevision(opts.service.trim(), opts.type, opts.revision.trim(), opts.pinned, {
+    actor: CLI_REVISION_ACTOR,
+  });
+  return { changed };
+}
+
+// ---------------------------------------------------------------------------
+// credentials prune
+// ---------------------------------------------------------------------------
+
 /**
  * Prune credentials vault: remove entries flagged by audit. Default dry-run; use --yes to apply.
  */

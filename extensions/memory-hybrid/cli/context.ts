@@ -72,6 +72,33 @@ export type ManageContext = {
   }) => { service: string; type: string; value: string; url: string | null; notes: string | null } | null;
   runCredentialsAudit: () => CredentialsAuditResult;
   runCredentialsPrune: (opts: { dryRun: boolean; yes?: boolean; onlyFlags?: string[] }) => CredentialsPruneResult;
+  /** Historical credential revisions (issue #2104). All return null when the vault is disabled. */
+  runCredentialRevisionList: (opts: {
+    service: string;
+    type: import("../config.js").CredentialType;
+  }) => import("../backends/credentials-db.js").CredentialRevisionMeta[] | null;
+  runCredentialRevisionGet: (opts: {
+    service: string;
+    type: import("../config.js").CredentialType;
+    revision: string;
+  }) => import("../backends/credentials-db.js").CredentialRevisionEntry | null;
+  runCredentialRevisionRestore: (opts: {
+    service: string;
+    type: import("../config.js").CredentialType;
+    revision: string;
+  }) => import("../backends/credentials-db.js").CredentialEntry | null;
+  runCredentialRevisionPurge: (opts: {
+    service: string;
+    type: import("../config.js").CredentialType;
+    revision?: string;
+    all?: boolean;
+  }) => { purged: number } | null;
+  runCredentialRevisionPin: (opts: {
+    service: string;
+    type: import("../config.js").CredentialType;
+    revision: string;
+    pinned: boolean;
+  }) => { changed: boolean } | null;
   runUninstall: (opts: { cleanAll: boolean; leaveConfig: boolean }) => Promise<UninstallCliResult>;
   runUpgrade: (version?: string) => Promise<UpgradeCliResult>;
   runConfigView: (

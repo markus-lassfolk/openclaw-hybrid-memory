@@ -3,6 +3,7 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
+import { CREDENTIAL_TYPES, type CredentialType } from "../../../config.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { deleteVectorsForFactIds } from "../../../services/vector-maintenance.js";
 import type { ScopeFilter } from "../../../types/memory.js";
@@ -12,6 +13,14 @@ import { type Chainable, withExit } from "../../shared.js";
 import type { MigrateToVaultResult } from "../../types.js";
 import type { ManageBindings } from "./bindings.js";
 import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
+
+/** Validates a `--type` value against the credential type enum, printing a standard CLI error. */
+function parseRevisionCredentialType(raw: string): CredentialType | null {
+  if ((CREDENTIAL_TYPES as readonly string[]).includes(raw)) return raw as CredentialType;
+  console.error(`error: --type must be one of ${CREDENTIAL_TYPES.join(", ")}`);
+  process.exitCode = 1;
+  return null;
+}
 
 export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindings): void {
   const {
@@ -25,6 +34,11 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
     runCredentialsGet,
     runCredentialsAudit,
     runCredentialsPrune,
+    runCredentialRevisionList,
+    runCredentialRevisionGet,
+    runCredentialRevisionRestore,
+    runCredentialRevisionPurge,
+    runCredentialRevisionPin,
   } = b;
 
   const credentials = mem.command("credentials").description("Manage credentials (vaulted)");
@@ -346,6 +360,218 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
         } else {
           console.log(`Removed ${res.removed} entries.`);
         }
+      }),
+    );
+
+  const revisions = credentials
+    .command("revisions")
+    .description("Manage historical credential revisions — kept when an existing credential is overwritten (#2104)");
+
+  revisions
+    .command("list")
+    .description("List historical revisions for a credential (metadata only — values are never listed)")
+    .requiredOption("--service <name>", "Service name")
+    .requiredOption("--type <type>", "Credential type (token, password, api_key, ssh, bearer, other)")
+    .option("--json", "Output as JSON")
+    .action(
+      withExit(async (opts: { service: string; type: string; json?: boolean }) => {
+        const type = parseRevisionCredentialType(opts.type);
+        if (!type) return;
+        const revs = runCredentialRevisionList({ service: opts.service, type });
+        if (revs === null) {
+          console.log("Credentials vault is not available (disabled or not configured).");
+          return;
+        }
+        if (opts.json) {
+          console.log(JSON.stringify(revs, null, 2));
+          return;
+        }
+        if (revs.length === 0) {
+          console.log(`No revisions found for ${opts.service} (${type}).`);
+          return;
+        }
+        console.log(`Revisions for ${opts.service} (${type}) — newest first:`);
+        for (const r of revs) {
+          const expiry = r.pinnedAt
+            ? "pinned (never expires)"
+            : r.expiresAt
+              ? `expires ${new Date(r.expiresAt * 1000).toISOString()}`
+              : "no expiry";
+          console.log(
+            `  ${r.id}  replaced ${new Date(r.replacedAt * 1000).toISOString()}  ${expiry}${r.url ? `  url=${r.url}` : ""}`,
+          );
+        }
+      }),
+    );
+
+  revisions
+    .command("get")
+    .description("Retrieve a specific revision's value intentionally (never shown by `revisions list`)")
+    .requiredOption("--service <name>", "Service name")
+    .requiredOption("--type <type>", "Credential type")
+    .requiredOption("--revision <id>", "Revision id (from `credentials revisions list`)")
+    .option("--show-value", "Reveal the secret value in the default output. Without this the value is masked.")
+    .option("--value-only", "Print only the secret value (for piping); no metadata.")
+    .option("--json", "Output as JSON")
+    .action(
+      withExit(
+        async (opts: {
+          service: string;
+          type: string;
+          revision: string;
+          showValue?: boolean;
+          valueOnly?: boolean;
+          json?: boolean;
+        }) => {
+          const type = parseRevisionCredentialType(opts.type);
+          if (!type) return;
+          const entry = runCredentialRevisionGet({ service: opts.service, type, revision: opts.revision });
+          if (!entry) {
+            console.error(`No revision "${opts.revision}" found for ${opts.service} (${type}).`);
+            process.exitCode = 1;
+            return;
+          }
+          if (opts.valueOnly) {
+            withMachineOutputStdoutSuppressed(() => {
+              process.stdout.write(entry.value);
+            });
+            return;
+          }
+          if (opts.json) {
+            console.log(JSON.stringify(entry, null, 2));
+            return;
+          }
+          console.log(`revision: ${entry.id}`);
+          console.log(`service: ${entry.service}`);
+          console.log(`type: ${entry.type}`);
+          if (opts.showValue) {
+            console.log(`value: ${entry.value}`);
+          } else {
+            console.log("value: *** (use --show-value to reveal, or --value-only to pipe)");
+          }
+          if (entry.url) console.log(`url: ${entry.url}`);
+          if (entry.notes) console.log(`notes: ${entry.notes}`);
+          console.log(`replacedAt: ${new Date(entry.replacedAt * 1000).toISOString()}`);
+          console.log(
+            entry.pinnedAt
+              ? "pinned: yes"
+              : `expiresAt: ${entry.expiresAt ? new Date(entry.expiresAt * 1000).toISOString() : "n/a"}`,
+          );
+        },
+      ),
+    );
+
+  revisions
+    .command("restore")
+    .description("Restore/promote a historical revision back to current (default: dry-run; use --yes to apply)")
+    .requiredOption("--service <name>", "Service name")
+    .requiredOption("--type <type>", "Credential type")
+    .requiredOption("--revision <id>", "Revision id to restore")
+    .option("--yes", "Apply the restore (default: dry-run preview)")
+    .action(
+      withExit(async (opts: { service: string; type: string; revision: string; yes?: boolean }) => {
+        const type = parseRevisionCredentialType(opts.type);
+        if (!type) return;
+        if (!opts.yes) {
+          const existing = runCredentialRevisionList({ service: opts.service, type });
+          if (existing === null) {
+            console.log("Credentials vault is not available (disabled or not configured).");
+            return;
+          }
+          const match = existing.find((r) => r.id === opts.revision);
+          if (!match) {
+            console.error(`No revision "${opts.revision}" found for ${opts.service} (${type}).`);
+            process.exitCode = 1;
+            return;
+          }
+          console.log(
+            `Would restore revision ${match.id} (replaced ${new Date(match.replacedAt * 1000).toISOString()}) to current for ${opts.service} (${type}).`,
+          );
+          console.log("Dry-run only. Run with --yes to apply.");
+          return;
+        }
+        const restored = runCredentialRevisionRestore({ service: opts.service, type, revision: opts.revision });
+        if (!restored) {
+          console.error(`No revision "${opts.revision}" found for ${opts.service} (${type}), or vault disabled.`);
+          process.exitCode = 1;
+          return;
+        }
+        console.log(`Restored revision ${opts.revision} to current for ${opts.service} (${type}).`);
+      }),
+    );
+
+  revisions
+    .command("purge")
+    .description("Hard-delete revision(s) — cannot be undone (default: dry-run; use --yes to apply)")
+    .requiredOption("--service <name>", "Service name")
+    .requiredOption("--type <type>", "Credential type")
+    .option("--revision <id>", "Revision id to purge (omit when --all is set)")
+    .option("--all", "Purge every revision for this service/type")
+    .option("--yes", "Apply the purge (default: dry-run preview)")
+    .action(
+      withExit(
+        async (opts: { service: string; type: string; revision?: string; all?: boolean; yes?: boolean }) => {
+          const type = parseRevisionCredentialType(opts.type);
+          if (!type) return;
+          if (!opts.revision && !opts.all) {
+            console.error("error: specify --revision <id> or --all");
+            process.exitCode = 1;
+            return;
+          }
+          const existing = runCredentialRevisionList({ service: opts.service, type });
+          if (existing === null) {
+            console.log("Credentials vault is not available (disabled or not configured).");
+            return;
+          }
+          const targets = opts.all ? existing : existing.filter((r) => r.id === opts.revision);
+          if (targets.length === 0) {
+            console.log(
+              opts.all
+                ? `No revisions to purge for ${opts.service} (${type}).`
+                : `No revision "${opts.revision}" found for ${opts.service} (${type}).`,
+            );
+            return;
+          }
+          if (!opts.yes) {
+            console.log(`Would purge ${targets.length} revision(s) for ${opts.service} (${type}):`);
+            for (const r of targets) console.log(`  ${r.id}`);
+            console.log("Dry-run only. Run with --yes to apply.");
+            return;
+          }
+          const result = runCredentialRevisionPurge({
+            service: opts.service,
+            type,
+            revision: opts.revision,
+            all: opts.all,
+          });
+          console.log(`Purged ${result?.purged ?? 0} revision(s) for ${opts.service} (${type}).`);
+        },
+      ),
+    );
+
+  revisions
+    .command("pin")
+    .description("Pin a revision so it never expires, or --unpin to re-expose it to normal TTL expiry")
+    .requiredOption("--service <name>", "Service name")
+    .requiredOption("--type <type>", "Credential type")
+    .requiredOption("--revision <id>", "Revision id")
+    .option("--unpin", "Unpin instead of pin")
+    .action(
+      withExit(async (opts: { service: string; type: string; revision: string; unpin?: boolean }) => {
+        const type = parseRevisionCredentialType(opts.type);
+        if (!type) return;
+        const pinned = !opts.unpin;
+        const result = runCredentialRevisionPin({ service: opts.service, type, revision: opts.revision, pinned });
+        if (result === null) {
+          console.log("Credentials vault is not available (disabled or not configured).");
+          return;
+        }
+        if (!result.changed) {
+          console.error(`No revision "${opts.revision}" found for ${opts.service} (${type}).`);
+          process.exitCode = 1;
+          return;
+        }
+        console.log(`Revision ${opts.revision} for ${opts.service} (${type}) is now ${pinned ? "pinned" : "unpinned"}.`);
       }),
     );
 

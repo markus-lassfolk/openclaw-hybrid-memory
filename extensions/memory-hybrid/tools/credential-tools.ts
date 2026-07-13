@@ -28,10 +28,16 @@ export interface PluginContext {
   vectorDb?: VectorDB | null;
   cfg: HybridMemoryConfig;
   api: ClawdbotPluginApi;
+  currentAgentIdRef?: { value: string | null };
 }
 
 export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginApi): void {
-  const { credentialsDb, factsDb, vectorDb, cfg } = ctx;
+  const { credentialsDb, factsDb, vectorDb, cfg, currentAgentIdRef } = ctx;
+  const storeOpts = () => ({
+    revisionsEnabled: cfg.credentials.revisionsEnabled !== false,
+    revisionTtlDays: cfg.credentials.revisionTtlDays,
+    replacedBy: currentAgentIdRef?.value ?? null,
+  });
 
   if (cfg.credentials.enabled && credentialsDb) {
     api.registerTool(
@@ -73,7 +79,7 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
           // deleting the row outright (which would also discard this pre-existing value).
           const priorEntry = credentialsDb.get(service, type);
           try {
-            credentialsDb.store({ service, type, value, url: urlTrim, notes: notesTrim, expires });
+            credentialsDb.store({ service, type, value, url: urlTrim, notes: notesTrim, expires }, storeOpts());
           } catch (err) {
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {
               subsystem: "credentials",
@@ -92,8 +98,20 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
             rollbackVaultCredentialWrite(credentialsDb, service, type, undefined, priorEntry);
             throw new Error("Credential pointer rejected by pre-store guard");
           }
+          // #2104: surface the retention behavior so an operator overwriting a value (e.g. during a
+          // migration) knows the old value is recoverable, instead of discovering this only later.
+          let retentionNote = "";
+          if (priorEntry && cfg.credentials.revisionsEnabled !== false) {
+            const ttlDays = cfg.credentials.revisionTtlDays ?? 30;
+            const revisions = credentialsDb.listRevisions(service, type);
+            const newest = revisions[0];
+            if (newest) {
+              const expiresLabel = newest.expiresAt ? formatTimestampUtc(newest.expiresAt) : "never (pinned)";
+              retentionNote = ` Previous value retained as revision ${newest.id} until ${expiresLabel} (${ttlDays}-day retention) unless accessed/pinned/purged.`;
+            }
+          }
           return {
-            content: [{ type: "text", text: `Stored credential for ${service} (${type}).` }],
+            content: [{ type: "text", text: `Stored credential for ${service} (${type}).${retentionNote}` }],
             details: { service, type },
           };
         },
@@ -273,6 +291,210 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
         },
       },
       { name: "credential_delete" },
+    );
+
+    api.registerTool(
+      {
+        name: "credential_revision_list",
+        label: "List Credential Revisions",
+        description:
+          "List historical revisions of a credential (issue #2104) — metadata only (id, url, notes, timestamps, pinned state). Never exposes values; use credential_revision_get to retrieve one intentionally.",
+        parameters: Type.Object({
+          service: Type.String({ description: "Service name" }),
+          type: stringEnum(CREDENTIAL_TYPES as unknown as readonly string[]),
+        }),
+        async execute(_toolCallId: string, params: Record<string, unknown>) {
+          const { service, type } = params as { service: string; type: CredentialType };
+          if (!credentialsDb) throw new Error("Credentials store not available");
+          const revisions = credentialsDb.listRevisions(service, type);
+          if (revisions.length === 0) {
+            return {
+              content: [{ type: "text", text: `No revisions found for ${service} (${type}).` }],
+              details: { count: 0, revisions: [] },
+            };
+          }
+          const lines = revisions.map(
+            (r) =>
+              `- ${r.id} replaced ${formatTimestampUtc(r.replacedAt)}${r.pinnedAt ? " [pinned]" : ` (expires ${r.expiresAt ? formatTimestampUtc(r.expiresAt) : "n/a"})`}`,
+          );
+          return {
+            content: [{ type: "text", text: `Revisions for ${service} (${type}):\n${lines.join("\n")}` }],
+            details: { count: revisions.length, revisions },
+          };
+        },
+      },
+      { name: "credential_revision_list" },
+    );
+
+    api.registerTool(
+      {
+        name: "credential_revision_get",
+        label: "Get Credential Revision",
+        description:
+          "Retrieve a specific historical credential revision's value intentionally (issue #2104). Never returned from a list call. Unless disabled, accessing a revision refreshes its retention TTL.",
+        parameters: Type.Object({
+          service: Type.String({ description: "Service name" }),
+          type: stringEnum(CREDENTIAL_TYPES as unknown as readonly string[]),
+          revision: Type.String({ description: "Revision id (from credential_revision_list)" }),
+        }),
+        async execute(_toolCallId: string, params: Record<string, unknown>) {
+          const { service, type, revision } = params as { service: string; type: CredentialType; revision: string };
+          if (!credentialsDb) throw new Error("Credentials store not available");
+          const entry = credentialsDb.getRevision(service, type, revision, {
+            refreshAccess: cfg.credentials.revisionAccessRefresh !== false,
+            revisionTtlDays: cfg.credentials.revisionTtlDays,
+            actor: currentAgentIdRef?.value ?? null,
+          });
+          if (!entry) {
+            return {
+              content: [{ type: "text", text: `No revision "${revision}" found for ${service} (${type}).` }],
+              details: { found: false },
+            };
+          }
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Revision ${entry.id} for ${entry.service} (${entry.type}) retrieved. Value available in structured details (sensitiveFields: ["value"]).`,
+              },
+            ],
+            details: {
+              service: entry.service,
+              type: entry.type,
+              url: entry.url,
+              value: entry.value,
+              replacedAt: entry.replacedAt,
+              expiresAt: entry.expiresAt,
+              pinnedAt: entry.pinnedAt,
+              sensitiveFields: ["value"],
+            },
+          };
+        },
+      },
+      { name: "credential_revision_get" },
+    );
+
+    api.registerTool(
+      {
+        name: "credential_revision_restore",
+        label: "Restore Credential Revision",
+        description:
+          "Restore/promote a historical credential revision back to current (issue #2104). The value it replaces is itself kept as a new revision, so restoring never discards data outright.",
+        parameters: Type.Object({
+          service: Type.String({ description: "Service name" }),
+          type: stringEnum(CREDENTIAL_TYPES as unknown as readonly string[]),
+          revision: Type.String({ description: "Revision id to restore (from credential_revision_list)" }),
+        }),
+        async execute(_toolCallId: string, params: Record<string, unknown>) {
+          const { service, type, revision } = params as { service: string; type: CredentialType; revision: string };
+          if (!credentialsDb) throw new Error("Credentials store not available");
+          const restored = credentialsDb.restoreRevision(service, type, revision, {
+            revisionsEnabled: cfg.credentials.revisionsEnabled !== false,
+            revisionTtlDays: cfg.credentials.revisionTtlDays,
+            actor: currentAgentIdRef?.value ?? null,
+          });
+          if (!restored) {
+            return {
+              content: [{ type: "text", text: `No revision "${revision}" found for ${service} (${type}).` }],
+              details: { restored: false },
+            };
+          }
+          return {
+            content: [
+              { type: "text", text: `Restored revision ${revision} to current for ${service} (${type}).` },
+            ],
+            details: { restored: true, service, type },
+          };
+        },
+      },
+      { name: "credential_revision_restore" },
+    );
+
+    api.registerTool(
+      {
+        name: "credential_revision_purge",
+        label: "Purge Credential Revision",
+        description:
+          "Hard-delete historical credential revision(s) (issue #2104). Pass revision to purge one specific revision, or all=true to purge every revision for the service/type. This cannot be undone.",
+        parameters: Type.Object({
+          service: Type.String({ description: "Service name" }),
+          type: stringEnum(CREDENTIAL_TYPES as unknown as readonly string[]),
+          revision: Type.Optional(Type.String({ description: "Revision id to purge (omit when all=true)" })),
+          all: Type.Optional(Type.Boolean({ description: "Purge every revision for this service/type" })),
+        }),
+        async execute(_toolCallId: string, params: Record<string, unknown>) {
+          const { service, type, revision, all } = params as {
+            service: string;
+            type: CredentialType;
+            revision?: string;
+            all?: boolean;
+          };
+          if (!credentialsDb) throw new Error("Credentials store not available");
+          const actor = currentAgentIdRef?.value ?? null;
+          if (all === true) {
+            const removed = credentialsDb.purgeAllRevisions(service, type, { actor });
+            return {
+              content: [{ type: "text", text: `Purged ${removed} revision(s) for ${service} (${type}).` }],
+              details: { purged: removed },
+            };
+          }
+          if (!revision) {
+            throw new Error("Specify either `revision` or `all: true`");
+          }
+          const purged = credentialsDb.purgeRevision(service, type, revision, { actor });
+          return {
+            content: [
+              {
+                type: "text",
+                text: purged
+                  ? `Purged revision ${revision} for ${service} (${type}).`
+                  : `No revision "${revision}" found for ${service} (${type}).`,
+              },
+            ],
+            details: { purged: purged ? 1 : 0 },
+          };
+        },
+      },
+      { name: "credential_revision_purge" },
+    );
+
+    api.registerTool(
+      {
+        name: "credential_revision_pin",
+        label: "Pin/Unpin Credential Revision",
+        description:
+          "Pin a historical credential revision so it never expires, or unpin it to re-expose it to normal TTL expiry (issue #2104). Useful for known migration rollback records.",
+        parameters: Type.Object({
+          service: Type.String({ description: "Service name" }),
+          type: stringEnum(CREDENTIAL_TYPES as unknown as readonly string[]),
+          revision: Type.String({ description: "Revision id (from credential_revision_list)" }),
+          pinned: Type.Boolean({ description: "true to pin (never expire), false to unpin" }),
+        }),
+        async execute(_toolCallId: string, params: Record<string, unknown>) {
+          const { service, type, revision, pinned } = params as {
+            service: string;
+            type: CredentialType;
+            revision: string;
+            pinned: boolean;
+          };
+          if (!credentialsDb) throw new Error("Credentials store not available");
+          const changed = credentialsDb.pinRevision(service, type, revision, pinned, {
+            actor: currentAgentIdRef?.value ?? null,
+          });
+          return {
+            content: [
+              {
+                type: "text",
+                text: changed
+                  ? `Revision ${revision} for ${service} (${type}) is now ${pinned ? "pinned" : "unpinned"}.`
+                  : `No revision "${revision}" found for ${service} (${type}).`,
+              },
+            ],
+            details: { changed },
+          };
+        },
+      },
+      { name: "credential_revision_pin" },
     );
   }
 }
