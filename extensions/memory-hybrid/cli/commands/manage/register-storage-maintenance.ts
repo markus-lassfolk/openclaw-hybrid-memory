@@ -531,6 +531,7 @@ function registerManageStorageMaintenanceOnParent(
             const canonicalEmbeddings = factsDb.countCanonicalEmbeddings();
             const vectorless = factsDb.countVectorlessActiveFacts();
             const vectorlessBySource = factsDb.vectorlessActiveFactsBySource(5);
+            const vectorlessByCategory = factsDb.vectorlessActiveFactsByCategory(5);
             const procedureTriage = factsDb.triageProcedures({ status: "validated", notPromoted: true, limit: 10_000 });
             const unresolvedContradictions = factsDb.contradictionsCount();
             const verifiedFacts = factsDb.countVerifiedFacts();
@@ -570,6 +571,11 @@ function registerManageStorageMaintenanceOnParent(
             if (vectorlessBySource.length > 0) {
               console.log(
                 `Vectorless by source: ${vectorlessBySource.map((r) => `${r.source}=${r.count}`).join(", ")}`,
+              );
+            }
+            if (vectorlessByCategory.length > 0) {
+              console.log(
+                `Vectorless by category: ${vectorlessByCategory.map((r) => `${r.category}=${r.count}`).join(", ")}`,
               );
             }
             if (lanceDeltaSignificant || canonicalDeltaSignificant) {
@@ -1103,6 +1109,11 @@ function registerManageStorageMaintenanceOnParent(
             }
             const after = opts?.apply ? factsDb.countVectorlessActiveFacts(opts?.source) : before;
             const durationMs = Date.now() - startedAtMs;
+            // #2093: break the remaining backlog down by source/category so an operator can tell
+            // "this is mostly structured-adjacent categories" apart from "genuine indexing gap"
+            // without a separate storage-stats invocation.
+            const vectorlessBySource = factsDb.vectorlessActiveFactsBySource(10);
+            const vectorlessByCategory = factsDb.vectorlessActiveFactsByCategory(10);
             const report: Record<string, unknown> = {
               apply: opts?.apply === true,
               source: opts?.source ?? null,
@@ -1119,6 +1130,8 @@ function registerManageStorageMaintenanceOnParent(
               remaining: after,
               durationMs,
               aborted,
+              vectorlessBySource,
+              vectorlessByCategory,
             };
             if (adaptiveCatchUp) {
               report.adaptive = {
@@ -1207,6 +1220,16 @@ function registerManageStorageMaintenanceOnParent(
             console.log(
               `Vectorless SLO repair: ratio ${(slo.vectorlessRatioAfter * 100).toFixed(2)}% (target ${(slo.targetVectorlessRatio * 100).toFixed(0)}%), clear ${slo.vectorlessToClearForSlo} more, ~${slo.estimatedRunsToReachSlo} run(s) at limit ${slo.recommendedLimitNextRun} batch ${slo.recommendedBatchSizeNextRun}`,
             );
+            if (vectorlessBySource.length > 0) {
+              console.log(
+                `Vectorless by source: ${vectorlessBySource.map((r) => `${r.source}=${r.count}`).join(", ")}`,
+              );
+            }
+            if (vectorlessByCategory.length > 0) {
+              console.log(
+                `Vectorless by category: ${vectorlessByCategory.map((r) => `${r.category}=${r.count}`).join(", ")}`,
+              );
+            }
             if (candidates.length > 0 && !opts?.apply) {
               console.log("Examples:");
               for (const fact of candidates.slice(0, 10)) {

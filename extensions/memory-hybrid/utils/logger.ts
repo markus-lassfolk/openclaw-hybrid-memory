@@ -25,7 +25,7 @@
  * stdout if the host attaches api.logger to stdout).
  */
 
-import { getEnv } from "./env-manager.js";
+import { getEnv, setEnv } from "./env-manager.js";
 
 /** Logger interface matching api.logger from ClawdbotPluginApi */
 export interface PluginLoggerApi {
@@ -53,6 +53,27 @@ export interface PluginLoggerApi {
  */
 export function isHybridMemQuiet(): boolean {
   return getEnv("OPENCLAW_HYBRID_MEM_QUIET") === "1";
+}
+
+/**
+ * Discoverable `--quiet`/`-q` CLI flag (#2095), equivalent to setting
+ * `OPENCLAW_HYBRID_MEM_QUIET=1` — the issue's own suggested options listed both an env var and a
+ * flag, and an env var alone is easy to miss when reading `--help`. Scans raw argv (like
+ * `isHybridMemHelpInvocation`/`argvHasHybridMemVerbose`) rather than Commander opts because this
+ * must run before bootstrap, before any command handler has parsed its own options. Call once,
+ * early in plugin registration, before the first `isHybridMemQuiet()` check.
+ */
+export function applyHybridMemQuietFlagFromArgv(argv: readonly string[] = process.argv): void {
+  const hybridIdx = argv.indexOf("hybrid-mem");
+  if (hybridIdx === -1) return;
+  for (let i = hybridIdx + 1; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--") break;
+    if (arg === "--quiet" || arg === "-q") {
+      setEnv("OPENCLAW_HYBRID_MEM_QUIET", "1");
+      return;
+    }
+  }
 }
 
 /** Silent no-op logger used before initPluginLogger is called. */

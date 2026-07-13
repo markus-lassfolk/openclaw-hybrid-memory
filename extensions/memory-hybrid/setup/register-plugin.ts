@@ -48,7 +48,7 @@ import {
   getCategoryFactRegex,
   getCategoryPreferenceRegex,
 } from "../utils/language-keywords.js";
-import { initPluginLogger, pluginLogger } from "../utils/logger.js";
+import { applyHybridMemQuietFlagFromArgv, initPluginLogger, pluginLogger } from "../utils/logger.js";
 import { buildToolScopeFilter } from "../utils/scope-filter.js";
 import { versionInfo } from "../versionInfo.js";
 import {
@@ -334,6 +334,9 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
 }
 
 function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
+  // Issue #2095: a bare `--quiet`/`-q` flag is equivalent to OPENCLAW_HYBRID_MEM_QUIET=1, set here
+  // (before the env var is first consulted below) so operators don't have to know the env var name.
+  applyHybridMemQuietFlagFromArgv(process.argv);
   // Issue #1230 / #1234 / #1882: machine-output CLI must not write plugin telemetry to stdout.
   // Wrap api.logger to stderr before bootstrap; keep pluginLogger on that same logger delegate.
   // Issue #2095: OPENCLAW_HYBRID_MEM_QUIET=1 further drops info/debug bootstrap noise; composed

@@ -3,19 +3,23 @@
  *
  * Exercises the full memory pipeline — SQLite fact storage, the fact_embeddings cache, LanceDB
  * vector storage, keyword recall, semantic/paraphrase recall, graph link creation + degree
- * counters, episode record/search — using disposable, uniquely-tagged test facts, then verifies
- * complete cleanup and that the storage-sync drift state did not regress.
+ * counters, semantic auto-link (graph-autolink.ts), episode record/search — using disposable,
+ * uniquely-tagged test facts, then verifies complete cleanup and that the storage-sync drift
+ * state did not regress.
  *
  * Safe to run against a production local memory store: every fact/episode is tagged with a
- * unique run id, decayClass="ephemeral", and cleanup always runs (best-effort, tracked per
- * artifact) regardless of where an earlier step failed.
+ * unique run id, decayClass="ephemeral", and best-effort cleanup (tracked per artifact) runs by
+ * default regardless of where an earlier step failed. Pass `cleanup: false` to opt out and leave
+ * the disposable artifacts in place for inspection.
  */
 
 import { randomUUID } from "node:crypto";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
+import type { GraphConfig } from "../config.js";
 import { normalizeVectorId } from "../utils/vector-id.js";
 import type { EmbeddingProvider } from "./embeddings.js";
+import { autoLinkSemanticallySimilarFacts } from "./graph-autolink.js";
 import { collectStorageSyncSnapshot, type StorageSyncSnapshot } from "./storage-sync-diagnostics.js";
 import { storeCanonicalVectorForFact } from "./vector-maintenance.js";
 
@@ -91,8 +95,16 @@ export async function runSmokeE2E(deps: {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   embeddings: EmbeddingProvider;
+  /** Real graph config, so the auto-link verification step exercises the deployed enabled/autoLink
+   *  settings. Omit to skip that step (e.g. a caller that doesn't have the full config on hand). */
+  graphConfig?: GraphConfig;
+  /** Default true. Set false to intentionally leave the disposable test artifacts in place for
+   *  manual inspection (e.g. after investigating a failure) instead of best-effort cleanup. The
+   *  cleanup/cleanup-verify/sync-drift steps report "skip", not "fail", when this is false. */
+  cleanup?: boolean;
 }): Promise<SmokeE2EResult> {
-  const { factsDb, vectorDb, embeddings } = deps;
+  const { factsDb, vectorDb, embeddings, graphConfig } = deps;
+  const cleanupEnabled = deps.cleanup !== false;
   const startedAtMs = Date.now();
   const runId = randomUUID().slice(0, 8);
   const marker = `smoke-e2e-${runId}`;
@@ -252,6 +264,59 @@ export async function runSmokeE2E(deps: {
     };
   });
 
+  await runStep(steps, "graph-autolink", async () => {
+    if (!lanceAvailable) return { ok: "skip", detail: "LanceDB unavailable — auto-link needs vector search" };
+    if (!graphConfig) return { ok: "skip", detail: "graph config not provided to smoke test" };
+    if (!graphConfig.enabled || !graphConfig.autoLink) {
+      return { ok: "skip", detail: "graph.autoLink disabled in config — nothing to verify" };
+    }
+    // A third fact, deliberately paraphrasing fact1 rather than reusing its exact text, so this
+    // genuinely exercises semantic-similarity auto-linking (services/graph-autolink.ts) instead of
+    // re-testing the manually created RELATED_TO link from the graph-link step above.
+    const text3 = `Automated verification confirmed the smoke test entity ${marker} passed its end-to-end pipeline check.`;
+    const fact3 = factsDb.store({
+      text: text3,
+      category: "fact",
+      importance: 0.5,
+      entity: marker,
+      key: null,
+      value: null,
+      source: "smoke-e2e",
+      decayClass: "ephemeral",
+    });
+    factIds.push(fact3.id);
+    const v3 = await embeddings.embed(text3);
+    await storeCanonicalVectorForFact({
+      vectorDb,
+      factsDb,
+      factId: fact3.id,
+      text: text3,
+      vector: v3,
+      importance: 0.5,
+      category: "fact",
+      embeddingModel: embeddings.modelName,
+    });
+    // Clamp the similarity gate down for this diagnostic check only — it must detect that the
+    // pipeline runs and links genuinely similar content, not re-validate the operator's own
+    // similarity tuning (which may be much stricter than what these two paraphrases score).
+    const linked = await autoLinkSemanticallySimilarFacts(
+      { factsDb, vectorDb, vector: v3, text: text3, entity: marker, key: null, newFactId: fact3.id },
+      { ...graphConfig, autoLinkSimilarityThreshold: Math.min(graphConfig.autoLinkSimilarityThreshold, 0.3) },
+    );
+    const outgoing = factsDb.getLinksFrom(fact3.id);
+    const incoming = factsDb.getLinksTo(fact3.id);
+    const createdLinkToFact1 =
+      outgoing.some((l) => l.targetFactId === f1.id && l.linkType === "RELATED_TO") ||
+      incoming.some((l) => l.sourceFactId === f1.id && l.linkType === "RELATED_TO");
+    const ok = linked >= 1 && createdLinkToFact1;
+    return {
+      ok,
+      detail: ok
+        ? `auto-link pipeline created ${linked} link(s), including a RELATED_TO edge to fact1`
+        : `auto-link pipeline reported linked=${linked}, RELATED_TO edge to fact1 present=${createdLinkToFact1}`,
+    };
+  });
+
   await runStep(steps, "episode-record-search", async () => {
     const episode = factsDb.recordEpisode({
       event: `smoke-e2e run ${marker} completed a pipeline validation step`,
@@ -279,6 +344,9 @@ export async function runSmokeE2E(deps: {
   if (linkId) leftover.linkIds.push(linkId);
 
   await runStep(steps, "cleanup", async () => {
+    if (!cleanupEnabled) {
+      return { ok: "skip", detail: "cleanup skipped (--no-cleanup) — artifacts left in place for inspection" };
+    }
     const failures: string[] = [];
     if (linkId) {
       try {
@@ -343,6 +411,9 @@ export async function runSmokeE2E(deps: {
   });
 
   await runStep(steps, "cleanup-verify", async () => {
+    if (!cleanupEnabled) {
+      return { ok: "skip", detail: "cleanup skipped (--no-cleanup) — nothing to verify" };
+    }
     const problems: string[] = [];
     for (const factId of factIds) {
       if (factsDb.getById(factId)) problems.push(`fact ${factId} still present in SQLite`);
@@ -361,6 +432,9 @@ export async function runSmokeE2E(deps: {
   });
 
   await runStep(steps, "sync-drift", async () => {
+    if (!cleanupEnabled) {
+      return { ok: "skip", detail: "cleanup skipped (--no-cleanup) — drift vs before is expected" };
+    }
     const snapshotAfter = await collectStorageSyncSnapshot(factsDb, vectorDb);
     const regression = driftRegressed(snapshotBefore, snapshotAfter);
     return {

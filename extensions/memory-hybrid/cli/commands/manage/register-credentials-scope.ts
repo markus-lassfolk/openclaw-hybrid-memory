@@ -120,6 +120,20 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
         if (res.dryRun) {
           console.log(`Vault is encrypted (kdf_version=${res.status.kdfVersion}).`);
           console.log(`Vault path: ${res.vaultPath}`);
+          console.log(
+            `Preflight: backup path writable=${res.preflight.backupPathWritable}` +
+              (res.preflight.targetKeyFileReadable === null
+                ? ""
+                : `, target key file readable=${res.preflight.targetKeyFileReadable}`),
+          );
+          if (!res.preflight.backupPathWritable) {
+            console.log("⚠  Backup directory is not writable — fix permissions before running with --backup --yes.");
+          }
+          if (res.preflight.targetKeyFileReadable === false) {
+            console.log(
+              "⚠  Configured credentials.encryptionKey file: ref could not be read — fix it before rekeying.",
+            );
+          }
           console.log("Dry-run only. To re-encrypt with the configured key material, run:");
           console.log("  openclaw hybrid-mem credentials rekey-vault --backup --verify --yes");
           return;

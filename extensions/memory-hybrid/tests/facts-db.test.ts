@@ -4640,12 +4640,27 @@ describe("Issue #1191 vectorless facts and procedure triage", () => {
       supersedesId: superseded.id,
     });
     db.storeEmbedding(replacement.id, "test-model", "canonical", new Float32Array([0, 1, 0, 0]), 4);
+    db.store({
+      text: "vectorless decision fact",
+      category: "decision",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
 
-    expect(db.countVectorlessActiveFacts()).toBe(3);
+    expect(db.countVectorlessActiveFacts()).toBe(4);
     expect(db.countVectorlessActiveFacts("distillation")).toBe(2);
     expect(db.vectorlessActiveFactsBySource(5)).toEqual([
+      { source: "conversation", count: 2 },
       { source: "distillation", count: 2 },
-      { source: "conversation", count: 1 },
+    ]);
+    // #2093: category breakdown of the same population, so an operator can tell "mostly one
+    // structured-adjacent category" apart from "broad indexing gap" without cross-referencing source.
+    expect(db.vectorlessActiveFactsByCategory(5)).toEqual([
+      { category: "fact", count: 3 },
+      { category: "decision", count: 1 },
     ]);
     expect(db.listVectorlessActiveFacts({ limit: 1, source: "distillation" })[0]?.id).toBe(vectorlessA.id);
   });

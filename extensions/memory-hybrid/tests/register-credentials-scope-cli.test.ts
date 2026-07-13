@@ -5,8 +5,8 @@
  */
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { registerManageCredentialsAndScope } from "../cli/commands/manage/register-credentials-scope.js";
 import type { ManageBindings } from "../cli/commands/manage/bindings.js";
+import { registerManageCredentialsAndScope } from "../cli/commands/manage/register-credentials-scope.js";
 import { _testing } from "../index.js";
 
 const { FactsDB } = _testing;
@@ -122,6 +122,57 @@ describe("credentials vault-status legacy key surfacing (#2099)", () => {
     await mem.parseAsync(["credentials", "vault-status"], { from: "user" });
 
     expect(lines.some((l) => l.includes("Legacy key material"))).toBe(false);
+  });
+});
+
+describe("credentials rekey-vault dry-run preflight (#2099)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    process.exitCode = undefined;
+  });
+
+  it("prints backup-path and target-key-file readiness, and a warning line when either is not ready", async () => {
+    const runRekeyVault = vi.fn().mockReturnValue({
+      ok: true,
+      dryRun: true,
+      vaultPath: "/tmp/creds.db",
+      status: { kdfVersion: 2, encryptedAtRest: true },
+      preflight: { backupPathWritable: false, targetKeyFileReadable: false },
+    });
+    const mem = makeProgram({ runRekeyVault, factsDb: {}, vectorDb: {} });
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((a) => String(a)).join(" "));
+    });
+
+    await mem.parseAsync(["credentials", "rekey-vault"], { from: "user" });
+
+    expect(lines.some((l) => l.includes("backup path writable=false"))).toBe(true);
+    expect(lines.some((l) => l.includes("target key file readable=false"))).toBe(true);
+    expect(lines.some((l) => l.includes("Backup directory is not writable"))).toBe(true);
+    expect(lines.some((l) => l.includes("file: ref could not be read"))).toBe(true);
+  });
+
+  it("omits the target-key-file line entirely when the configured key is not a file: ref", async () => {
+    const runRekeyVault = vi.fn().mockReturnValue({
+      ok: true,
+      dryRun: true,
+      vaultPath: "/tmp/creds.db",
+      status: { kdfVersion: 2, encryptedAtRest: true },
+      preflight: { backupPathWritable: true, targetKeyFileReadable: null },
+    });
+    const mem = makeProgram({ runRekeyVault, factsDb: {}, vectorDb: {} });
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((a) => String(a)).join(" "));
+    });
+
+    await mem.parseAsync(["credentials", "rekey-vault"], { from: "user" });
+
+    expect(lines.some((l) => l.includes("backup path writable=true"))).toBe(true);
+    expect(lines.some((l) => l.includes("target key file readable"))).toBe(false);
+    expect(lines.some((l) => l.includes("Backup directory is not writable"))).toBe(false);
+    expect(lines.some((l) => l.includes("file: ref could not be read"))).toBe(false);
   });
 });
 

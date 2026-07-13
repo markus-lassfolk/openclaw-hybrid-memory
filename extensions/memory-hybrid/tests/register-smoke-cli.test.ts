@@ -14,6 +14,25 @@ import { registerManageSmoke } from "../cli/commands/manage/register-smoke.js";
 
 const DIM = 3;
 
+const FAKE_GRAPH_CONFIG = {
+  enabled: true,
+  autoLink: true,
+  autoLinkStrength: 0.7,
+  autoLinkSimilarityThreshold: 0.7,
+  autoLinkMinScore: 0.7,
+  autoLinkLimit: 5,
+  maxTraversalDepth: 2,
+  useInRecall: true,
+  coOccurrenceWeight: 0.3,
+  autoSupersede: true,
+  strengthenOnRecall: true,
+  temporalEdges: true,
+  autoLinkBudgetPerMin: 30,
+  linkDecay: { enabled: true, halfLifeDays: 30, floor: 0.05 },
+  hubDegreeCap: 500,
+  hubScorePenalty: null,
+};
+
 function makeFakeEmbeddings() {
   return {
     embed: vi.fn(async (text: string) => (text.includes("companion record") ? [0, 1, 0] : [1, 0, 0])),
@@ -56,6 +75,7 @@ describe("smoke e2e CLI (#2088)", () => {
       factsDb,
       vectorDb,
       embeddings: makeFakeEmbeddings(),
+      cfg: { graph: FAKE_GRAPH_CONFIG },
     } as unknown as ManageBindings);
     return mem;
   }
@@ -91,6 +111,7 @@ describe("smoke e2e CLI (#2088)", () => {
           throw new Error("embed down");
         }),
       },
+      cfg: { graph: FAKE_GRAPH_CONFIG },
     } as unknown as ManageBindings);
 
     await mem.parseAsync(["smoke", "e2e"], { from: "user" });
@@ -99,5 +120,23 @@ describe("smoke e2e CLI (#2088)", () => {
     expect(logs.some((l) => l.includes("Overall: ❌ fail"))).toBe(true);
     // Cleanup still succeeds even when an earlier step fails, so no manual-cleanup section should print.
     expect(logs.some((l) => l.includes("Manual remediation"))).toBe(false);
+  });
+
+  it("--no-cleanup (#2088) leaves the disposable facts in place and skips cleanup/verify/drift", async () => {
+    const mem = makeProgram();
+    await mem.parseAsync(["smoke", "e2e", "--json", "--no-cleanup"], { from: "user" });
+
+    const result = JSON.parse(logs.join(""));
+    expect(result.overall).toBe("pass");
+    const byName = Object.fromEntries(result.steps.map((s: { name: string; status: string }) => [s.name, s.status]));
+    expect(byName.cleanup).toBe("skip");
+    expect(byName["cleanup-verify"]).toBe("skip");
+    expect(byName["sync-drift"]).toBe("skip");
+    expect(result.leftover.factIds.length).toBeGreaterThan(0);
+
+    // The facts really were left behind, not just reported as such.
+    for (const factId of result.leftover.factIds) {
+      expect(factsDb.getById(factId)).not.toBeNull();
+    }
   });
 });

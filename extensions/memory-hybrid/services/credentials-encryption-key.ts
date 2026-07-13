@@ -13,6 +13,35 @@ export { getCredentialsEncryptionKeyRaw } from "./credentials-path.js";
 
 const LEGACY_FILE_REF_WARN_KEY_PREFIX = "credentials-vault-legacy-key:";
 
+/** Subcommands where surfacing the legacy-key migration warning is expected: vault/credential
+ *  management itself, and the two general health-check commands. */
+const VAULT_WARNING_SUBCOMMANDS = new Set(["credentials", "doctor", "verify"]);
+
+/**
+ * True when this invocation is a command where the legacy-key migration warning is expected
+ * (credential/vault-focused commands, or an explicit health check), or `--verbose`/`-v` was
+ * passed. Every `hybrid-mem` CLI invocation is its own process, so `warnOnce`'s per-process dedup
+ * cannot suppress this across invocations (#2099) — command scoping is the actual fix. Scans raw
+ * argv (not Commander opts) because this runs deep inside bootstrap, before any command handler
+ * has parsed its options.
+ */
+export function shouldSurfaceLegacyKeyWarning(argv: readonly string[] = process.argv): boolean {
+  const hybridIdx = argv.indexOf("hybrid-mem");
+  if (hybridIdx === -1) return true; // Can't tell from argv — fail open rather than hide a real warning.
+  let sawSubcommand = false;
+  for (let i = hybridIdx + 1; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--") break;
+    if (arg === "--verbose" || arg === "-v") return true;
+    if (arg.startsWith("-")) continue;
+    if (!sawSubcommand) {
+      sawSubcommand = true;
+      if (VAULT_WARNING_SUBCOMMANDS.has(arg)) return true;
+    }
+  }
+  return false;
+}
+
 /** Returns true when the key can open the vault (empty vaults always pass). */
 export function probeCredentialsVaultKey(dbPath: string, encryptionKey: string): boolean {
   if (!encryptionKey || encryptionKey.length < 16) return false;
@@ -31,6 +60,7 @@ export function probeCredentialsVaultKey(dbPath: string, encryptionKey: string):
 }
 
 function warnLegacyFileRefLiteralKey(dbPath: string, raw: string): void {
+  if (!shouldSurfaceLegacyKeyWarning()) return;
   warnOnce(`${LEGACY_FILE_REF_WARN_KEY_PREFIX}${dbPath}`, () => {
     pluginLogger.warn(
       "memory-hybrid: credentials vault opened using legacy literal file: SecretRef key material " +

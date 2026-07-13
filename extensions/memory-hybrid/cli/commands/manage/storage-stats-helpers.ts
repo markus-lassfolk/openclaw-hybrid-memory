@@ -435,6 +435,7 @@ export type AuditHealthReport = {
   canonicalEmbeddings: number;
   vectorless: number;
   vectorlessBySource: Array<{ source: string; count: number }>;
+  vectorlessByCategory: Array<{ category: string; count: number }>;
   procedures: {
     total: number;
     validated: number;
@@ -611,6 +612,7 @@ export function buildAuditHealthReport(
   const implicitFeedbackTrajectorySignals = countImplicitFeedbackTrajectorySignals(factsDb);
   const vectorless = factsDb.countVectorlessActiveFacts();
   const vectorlessBySource = factsDb.vectorlessActiveFactsBySource(10);
+  const vectorlessByCategory = factsDb.vectorlessActiveFactsByCategory(10);
   const procedureTriage = factsDb.triageProcedures({ status: "validated", notPromoted: true, limit: 10_000 });
   const raw = factsDb.getRawDb?.();
 
@@ -1071,6 +1073,7 @@ export function buildAuditHealthReport(
     canonicalEmbeddings,
     vectorless,
     vectorlessBySource,
+    vectorlessByCategory,
     procedures: {
       total: procedures,
       validated,
@@ -1154,6 +1157,11 @@ export function printAuditHealthMarkdown(report: AuditHealthReport): void {
   }
   if (report.vectorlessBySource.length > 0) {
     console.log(`Vectorless by source: ${report.vectorlessBySource.map((r) => `${r.source}=${r.count}`).join(", ")}`);
+  }
+  if (report.vectorlessByCategory.length > 0) {
+    console.log(
+      `Vectorless by category: ${report.vectorlessByCategory.map((r) => `${r.category}=${r.count}`).join(", ")}`,
+    );
   }
   console.log(
     `Procedures: ${report.procedures.total} (validated: ${report.procedures.validated}, promoted: ${report.procedures.promoted}, blocked: ${report.procedures.blocked}${report.procedures.topBlockReason ? ` by ${report.procedures.topBlockReason}` : ""})`,

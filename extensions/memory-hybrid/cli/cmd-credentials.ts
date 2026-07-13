@@ -10,6 +10,7 @@
  *   - credentials vault-status — show vault encryption status
  */
 
+import { accessSync, constants } from "node:fs";
 import { dirname, join } from "node:path";
 
 import type { CredentialType } from "../config.js";
@@ -20,6 +21,7 @@ import {
   auditServiceName,
   normalizeServiceForDedup,
 } from "../services/credential-validation.js";
+import { getCredentialsEncryptionKeyRaw } from "../services/credentials-path.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import type { HandlerContext } from "./handlers.js";
 import type {
@@ -125,6 +127,38 @@ export function runEncryptVaultForCli(
 }
 
 /**
+ * Non-mutating migration-readiness preflight (#2099): can a backup actually be written next to
+ * the vault, and — when the configured key is a `file:` ref — does that file exist and is it
+ * readable? Neither check writes anything; `accessSync` only probes permissions.
+ */
+function checkVaultMigrationPreflight(
+  vaultPath: string,
+  rawKeyRef: string,
+): { backupPathWritable: boolean; targetKeyFileReadable: boolean | null } {
+  let backupPathWritable = false;
+  try {
+    accessSync(dirname(vaultPath), constants.W_OK);
+    backupPathWritable = true;
+  } catch {
+    backupPathWritable = false;
+  }
+
+  let targetKeyFileReadable: boolean | null = null;
+  const trimmedRef = rawKeyRef.trim();
+  if (trimmedRef.startsWith("file:")) {
+    const filePath = trimmedRef.slice(5).trim();
+    try {
+      accessSync(filePath, constants.R_OK);
+      targetKeyFileReadable = true;
+    } catch {
+      targetKeyFileReadable = false;
+    }
+  }
+
+  return { backupPathWritable, targetKeyFileReadable };
+}
+
+/**
  * Re-encrypt an already-encrypted vault with the configured encryption key material.
  * Use after fixing a legacy literal `file:/path` SecretRef to file-content semantics.
  */
@@ -158,7 +192,14 @@ export function runRekeyVaultForCli(
   }
 
   if (!opts.yes) {
-    return { ok: true, dryRun: true, vaultPath, status: { kdfVersion: st.kdfVersion, encryptedAtRest: true } };
+    const preflight = checkVaultMigrationPreflight(vaultPath, getCredentialsEncryptionKeyRaw(cfg));
+    return {
+      ok: true,
+      dryRun: true,
+      vaultPath,
+      status: { kdfVersion: st.kdfVersion, encryptedAtRest: true },
+      preflight,
+    };
   }
 
   let resolvedBackupPath: string | undefined = opts.backupPath;

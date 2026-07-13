@@ -262,7 +262,7 @@ export function buildCliContextServices(
         vectorDb,
         embeddings,
         openai,
-        { ...opts, thinkingMode: resolveReflectionThinkingMode(cfg) },
+        { ...opts, thinkingMode: resolveReflectionThinkingMode(cfg), fuzzyDedupe: cfg.store.fuzzyDedupe === true },
         api.logger,
         aliasDb,
         provenanceService,

@@ -23,19 +23,26 @@ function printLeftoverHints(result: SmokeE2EResult): void {
 }
 
 export function registerManageSmoke(mem: Chainable, b: ManageBindings): void {
-  const { factsDb, vectorDb, embeddings } = b;
+  const { factsDb, vectorDb, embeddings, cfg } = b;
 
   const smoke = mem.command("smoke").description("Built-in end-to-end pipeline smoke tests (#2088).");
 
   smoke
     .command("e2e")
     .description(
-      "Store/embed/recall/link/episode/forget pipeline check with disposable test facts (decayClass=ephemeral, unique run id). Cleanup always runs.",
+      "Store/embed/recall/link/auto-link/episode/forget pipeline check with disposable test facts (decayClass=ephemeral, unique run id). Cleanup runs by default; pass --no-cleanup to leave artifacts in place for inspection.",
     )
     .option("--json", "Output as JSON")
+    .option("--no-cleanup", "Leave disposable test artifacts in place instead of best-effort cleanup")
     .action(
-      withExit(async (opts?: { json?: boolean }) => {
-        const result = await runSmokeE2E({ factsDb, vectorDb, embeddings });
+      withExit(async (opts?: { json?: boolean; cleanup?: boolean }) => {
+        const result = await runSmokeE2E({
+          factsDb,
+          vectorDb,
+          embeddings,
+          graphConfig: cfg.graph,
+          cleanup: opts?.cleanup !== false,
+        });
 
         if (opts?.json) {
           console.log(JSON.stringify(result, null, 2));

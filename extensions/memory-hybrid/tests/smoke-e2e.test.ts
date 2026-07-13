@@ -14,6 +14,25 @@ import { runSmokeE2E } from "../services/smoke-e2e.js";
 
 const DIM = 3;
 
+const FAKE_GRAPH_CONFIG = {
+  enabled: true,
+  autoLink: true,
+  autoLinkStrength: 0.7,
+  autoLinkSimilarityThreshold: 0.7,
+  autoLinkMinScore: 0.7,
+  autoLinkLimit: 5,
+  maxTraversalDepth: 2,
+  useInRecall: true,
+  coOccurrenceWeight: 0.3,
+  autoSupersede: true,
+  strengthenOnRecall: true,
+  temporalEdges: true,
+  autoLinkBudgetPerMin: 30,
+  linkDecay: { enabled: true, halfLifeDays: 30, floor: 0.05 },
+  hubDegreeCap: 500,
+  hubScorePenalty: null,
+} as unknown as import("../config.js").GraphConfig;
+
 function makeFakeEmbeddings(): EmbeddingProvider {
   return {
     // Deterministic 3-d embedding: text mentioning "companion record" (fact2) gets a distinct
@@ -53,7 +72,7 @@ describe("runSmokeE2E (#2088)", () => {
   });
 
   it("passes every step and leaves nothing behind on a clean run", async () => {
-    const result = await runSmokeE2E({ factsDb, vectorDb, embeddings });
+    const result = await runSmokeE2E({ factsDb, vectorDb, embeddings, graphConfig: FAKE_GRAPH_CONFIG });
 
     expect(result.overall).toBe("pass");
     const stepNames = result.steps.map((s) => s.name);
@@ -65,6 +84,7 @@ describe("runSmokeE2E (#2088)", () => {
       "keyword-recall",
       "semantic-recall",
       "graph-link",
+      "graph-autolink",
       "episode-record-search",
       "cleanup",
       "cleanup-verify",
@@ -74,9 +94,50 @@ describe("runSmokeE2E (#2088)", () => {
       expect(step.status, `step "${step.name}" detail: ${step.detail}`).toBe("pass");
       expect(step.durationMs).toBeGreaterThanOrEqual(0);
     }
+    const autoLinkStep = result.steps.find((s) => s.name === "graph-autolink");
+    expect(autoLinkStep?.detail).toContain("RELATED_TO edge to fact1");
     expect(result.leftover).toEqual({ factIds: [], episodeIds: [], linkIds: [] });
     expect(result.runId).toMatch(/^[0-9a-f]{8}$/);
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("skips graph-autolink when no graph config is provided, without failing the run", async () => {
+    const result = await runSmokeE2E({ factsDb, vectorDb, embeddings });
+    const autoLinkStep = result.steps.find((s) => s.name === "graph-autolink");
+    expect(autoLinkStep?.status).toBe("skip");
+    expect(result.overall).toBe("pass");
+  });
+
+  it("skips graph-autolink when graph.autoLink is disabled in config", async () => {
+    const result = await runSmokeE2E({
+      factsDb,
+      vectorDb,
+      embeddings,
+      graphConfig: { ...FAKE_GRAPH_CONFIG, autoLink: false },
+    });
+    const autoLinkStep = result.steps.find((s) => s.name === "graph-autolink");
+    expect(autoLinkStep?.status).toBe("skip");
+    expect(autoLinkStep?.detail).toContain("disabled in config");
+    expect(result.overall).toBe("pass");
+  });
+
+  it("cleanup: false leaves every created artifact in place and reports cleanup/verify/drift as skip", async () => {
+    const result = await runSmokeE2E({ factsDb, vectorDb, embeddings, cleanup: false });
+
+    expect(result.overall).toBe("pass");
+    const byName = Object.fromEntries(result.steps.map((s) => [s.name, s]));
+    expect(byName.cleanup.status).toBe("skip");
+    expect(byName["cleanup-verify"].status).toBe("skip");
+    expect(byName["sync-drift"].status).toBe("skip");
+    expect(result.leftover.factIds.length).toBeGreaterThan(0);
+    for (const factId of result.leftover.factIds) {
+      expect(factsDb.getById(factId)).not.toBeNull();
+    }
+    // The manually created RELATED_TO link (graph-link step) must still be there too — reported
+    // in leftover, and actually still present, not merely un-deleted-in-name.
+    expect(result.leftover.linkIds.length).toBeGreaterThan(0);
+    const [f1Id] = result.leftover.factIds;
+    expect(factsDb.getLinksFrom(f1Id).some((l) => l.id === result.leftover.linkIds[0])).toBe(true);
   });
 
   it("actually leaves the store empty, not just self-reporting cleanup", async () => {

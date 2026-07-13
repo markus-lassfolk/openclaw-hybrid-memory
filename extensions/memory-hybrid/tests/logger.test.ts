@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  applyHybridMemQuietFlagFromArgv,
   initPluginLogger,
   isHybridMemQuiet,
   pluginLogger,
@@ -173,5 +174,44 @@ describe("isHybridMemQuiet / quiet mode (#2095)", () => {
     delete process.env.OPENCLAW_HYBRID_MEM_QUIET;
     pluginLogger.info("visible again");
     expect(mockLogger.info).toHaveBeenCalledWith("visible again");
+  });
+});
+
+describe("applyHybridMemQuietFlagFromArgv (#2095)", () => {
+  const savedQuiet = process.env.OPENCLAW_HYBRID_MEM_QUIET;
+
+  afterEach(() => {
+    if (savedQuiet === undefined) delete process.env.OPENCLAW_HYBRID_MEM_QUIET;
+    else process.env.OPENCLAW_HYBRID_MEM_QUIET = savedQuiet;
+  });
+
+  it("sets the quiet env var when --quiet follows hybrid-mem", () => {
+    delete process.env.OPENCLAW_HYBRID_MEM_QUIET;
+    applyHybridMemQuietFlagFromArgv(["node", "cli.js", "hybrid-mem", "status", "--quiet"]);
+    expect(isHybridMemQuiet()).toBe(true);
+  });
+
+  it("sets the quiet env var when the short -q flag follows hybrid-mem", () => {
+    delete process.env.OPENCLAW_HYBRID_MEM_QUIET;
+    applyHybridMemQuietFlagFromArgv(["node", "cli.js", "hybrid-mem", "digest", "pending", "-q"]);
+    expect(isHybridMemQuiet()).toBe(true);
+  });
+
+  it("does not touch the env var when neither flag is present", () => {
+    delete process.env.OPENCLAW_HYBRID_MEM_QUIET;
+    applyHybridMemQuietFlagFromArgv(["node", "cli.js", "hybrid-mem", "status"]);
+    expect(isHybridMemQuiet()).toBe(false);
+  });
+
+  it("does not touch the env var when hybrid-mem isn't in argv at all", () => {
+    delete process.env.OPENCLAW_HYBRID_MEM_QUIET;
+    applyHybridMemQuietFlagFromArgv(["node", "some-other-script.js", "--quiet"]);
+    expect(isHybridMemQuiet()).toBe(false);
+  });
+
+  it("stops scanning at a literal -- separator", () => {
+    delete process.env.OPENCLAW_HYBRID_MEM_QUIET;
+    applyHybridMemQuietFlagFromArgv(["node", "cli.js", "hybrid-mem", "status", "--", "--quiet"]);
+    expect(isHybridMemQuiet()).toBe(false);
   });
 });
