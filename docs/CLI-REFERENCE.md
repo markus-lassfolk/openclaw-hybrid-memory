@@ -352,6 +352,8 @@ Add **`--reconcile`** to also check for SQLite ↔ LanceDB **orphan** drift (mis
 
 Checks that need human judgement or aren't safely repairable from inside the running process stay suggestion-only: SQLite/LanceDB connection failures, missing/misconfigured embedding provider, low disk space, WAL disabled/unavailable/circuit-breaker-tripped/journal-corrupt (data-loss risk — needs root-cause investigation first), and stale maintenance jobs.
 
+**`--json`:** prints the full check list and summary as a single JSON object to stdout instead of the human-readable banner/icon lines — `{ overall: "healthy"|"degraded"|"unhealthy", checks: [{ name, status, message, fix? }], summary: { passed, warnings, failed }, durationMs, timestamp }`. `overall` is `"unhealthy"` (and the process exits `1`) if any check failed, `"degraded"` if only warnings are present, else `"healthy"`. Composes with `--fix`/`--reconcile`/`--deep` — the repairs still run, only the output format changes. Useful for scripting/monitoring the nightly `hybrid-mem:nightly-doctor-repair` cron job (see [Maintenance cron jobs](#maintenance-cron-jobs)) without having to parse the human-readable text: check `checks` for the `"Database Sync"`/`"FTS Index/Triggers"`/`"Alias Lance Index"`/`"Goal registry quarantine"` entries specifically before treating an unrelated failing check (e.g. embedding provider down) as a reconcile failure.
+
 `openclaw hybrid-mem doctor --fix --reconcile` runs nightly by default via the `hybrid-mem:nightly-doctor-repair` cron job (see [Maintenance cron jobs](#maintenance-cron-jobs) below) — existing installs pick it up the next time `install` or `verify --fix` runs.
 
 ---

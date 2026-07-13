@@ -27,6 +27,7 @@ import {
   STORAGE_REPAIR_REMEDIATION,
 } from "../services/storage-sync-diagnostics.js";
 import { getWalCircuitBreakerState } from "../services/wal-helpers.js";
+import { nowIso } from "../utils/dates.js";
 import { formatBytes, WAL_SIZE_WARN_BYTES } from "../utils/format.js";
 import { detectAvailableProviders } from "../utils/provider-detection.js";
 import { withTimeout } from "../utils/timeout.js";
@@ -92,6 +93,7 @@ export function registerDoctorCommand(
       "Max vectors to rebuild for SQLite orphan gaps (records missing vectors) when --fix is set (default: 200; " +
         "--reconcile-policy aggressive raises this to 2000 unless you pass this flag explicitly, which is always honored as a hard cap)",
     )
+    .option("--json", "Output the full check list and summary as JSON to stdout instead of human-readable text")
     .action(
       // withExit (not a bare process.exit()): the SQLite/LanceDB/WAL checks below are now
       // withTimeout()-bounded, but withTimeout can't cancel a hung native call — the loser keeps
@@ -106,8 +108,9 @@ export function registerDoctorCommand(
           reconcile?: boolean;
           reconcilePolicy?: string;
           reconcileMaxFixes?: string;
+          json?: boolean;
         }) => {
-          console.log("\n🏥 Running Hybrid Memory Diagnostics...\n");
+          if (!opts?.json) console.log("\n🏥 Running Hybrid Memory Diagnostics...\n");
 
           // Mirrors cli/verify.ts's parsing exactly: keep reconcileMaxFixes undefined when the flag
           // is omitted so resolveStorageRepairBudget can distinguish "use the policy default" from
@@ -913,6 +916,31 @@ export function registerDoctorCommand(
             }
           }
 
+          const duration = Date.now() - startTime;
+          const passed = checks.filter((c) => c.status === "pass").length;
+          const warnings = checks.filter((c) => c.status === "warn").length;
+          const failed = checks.filter((c) => c.status === "fail").length;
+
+          if (opts?.json) {
+            // JSON output contract (docs/CLI-REFERENCE.md): stdout gets JSON only when --json is
+            // set — no banner/icons/summary text alongside it, matching cmd-health.ts's --json.
+            console.log(
+              JSON.stringify(
+                {
+                  overall: failed > 0 ? "unhealthy" : warnings > 0 ? "degraded" : "healthy",
+                  checks,
+                  summary: { passed, warnings, failed },
+                  durationMs: duration,
+                  timestamp: nowIso(),
+                },
+                null,
+                2,
+              ),
+            );
+            if (failed > 0) process.exitCode = 1;
+            return;
+          }
+
           // Display results
           for (const check of checks) {
             const icon = check.status === "pass" ? "🟢" : check.status === "warn" ? "🟡" : "🔴";
@@ -922,14 +950,7 @@ export function registerDoctorCommand(
             }
           }
 
-          const duration = Date.now() - startTime;
           console.log(`\n✓ Diagnostics completed in ${duration}ms\n`);
-
-          // Summary
-          const passed = checks.filter((c) => c.status === "pass").length;
-          const warnings = checks.filter((c) => c.status === "warn").length;
-          const failed = checks.filter((c) => c.status === "fail").length;
-
           console.log(`Summary: ${passed} passed, ${warnings} warnings, ${failed} failed\n`);
 
           if (failed > 0) {
