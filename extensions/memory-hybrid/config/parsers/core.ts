@@ -571,7 +571,8 @@ export function parseSerendipityProtocolConfig(cfg: Record<string, unknown>): Se
   const raw = cfg.serendipityProtocol as Record<string, unknown> | undefined;
   const num = (v: unknown, fallback: number, min: number, max: number): number =>
     typeof v === "number" && Number.isFinite(v) && v >= min && v <= max ? v : fallback;
-  const int = (v: unknown, fallback: number, min: number, max: number): number => Math.floor(num(v, fallback, min, max));
+  const int = (v: unknown, fallback: number, min: number, max: number): number =>
+    Math.floor(num(v, fallback, min, max));
 
   const enabled = raw?.enabled === true;
   const resurfaceRaw = raw?.resurface as Record<string, unknown> | undefined;

@@ -2727,7 +2727,10 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "enabled": { "type": "boolean", "description": "Enable the on-demand serendipity digest (default: true)." }
+              "enabled": {
+                "type": "boolean",
+                "description": "Enable the on-demand serendipity digest (default: true)."
+              }
             },
             "description": "On-demand, low-noise digest of findings."
           },
