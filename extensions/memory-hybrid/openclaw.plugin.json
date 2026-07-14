@@ -2750,6 +2750,10 @@
               "maxChars": {
                 "type": "number",
                 "description": "Character cap for the resurfaced backlog line (default: 200)."
+              },
+              "promote": {
+                "type": "boolean",
+                "description": "When true, a resurfaced finding is promoted to a goal (requires goal stewardship) instead of only injecting a pointer. Default: false."
               }
             },
             "description": "Heartbeat resurfacing of the deferred backlog (index-only, bounded, cooldown-gated)."

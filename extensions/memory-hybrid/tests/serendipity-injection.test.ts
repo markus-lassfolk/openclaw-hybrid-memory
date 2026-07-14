@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SerendipityStore } from "../backends/serendipity-store.js";
 import { parseConfig } from "../config/parsers/index.js";
 import { registerSerendipityPolicyInjection } from "../lifecycle/stage-serendipity-policy.js";
+import { listActiveGoals } from "../services/goal-stewardship.js";
+import { resolveGoalsDir } from "../services/goal-registry.js";
 import type { HybridMemoryConfig } from "../config.js";
 
 function buildCfg(sp: Record<string, unknown>): HybridMemoryConfig {
@@ -104,6 +106,40 @@ describe("serendipity backlog resurfacing", () => {
     const res = (await api.fire({ prompt: "heartbeat", sessionKey: "s-hb" })) as { prependContext?: string };
     expect(res?.prependContext).toContain("[serendipity backlog]");
     expect(res?.prependContext).toContain("apache-arrow");
+  });
+
+  it("promotes the resurfaced finding to a goal when resurface.promote is enabled", async () => {
+    const savedWorkspace = process.env.OPENCLAW_WORKSPACE;
+    process.env.OPENCLAW_WORKSPACE = tmpDir;
+    try {
+      const cfg = parseConfig({
+        embedding: { provider: "ollama", model: "nomic-embed-text" },
+        goalStewardship: { enabled: true },
+        serendipityProtocol: {
+          enabled: true,
+          defaultLevel: 4,
+          resurface: { enabled: true, minLevel: 0, cooldownPrompts: 1, promote: true },
+        },
+      }) as HybridMemoryConfig;
+      const finding = store.create({
+        title: "apache-arrow missing",
+        description: "d",
+        findingType: "packaging_defect",
+        suggestedAction: "fix_now",
+        adjacency: "direct",
+      });
+      const api = makeApi();
+      registerSerendipityPolicyInjection(api as any, makeCtx(store, cfg));
+
+      const res = (await api.fire({ prompt: "heartbeat", sessionKey: "s-promote" })) as { prependContext?: string };
+      expect(res?.prependContext).toContain("promoted");
+      expect(res?.prependContext).toContain("to goal");
+      expect(store.get(finding.id)?.status).toBe("proposed");
+      expect(await listActiveGoals(resolveGoalsDir(tmpDir, cfg.goalStewardship.goalsDir))).toHaveLength(1);
+    } finally {
+      if (savedWorkspace === undefined) delete process.env.OPENCLAW_WORKSPACE;
+      else process.env.OPENCLAW_WORKSPACE = savedWorkspace;
+    }
   });
 
   it("does not resurface below the configured minimum level", async () => {

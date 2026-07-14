@@ -591,6 +591,7 @@ export function parseSerendipityProtocolConfig(cfg: Record<string, unknown>): Se
       minLevel: num(resurfaceRaw?.minLevel, 3, 0, 4),
       cooldownPrompts: int(resurfaceRaw?.cooldownPrompts, 10, 1, 1000),
       maxChars: int(resurfaceRaw?.maxChars, 200, 40, 2000),
+      promote: resurfaceRaw?.promote === true,
     },
     sweep: {
       enabled: sweepRaw?.enabled === true,

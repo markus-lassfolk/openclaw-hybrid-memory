@@ -521,6 +521,12 @@ export type SerendipityProtocolConfig = {
     cooldownPrompts: number;
     /** Character cap for the resurfaced backlog line (default: 200). */
     maxChars: number;
+    /**
+     * When true, a resurfaced finding is promoted to a goal (requires goal
+     * stewardship) instead of only injecting a pointer — "use idle time to work
+     * on things noticed before" on interactive heartbeat turns. Default: false.
+     */
+    promote: boolean;
   };
   /** Opt-in Level-4 cron sweep of the deferred backlog. */
   sweep: {

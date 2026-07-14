@@ -17,10 +17,12 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { matchesHeartbeat } from "../services/goal-stewardship-heartbeat.js";
 import { applyPrependBudget } from "../services/prepend-budget.js";
 import { buildSerendipityPolicySummary } from "../services/serendipity-policy.js";
+import { promoteToGoal } from "../services/serendipity-promotion.js";
 import { sanitizePromptInjection } from "../services/skill-prompt-injection.js";
 import type { SerendipityScopeContext } from "../types/serendipity-types.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
 import { buildToolScopeFilter } from "../utils/scope-filter.js";
+import { resolvedGoalsDirForLifecycle } from "./stage-goal-stewardship.js";
 import { resolveSessionKeyFromHookEvent } from "./session-state.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
 import type { LifecycleContext } from "./types.js";
@@ -81,11 +83,27 @@ export function registerSerendipityPolicyInjection(api: ClawdbotPluginApi, ctx: 
               const top = store.listActionableDeferred({ level, limit: 1 })[0];
               if (top) {
                 heartbeatCounters.set(sessionKey, 0);
-                store.markSurfaced(top.id);
                 const title = sanitizePromptInjection(top.title).slice(0, sp.resurface.maxChars);
-                parts.push(
-                  `[serendipity backlog] ${top.findingType}: ${title} — review with serendipity_list backlog:true, act only if in-bounds.`,
-                );
+                let promotedNote: string | null = null;
+                if (sp.resurface.promote && ctx.cfg.goalStewardship.enabled) {
+                  const res = await promoteToGoal(top, {
+                    store,
+                    cfg: ctx.cfg,
+                    goalsDir: resolvedGoalsDirForLifecycle(ctx.cfg),
+                    eventLog: ctx.eventLog,
+                  });
+                  if (res.ok) {
+                    promotedNote = `[serendipity backlog] promoted "${title}" to goal ${res.refId?.slice(0, 8)} — track with goal_list.`;
+                  }
+                }
+                if (promotedNote) {
+                  parts.push(promotedNote);
+                } else {
+                  store.markSurfaced(top.id);
+                  parts.push(
+                    `[serendipity backlog] ${top.findingType}: ${title} — review with serendipity_list backlog:true, act only if in-bounds.`,
+                  );
+                }
               }
             }
           }

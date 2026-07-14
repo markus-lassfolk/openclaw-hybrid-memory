@@ -65,7 +65,7 @@ Low confidence downgrades a would-be `fix_now` to `remember`.
 
 Findings left in `observed`/`deferred` form a **TTL-bounded backlog** (`deferredTtlDays`, default 30; expired findings are pruned by `archiveExpired()`). Two revisit drivers surface backlog items — **neither edits code; the agent acts under approval:**
 
-- **Heartbeat resurfacing** (`resurface`, level-gated ≥ `minLevel`, default 3): on heartbeat / low-activity turns, the single top actionable deferred finding is injected as a bounded, cooldown-gated one-liner.
+- **Heartbeat resurfacing** (`resurface`, level-gated ≥ `minLevel`, default 3): on heartbeat / low-activity turns, the single top actionable deferred finding is injected as a bounded, cooldown-gated one-liner. When `resurface.promote` is enabled (and goal stewardship is on), the resurfaced finding is instead **promoted to a goal** — so idle interactive turns also hand work off, not just point at it.
 - **Opt-in Level-4 cron sweep** (`sweep.enabled`, off by default): a scheduled job prunes expired findings and reports the backlog. It is **surface-only** unless `sweep.dispatch` is enabled; when dispatch is on it **promotes** the top in-bounds findings (up to `sweep.maxDispatch`) into goals or active tasks (`sweep.target`, default `goal`) so their existing dispatch/approval loops drive the work. The sweep never edits code itself.
 
 The **pending-review digest** (`openclaw hybrid-mem digest`) also gains a "Serendipity backlog" section when the protocol is enabled, so the actionable backlog shows up in the regular weekly review.
@@ -102,7 +102,7 @@ When `injectPolicy` is on, a compact one-line policy summary is injected once pe
     "dedupWindowDays": 30,
     "deferredTtlDays": 30,     // 0 = never expire
     "digest": { "enabled": true },
-    "resurface": { "enabled": true, "minLevel": 3, "cooldownPrompts": 10, "maxChars": 200 },
+    "resurface": { "enabled": true, "minLevel": 3, "cooldownPrompts": 10, "maxChars": 200, "promote": false },
     "sweep": { "enabled": false, "minLevel": 4, "dispatch": false, "target": "goal", "maxDispatch": 3 }
   }
 }
