@@ -142,7 +142,7 @@ After running, restart the gateway (or run `openclaw hybrid-mem verify`) to conf
 
 ## API (Tools)
 
-When enabled, four tools are registered:
+When enabled, nine tools are registered:
 
 | Tool | Description |
 |------|-------------|
@@ -150,6 +150,11 @@ When enabled, four tools are registered:
 | `credential_get` | Retrieve by service (optional type for disambiguation) |
 | `credential_list` | List stored credentials (service/type/url only — no values) |
 | `credential_delete` | Delete by service (optional type) |
+| `credential_revision_list` | List historical revisions for a service/type (metadata only) |
+| `credential_revision_get` | Retrieve a specific revision's value intentionally |
+| `credential_revision_restore` | Restore/promote a revision back to current |
+| `credential_revision_purge` | Hard-delete one revision, or every revision for a service/type |
+| `credential_revision_pin` | Pin a revision so it never expires, or unpin it |
 
 ### Credential Types
 
@@ -171,11 +176,68 @@ credential_get(service="home-assistant")
 credential_get(service="github", type="api_key")
 ```
 
+## Historical Revisions (issue #2104)
+
+Overwriting an existing credential (same `service` + `type`) no longer discards the previous
+value outright — it's kept as a **historical revision** for a retention window, so a migration or
+rotation mistake can be reversed instead of reconstructed from memory/logs.
+
+```
+credential_store(service="doris-gateway", type="other", value="10.0.0.70")
+# → "Stored credential for doris-gateway (other). Previous value retained as revision
+#    <id> until <date> (30-day retention) unless accessed/pinned/purged."
+
+credential_revision_list(service="doris-gateway", type="other")
+credential_revision_get(service="doris-gateway", type="other", revision="<id>")
+credential_revision_restore(service="doris-gateway", type="other", revision="<id>")
+credential_revision_purge(service="doris-gateway", type="other", revision="<id>")   # or all=true
+credential_revision_pin(service="doris-gateway", type="other", revision="<id>", pinned=true)
+```
+
+Equivalent CLI commands: `hybrid-mem credentials revisions list|get|restore|purge|pin` (`restore`
+and `purge` are dry-run by default — pass `--yes` to apply; `get` masks the value by default —
+pass `--show-value` or `--value-only`).
+
+**Retention model:**
+- Replaced values are kept for **30 days** by default (`credentials.revisionTtlDays`).
+- Retrieving a specific revision (`credential_revision_get`) refreshes/extends its retention
+  window from the moment of access, unless `credentials.revisionAccessRefresh` is set to `false`.
+- Pinned revisions (`credential_revision_pin`) never expire until unpinned.
+- Expired, unpinned revisions are swept lazily the next time revisions for that service/type are
+  listed or accessed.
+- `credential_revision_purge` hard-deletes immediately and cannot be undone.
+- Set `credentials.revisionsEnabled: false` to disable revision history entirely (a plain overwrite,
+  matching pre-#2104 behavior).
+
+**Restore is non-destructive**: promoting an old revision back to current snapshots the value it
+replaces as a *new* revision first, so restoring never discards data outright.
+
+**Security:** revisions are encrypted with the same key/mode as current values (re-keying/encrypting
+the vault also re-encrypts every revision). `credential_revision_list` never includes values — only
+`credential_revision_get` does, and only for a revision id you explicitly pass. Every retrieve,
+restore, purge, and pin/unpin is recorded in a revision-specific audit trail inside the vault itself,
+so the trail exists even when the cross-agent audit log isn't wired up (e.g. the credentials-only
+CLI fast path). Normal `credential_get` is completely unaffected — it only ever returns the current
+value.
+
+```json
+{
+  "credentials": {
+    "enabled": true,
+    "revisionsEnabled": true,
+    "revisionTtlDays": 30,
+    "revisionAccessRefresh": true
+  }
+}
+```
+
 ## Storage
 
 - Credentials are stored in `credentials.db` next to your facts database (e.g. `~/.openclaw/memory/credentials.db`)
 - Values are encrypted with AES-256-GCM
 - Only service, type, url, notes, and expiry metadata are stored in plaintext
+- Historical revisions live in the same database (`credential_revisions` table) with the same
+  encryption, plus a `credential_revision_audit` table for the retrieve/restore/purge/pin trail
 
 ### Key Derivation (KDF)
 

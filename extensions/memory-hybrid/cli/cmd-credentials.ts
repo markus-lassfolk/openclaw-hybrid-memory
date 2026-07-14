@@ -10,6 +10,7 @@
  *   - credentials vault-status — show vault encryption status
  */
 
+import { accessSync, constants } from "node:fs";
 import { dirname, join } from "node:path";
 
 import type { CredentialType } from "../config.js";
@@ -20,6 +21,7 @@ import {
   auditServiceName,
   normalizeServiceForDedup,
 } from "../services/credential-validation.js";
+import { getCredentialsEncryptionKeyRaw } from "../services/credentials-path.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import type { HandlerContext } from "./handlers.js";
 import type {
@@ -125,6 +127,38 @@ export function runEncryptVaultForCli(
 }
 
 /**
+ * Non-mutating migration-readiness preflight (#2099): can a backup actually be written next to
+ * the vault, and — when the configured key is a `file:` ref — does that file exist and is it
+ * readable? Neither check writes anything; `accessSync` only probes permissions.
+ */
+function checkVaultMigrationPreflight(
+  vaultPath: string,
+  rawKeyRef: string,
+): { backupPathWritable: boolean; targetKeyFileReadable: boolean | null } {
+  let backupPathWritable = false;
+  try {
+    accessSync(dirname(vaultPath), constants.W_OK);
+    backupPathWritable = true;
+  } catch {
+    backupPathWritable = false;
+  }
+
+  let targetKeyFileReadable: boolean | null = null;
+  const trimmedRef = rawKeyRef.trim();
+  if (trimmedRef.startsWith("file:")) {
+    const filePath = trimmedRef.slice(5).trim();
+    try {
+      accessSync(filePath, constants.R_OK);
+      targetKeyFileReadable = true;
+    } catch {
+      targetKeyFileReadable = false;
+    }
+  }
+
+  return { backupPathWritable, targetKeyFileReadable };
+}
+
+/**
  * Re-encrypt an already-encrypted vault with the configured encryption key material.
  * Use after fixing a legacy literal `file:/path` SecretRef to file-content semantics.
  */
@@ -158,7 +192,14 @@ export function runRekeyVaultForCli(
   }
 
   if (!opts.yes) {
-    return { ok: true, dryRun: true, vaultPath, status: { kdfVersion: st.kdfVersion, encryptedAtRest: true } };
+    const preflight = checkVaultMigrationPreflight(vaultPath, getCredentialsEncryptionKeyRaw(cfg));
+    return {
+      ok: true,
+      dryRun: true,
+      vaultPath,
+      status: { kdfVersion: st.kdfVersion, encryptedAtRest: true },
+      preflight,
+    };
   }
 
   let resolvedBackupPath: string | undefined = opts.backupPath;
@@ -298,6 +339,84 @@ export function runCredentialsGetForCli(
     url: entry.url ?? null,
     notes: entry.notes ?? null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// credentials prune
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// credentials revisions (#2104)
+// ---------------------------------------------------------------------------
+
+/** CLI-originated revision operations are attributed to this actor in the audit trail. */
+const CLI_REVISION_ACTOR = "cli";
+
+/** List historical revisions (metadata only) for a service/type. Returns null when vault is disabled. */
+export function runCredentialRevisionListForCli(
+  ctx: HandlerContext,
+  opts: { service: string; type: CredentialType },
+): import("../backends/credentials-db.js").CredentialRevisionMeta[] | null {
+  const { credentialsDb } = ctx;
+  if (!credentialsDb) return null;
+  return credentialsDb.listRevisions(opts.service.trim(), opts.type);
+}
+
+/** Retrieve a specific revision's decrypted value intentionally. Returns null when not found/disabled. */
+export function runCredentialRevisionGetForCli(
+  ctx: HandlerContext,
+  opts: { service: string; type: CredentialType; revision: string },
+): import("../backends/credentials-db.js").CredentialRevisionEntry | null {
+  const { credentialsDb, cfg } = ctx;
+  if (!credentialsDb) return null;
+  return credentialsDb.getRevision(opts.service.trim(), opts.type, opts.revision.trim(), {
+    refreshAccess: cfg.credentials.revisionAccessRefresh !== false,
+    revisionTtlDays: cfg.credentials.revisionTtlDays,
+    actor: CLI_REVISION_ACTOR,
+  });
+}
+
+/** Restore/promote a revision back to current. Returns null when not found/disabled. */
+export function runCredentialRevisionRestoreForCli(
+  ctx: HandlerContext,
+  opts: { service: string; type: CredentialType; revision: string },
+): import("../backends/credentials-db.js").CredentialEntry | null {
+  const { credentialsDb, cfg } = ctx;
+  if (!credentialsDb) return null;
+  return credentialsDb.restoreRevision(opts.service.trim(), opts.type, opts.revision.trim(), {
+    revisionsEnabled: cfg.credentials.revisionsEnabled !== false,
+    revisionTtlDays: cfg.credentials.revisionTtlDays,
+    actor: CLI_REVISION_ACTOR,
+  });
+}
+
+/** Hard-delete one revision (or every revision for the service/type when `all` is true). */
+export function runCredentialRevisionPurgeForCli(
+  ctx: HandlerContext,
+  opts: { service: string; type: CredentialType; revision?: string; all?: boolean },
+): { purged: number } | null {
+  const { credentialsDb } = ctx;
+  if (!credentialsDb) return null;
+  const service = opts.service.trim();
+  if (opts.all) {
+    return { purged: credentialsDb.purgeAllRevisions(service, opts.type, { actor: CLI_REVISION_ACTOR }) };
+  }
+  if (!opts.revision) return { purged: 0 };
+  const purged = credentialsDb.purgeRevision(service, opts.type, opts.revision.trim(), { actor: CLI_REVISION_ACTOR });
+  return { purged: purged ? 1 : 0 };
+}
+
+/** Pin (never expire) or unpin a revision. Returns null when vault is disabled. */
+export function runCredentialRevisionPinForCli(
+  ctx: HandlerContext,
+  opts: { service: string; type: CredentialType; revision: string; pinned: boolean },
+): { changed: boolean } | null {
+  const { credentialsDb } = ctx;
+  if (!credentialsDb) return null;
+  const changed = credentialsDb.pinRevision(opts.service.trim(), opts.type, opts.revision.trim(), opts.pinned, {
+    actor: CLI_REVISION_ACTOR,
+  });
+  return { changed };
 }
 
 // ---------------------------------------------------------------------------

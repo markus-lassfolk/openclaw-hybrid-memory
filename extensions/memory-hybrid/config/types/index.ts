@@ -208,6 +208,16 @@ export type CredentialsConfig = {
    * persisted in transcripts, logs, and memory-extraction pipelines.
    */
   revealInContent?: boolean;
+  /**
+   * When a `credential_store` overwrite replaces an existing (service, type) value, keep the
+   * replaced value as a historical revision instead of discarding it immediately (issue #2104).
+   * Default: true.
+   */
+  revisionsEnabled?: boolean;
+  /** Retention window (days) for a replaced credential's historical revision. Default: 30. */
+  revisionTtlDays?: number;
+  /** When true (default), retrieving a specific revision extends its retention TTL from now. */
+  revisionAccessRefresh?: boolean;
 };
 
 /** Error reporting configuration for GlitchTip/Sentry integration (opt-in, privacy-first) */

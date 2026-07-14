@@ -893,3 +893,195 @@ describe("CredentialsDB legacy type=url migration", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Historical revisions (#2104)
+// ---------------------------------------------------------------------------
+
+describe("CredentialsDB revisions (#2104)", () => {
+  it("overwriting an existing credential creates a historical revision with the prior value", () => {
+    db.store({ service: "doris-gateway", type: "other", value: "192.168.1.195" });
+    db.store({ service: "doris-gateway", type: "other", value: "192.168.1.70" });
+
+    const revisions = db.listRevisions("doris-gateway", "other");
+    expect(revisions).toHaveLength(1);
+    expect(revisions[0]).not.toHaveProperty("value");
+
+    const current = db.get("doris-gateway", "other");
+    expect(current?.value).toBe("192.168.1.70");
+  });
+
+  it("storing a brand-new credential creates no revision", () => {
+    db.store({ service: "brand-new", type: "other", value: "v1" });
+    expect(db.listRevisions("brand-new", "other")).toHaveLength(0);
+  });
+
+  it("list never exposes the decrypted value", () => {
+    db.store({ service: "svc", type: "token", value: "secret-1" });
+    db.store({ service: "svc", type: "token", value: "secret-2" });
+    const revisions = db.listRevisions("svc", "token");
+    expect(JSON.stringify(revisions)).not.toContain("secret-1");
+  });
+
+  it("get retrieves a specific revision's decrypted value intentionally", () => {
+    db.store({ service: "svc", type: "token", value: "secret-1", url: "https://old.example.com" });
+    db.store({ service: "svc", type: "token", value: "secret-2" });
+    const [rev] = db.listRevisions("svc", "token");
+    const full = db.getRevision("svc", "token", rev.id);
+    expect(full?.value).toBe("secret-1");
+    expect(full?.url).toBe("https://old.example.com");
+  });
+
+  it("restore promotes a revision back to current, and snapshots the value it replaced", () => {
+    db.store({ service: "svc", type: "token", value: "secret-1" });
+    db.store({ service: "svc", type: "token", value: "secret-2" });
+    const [rev1] = db.listRevisions("svc", "token");
+
+    const restored = db.restoreRevision("svc", "token", rev1.id);
+    expect(restored?.value).toBe("secret-1");
+    expect(db.get("svc", "token")?.value).toBe("secret-1");
+
+    // secret-2 (the value just replaced by the restore) must now be recoverable as a revision.
+    const revisionsAfterRestore = db.listRevisions("svc", "token");
+    const values = revisionsAfterRestore.map((r) => db.getRevision("svc", "token", r.id)?.value);
+    expect(values).toContain("secret-2");
+  });
+
+  it("restore returns null for an unknown revision id", () => {
+    db.store({ service: "svc", type: "token", value: "secret-1" });
+    expect(db.restoreRevision("svc", "token", "does-not-exist")).toBeNull();
+  });
+
+  it("purge hard-deletes a single revision", () => {
+    db.store({ service: "svc", type: "token", value: "secret-1" });
+    db.store({ service: "svc", type: "token", value: "secret-2" });
+    const [rev] = db.listRevisions("svc", "token");
+    expect(db.purgeRevision("svc", "token", rev.id)).toBe(true);
+    expect(db.listRevisions("svc", "token")).toHaveLength(0);
+    expect(db.purgeRevision("svc", "token", rev.id)).toBe(false);
+  });
+
+  it("purgeAllRevisions hard-deletes every revision for a service/type", () => {
+    db.store({ service: "svc", type: "token", value: "v1" });
+    db.store({ service: "svc", type: "token", value: "v2" });
+    db.store({ service: "svc", type: "token", value: "v3" });
+    expect(db.listRevisions("svc", "token").length).toBeGreaterThanOrEqual(2);
+    const removed = db.purgeAllRevisions("svc", "token");
+    expect(removed).toBeGreaterThanOrEqual(2);
+    expect(db.listRevisions("svc", "token")).toHaveLength(0);
+  });
+
+  it("revisions expire after the default 30-day TTL (lazy sweep on next access)", () => {
+    db.store({ service: "svc", type: "token", value: "v1" });
+    db.store({ service: "svc", type: "token", value: "v2" });
+    const [rev] = db.listRevisions("svc", "token");
+
+    const dbPath = join(tmpDir, "creds.db");
+    const raw = new DatabaseSync(dbPath);
+    raw
+      .prepare("UPDATE credential_revisions SET expires_at = ? WHERE id = ?")
+      .run(Math.floor(Date.now() / 1000) - 1, rev.id);
+    raw.close();
+
+    expect(db.listRevisions("svc", "token")).toHaveLength(0);
+  });
+
+  it("pinned revisions never expire, even long past the TTL window", () => {
+    db.store({ service: "svc", type: "token", value: "v1" });
+    db.store({ service: "svc", type: "token", value: "v2" });
+    const [rev] = db.listRevisions("svc", "token");
+    expect(db.pinRevision("svc", "token", rev.id, true)).toBe(true);
+
+    const dbPath = join(tmpDir, "creds.db");
+    const raw = new DatabaseSync(dbPath);
+    raw
+      .prepare("UPDATE credential_revisions SET expires_at = ? WHERE id = ?")
+      .run(Math.floor(Date.now() / 1000) - 1, rev.id);
+    raw.close();
+
+    const revisions = db.listRevisions("svc", "token");
+    expect(revisions.map((r) => r.id)).toContain(rev.id);
+  });
+
+  it("unpinning re-exposes a revision to expiry sweeps", () => {
+    db.store({ service: "svc", type: "token", value: "v1" });
+    db.store({ service: "svc", type: "token", value: "v2" });
+    const [rev] = db.listRevisions("svc", "token");
+    db.pinRevision("svc", "token", rev.id, true);
+    db.pinRevision("svc", "token", rev.id, false);
+
+    const dbPath = join(tmpDir, "creds.db");
+    const raw = new DatabaseSync(dbPath);
+    raw
+      .prepare("UPDATE credential_revisions SET expires_at = ? WHERE id = ?")
+      .run(Math.floor(Date.now() / 1000) - 1, rev.id);
+    raw.close();
+
+    expect(db.listRevisions("svc", "token")).toHaveLength(0);
+  });
+
+  it("accessing a revision via getRevision refreshes its expiry unless refreshAccess is false", () => {
+    db.store({ service: "svc", type: "token", value: "v1" });
+    db.store({ service: "svc", type: "token", value: "v2" });
+    const [rev] = db.listRevisions("svc", "token");
+
+    const dbPath = join(tmpDir, "creds.db");
+    const nearExpiry = Math.floor(Date.now() / 1000) + 60;
+    const raw = new DatabaseSync(dbPath);
+    raw.prepare("UPDATE credential_revisions SET expires_at = ? WHERE id = ?").run(nearExpiry, rev.id);
+    raw.close();
+
+    db.getRevision("svc", "token", rev.id, { refreshAccess: false });
+    const afterNoRefresh = db.listRevisions("svc", "token").find((r) => r.id === rev.id);
+    expect(afterNoRefresh?.expiresAt).toBe(nearExpiry);
+
+    db.getRevision("svc", "token", rev.id);
+    const afterRefresh = db.listRevisions("svc", "token").find((r) => r.id === rev.id);
+    expect(afterRefresh?.expiresAt).toBeGreaterThan(nearExpiry);
+  });
+
+  it("does not create a revision when revisionsEnabled is false", () => {
+    db.store({ service: "svc", type: "token", value: "v1" });
+    db.store({ service: "svc", type: "token", value: "v2" }, { revisionsEnabled: false });
+    expect(db.listRevisions("svc", "token")).toHaveLength(0);
+  });
+
+  it("normal credentials get() is unaffected by revision history", () => {
+    db.store({ service: "svc", type: "token", value: "v1" });
+    db.store({ service: "svc", type: "token", value: "v2" });
+    db.store({ service: "svc", type: "token", value: "v3" });
+    expect(db.get("svc", "token")?.value).toBe("v3");
+  });
+
+  it("records an audit event for retrieve/restore/purge/pin", () => {
+    db.store({ service: "svc", type: "token", value: "v1" });
+    db.store({ service: "svc", type: "token", value: "v2" });
+    const [rev] = db.listRevisions("svc", "token");
+
+    db.getRevision("svc", "token", rev.id, { actor: "agent-1" });
+    db.pinRevision("svc", "token", rev.id, true, { actor: "agent-1" });
+    db.pinRevision("svc", "token", rev.id, false, { actor: "agent-1" });
+    db.restoreRevision("svc", "token", rev.id, { actor: "agent-1" });
+
+    const events = db.listRevisionAuditEvents("svc", "token");
+    const actions = events.map((e) => e.action);
+    expect(actions).toContain("retrieve");
+    expect(actions).toContain("pin");
+    expect(actions).toContain("unpin");
+    expect(actions).toContain("restore");
+    expect(events.every((e) => e.actor === "agent-1")).toBe(true);
+  });
+
+  it("rekeyVaultSafe re-encrypts revision values with the new key", () => {
+    db.store({ service: "svc", type: "token", value: "old-secret" });
+    db.store({ service: "svc", type: "token", value: "new-secret" });
+    const [rev] = db.listRevisions("svc", "token");
+    expect(db.getRevision("svc", "token", rev.id)?.value).toBe("old-secret");
+
+    const newKey = "a-different-32-character-key!!!!";
+    db.rekeyVaultSafe(newKey);
+
+    const revisionsAfterRekey = db.listRevisions("svc", "token");
+    expect(db.getRevision("svc", "token", revisionsAfterRekey[0].id)?.value).toBe("old-secret");
+  });
+});

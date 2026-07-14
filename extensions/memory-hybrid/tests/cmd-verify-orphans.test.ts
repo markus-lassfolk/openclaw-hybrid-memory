@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
 import { hybridConfigSchema } from "../config.js";
 import { computeVectorSqliteOrphans } from "../cli/cmd-verify.js";
+import { clearMaintenanceRunDeadline, setMaintenanceRunDeadlineMs } from "../utils/maintenance-run-deadline.js";
 
 vi.mock("../services/error-reporter.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/error-reporter.js")>();
@@ -289,5 +290,83 @@ describe("runVerifyForCli --reconcile", () => {
     expect(out).toContain("Skipped 7 SQLite orphan(s) due to --reconcile-max-fixes budget.");
     // Partial rebuild must NOT be reported as a verified success.
     expect(out).not.toContain("Verified rebuild:");
+  });
+
+  describe("progress heartbeat under --verbose (#2105)", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+      clearMaintenanceRunDeadline();
+    });
+
+    it("emits start/complete heartbeat lines for the SQLite-orphan rebuild loop when verbose", async () => {
+      storeSqliteOnlyFacts(3);
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+      const { runVerifyForCli } = await import("../cli/handlers.js");
+      await runVerifyForCli(
+        buildCtx() as never,
+        { fix: true, reconcile: true, verbose: true },
+        { log: () => {} },
+      );
+
+      const consoleLines = logSpy.mock.calls.map((c) => String(c[0]));
+      expect(consoleLines.some((l) => l.includes("verify-reconcile:rebuild-sqlite-orphans — start"))).toBe(true);
+      expect(consoleLines.some((l) => l.includes("verify-reconcile:rebuild-sqlite-orphans — complete in"))).toBe(
+        true,
+      );
+    });
+
+    it("emits start/complete heartbeat lines for the vector-orphan delete path when verbose", async () => {
+      const orphanId = "eeeeeeee-0000-4000-8000-000000000099";
+      await vectorDb.store({
+        id: orphanId,
+        text: "orphan-verbose",
+        vector: makeVector(),
+        importance: 0.5,
+        category: "fact",
+      });
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+      const { runVerifyForCli } = await import("../cli/handlers.js");
+      await runVerifyForCli(
+        buildCtx() as never,
+        { fix: true, reconcile: true, verbose: true },
+        { log: () => {} },
+      );
+
+      const consoleLines = logSpy.mock.calls.map((c) => String(c[0]));
+      expect(consoleLines.some((l) => l.includes("verify-reconcile:delete-vector-orphans — start"))).toBe(true);
+      expect(consoleLines.some((l) => l.includes("verify-reconcile:delete-vector-orphans — complete in"))).toBe(
+        true,
+      );
+    });
+
+    it("stays silent (no heartbeat lines) without --verbose", async () => {
+      storeSqliteOnlyFacts(3);
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+      const { runVerifyForCli } = await import("../cli/handlers.js");
+      await runVerifyForCli(buildCtx() as never, { fix: true, reconcile: true }, { log: () => {} });
+
+      const consoleLines = logSpy.mock.calls.map((c) => String(c[0]));
+      expect(consoleLines.some((l) => l.includes("verify-reconcile:rebuild-sqlite-orphans"))).toBe(false);
+    });
+
+    it("stops the SQLite-orphan rebuild loop early when the maintenance run deadline has passed", async () => {
+      storeSqliteOnlyFacts(5);
+      setMaintenanceRunDeadlineMs(Date.now() - 1000);
+
+      const { runVerifyForCli } = await import("../cli/handlers.js");
+      const lines: string[] = [];
+      await runVerifyForCli(
+        buildCtx() as never,
+        { fix: true, reconcile: true },
+        { log: (m) => lines.push(m) },
+      );
+      const out = lines.join("\n");
+
+      expect(out).toContain("stopped early after 0/5 — maintenance run deadline reached");
+      expect(out).toContain("rebuilt 0/5 SQLite orphan vector(s)");
+    });
   });
 });

@@ -4,7 +4,7 @@
  * values are stored in plaintext; the user may secure data by other means (e.g. filesystem permissions).
  */
 
-import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, scryptSync } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -17,9 +17,13 @@ import {
 import { assertValidCredentialRow, assertValidCredentialType } from "../services/credential-validation.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { pluginLogger } from "../utils/logger.js";
+import { SECONDS_PER_DAY } from "../utils/constants.js";
 import { tryRestrictSqliteDbFileMode } from "../utils/sqlite-file-perms.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
+
+/** Default retention window for a replaced credential's historical revision (issue #2104). */
+const DEFAULT_REVISION_TTL_DAYS = 30;
 
 /** node:sqlite returns BLOBs as Uint8Array; convert to Buffer for crypto ops. */
 function toBuffer(val: Uint8Array | Buffer): Buffer {
@@ -88,6 +92,41 @@ export type CredentialEntry = {
   expires: number | null;
 };
 
+/** Metadata for a historical credential revision — never carries the decrypted value (issue #2104). */
+export type CredentialRevisionMeta = {
+  id: string;
+  service: string;
+  type: CredentialType;
+  url: string | null;
+  notes: string | null;
+  /** `created` of the credential row this revision was replaced from (preserved across restores). */
+  created: number;
+  /** The replaced credential's own business-logic expiry, if any (distinct from `expiresAt`). */
+  credExpires: number | null;
+  /** When this revision was written (i.e. when the credential it replaced was overwritten). */
+  replacedAt: number;
+  /** Retention TTL for this revision; null means it never expires (only true while pinned). */
+  expiresAt: number | null;
+  /** Non-null (a timestamp) means the revision is pinned and exempt from expiry. */
+  pinnedAt: number | null;
+  /** Session/agent identifier that triggered the replacement, when available. */
+  replacedBy: string | null;
+};
+
+export type CredentialRevisionEntry = CredentialRevisionMeta & { value: string };
+
+export type CredentialRevisionAuditAction = "retrieve" | "restore" | "purge" | "purge_all" | "pin" | "unpin";
+
+export type CredentialRevisionAuditEvent = {
+  id: string;
+  ts: number;
+  service: string;
+  type: CredentialType;
+  revisionId: string;
+  action: CredentialRevisionAuditAction;
+  actor: string | null;
+};
+
 export class CredentialsDB extends BaseSqliteStore {
   private readonly dbPath: string;
   private key!: Buffer;
@@ -140,6 +179,7 @@ export class CredentialsDB extends BaseSqliteStore {
     this.liveDb.exec(`
       CREATE INDEX IF NOT EXISTS idx_credentials_service ON credentials(service)
     `);
+    this.ensureRevisionsSchema();
 
     const versionRow = this.liveDb.prepare("SELECT value FROM vault_meta WHERE key = 'kdf_version'").get() as
       | { value: Uint8Array | Buffer }
@@ -233,6 +273,48 @@ export class CredentialsDB extends BaseSqliteStore {
       );
     }
     this.maybeMigrateLegacyCredentialTypes();
+  }
+
+  /** Historical-revision tables (issue #2104). Idempotent; safe to call on every open. */
+  private ensureRevisionsSchema(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS credential_revisions (
+        id TEXT PRIMARY KEY,
+        service TEXT NOT NULL,
+        type TEXT NOT NULL DEFAULT 'other',
+        value BLOB NOT NULL,
+        url TEXT,
+        notes TEXT,
+        created INTEGER NOT NULL,
+        cred_expires INTEGER,
+        replaced_at INTEGER NOT NULL,
+        expires_at INTEGER,
+        pinned_at INTEGER,
+        replaced_by TEXT
+      )
+    `);
+    this.liveDb.exec(`
+      CREATE INDEX IF NOT EXISTS idx_credential_revisions_service_type ON credential_revisions(service, type)
+    `);
+    this.liveDb.exec(`
+      CREATE INDEX IF NOT EXISTS idx_credential_revisions_expires
+      ON credential_revisions(expires_at) WHERE expires_at IS NOT NULL
+    `);
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS credential_revision_audit (
+        id TEXT PRIMARY KEY,
+        ts INTEGER NOT NULL,
+        service TEXT NOT NULL,
+        type TEXT NOT NULL,
+        revision_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        actor TEXT
+      )
+    `);
+    this.liveDb.exec(`
+      CREATE INDEX IF NOT EXISTS idx_credential_revision_audit_service_type
+      ON credential_revision_audit(service, type)
+    `);
   }
 
   /** Migrate invalid legacy credential types (e.g. type=url) to supported schema. Idempotent. */
@@ -463,6 +545,9 @@ export class CredentialsDB extends BaseSqliteStore {
           const encrypted = encryptValue(plaintext, newKey);
           updateStmt.run(encrypted as unknown as Uint8Array, r.service, r.type);
         }
+        // Revisions carry the same ciphertext protection as current values (issue #2104) — without
+        // this they would silently stay on the old (plaintext) key after this method returns.
+        this.reencryptAllRevisions(newKey);
         this.liveDb
           .prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)")
           .run(Buffer.from([newKdfVersion]));
@@ -480,6 +565,25 @@ export class CredentialsDB extends BaseSqliteStore {
     this.storesEncryptedValues = true;
 
     return { migrated: migratedCount, kdfVersion: this.kdfVersion };
+  }
+
+  /**
+   * Re-encrypt every `credential_revisions.value` with `newKey`, decrypting with the CURRENT
+   * (pre-migration) key/mode. Must run inside the same transaction as the main `credentials`
+   * re-encryption, and before `this.key`/`this.storesEncryptedValues` are updated to the new values.
+   */
+  private reencryptAllRevisions(newKey: Buffer): number {
+    const rows = this.liveDb.prepare("SELECT id, value FROM credential_revisions").all() as Array<{
+      id: string;
+      value: Uint8Array | Buffer;
+    }>;
+    const updateStmt = this.liveDb.prepare("UPDATE credential_revisions SET value = ? WHERE id = ?");
+    for (const r of rows) {
+      const plaintext = this.decryptStoredValue(r.value);
+      const encrypted = encryptValue(plaintext, newKey);
+      updateStmt.run(encrypted as unknown as Uint8Array, r.id);
+    }
+    return rows.length;
   }
 
   /**
@@ -623,6 +727,10 @@ export class CredentialsDB extends BaseSqliteStore {
           const encrypted = encryptValue(plaintext, newKey);
           updateStmt.run(encrypted as unknown as Uint8Array, r.service, r.type);
         }
+        // Revisions carry the same ciphertext protection as current values (issue #2104). The
+        // pre-encryption backup above intentionally does not snapshot credential_revisions — it
+        // exists to roll back current credential values, not full revision history.
+        this.reencryptAllRevisions(newKey);
         this.liveDb
           .prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)")
           .run(Buffer.from([newKdfVersion]));
@@ -730,6 +838,24 @@ export class CredentialsDB extends BaseSqliteStore {
         `Rekey aborted: ${skippedCount} of ${skippedCount + decryptedEntries.length} credential row(s) could not be decrypted with the current key. Fix or remove those rows before rekeying — proceeding would silently leave them on the old key while the vault records the new one.`,
       );
     }
+    // Same guard for historical revisions (issue #2104) — a revision that can't be decrypted with
+    // the current key would otherwise silently stay on the old key while vault_meta records the new one.
+    const revisionRowsPreflight = this.liveDb.prepare("SELECT value FROM credential_revisions").all() as Array<{
+      value: Uint8Array | Buffer;
+    }>;
+    let revisionSkippedCount = 0;
+    for (const r of revisionRowsPreflight) {
+      try {
+        this.decryptStoredValue(r.value);
+      } catch {
+        revisionSkippedCount++;
+      }
+    }
+    if (revisionSkippedCount > 0) {
+      throw new Error(
+        `Rekey aborted: ${revisionSkippedCount} of ${revisionRowsPreflight.length} credential revision row(s) could not be decrypted with the current key. Fix or purge those revisions before rekeying.`,
+      );
+    }
     const plaintextRows = decryptedEntries.map((entry) => ({
       service: entry.service,
       type: entry.type as CredentialType,
@@ -823,6 +949,8 @@ export class CredentialsDB extends BaseSqliteStore {
           const encrypted = encryptValue(row.value, newKey);
           updateStmt.run(encrypted as unknown as Uint8Array, row.service, row.type);
         }
+        // Backup above intentionally does not snapshot credential_revisions (see encryptVaultSafe).
+        this.reencryptAllRevisions(newKey);
         this.liveDb
           .prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)")
           .run(Buffer.from([newKdfVersion]));
@@ -943,18 +1071,28 @@ export class CredentialsDB extends BaseSqliteStore {
   /**
    * Insert or update a credential. On conflict (service, type), `updated` and value fields refresh;
    * `created` is preserved from the original row — intentional for "same key, rotated secret" flows (#894).
+   *
+   * When a row already exists for (service, type) and `opts.revisionsEnabled` is not `false` (issue
+   * #2104), the value being overwritten is preserved as a historical revision — copying the raw
+   * ciphertext directly (no decrypt/re-encrypt round-trip needed) before the upsert clobbers it.
    */
-  store(entry: {
-    service: string;
-    type: CredentialType;
-    value: string;
-    url?: string;
-    notes?: string;
-    expires?: number | null;
-  }): CredentialEntry {
+  store(
+    entry: {
+      service: string;
+      type: CredentialType;
+      value: string;
+      url?: string;
+      notes?: string;
+      expires?: number | null;
+    },
+    opts: { revisionsEnabled?: boolean; revisionTtlDays?: number; replacedBy?: string | null } = {},
+  ): CredentialEntry {
     assertValidCredentialType(entry.type);
     this.maybeAdoptExternalVaultMigration();
     const now = Math.floor(Date.now() / 1000);
+    if (opts.revisionsEnabled !== false) {
+      this.snapshotCurrentAsRevision(entry.service, entry.type, now, opts.revisionTtlDays, opts.replacedBy ?? null);
+    }
     const stored = this.storesEncryptedValues ? encryptValue(entry.value, this.key) : Buffer.from(entry.value, "utf8");
     this.liveDb
       .prepare(
@@ -978,6 +1116,245 @@ export class CredentialsDB extends BaseSqliteStore {
       updated: now,
       expires: entry.expires ?? null,
     };
+  }
+
+  /** Copy the current (service, type) row's ciphertext into `credential_revisions`, if one exists. */
+  private snapshotCurrentAsRevision(
+    service: string,
+    type: CredentialType,
+    now: number,
+    ttlDays: number | undefined,
+    replacedBy: string | null,
+  ): void {
+    const existing = this.liveDb
+      .prepare("SELECT value, url, notes, created, expires FROM credentials WHERE service = ? AND type = ?")
+      .get(service, type) as
+      | { value: Uint8Array | Buffer; url: string | null; notes: string | null; created: number; expires: number | null }
+      | undefined;
+    if (!existing) return;
+    const ttl = ttlDays ?? DEFAULT_REVISION_TTL_DAYS;
+    const expiresAt = now + ttl * SECONDS_PER_DAY;
+    this.liveDb
+      .prepare(
+        `INSERT INTO credential_revisions
+           (id, service, type, value, url, notes, created, cred_expires, replaced_at, expires_at, pinned_at, replaced_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+      )
+      .run(
+        randomUUID(),
+        service,
+        type,
+        existing.value,
+        existing.url,
+        existing.notes,
+        existing.created,
+        existing.expires,
+        now,
+        expiresAt,
+        replacedBy,
+      );
+  }
+
+  /** Delete expired, unpinned revisions (lazy sweep — called before any revision read). */
+  private pruneExpiredRevisions(service: string, type?: CredentialType): void {
+    const now = Math.floor(Date.now() / 1000);
+    if (type) {
+      this.liveDb
+        .prepare(
+          "DELETE FROM credential_revisions WHERE service = ? AND type = ? AND pinned_at IS NULL AND expires_at IS NOT NULL AND expires_at < ?",
+        )
+        .run(service, type, now);
+    } else {
+      this.liveDb
+        .prepare(
+          "DELETE FROM credential_revisions WHERE service = ? AND pinned_at IS NULL AND expires_at IS NOT NULL AND expires_at < ?",
+        )
+        .run(service, now);
+    }
+  }
+
+  private rowToRevisionMeta(row: Record<string, unknown>): CredentialRevisionMeta {
+    return {
+      id: row.id as string,
+      service: row.service as string,
+      type: row.type as CredentialType,
+      url: (row.url as string) ?? null,
+      notes: (row.notes as string) ?? null,
+      created: row.created as number,
+      credExpires: (row.cred_expires as number) ?? null,
+      replacedAt: row.replaced_at as number,
+      expiresAt: (row.expires_at as number) ?? null,
+      pinnedAt: (row.pinned_at as number) ?? null,
+      replacedBy: (row.replaced_by as string) ?? null,
+    };
+  }
+
+  private recordRevisionAudit(
+    action: CredentialRevisionAuditAction,
+    service: string,
+    type: CredentialType,
+    revisionId: string,
+    actor: string | null,
+  ): void {
+    try {
+      this.liveDb
+        .prepare(
+          "INSERT INTO credential_revision_audit (id, ts, service, type, revision_id, action, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(randomUUID(), Math.floor(Date.now() / 1000), service, type, revisionId, action, actor);
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "credentials",
+        operation: "record-revision-audit",
+        severity: "warning",
+      });
+    }
+  }
+
+  /** List historical revisions for a (service, type) — metadata only, values are never included. */
+  listRevisions(service: string, type: CredentialType): CredentialRevisionMeta[] {
+    this.pruneExpiredRevisions(service, type);
+    const rows = this.liveDb
+      .prepare(
+        "SELECT * FROM credential_revisions WHERE service = ? AND type = ? ORDER BY replaced_at DESC",
+      )
+      .all(service, type) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToRevisionMeta(row));
+  }
+
+  /**
+   * Retrieve one revision's decrypted value intentionally (never returned from a list call).
+   * Unless `refreshAccess` is `false`, accessing a revision extends its retention TTL from now.
+   */
+  getRevision(
+    service: string,
+    type: CredentialType,
+    revisionId: string,
+    opts: { refreshAccess?: boolean; revisionTtlDays?: number; actor?: string | null } = {},
+  ): CredentialRevisionEntry | null {
+    this.pruneExpiredRevisions(service, type);
+    const row = this.liveDb
+      .prepare("SELECT * FROM credential_revisions WHERE id = ? AND service = ? AND type = ?")
+      .get(revisionId, service, type) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    const value = this.decryptStoredValue(row.value as Uint8Array | Buffer);
+    const meta = this.rowToRevisionMeta(row);
+    const refreshAccess = opts.refreshAccess !== false;
+    if (refreshAccess && meta.pinnedAt == null) {
+      const now = Math.floor(Date.now() / 1000);
+      const ttl = opts.revisionTtlDays ?? DEFAULT_REVISION_TTL_DAYS;
+      meta.expiresAt = now + ttl * SECONDS_PER_DAY;
+      this.liveDb
+        .prepare("UPDATE credential_revisions SET expires_at = ? WHERE id = ?")
+        .run(meta.expiresAt, revisionId);
+    }
+    this.recordRevisionAudit("retrieve", service, type, revisionId, opts.actor ?? null);
+    return { ...meta, value };
+  }
+
+  /**
+   * Restore/promote a historical revision back to current. The value it replaces (if any) is
+   * itself snapshotted as a new revision first, so a restore never discards data outright.
+   */
+  restoreRevision(
+    service: string,
+    type: CredentialType,
+    revisionId: string,
+    opts: { revisionsEnabled?: boolean; revisionTtlDays?: number; actor?: string | null } = {},
+  ): CredentialEntry | null {
+    this.pruneExpiredRevisions(service, type);
+    const row = this.liveDb
+      .prepare("SELECT * FROM credential_revisions WHERE id = ? AND service = ? AND type = ?")
+      .get(revisionId, service, type) as
+      | { value: Uint8Array | Buffer; url: string | null; notes: string | null; created: number; cred_expires: number | null }
+      | undefined;
+    if (!row) return null;
+    const now = Math.floor(Date.now() / 1000);
+    if (opts.revisionsEnabled !== false) {
+      this.snapshotCurrentAsRevision(service, type, now, opts.revisionTtlDays, opts.actor ?? null);
+    }
+    this.liveDb
+      .prepare(
+        `INSERT INTO credentials (service, type, value, url, notes, created, updated, expires)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(service, type) DO UPDATE SET
+           value = excluded.value,
+           url = excluded.url,
+           notes = excluded.notes,
+           updated = excluded.updated,
+           expires = excluded.expires`,
+      )
+      .run(service, type, row.value, row.url, row.notes, row.created, now, row.cred_expires);
+    this.recordRevisionAudit("restore", service, type, revisionId, opts.actor ?? null);
+    return this.get(service, type);
+  }
+
+  /** Hard-delete a single revision. */
+  purgeRevision(
+    service: string,
+    type: CredentialType,
+    revisionId: string,
+    opts: { actor?: string | null } = {},
+  ): boolean {
+    const r = this.liveDb
+      .prepare("DELETE FROM credential_revisions WHERE id = ? AND service = ? AND type = ?")
+      .run(revisionId, service, type);
+    const deleted = r.changes > 0;
+    if (deleted) this.recordRevisionAudit("purge", service, type, revisionId, opts.actor ?? null);
+    return deleted;
+  }
+
+  /** Hard-delete every revision for a (service, type) — e.g. an operator wants a value gone for good. */
+  purgeAllRevisions(service: string, type: CredentialType, opts: { actor?: string | null } = {}): number {
+    const r = this.liveDb.prepare("DELETE FROM credential_revisions WHERE service = ? AND type = ?").run(service, type);
+    const removed = Number(r.changes);
+    if (removed > 0) this.recordRevisionAudit("purge_all", service, type, "*", opts.actor ?? null);
+    return removed;
+  }
+
+  /** Pin (never expire) or unpin a revision. */
+  pinRevision(
+    service: string,
+    type: CredentialType,
+    revisionId: string,
+    pinned: boolean,
+    opts: { actor?: string | null } = {},
+  ): boolean {
+    const now = Math.floor(Date.now() / 1000);
+    const r = this.liveDb
+      .prepare("UPDATE credential_revisions SET pinned_at = ? WHERE id = ? AND service = ? AND type = ?")
+      .run(pinned ? now : null, revisionId, service, type);
+    const changed = r.changes > 0;
+    if (changed) this.recordRevisionAudit(pinned ? "pin" : "unpin", service, type, revisionId, opts.actor ?? null);
+    return changed;
+  }
+
+  /** Audit trail for revision retrieval/restoration/purge/pin — self-contained (works even when the
+   * cross-agent AuditStore is unavailable, e.g. the credentials-only CLI fast path). */
+  listRevisionAuditEvents(service?: string, type?: CredentialType, limit = 50): CredentialRevisionAuditEvent[] {
+    let rows: Array<Record<string, unknown>>;
+    if (service && type) {
+      rows = this.liveDb
+        .prepare("SELECT * FROM credential_revision_audit WHERE service = ? AND type = ? ORDER BY ts DESC LIMIT ?")
+        .all(service, type, limit) as Array<Record<string, unknown>>;
+    } else if (service) {
+      rows = this.liveDb
+        .prepare("SELECT * FROM credential_revision_audit WHERE service = ? ORDER BY ts DESC LIMIT ?")
+        .all(service, limit) as Array<Record<string, unknown>>;
+    } else {
+      rows = this.liveDb
+        .prepare("SELECT * FROM credential_revision_audit ORDER BY ts DESC LIMIT ?")
+        .all(limit) as Array<Record<string, unknown>>;
+    }
+    return rows.map((row) => ({
+      id: row.id as string,
+      ts: row.ts as number,
+      service: row.service as string,
+      type: row.type as CredentialType,
+      revisionId: row.revision_id as string,
+      action: row.action as CredentialRevisionAuditAction,
+      actor: (row.actor as string) ?? null,
+    }));
   }
 
   get(service: string, type?: CredentialType): CredentialEntry | null {

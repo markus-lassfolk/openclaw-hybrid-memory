@@ -1,15 +1,15 @@
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { hybridConfigSchema } from "../config.js";
+import { CredentialsDB } from "../backends/credentials-db.js";
 import {
   parseCredentialsConfig,
   resolveCredentialsEncryptionKeyCandidates,
   resolveCredentialsEncryptionKeyForConfig,
 } from "../config/parsers/core.js";
-import { CredentialsDB } from "../backends/credentials-db.js";
+import { hybridConfigSchema } from "../config.js";
 import { getCredentialsEncryptionKeyRaw } from "../services/credentials-path.js";
 import { pluginLogger } from "../utils/logger.js";
 
@@ -56,6 +56,39 @@ describe("resolveCredentialsEncryptionKeyCandidates", () => {
     const missing = `file:${join(tmpdir(), "cred-key-missing", "vault.key")}`;
     expect(resolveCredentialsEncryptionKeyForConfig(missing)).toBe("");
     expect(resolveCredentialsEncryptionKeyCandidates(missing)).toEqual([""]);
+  });
+});
+
+describe("shouldSurfaceLegacyKeyWarning (#2099)", () => {
+  it("fails open (true) when argv doesn't contain hybrid-mem at all — can't tell the command", async () => {
+    const { shouldSurfaceLegacyKeyWarning } = await import("../services/credentials-encryption-key.js");
+    expect(shouldSurfaceLegacyKeyWarning(["node", "some-other-script.js"])).toBe(true);
+  });
+
+  it("surfaces for credentials subcommands", async () => {
+    const { shouldSurfaceLegacyKeyWarning } = await import("../services/credentials-encryption-key.js");
+    expect(shouldSurfaceLegacyKeyWarning(["node", "cli.js", "hybrid-mem", "credentials", "vault-status"])).toBe(true);
+    expect(shouldSurfaceLegacyKeyWarning(["node", "cli.js", "hybrid-mem", "credentials", "rekey-vault"])).toBe(true);
+  });
+
+  it("surfaces for doctor and verify (explicit health checks)", async () => {
+    const { shouldSurfaceLegacyKeyWarning } = await import("../services/credentials-encryption-key.js");
+    expect(shouldSurfaceLegacyKeyWarning(["node", "cli.js", "hybrid-mem", "doctor"])).toBe(true);
+    expect(shouldSurfaceLegacyKeyWarning(["node", "cli.js", "hybrid-mem", "verify"])).toBe(true);
+  });
+
+  it("surfaces when --verbose or -v is present anywhere after hybrid-mem", async () => {
+    const { shouldSurfaceLegacyKeyWarning } = await import("../services/credentials-encryption-key.js");
+    expect(shouldSurfaceLegacyKeyWarning(["node", "cli.js", "hybrid-mem", "status", "--verbose"])).toBe(true);
+    expect(shouldSurfaceLegacyKeyWarning(["node", "cli.js", "hybrid-mem", "digest", "pending", "-v"])).toBe(true);
+  });
+
+  it("suppresses for unrelated commands without --verbose (the reported noise)", async () => {
+    const { shouldSurfaceLegacyKeyWarning } = await import("../services/credentials-encryption-key.js");
+    expect(shouldSurfaceLegacyKeyWarning(["node", "cli.js", "hybrid-mem", "status"])).toBe(false);
+    expect(shouldSurfaceLegacyKeyWarning(["node", "cli.js", "hybrid-mem", "digest", "pending"])).toBe(false);
+    expect(shouldSurfaceLegacyKeyWarning(["node", "cli.js", "hybrid-mem", "maintenance", "status"])).toBe(false);
+    expect(shouldSurfaceLegacyKeyWarning(["node", "cli.js", "hybrid-mem", "dream-cycle", "--help"])).toBe(false);
   });
 });
 

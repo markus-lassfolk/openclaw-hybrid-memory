@@ -196,6 +196,9 @@ function parseCredentialOptions(credRaw: Record<string, unknown> | undefined): {
   autoDetect: boolean;
   expiryWarningDays: number;
   revealInContent: boolean;
+  revisionsEnabled: boolean;
+  revisionTtlDays: number;
+  revisionAccessRefresh: boolean;
 } {
   const autoCaptureRaw = credRaw?.autoCapture as Record<string, unknown> | undefined;
   const autoCapture: CredentialAutoCaptureConfig | undefined = autoCaptureRaw
@@ -214,6 +217,12 @@ function parseCredentialOptions(credRaw: Record<string, unknown> | undefined): {
         ? Math.floor(credRaw.expiryWarningDays)
         : 7,
     revealInContent: credRaw?.revealInContent === true,
+    revisionsEnabled: credRaw?.revisionsEnabled !== false,
+    revisionTtlDays:
+      typeof credRaw?.revisionTtlDays === "number" && credRaw.revisionTtlDays > 0
+        ? Math.floor(credRaw.revisionTtlDays)
+        : 30,
+    revisionAccessRefresh: credRaw?.revisionAccessRefresh !== false,
   };
 }
 

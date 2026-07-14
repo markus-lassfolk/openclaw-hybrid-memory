@@ -28,6 +28,7 @@ import {
 import type { ProvenanceService } from "./provenance.js";
 import { dotProductSimilarity, loadReflectionDedupeCorpusVectors } from "./reflection.js";
 import { deleteVectorsForFactIds, cleanupEvictedVector } from "./vector-maintenance.js";
+import { resolveWriteVectorCandidates } from "./vector-dedupe-helpers.js";
 
 interface ConsolidateOptions {
   threshold: number;
@@ -38,6 +39,11 @@ interface ConsolidateOptions {
   thinkingMode?: import("./chat.js").MiniMaxThinkingMode;
   /** Invoked once per cluster processed by the merge loop (success, skip, or failure). */
   onProgress?: (progress: { clusterIndex: number; totalClusters: number; merged: number }) => void;
+  /**
+   * When true, plumb real vector-neighbour candidates into the merged fact's write-time dedupe
+   * (#2091) instead of silently degrading to lexical-only — mirrors `cfg.store.fuzzyDedupe`.
+   */
+  fuzzyDedupe?: boolean;
 }
 
 interface ConsolidateResult {
@@ -293,7 +299,49 @@ export async function runConsolidate(
       continue;
     }
 
-    storeDedupeVectorFallbackSuppressed++;
+    // Embed before storing (#2091) so a real embedding can feed write-time vector dedupe below —
+    // previously this embed only happened after storeWithResult, forcing every consolidation store
+    // to silently degrade to lexical-only dedupe even when cfg.store.fuzzyDedupe is enabled.
+    const candidateScope = (first?.scope as "global" | "user" | "agent" | "session" | undefined) ?? "global";
+    const candidateScopeTarget = first?.scopeTarget ?? null;
+    let vector: number[] | undefined;
+    try {
+      vector = await embeddings.embed(mergedText);
+    } catch (err) {
+      logger.warn(`memory-hybrid: consolidate embed failed: ${err}`);
+      vectorFailures++;
+      // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+      if (!shouldSuppressEmbeddingError(err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "consolidate-embed",
+          subsystem: "embeddings",
+        });
+      }
+    }
+
+    let vectorCandidates: ReadonlyArray<{ id: string; score: number }> | undefined;
+    let suppressVectorFallbackWarning = true;
+    if (opts.fuzzyDedupe && vector !== undefined) {
+      const resolved = await resolveWriteVectorCandidates({
+        fuzzyDedupe: true,
+        vector,
+        vectorDb,
+        factsDb,
+        source: "consolidation",
+        embeddingModelName: embeddings.modelName,
+        candidateScope,
+        candidateScopeTarget,
+      });
+      if (!resolved.vectorSearchDegraded) {
+        vectorCandidates = resolved.vectorCandidates;
+        suppressVectorFallbackWarning = false;
+      } else {
+        storeDedupeVectorFallbackSuppressed++;
+      }
+    } else {
+      storeDedupeVectorFallbackSuppressed++;
+    }
+
     const storeResult = factsDb.storeWithResult(
       {
         text: mergedText,
@@ -306,8 +354,8 @@ export async function runConsolidate(
         // Every fact in this cluster shares the same (scope, scopeTarget) — enforced when edges
         // were built above — so the merged output must carry that same scope forward rather than
         // defaulting to global, which would leak a tenant-scoped source fact's content globally.
-        scope: (first?.scope as "global" | "user" | "agent" | "session" | undefined) ?? "global",
-        scopeTarget: first?.scopeTarget ?? null,
+        scope: candidateScope,
+        scopeTarget: candidateScopeTarget,
         decayClass: CONSOLIDATED_FACT_DECAY_CLASS,
         sourceDate: maxSourceDate,
         tags: mergedTags.length > 0 ? mergedTags : undefined,
@@ -327,7 +375,8 @@ export async function runConsolidate(
       },
       {
         warnContext: "consolidation",
-        suppressVectorFallbackWarning: true,
+        vectorCandidates,
+        suppressVectorFallbackWarning,
       },
     );
     if (storeResult.skipped) {
@@ -364,21 +413,6 @@ export async function runConsolidate(
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "consolidate-provenance-derived",
           subsystem: "provenance",
-          factId: entry.id,
-        });
-      }
-    }
-    let vector: number[] | undefined;
-    try {
-      vector = await embeddings.embed(mergedText);
-    } catch (err) {
-      logger.warn(`memory-hybrid: consolidate embed failed: ${err}`);
-      vectorFailures++;
-      // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
-      if (!shouldSuppressEmbeddingError(err)) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "consolidate-embed",
-          subsystem: "embeddings",
           factId: entry.id,
         });
       }

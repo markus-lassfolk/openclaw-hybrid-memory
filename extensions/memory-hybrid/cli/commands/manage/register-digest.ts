@@ -5,15 +5,21 @@
  * tool proposals, crystallization proposals, and verified facts.
  */
 
-import { runPendingDigestAutopilotCron } from "../../../services/pending-digest-autopilot-cron.js";
 import {
   type PendingDigestAutopilotMaxima,
   type PendingDigestAutopilotPolicies,
   runPendingDigestAutopilot,
   stablePendingDigestAutopilotJson,
 } from "../../../services/pending-digest-autopilot.js";
+import { runPendingDigestAutopilotCron } from "../../../services/pending-digest-autopilot-cron.js";
+import {
+  applyDigestBatchReject,
+  type DigestBatchRejectQueue,
+  previewDigestBatchReject,
+} from "../../../services/pending-digest-batch-reject.js";
 import {
   buildPendingReviewDigestReport,
+  parsePendingDigestSinceDays,
   writePendingReviewDigestOutput,
 } from "../../../services/pending-review-digest.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
@@ -46,6 +52,99 @@ export function registerManageDigest(mem: Chainable, b: ManageBindings): void {
         });
         writePendingReviewDigestOutput({ report, format, outPath });
       }),
+    );
+
+  digest
+    .command("batch-reject")
+    .description(
+      "Batch-triage a large pending backlog (#2098): finds duplicate/stale/low-confidence items across " +
+        "persona|tools|crystallization proposals and rejects them. Dry-run by default.",
+    )
+    .requiredOption("--queue <queue>", "persona|tools|crystallization")
+    .option("--older-than <duration>", "Reject items at least this old, e.g. 30d, 2w")
+    .option("--max-confidence <n>", "Reject items with confidence <= n (persona/crystallization only)")
+    .option("--duplicates-only", "Only consider duplicate items (same target/name, keep the newest)")
+    .option("--yes", "Apply the rejections (default: dry-run preview only)")
+    .option("--json", "Emit structured JSON instead of the human-readable list")
+    .action(
+      withExit(
+        async (opts?: {
+          queue?: string;
+          olderThan?: string;
+          maxConfidence?: string;
+          duplicatesOnly?: boolean;
+          yes?: boolean;
+          json?: boolean;
+        }) => {
+          const queue = opts?.queue as DigestBatchRejectQueue | undefined;
+          if (queue !== "persona" && queue !== "tools" && queue !== "crystallization") {
+            console.error("error: --queue must be one of persona|tools|crystallization");
+            process.exitCode = 1;
+            return;
+          }
+          // Stricter than digest pending's own --since parsing: a batch REJECT is destructive, so
+          // a malformed --older-than must error out rather than silently falling back to 7d.
+          if (opts?.olderThan !== undefined && !/^\d+[dhw]?$/i.test(opts.olderThan.trim())) {
+            console.error("error: --older-than must look like 30d, 2w, or 24h");
+            process.exitCode = 1;
+            return;
+          }
+          const olderThanDays = opts?.olderThan ? parsePendingDigestSinceDays(opts.olderThan) : undefined;
+          const maxConfidence = opts?.maxConfidence !== undefined ? Number(opts.maxConfidence) : undefined;
+          if (maxConfidence !== undefined && (Number.isNaN(maxConfidence) || maxConfidence < 0 || maxConfidence > 1)) {
+            console.error("error: --max-confidence must be a number between 0 and 1");
+            process.exitCode = 1;
+            return;
+          }
+          if (olderThanDays === undefined && maxConfidence === undefined && !opts?.duplicatesOnly) {
+            console.error("error: pass at least one filter: --older-than, --max-confidence, or --duplicates-only");
+            process.exitCode = 1;
+            return;
+          }
+
+          const preview = previewDigestBatchReject({
+            cfg: b.cfg,
+            queue,
+            olderThanDays,
+            maxConfidence,
+            duplicatesOnly: opts?.duplicatesOnly === true,
+          });
+
+          if (!opts?.yes) {
+            if (opts?.json) {
+              console.log(JSON.stringify({ ...preview, dryRun: true }, null, 2));
+              return;
+            }
+            if (preview.candidates.length === 0) {
+              console.log(`No ${queue} candidates match those filters (${preview.totalPending} pending total).`);
+              return;
+            }
+            console.log(
+              `Would reject ${preview.candidates.length}/${preview.totalPending} pending ${queue} item(s) (dry-run — pass --yes to apply):`,
+            );
+            for (const c of preview.candidates) {
+              console.log(`  [${c.id}] ${c.label} (${c.ageDays}d) — ${c.reasons.join(", ")}`);
+            }
+            return;
+          }
+
+          const result = applyDigestBatchReject({
+            cfg: b.cfg,
+            queue,
+            ids: preview.candidates.map((c) => c.id),
+            reasonPrefix: `digest batch-reject (${preview.candidates.length > 0 ? preview.candidates[0].reasons.join(",") : "n/a"})`,
+          });
+          if (opts?.json) {
+            console.log(JSON.stringify({ queue, ...result }, null, 2));
+            return;
+          }
+          console.log(`Rejected ${result.rejected}/${preview.candidates.length} ${queue} item(s).`);
+          if (result.failed.length > 0) {
+            console.log(`Failed to reject: ${result.failed.join(", ")}`);
+            process.exitCode = 2;
+          }
+        },
+      ),
     );
 
   digest
@@ -111,7 +210,10 @@ export function registerManageDigest(mem: Chainable, b: ManageBindings): void {
       "Cron wrapper for pending digest autopilot (#1330). Enforces guard/lock/config safety, writes HM artifacts, and emits structured summary.",
     )
     .option("--json", "Emit structured summary JSON")
-    .option("-v, --verbose", "Mirror internal step progress as the run executes (stderr in --json mode, stdout otherwise)")
+    .option(
+      "-v, --verbose",
+      "Mirror internal step progress as the run executes (stderr in --json mode, stdout otherwise)",
+    )
     .action(
       withExit(async (opts?: { json?: boolean; verbose?: boolean }, cmd?: CommanderOptsParent) => {
         const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);

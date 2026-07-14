@@ -5,8 +5,8 @@
  */
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { registerManageCredentialsAndScope } from "../cli/commands/manage/register-credentials-scope.js";
 import type { ManageBindings } from "../cli/commands/manage/bindings.js";
+import { registerManageCredentialsAndScope } from "../cli/commands/manage/register-credentials-scope.js";
 import { _testing } from "../index.js";
 
 const { FactsDB } = _testing;
@@ -122,6 +122,280 @@ describe("credentials vault-status legacy key surfacing (#2099)", () => {
     await mem.parseAsync(["credentials", "vault-status"], { from: "user" });
 
     expect(lines.some((l) => l.includes("Legacy key material"))).toBe(false);
+  });
+});
+
+describe("credentials rekey-vault dry-run preflight (#2099)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    process.exitCode = undefined;
+  });
+
+  it("prints backup-path and target-key-file readiness, and a warning line when either is not ready", async () => {
+    const runRekeyVault = vi.fn().mockReturnValue({
+      ok: true,
+      dryRun: true,
+      vaultPath: "/tmp/creds.db",
+      status: { kdfVersion: 2, encryptedAtRest: true },
+      preflight: { backupPathWritable: false, targetKeyFileReadable: false },
+    });
+    const mem = makeProgram({ runRekeyVault, factsDb: {}, vectorDb: {} });
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((a) => String(a)).join(" "));
+    });
+
+    await mem.parseAsync(["credentials", "rekey-vault"], { from: "user" });
+
+    expect(lines.some((l) => l.includes("backup path writable=false"))).toBe(true);
+    expect(lines.some((l) => l.includes("target key file readable=false"))).toBe(true);
+    expect(lines.some((l) => l.includes("Backup directory is not writable"))).toBe(true);
+    expect(lines.some((l) => l.includes("file: ref could not be read"))).toBe(true);
+  });
+
+  it("omits the target-key-file line entirely when the configured key is not a file: ref", async () => {
+    const runRekeyVault = vi.fn().mockReturnValue({
+      ok: true,
+      dryRun: true,
+      vaultPath: "/tmp/creds.db",
+      status: { kdfVersion: 2, encryptedAtRest: true },
+      preflight: { backupPathWritable: true, targetKeyFileReadable: null },
+    });
+    const mem = makeProgram({ runRekeyVault, factsDb: {}, vectorDb: {} });
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((a) => String(a)).join(" "));
+    });
+
+    await mem.parseAsync(["credentials", "rekey-vault"], { from: "user" });
+
+    expect(lines.some((l) => l.includes("backup path writable=true"))).toBe(true);
+    expect(lines.some((l) => l.includes("target key file readable"))).toBe(false);
+    expect(lines.some((l) => l.includes("Backup directory is not writable"))).toBe(false);
+    expect(lines.some((l) => l.includes("file: ref could not be read"))).toBe(false);
+  });
+});
+
+describe("credentials revisions (#2104)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    process.exitCode = undefined;
+  });
+
+  it("rejects an invalid --type before calling the handler", async () => {
+    const runCredentialRevisionList = vi.fn();
+    const mem = makeProgram({ runCredentialRevisionList, factsDb: {}, vectorDb: {} });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await mem.parseAsync(["credentials", "revisions", "list", "--service", "svc", "--type", "bogus"], {
+      from: "user",
+    });
+
+    expect(process.exitCode).toBe(1);
+    expect(runCredentialRevisionList).not.toHaveBeenCalled();
+  });
+
+  it("list prints revision metadata and never the value", async () => {
+    const runCredentialRevisionList = vi.fn().mockReturnValue([
+      {
+        id: "rev-1",
+        service: "doris-gateway",
+        type: "other",
+        url: "http://192.168.1.195",
+        notes: null,
+        created: 1000,
+        credExpires: null,
+        replacedAt: 2000,
+        expiresAt: 2000 + 30 * 86400,
+        pinnedAt: null,
+        replacedBy: null,
+      },
+    ]);
+    const mem = makeProgram({ runCredentialRevisionList, factsDb: {}, vectorDb: {} });
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map(String).join(" "));
+    });
+
+    await mem.parseAsync(["credentials", "revisions", "list", "--service", "doris-gateway", "--type", "other"], {
+      from: "user",
+    });
+
+    expect(runCredentialRevisionList).toHaveBeenCalledWith({ service: "doris-gateway", type: "other" });
+    expect(lines.some((l) => l.includes("rev-1"))).toBe(true);
+  });
+
+  it("get masks the value by default and reveals it with --show-value", async () => {
+    const runCredentialRevisionGet = vi.fn().mockReturnValue({
+      id: "rev-1",
+      service: "svc",
+      type: "token",
+      value: "old-secret",
+      url: null,
+      notes: null,
+      created: 1000,
+      credExpires: null,
+      replacedAt: 2000,
+      expiresAt: null,
+      pinnedAt: 3000,
+      replacedBy: null,
+    });
+    const mem = makeProgram({ runCredentialRevisionGet, factsDb: {}, vectorDb: {} });
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map(String).join(" "));
+    });
+
+    await mem.parseAsync(
+      ["credentials", "revisions", "get", "--service", "svc", "--type", "token", "--revision", "rev-1"],
+      { from: "user" },
+    );
+    expect(lines.some((l) => l.includes("old-secret"))).toBe(false);
+
+    lines.length = 0;
+    await mem.parseAsync(
+      [
+        "credentials",
+        "revisions",
+        "get",
+        "--service",
+        "svc",
+        "--type",
+        "token",
+        "--revision",
+        "rev-1",
+        "--show-value",
+      ],
+      { from: "user" },
+    );
+    expect(lines.some((l) => l.includes("old-secret"))).toBe(true);
+  });
+
+  it("restore previews without applying, then applies with --yes", async () => {
+    const runCredentialRevisionList = vi.fn().mockReturnValue([
+      {
+        id: "rev-1",
+        service: "svc",
+        type: "token",
+        url: null,
+        notes: null,
+        created: 1000,
+        credExpires: null,
+        replacedAt: 2000,
+        expiresAt: null,
+        pinnedAt: null,
+        replacedBy: null,
+      },
+    ]);
+    const runCredentialRevisionRestore = vi.fn().mockReturnValue({
+      service: "svc",
+      type: "token",
+      value: "[redacted]",
+      url: null,
+      notes: null,
+      created: 1000,
+      updated: 3000,
+      expires: null,
+    });
+    const mem = makeProgram({ runCredentialRevisionList, runCredentialRevisionRestore, factsDb: {}, vectorDb: {} });
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map(String).join(" "));
+    });
+
+    await mem.parseAsync(
+      ["credentials", "revisions", "restore", "--service", "svc", "--type", "token", "--revision", "rev-1"],
+      { from: "user" },
+    );
+    expect(runCredentialRevisionRestore).not.toHaveBeenCalled();
+    expect(lines.some((l) => l.includes("Would restore"))).toBe(true);
+
+    lines.length = 0;
+    await mem.parseAsync(
+      ["credentials", "revisions", "restore", "--service", "svc", "--type", "token", "--revision", "rev-1", "--yes"],
+      { from: "user" },
+    );
+    expect(runCredentialRevisionRestore).toHaveBeenCalledWith({ service: "svc", type: "token", revision: "rev-1" });
+    expect(lines.some((l) => l.includes("Restored revision rev-1"))).toBe(true);
+  });
+
+  it("purge requires --revision or --all", async () => {
+    const runCredentialRevisionPurge = vi.fn();
+    const mem = makeProgram({ runCredentialRevisionPurge, factsDb: {}, vectorDb: {} });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await mem.parseAsync(["credentials", "revisions", "purge", "--service", "svc", "--type", "token"], {
+      from: "user",
+    });
+
+    expect(process.exitCode).toBe(1);
+    expect(runCredentialRevisionPurge).not.toHaveBeenCalled();
+  });
+
+  it("purge previews without applying, then applies with --yes", async () => {
+    const runCredentialRevisionList = vi.fn().mockReturnValue([
+      {
+        id: "rev-1",
+        service: "svc",
+        type: "token",
+        url: null,
+        notes: null,
+        created: 1000,
+        credExpires: null,
+        replacedAt: 2000,
+        expiresAt: null,
+        pinnedAt: null,
+        replacedBy: null,
+      },
+    ]);
+    const runCredentialRevisionPurge = vi.fn().mockReturnValue({ purged: 1 });
+    const mem = makeProgram({ runCredentialRevisionList, runCredentialRevisionPurge, factsDb: {}, vectorDb: {} });
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map(String).join(" "));
+    });
+
+    await mem.parseAsync(
+      ["credentials", "revisions", "purge", "--service", "svc", "--type", "token", "--revision", "rev-1"],
+      { from: "user" },
+    );
+    expect(runCredentialRevisionPurge).not.toHaveBeenCalled();
+    expect(lines.some((l) => l.includes("Would purge 1"))).toBe(true);
+
+    lines.length = 0;
+    await mem.parseAsync(
+      ["credentials", "revisions", "purge", "--service", "svc", "--type", "token", "--revision", "rev-1", "--yes"],
+      { from: "user" },
+    );
+    expect(runCredentialRevisionPurge).toHaveBeenCalledWith({
+      service: "svc",
+      type: "token",
+      revision: "rev-1",
+      all: undefined,
+    });
+    expect(lines.some((l) => l.includes("Purged 1 revision"))).toBe(true);
+  });
+
+  it("pin applies immediately (no --yes gate) and reports unpinned with --unpin", async () => {
+    const runCredentialRevisionPin = vi.fn().mockReturnValue({ changed: true });
+    const mem = makeProgram({ runCredentialRevisionPin, factsDb: {}, vectorDb: {} });
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map(String).join(" "));
+    });
+
+    await mem.parseAsync(
+      ["credentials", "revisions", "pin", "--service", "svc", "--type", "token", "--revision", "rev-1", "--unpin"],
+      { from: "user" },
+    );
+
+    expect(runCredentialRevisionPin).toHaveBeenCalledWith({
+      service: "svc",
+      type: "token",
+      revision: "rev-1",
+      pinned: false,
+    });
+    expect(lines.some((l) => l.includes("now unpinned"))).toBe(true);
   });
 });
 

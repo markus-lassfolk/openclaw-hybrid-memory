@@ -137,19 +137,38 @@ export function recordMaintenanceStepRun(db: DatabaseSync, step: OrchestratorSte
   });
 }
 
-/** Jobs not run in the last N hours (for doctor warning). */
-export function getStaleMaintenanceJobs(db: DatabaseSync, hours = 48): string[] {
-  const cutoff = Math.floor(Date.now() / 1000) - hours * 3600;
-  const monitored = new Set(MAINTENANCE_STEPS.map((step) => step.name));
+/** Default tolerance applied to each step's own guard cadence before it's considered stale. */
+export const DEFAULT_STALE_GUARD_MULTIPLIER = 3;
+
+/**
+ * Jobs overdue relative to their own guard cadence (for doctor warning; issue #2108).
+ *
+ * Each `MAINTENANCE_STEPS` entry already carries its real expected cadence via `guardIntervalMs`
+ * (from 1h for `prune` up to 5d for slow steps like `build-languages`). A single flat cutoff
+ * applied to every step — the previous behavior — false-flags any long-cadence step as stale long
+ * before it's actually overdue (a 5-day-cadence step is guaranteed to look "stale" under a 48h
+ * cutoff), while `maintenance status`/`maintenance inventory` correctly judge health against the
+ * `maintenance-nightly` orchestrator's own cadence. Comparing against each step's own cadence
+ * (with `staleGuardMultiplier` tolerance for missed/gated cycles) keeps doctor's signal consistent
+ * with the rest of the maintenance health model instead of contradicting it.
+ */
+export function getStaleMaintenanceJobs(db: DatabaseSync, staleGuardMultiplier = DEFAULT_STALE_GUARD_MULTIPLIER): string[] {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const monitored = new Map(MAINTENANCE_STEPS.map((step) => [step.name, step]));
   const stale: string[] = [];
-  for (const job of monitored) {
-    const last = getLastRunForJob(db, job);
+  for (const step of monitored.values()) {
+    const last = getLastRunForJob(db, step.name);
     if (!last) continue;
     // A missing-runner step gets a fresh started_at on every orchestrator cycle even though it
     // never actually executes — recency alone can never surface it, so flag it unconditionally
     // (#2094 QA follow-up: cmd-doctor's "Maintenance health" check previously reported "pass"
     // indefinitely for a permanently unwired step).
-    if (last.status === "skipped:missing-runner" || last.started_at < cutoff) stale.push(job);
+    if (last.status === "skipped:missing-runner") {
+      stale.push(step.name);
+      continue;
+    }
+    const cutoffSec = nowSec - (step.guardIntervalMs * staleGuardMultiplier) / 1000;
+    if (last.started_at < cutoffSec) stale.push(step.name);
   }
   return stale;
 }

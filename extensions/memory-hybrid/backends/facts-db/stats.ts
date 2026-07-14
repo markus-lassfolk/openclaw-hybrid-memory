@@ -127,6 +127,11 @@ export type VectorlessBySourceRow = {
   count: number;
 };
 
+export type VectorlessByCategoryRow = {
+  category: string;
+  count: number;
+};
+
 /**
  * Active, unstructured (no key/value) facts — the population that is expected to carry a
  * canonical vector. Structured key/value facts (e.g. task-ledger rows) are intentionally
@@ -195,6 +200,26 @@ export function vectorlessActiveFactsBySource(db: DatabaseSync, limit = 20): Vec
     )
     .all(nowSec, Math.max(1, Math.min(100, Math.floor(limit)))) as Array<{ source: string; cnt: number }>;
   return rows.map((row) => ({ source: row.source, count: Number(row.cnt ?? 0) }));
+}
+
+/**
+ * By-category breakdown of the same vectorless population as {@link vectorlessActiveFactsBySource}
+ * (#2093) — lets an operator tell "this backlog is mostly one structured-adjacent category" apart
+ * from "this is a broad indexing gap" at a glance, without cross-referencing source names.
+ */
+export function vectorlessActiveFactsByCategory(db: DatabaseSync, limit = 20): VectorlessByCategoryRow[] {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const rows = db
+    .prepare(
+      `SELECT COALESCE(NULLIF(f.category, ''), 'other') AS category, COUNT(*) AS cnt
+       FROM facts f
+       WHERE ${vectorlessWhereClause()}
+       GROUP BY COALESCE(NULLIF(f.category, ''), 'other')
+       ORDER BY cnt DESC, category COLLATE NOCASE ASC
+       LIMIT ?`,
+    )
+    .all(nowSec, Math.max(1, Math.min(100, Math.floor(limit)))) as Array<{ category: string; cnt: number }>;
+  return rows.map((row) => ({ category: row.category, count: Number(row.cnt ?? 0) }));
 }
 
 export function listVectorlessActiveFacts(

@@ -25,14 +25,21 @@ import {
 import { atomicWriteFile } from "../../../utils/atomic-write.js";
 import { PLUGIN_ID } from "../../../utils/constants.js";
 import { formatTimestampUtcFromMs, nowIso } from "../../../utils/dates.js";
+import { maintenanceRunDeadlineReached } from "../../../utils/maintenance-run-deadline.js";
 import { ensureGoalStewardshipHeartbeatCronJob, ensureMaintenanceCronJobs } from "../../cmd-install.js";
 import {
   buildMaintenanceCronFeatureGates,
   RESEARCH_OVERNIGHT_JOB_ID,
   readConsolidatedCronJobsFlag,
 } from "../../install/cron-jobs.js";
+import { runMaintenanceHeartbeat } from "../../commands/manage/maintenance-heartbeat.js";
 
 import type { VerifyRunState } from "../verify-run-state.js";
+
+/** Heartbeat cadence for reconcile-fix work (issue #2105) — shorter than the 60s maintenance
+ * default since an operator watching `verify --fix --reconcile --verbose` interactively needs
+ * faster confirmation that the command is alive, not hung. */
+const RECONCILE_HEARTBEAT_INTERVAL_MS = 20_000;
 
 export async function runVerifyReconcileSection(state: VerifyRunState): Promise<void> {
   const {
@@ -114,9 +121,15 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
               });
               if (vectorOrphans.length > 10) log(`  … and ${vectorOrphans.length - 10} more`);
               if (opts.fix) {
-                const reconcileResult = await reconcileOrphanVectors(factsDb, vectorDb, {
-                  operation: "verify-reconcile",
-                });
+                const reconcileResult = await runMaintenanceHeartbeat(
+                  "verify-reconcile:delete-vector-orphans",
+                  opts.verbose === true,
+                  () => reconcileOrphanVectors(factsDb, vectorDb, { operation: "verify-reconcile" }),
+                  {
+                    heartbeatIntervalMs: RECONCILE_HEARTBEAT_INTERVAL_MS,
+                    progressSupplier: () => `stage=delete; orphansToProcess=${vectorOrphans.length}`,
+                  },
+                );
                 log(
                   `  → Delete attempted for ${reconcileResult.orphansFound} orphan vector(s): ` +
                     `deleted=${reconcileResult.orphanVectorsRemoved}, failed=${reconcileResult.failed}.`,
@@ -184,28 +197,53 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
               if (opts.fix && sqliteOrphanRebuildBudget > 0) {
                 let rebuilt = 0;
                 let failed = 0;
-                for (const id of sqliteOrphans.slice(0, sqliteOrphanRebuildBudget)) {
-                  try {
-                    const fact = factsDb.getById(id);
-                    if (!fact) {
-                      failed++;
-                      continue;
+                let processed = 0;
+                let deadlineStopped = false;
+                const targets = sqliteOrphans.slice(0, sqliteOrphanRebuildBudget);
+                await runMaintenanceHeartbeat(
+                  "verify-reconcile:rebuild-sqlite-orphans",
+                  opts.verbose === true,
+                  async (heartbeat) => {
+                    for (const id of targets) {
+                      if (maintenanceRunDeadlineReached()) {
+                        deadlineStopped = true;
+                        break;
+                      }
+                      try {
+                        const fact = factsDb.getById(id);
+                        if (!fact) {
+                          failed++;
+                          continue;
+                        }
+                        const vec = await embeddings.embed(fact.text);
+                        await storeCanonicalVectorForFact({
+                          vectorDb,
+                          factsDb,
+                          factId: fact.id,
+                          text: fact.text,
+                          vector: vec,
+                          importance: fact.importance ?? 0.5,
+                          category: fact.category,
+                          embeddingModel: embeddings.modelName,
+                        });
+                        rebuilt++;
+                      } catch {
+                        failed++;
+                      }
+                      processed++;
+                      heartbeat.heartbeat();
                     }
-                    const vec = await embeddings.embed(fact.text);
-                    await storeCanonicalVectorForFact({
-                      vectorDb,
-                      factsDb,
-                      factId: fact.id,
-                      text: fact.text,
-                      vector: vec,
-                      importance: fact.importance ?? 0.5,
-                      category: fact.category,
-                      embeddingModel: embeddings.modelName,
-                    });
-                    rebuilt++;
-                  } catch {
-                    failed++;
-                  }
+                  },
+                  {
+                    heartbeatIntervalMs: RECONCILE_HEARTBEAT_INTERVAL_MS,
+                    progressSupplier: () =>
+                      `stage=rebuild; processed=${processed}/${targets.length}; rebuilt=${rebuilt}; failed=${failed}; embeddingModel=${embeddings.modelName}`,
+                  },
+                );
+                if (deadlineStopped) {
+                  log(
+                    `  → Rebuild policy=${reconcilePolicy}: stopped early after ${processed}/${targets.length} — maintenance run deadline reached.`,
+                  );
                 }
                 log(
                   `  → Rebuild policy=${reconcilePolicy}: rebuilt ${rebuilt}/${Math.min(sqliteOrphans.length, sqliteOrphanRebuildBudget)} SQLite orphan vector(s)${failed > 0 ? ` (${failed} failed)` : ""}.`,
@@ -215,7 +253,8 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
                     `  → Skipped ${sqliteOrphans.length - sqliteOrphanRebuildBudget} SQLite orphan(s) due to --reconcile-max-fixes budget.`,
                   );
                 }
-                sqliteOrphansFullyRebuilt = failed === 0 && sqliteOrphans.length <= sqliteOrphanRebuildBudget;
+                sqliteOrphansFullyRebuilt =
+                  failed === 0 && !deadlineStopped && sqliteOrphans.length <= sqliteOrphanRebuildBudget;
               } else if (opts.fix && sqliteOrphanRebuildBudget === 0) {
                 log(
                   `  → Policy=${reconcilePolicy}: SQLite-orphan auto-rebuild disabled; use re-index for full recovery.`,

@@ -397,6 +397,120 @@ describe("runConsolidate scope isolation (loop iteration 104 regression)", () =>
   });
 });
 
+describe("runConsolidate real vector-candidate wiring (#2091)", () => {
+  it("plumbs live vector neighbours into the store call when fuzzyDedupe is enabled", async () => {
+    const entries = [makeEntry({ id: "a", text: "Fact A" }), makeEntry({ id: "b", text: "Fact B" })];
+    const factsDb = makeFactsDb(entries);
+    const candidateFact = makeEntry({
+      id: "candidate-1",
+      text: "Pre-existing similar fact",
+      source: "consolidation",
+      supersededAt: null,
+      expiresAt: null,
+    });
+    factsDb.getById = vi.fn((id: string) =>
+      id === "candidate-1" ? candidateFact : (entries.find((e) => e.id === id) ?? null),
+    );
+    const vectorDb = {
+      store: vi.fn().mockResolvedValue(undefined),
+      search: vi.fn().mockResolvedValue([{ entry: { id: "candidate-1" }, score: 0.97 }]),
+    };
+    const embeddings = makeEmbeddings({
+      "Fact A": [1, 0],
+      "Fact B": [1, 0],
+      "Merged fact": [1, 0],
+    });
+    const openai = {
+      chat: {
+        completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content: "Merged fact" } }] }) },
+      },
+    } as never;
+
+    await runConsolidate(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai,
+      { threshold: 0.9, includeStructured: true, dryRun: false, limit: 10, model: "test-model", fuzzyDedupe: true },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(vectorDb.search).toHaveBeenCalled();
+    expect(factsDb.storeWithResult).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "consolidation" }),
+      expect.objectContaining({
+        suppressVectorFallbackWarning: false,
+        vectorCandidates: [{ id: "candidate-1", score: 0.97 }],
+      }),
+    );
+  });
+
+  it("falls back to lexical-only (and suppresses the warning) when vector search fails", async () => {
+    const entries = [makeEntry({ id: "a", text: "Fact A" }), makeEntry({ id: "b", text: "Fact B" })];
+    const factsDb = makeFactsDb(entries);
+    const vectorDb = {
+      store: vi.fn().mockResolvedValue(undefined),
+      search: vi.fn().mockRejectedValue(new Error("vector backend unavailable")),
+    };
+    const embeddings = makeEmbeddings({
+      "Fact A": [1, 0],
+      "Fact B": [1, 0],
+      "Merged fact": [1, 0],
+    });
+    const openai = {
+      chat: {
+        completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content: "Merged fact" } }] }) },
+      },
+    } as never;
+
+    await runConsolidate(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai,
+      { threshold: 0.9, includeStructured: true, dryRun: false, limit: 10, model: "test-model", fuzzyDedupe: true },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(vectorDb.search).toHaveBeenCalled();
+    expect(factsDb.storeWithResult).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "consolidation" }),
+      expect.objectContaining({ suppressVectorFallbackWarning: true, vectorCandidates: undefined }),
+    );
+  });
+
+  it("stays lexical-only (no search call) when fuzzyDedupe is not set, matching prior behavior", async () => {
+    const entries = [makeEntry({ id: "a", text: "Fact A" }), makeEntry({ id: "b", text: "Fact B" })];
+    const factsDb = makeFactsDb(entries);
+    const vectorDb = { store: vi.fn().mockResolvedValue(undefined), search: vi.fn() };
+    const embeddings = makeEmbeddings({
+      "Fact A": [1, 0],
+      "Fact B": [1, 0],
+      "Merged fact": [1, 0],
+    });
+    const openai = {
+      chat: {
+        completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content: "Merged fact" } }] }) },
+      },
+    } as never;
+
+    await runConsolidate(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai,
+      { threshold: 0.9, includeStructured: true, dryRun: false, limit: 10, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(vectorDb.search).not.toHaveBeenCalled();
+    expect(factsDb.storeWithResult).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "consolidation" }),
+      expect.objectContaining({ suppressVectorFallbackWarning: true, vectorCandidates: undefined }),
+    );
+  });
+});
+
 describe("runConsolidate cleanup failure containment (regression)", () => {
   it("does not abort the whole run when factsDb.delete() throws during cleanup", async () => {
     const entries = [makeEntry({ id: "a", text: "Fact A" }), makeEntry({ id: "b", text: "Fact B" })];

@@ -52,7 +52,10 @@ type ProvenanceInstallerContext = Pick<
   ToolsContext,
   "factsDb" | "eventLog" | "provenanceService" | "cfg" | "currentAgentIdRef" | "buildToolScopeFilter"
 >;
-type CredentialInstallerContext = Pick<ToolsContext, "credentialsDb" | "factsDb" | "vectorDb" | "cfg">;
+type CredentialInstallerContext = Pick<
+  ToolsContext,
+  "credentialsDb" | "factsDb" | "vectorDb" | "cfg" | "currentAgentIdRef"
+>;
 type DocumentInstallerContext = Pick<
   ToolsContext,
   "factsDb" | "vectorDb" | "cfg" | "embeddings" | "pythonBridge" | "openai" | "provenanceService" | "currentAgentIdRef"
@@ -240,14 +243,15 @@ function selectCredentialToolsContext({
   factsDb,
   vectorDb,
   cfg,
+  currentAgentIdRef,
 }: ToolsContext): CredentialInstallerContext {
-  return { credentialsDb, factsDb, vectorDb, cfg };
+  return { credentialsDb, factsDb, vectorDb, cfg, currentAgentIdRef };
 }
 
 function installCredentialTools(ctx: CredentialInstallerContext, api: ClawdbotPluginApi): void {
-  const { credentialsDb, factsDb, vectorDb, cfg } = ctx;
+  const { credentialsDb, factsDb, vectorDb, cfg, currentAgentIdRef } = ctx;
   if (cfg.credentials.enabled && credentialsDb) {
-    registerCredentialTools({ credentialsDb, factsDb, vectorDb, cfg, api }, api);
+    registerCredentialTools({ credentialsDb, factsDb, vectorDb, cfg, api, currentAgentIdRef }, api);
   }
 }
 

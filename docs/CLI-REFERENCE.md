@@ -17,6 +17,9 @@ If you are new here, start with [TASKS.md](TASKS.md) for the task-based map and 
 **Tip: Verbosity level**
 CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `normal`, `verbose`). You can change it with `openclaw hybrid-mem config-set verbosity silent`.
 
+**Tip: Quiet bootstrap output (#2095)**
+Full bootstrap (DB init, vault open, doctor/config checks) logs a lot of `info`-level progress noise ahead of a command's actual output — most visible on `status`/`digest pending`/`maintenance status`. Pass `--quiet` (or the short `-q`) anywhere after `hybrid-mem`, or set `OPENCLAW_HYBRID_MEM_QUIET=1`, to drop that info/debug noise; warnings and errors are never suppressed. `--help` and `--version` are already quiet by default — they skip full bootstrap entirely and don't need this flag.
+
 **Agent tools (LLM):** Commands below are **CLI** entry points. Tools the agent invokes through the gateway use **underscore** names only (`memory_store`, `memory_recall`, `memory_directory`, …), with no `.` in the tool id — required by providers such as Anthropic. **`memory_directory`** lists contacts and returns **org-centric** views (people + fact ids for an organization)—stable structured data, not a replacement for ranked `memory_recall` search. See [CONFIGURATION.md § Agent tool names](CONFIGURATION.md#agent-tool-names).
 
 ## Commands by category
@@ -138,6 +141,11 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | `credentials get --service <name> [--type <type>] [--value-only] [--show-value]` | Retrieve a credential value. Use `--type` when multiple types exist for the service. `--value-only`: print only the secret (for piping). `--show-value`: reveal the secret in the default (metadata) output. |
 | `credentials audit [--json]` | Flag suspicious entries (natural language, long service names, duplicates). |
 | `credentials prune [--yes] [--only-flags ...]` | Remove flagged entries (default: dry-run; use `--yes` to apply). |
+| `credentials revisions list --service <name> --type <type> [--json]` | List historical revisions kept when a credential is overwritten (issue #2104) — metadata only, no values. |
+| `credentials revisions get --service <name> --type <type> --revision <id> [--show-value\|--value-only] [--json]` | Retrieve a specific revision's value intentionally. Masked by default. |
+| `credentials revisions restore --service <name> --type <type> --revision <id> [--yes]` | Restore/promote a revision back to current (default: dry-run; use `--yes` to apply). The value it replaces is itself kept as a new revision. |
+| `credentials revisions purge --service <name> --type <type> [--revision <id>\|--all] [--yes]` | Hard-delete revision(s) — cannot be undone (default: dry-run; use `--yes` to apply). |
+| `credentials revisions pin --service <name> --type <type> --revision <id> [--unpin]` | Pin a revision so it never expires, or `--unpin` to re-expose it to normal TTL expiry. |
 | `contacts list [--prefix <name>] [--limit <n>] [--json]` | List contacts (id, name, role, org, email). Issue #2014. |
 | `contacts suggest-merges [--json]` | List unambiguous partial-name duplicate candidates (e.g. "Daniel" vs. "Daniel Thunberg"). |
 | `contacts merge <fromId> <intoId>` | Merge `fromId` into `intoId` (each arg accepts a contact id **or** a name): repoints NER mentions and `entity_contact_id` FKs, folds in profile fields (manual wins conflicts), deletes `fromId`. |
@@ -370,14 +378,34 @@ Several commands support **`--json`**. Follow these rules when automating:
 
 Commands that register plugin config during startup must not print non-JSON lines to stdout when you use JSON mode (for example corrections/config registration during `config --json`). If `jq` fails with “parse error”, check stderr for the real message and upgrade to **2026.5.190+** if you hit legacy stdout pollution.
 
-**Quiet mode (`OPENCLAW_HYBRID_MEM_QUIET=1`, issue [#2095](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2095)):** By default, `hybrid-mem` commands print plugin bootstrap telemetry (startup checkpoints, `registered ...` confirmations, credential-vault-OK lines) before the command's real output, which can bury the result in a smoke suite or cron harness. Set the env var to `1` to drop that info/debug boilerplate:
+**Quiet mode (`--quiet`/`-q` or `OPENCLAW_HYBRID_MEM_QUIET=1`, issue [#2095](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2095)):** By default, `hybrid-mem` commands print plugin bootstrap telemetry (startup checkpoints, `registered ...` confirmations, credential-vault-OK lines) before the command's real output, which can bury the result in a smoke suite or cron harness. Pass `--quiet` (or `-q`) anywhere after `hybrid-mem`, or set the env var to `1`, to drop that info/debug boilerplate:
 
 ```bash
-OPENCLAW_HYBRID_MEM_QUIET=1 openclaw hybrid-mem maintenance status
+openclaw hybrid-mem maintenance status --quiet
 OPENCLAW_HYBRID_MEM_QUIET=1 openclaw hybrid-mem digest pending --json
 ```
 
 Warnings and errors are never suppressed by quiet mode — only routine progress logging is trimmed. `--help` invocations are already quiet (they short-circuit before the plugin/storage stack bootstraps) and are unaffected by this flag. Quiet mode composes with `--json`: bootstrap `warn`/`error` lines still route to stderr as usual, just without the `info`/`debug` noise ahead of them. Note: the `[plugins] loading ...` lines the OpenClaw host itself prints before the plugin registers are outside this plugin's control.
+
+---
+
+## Digest backlog hygiene
+
+`digest pending` reports age-bucket hygiene per queue (persona proposals, tool proposals, crystallization proposals), but on a large backlog reviewing items one at a time doesn't scale. `digest batch-reject` (issue [#2098](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2098)) finds duplicate/stale/low-confidence items and rejects them in bulk through each queue's existing reject primitive — dry-run by default:
+
+```bash
+# Preview: duplicates (same target/name, newest kept) across persona proposals
+openclaw hybrid-mem digest batch-reject --queue persona --duplicates-only
+
+# Preview: items 30+ days old in the tool-proposal queue
+openclaw hybrid-mem digest batch-reject --queue tools --older-than 30d
+
+# Preview: low-confidence crystallization proposals, then apply
+openclaw hybrid-mem digest batch-reject --queue crystallization --max-confidence 0.3
+openclaw hybrid-mem digest batch-reject --queue crystallization --max-confidence 0.3 --yes
+```
+
+`--queue` is required (`persona`|`tools`|`crystallization`); pass at least one of `--older-than <duration>`, `--max-confidence <n>`, or `--duplicates-only`. Filters combine — an item matching any of them becomes a candidate. `--yes` applies; without it the command only previews and never mutates. `--json` emits the structured preview/result instead of the human-readable list.
 
 ---
 

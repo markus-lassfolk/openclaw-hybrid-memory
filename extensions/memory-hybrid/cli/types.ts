@@ -109,6 +109,13 @@ export type RekeyVaultResult =
       dryRun: true;
       vaultPath: string;
       status: { kdfVersion: number; encryptedAtRest: boolean };
+      /**
+       * Non-mutating migration-readiness preflight (#2099): whether the directory a backup would
+       * be written to is writable, and — when `credentials.encryptionKey` is a `file:` ref —
+       * whether the target key file exists and is readable. `null` when the configured key is not
+       * a `file:` ref (nothing to check).
+       */
+      preflight: { backupPathWritable: boolean; targetKeyFileReadable: boolean | null };
     }
   | {
       ok: true;

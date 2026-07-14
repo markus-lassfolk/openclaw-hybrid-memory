@@ -4,6 +4,7 @@ import { setEnv } from "../utils/env-manager.js";
  */
 
 import { capturePluginError } from "../services/error-reporter.js";
+import { type CommanderOptsParent, resolveHybridMemVerbose } from "./global-verbose.js";
 import { type Chainable, withExit } from "./shared.js";
 import type { InstallCliResult, VerifyCliSink } from "./types.js";
 
@@ -16,6 +17,7 @@ export type VerifyContext = {
       reconcile?: boolean;
       reconcilePolicy?: "conservative" | "balanced" | "aggressive";
       reconcileMaxFixes?: number;
+      verbose?: boolean;
     },
     sink: VerifyCliSink,
   ) => Promise<void>;
@@ -51,16 +53,21 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
     .option("--no-emoji", "Use plain text indicators instead of emoji (for terminals with poor Unicode support)")
     .action(
       withExit(
-        async (opts: {
-          fix?: boolean;
-          logFile?: string;
-          testLlm?: boolean;
-          noEmoji?: boolean;
-          reconcile?: boolean;
-          reconcilePolicy?: string;
-          reconcileMaxFixes?: string;
-        }) => {
+        async (
+          opts: {
+            fix?: boolean;
+            logFile?: string;
+            testLlm?: boolean;
+            noEmoji?: boolean;
+            reconcile?: boolean;
+            reconcilePolicy?: string;
+            reconcileMaxFixes?: string;
+            verbose?: boolean;
+          },
+          cmd?: CommanderOptsParent,
+        ) => {
           if (opts.noEmoji) setEnv("HYBRID_MEM_NO_EMOJI", "1");
+          const verbose = resolveHybridMemVerbose(opts, cmd);
           const reconcilePolicyRaw = String(opts.reconcilePolicy ?? "balanced")
             .trim()
             .toLowerCase();
@@ -87,6 +94,7 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
                 reconcile: !!opts.reconcile,
                 reconcilePolicy,
                 reconcileMaxFixes,
+                verbose,
               },
               { log: (s) => console.log(s), error: (s) => console.error(s) },
             );

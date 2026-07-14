@@ -124,6 +124,7 @@ import {
   topEntitiesFiltered as topEntitiesFilteredImpl,
   topEntities as topEntitiesImpl,
   uniqueMemoryCategories as uniqueMemoryCategoriesImpl,
+  vectorlessActiveFactsByCategory as vectorlessActiveFactsByCategoryImpl,
   vectorlessActiveFactsBySource as vectorlessActiveFactsBySourceImpl,
 } from "./stats.js";
 import type { ReinforcementContext, ReinforcementEvent } from "./types.js";
@@ -448,6 +449,11 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
 
   vectorlessActiveFactsBySource(limit = 20): ReturnType<typeof vectorlessActiveFactsBySourceImpl> {
     return vectorlessActiveFactsBySourceImpl(this.liveDb, limit);
+  }
+
+  /** By-category breakdown of the same vectorless population (#2093). */
+  vectorlessActiveFactsByCategory(limit = 20): ReturnType<typeof vectorlessActiveFactsByCategoryImpl> {
+    return vectorlessActiveFactsByCategoryImpl(this.liveDb, limit);
   }
 
   listVectorlessActiveFacts(

@@ -35,6 +35,8 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       listVectorlessActiveFacts: vi.fn().mockReturnValue([fact]),
       storeEmbedding: vi.fn(),
       setEmbeddingModel: vi.fn(),
+      vectorlessActiveFactsBySource: vi.fn().mockReturnValue([]),
+      vectorlessActiveFactsByCategory: vi.fn().mockReturnValue([]),
     };
     const vectorDb = {
       runWithAutoOptimizePaused: vi.fn(async (fn: () => Promise<void>) => await fn()),
@@ -99,6 +101,8 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       ]),
       storeEmbedding: vi.fn(),
       setEmbeddingModel: vi.fn(),
+      vectorlessActiveFactsBySource: vi.fn().mockReturnValue([]),
+      vectorlessActiveFactsByCategory: vi.fn().mockReturnValue([]),
     };
     const vectorDb = {
       runWithAutoOptimizePaused: vi.fn(async (fn: () => Promise<void>) => await fn()),
@@ -185,6 +189,8 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       listVectorlessActiveFacts: vi.fn().mockReturnValue(facts),
       storeEmbedding: vi.fn(),
       setEmbeddingModel: vi.fn(),
+      vectorlessActiveFactsBySource: vi.fn().mockReturnValue([]),
+      vectorlessActiveFactsByCategory: vi.fn().mockReturnValue([]),
     };
     const vectorDb = {
       runWithAutoOptimizePaused: vi.fn(async (fn: () => Promise<void>) => await fn()),
@@ -254,6 +260,8 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       listVectorlessActiveFacts: vi.fn().mockReturnValue(facts),
       storeEmbedding: vi.fn(),
       setEmbeddingModel: vi.fn(),
+      vectorlessActiveFactsBySource: vi.fn().mockReturnValue([]),
+      vectorlessActiveFactsByCategory: vi.fn().mockReturnValue([]),
     };
     const vectorDb = {
       runWithAutoOptimizePaused: vi.fn(async (fn: () => Promise<void>) => await fn()),
@@ -335,6 +343,8 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       listVectorlessActiveFacts: vi.fn().mockReturnValue(facts),
       storeEmbedding: vi.fn(),
       setEmbeddingModel: vi.fn(),
+      vectorlessActiveFactsBySource: vi.fn().mockReturnValue([]),
+      vectorlessActiveFactsByCategory: vi.fn().mockReturnValue([]),
     };
     const vectorDb = {
       runWithAutoOptimizePaused: vi.fn(async (fn: () => Promise<void>) => await fn()),
@@ -439,6 +449,8 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       listVectorlessActiveFacts: vi.fn().mockReturnValue(facts),
       storeEmbedding: vi.fn(),
       setEmbeddingModel: vi.fn(),
+      vectorlessActiveFactsBySource: vi.fn().mockReturnValue([]),
+      vectorlessActiveFactsByCategory: vi.fn().mockReturnValue([]),
     };
     const vectorDb = {
       runWithAutoOptimizePaused: vi.fn(async (fn: () => Promise<void>) => await fn()),
@@ -528,6 +540,8 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       listVectorlessActiveFacts: vi.fn().mockReturnValue(facts),
       storeEmbedding: vi.fn(),
       setEmbeddingModel: vi.fn(),
+      vectorlessActiveFactsBySource: vi.fn().mockReturnValue([]),
+      vectorlessActiveFactsByCategory: vi.fn().mockReturnValue([]),
     };
     const vectorDb = {
       runWithAutoOptimizePaused: vi.fn(async (fn: () => Promise<void>) => await fn()),
@@ -626,6 +640,8 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       listVectorlessActiveFacts: vi.fn().mockReturnValue(facts),
       storeEmbedding: vi.fn(),
       setEmbeddingModel: vi.fn(),
+      vectorlessActiveFactsBySource: vi.fn().mockReturnValue([]),
+      vectorlessActiveFactsByCategory: vi.fn().mockReturnValue([]),
     };
     const vectorDb = {
       runWithAutoOptimizePaused: vi.fn(async (fn: () => Promise<void>) => await fn()),
@@ -746,6 +762,8 @@ describe("reembed-vectorless metrics persistence (#1808)", () => {
         listVectorlessActiveFacts: vi.fn().mockReturnValue([fact]),
         storeEmbedding: vi.fn(),
         setEmbeddingModel: vi.fn(),
+        vectorlessActiveFactsBySource: vi.fn().mockReturnValue([]),
+        vectorlessActiveFactsByCategory: vi.fn().mockReturnValue([]),
       };
       const vectorDb = {
         runWithAutoOptimizePaused: vi.fn(async (fn: () => Promise<void>) => await fn()),
@@ -817,6 +835,8 @@ describe("reembed-vectorless metrics persistence (#1808)", () => {
         .mockReturnValue([{ id: "skip-persist-001", text: "fact", category: "fact", source: "manual" }]),
       storeEmbedding: vi.fn(),
       setEmbeddingModel: vi.fn(),
+      vectorlessActiveFactsBySource: vi.fn().mockReturnValue([]),
+      vectorlessActiveFactsByCategory: vi.fn().mockReturnValue([]),
     };
     const vectorDb = {
       runWithAutoOptimizePaused: vi.fn(async (fn: () => Promise<void>) => await fn()),
