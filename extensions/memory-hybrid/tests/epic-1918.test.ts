@@ -318,8 +318,65 @@ describe("maintenance journal (#1913)", () => {
     // recency alone must never be able to hide this from getStaleMaintenanceJobs.
     insertMaintenanceRun(db, { job: "prune", status: "skipped:missing-runner" });
 
-    expect(getStaleMaintenanceJobs(db, 48)).toContain("prune");
+    expect(getStaleMaintenanceJobs(db)).toContain("prune");
     db.close();
+  });
+
+  describe("getStaleMaintenanceJobs compares each job against its own guard cadence (#2108)", () => {
+    async function makeJournalDb() {
+      const { DatabaseSync } = await import("node:sqlite");
+      const db = new DatabaseSync(":memory:");
+      db.exec(`
+        CREATE TABLE maintenance_runs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          job TEXT NOT NULL,
+          started_at INTEGER NOT NULL,
+          ended_at INTEGER,
+          status TEXT NOT NULL,
+          items_processed INTEGER,
+          cost_estimate REAL,
+          cost_actual REAL,
+          error_summary TEXT,
+          metadata_json TEXT
+        )
+      `);
+      return db;
+    }
+
+    it("does not flag a long-cadence step (5-day guard) that last ran 3 days ago", async () => {
+      const { insertMaintenanceRun, getStaleMaintenanceJobs } = await import("../services/maintenance-audit-journal.js");
+      const db = await makeJournalDb();
+      // build-languages has a 5-day (d5) guard interval — a flat 48h cutoff would wrongly flag this.
+      insertMaintenanceRun(db, { job: "build-languages", status: "ran" });
+      const threeDaysAgoSec = Math.floor(Date.now() / 1000) - 3 * 86400;
+      db.prepare("UPDATE maintenance_runs SET started_at = ? WHERE job = ?").run(threeDaysAgoSec, "build-languages");
+
+      expect(getStaleMaintenanceJobs(db)).not.toContain("build-languages");
+      db.close();
+    });
+
+    it("flags a short-cadence step (1-hour guard) once it's well past its own tolerance", async () => {
+      const { insertMaintenanceRun, getStaleMaintenanceJobs } = await import("../services/maintenance-audit-journal.js");
+      const db = await makeJournalDb();
+      // prune has a 1-hour (h1) guard interval; default tolerance is 3x = 3h, so 5h ago is overdue.
+      insertMaintenanceRun(db, { job: "prune", status: "ran" });
+      const fiveHoursAgoSec = Math.floor(Date.now() / 1000) - 5 * 3600;
+      db.prepare("UPDATE maintenance_runs SET started_at = ? WHERE job = ?").run(fiveHoursAgoSec, "prune");
+
+      expect(getStaleMaintenanceJobs(db)).toContain("prune");
+      db.close();
+    });
+
+    it("does not flag a short-cadence step within its own tolerance window", async () => {
+      const { insertMaintenanceRun, getStaleMaintenanceJobs } = await import("../services/maintenance-audit-journal.js");
+      const db = await makeJournalDb();
+      insertMaintenanceRun(db, { job: "prune", status: "ran" });
+      const thirtyMinAgoSec = Math.floor(Date.now() / 1000) - 30 * 60;
+      db.prepare("UPDATE maintenance_runs SET started_at = ? WHERE job = ?").run(thirtyMinAgoSec, "prune");
+
+      expect(getStaleMaintenanceJobs(db)).not.toContain("prune");
+      db.close();
+    });
   });
 });
 

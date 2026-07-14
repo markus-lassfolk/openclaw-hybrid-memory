@@ -462,6 +462,19 @@ When the gateway loads the plugin, hybrid-memory runs a **pre-parse merge** ([is
 
 **Scope:** Designed for OpenAI-compatible and Google paths that already use **`models.providers`**. Local-only setups (**Ollama** / **ONNX**) are unchanged unless you also set **`memorySearch`** accordingly.
 
+#### Gateway warning: `memorySearch.provider="..." is configured, but no loaded plugin registered a memory embedding provider` (issue #2107)
+
+After a gateway restart with hybrid-memory installed and `agents.defaults.memorySearch.provider` set (e.g. `"openai"`), you may see this warning in the **gateway's own** logs even though hybrid-memory reports itself perfectly healthy in the same startup window (`memory-hybrid: embedding check OK (provider=..., model=...)`, and `openclaw hybrid-mem doctor --deep` showing `🟢 Embedding Provider: ... is available`).
+
+**This is expected and does not mean semantic recall is degraded.** The warning comes from a check in the gateway's own built-in `memory-core` subsystem — a separate, independent embedding-provider registry from hybrid-memory's own SQLite/LanceDB pipeline. Installing hybrid-memory **replaces** the gateway's built-in memory implementation (via `plugins.slots.memory`) rather than plugging into that registry's contract (`contracts.embeddingProviders` / `contracts.memoryEmbeddingProviders` in the plugin manifest, plus a corresponding runtime `registerEmbeddingProvider` / `registerMemoryEmbeddingProvider` adapter call) — so the gateway's startup check, which only inspects that registry, has nothing to find for the configured provider id and warns, regardless of hybrid-memory's actual health.
+
+**To check hybrid-memory's real embedding health, ignore this specific gateway warning and use hybrid-memory's own diagnostics instead:**
+- The bootstrap log line `memory-hybrid: embedding check OK (provider=..., model=...)`.
+- `openclaw hybrid-mem doctor --deep` — look for `🟢 Embedding Provider: ... is available` and `🟢 Configuration: Configuration is valid`.
+- `openclaw hybrid-mem verify` — the embedding section reports the resolved provider/model.
+
+Registering hybrid-memory as a real adapter in the gateway's own embedding-provider registry (to suppress this warning at the source) is a considered follow-up, not implemented here: it would require a `create()`/`embedQuery`/`embedBatch` adapter the gateway's *own* memory-core could invoke independently of hybrid-memory's pipeline — a different subsystem this plugin doesn't otherwise touch, and not something verifiable against a real gateway in this environment.
+
 ---
 
 ### OpenAI (default)

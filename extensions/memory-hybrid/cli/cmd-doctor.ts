@@ -911,12 +911,14 @@ export function registerDoctorCommand(
           }
 
           try {
-            const stale = getStaleMaintenanceJobs(factsDb.getRawDb(), 48);
+            // #2108: compares each job against its own guard cadence (not a flat cutoff), so this
+            // agrees with `maintenance status`'s cadence-based health model instead of contradicting it.
+            const stale = getStaleMaintenanceJobs(factsDb.getRawDb());
             if (stale.length > 0) {
               checks.push({
                 name: "Maintenance health",
                 status: "warn",
-                message: `Stale jobs (≥48h): ${stale.join(", ")}`,
+                message: `Stale jobs (overdue vs. their own cadence): ${stale.join(", ")}`,
                 fix: "Run maintenance orchestrator or check cron schedule",
               });
             } else {

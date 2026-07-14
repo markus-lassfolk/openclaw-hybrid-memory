@@ -24,6 +24,8 @@ export type VerifyRunOpts = {
   reconcile?: boolean;
   reconcilePolicy?: "conservative" | "balanced" | "aggressive";
   reconcileMaxFixes?: number;
+  /** Emit progress heartbeats during long-running --fix/--reconcile work (issue #2105). */
+  verbose?: boolean;
 };
 
 export type VerifyRunState = {
