@@ -20,11 +20,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import {
-  buildSerendipityDigestReport,
-  renderSerendipityDigestMarkdown,
-  writeSerendipityDigestOutput,
-} from "../services/serendipity-digest.js";
+import { buildSerendipityDigestReport, renderSerendipityDigestMarkdown } from "../services/serendipity-digest.js";
 import { decideSerendipityAction } from "../services/serendipity-policy.js";
 import { parsePendingDigestSinceDays } from "../services/pending-review-digest.js";
 import {
@@ -407,7 +403,6 @@ export function registerSerendipityTools(ctx: SerendipityToolsContext, api: Claw
       parameters: Type.Object({
         since: Type.Optional(Type.String({ description: 'Lookback window, e.g. "7d", "24h", "2w" (default 7d).' })),
         format: Type.Optional(stringEnum(["md", "json"] as const)),
-        out: Type.Optional(Type.String({ description: 'Write to path, or "-" for stdout.' })),
       }),
       async execute(_id: string, params: Record<string, unknown>) {
         if (!sp.enabled || !store) return notEnabled();
@@ -418,13 +413,18 @@ export function registerSerendipityTools(ctx: SerendipityToolsContext, api: Claw
           };
         }
         try {
-          const p = params as { since?: string; format?: "md" | "json"; out?: string };
+          const p = params as { since?: string; format?: "md" | "json"; out?: unknown };
+          if (p.out != null) {
+            return {
+              content: [
+                { type: "text", text: "serendipity_digest does not support filesystem output from agent tools." },
+              ],
+              details: { error: "agent_digest_output_path_not_supported" },
+            };
+          }
           const sinceDays = parsePendingDigestSinceDays(p.since ?? "7d");
           // Operator/review view: show the full actionable backlog (level 4).
           const report = buildSerendipityDigestReport({ store, sinceDays, level: 4 });
-          if (p.out) {
-            writeSerendipityDigestOutput({ report, format: p.format ?? "md", outPath: p.out });
-          }
           const text = p.format === "json" ? JSON.stringify(report, null, 2) : renderSerendipityDigestMarkdown(report);
           return { content: [{ type: "text", text }], details: { report } };
         } catch (err) {
