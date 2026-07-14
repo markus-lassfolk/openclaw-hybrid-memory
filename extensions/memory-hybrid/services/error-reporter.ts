@@ -41,6 +41,39 @@ const MAX_BREADCRUMBS = 10;
 const MAX_PENDING_REPORTS = 200;
 
 /**
+ * Max age a pending telemetry report is retained before being aged out (#2113). Without this,
+ * a permanently unreachable reporting endpoint keeps the same reports queued forever, so every
+ * restart re-warns about the identical "stuck" backlog. Bounded retention lets the queue make
+ * forward progress (eventually empties) even when delivery never succeeds.
+ */
+const MAX_PENDING_REPORT_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+
+/**
+ * Classification of the most recent telemetry delivery outcome, used to distinguish a transient
+ * remote-endpoint problem (offline/unreachable GlitchTip) from a local queue issue when logging
+ * an incomplete drain/flush (#2113).
+ * - `none`    — last send succeeded.
+ * - `network` — the HTTP request itself failed to complete (DNS, connection refused, TLS,
+ *               timeout/abort). Almost always transient and operator-actionable only if the
+ *               endpoint is expected to be reachable.
+ * - `http`    — the endpoint responded but rejected the event (4xx/5xx).
+ * - `other`   — any other delivery error.
+ */
+export type TelemetrySendFailureKind = "none" | "network" | "http" | "other";
+
+/** Whether a thrown fetch error represents a connectivity failure rather than an HTTP rejection. */
+function isNetworkDeliveryError(err: unknown): boolean {
+  if (err instanceof Error) {
+    const name = err.name;
+    if (name === "AbortError" || name === "TimeoutError" || name === "TypeError") return true;
+    if (/ENOTFOUND|ECONNREFUSED|ECONNRESET|EAI_AGAIN|ETIMEDOUT|network|fetch failed|timed out|timeout/i.test(err.message)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Default GlitchTip DSN for anonymous crash reporting.
  * This DSN is safe to expose publicly — it only allows ingest (write), not read.
  * Users can opt out by setting errorReporting.consent: false or errorReporting.enabled: false.
@@ -79,6 +112,12 @@ export interface ErrorReporterConfig {
   pendingQueuePath?: string;
   /** Optional cap for persistent pending reports. Oldest entries are pruned first. */
   maxPendingReports?: number;
+  /**
+   * Optional max age (ms) a pending report is retained before being aged out. Defaults to
+   * {@link MAX_PENDING_REPORT_AGE_MS}. Prevents a permanently unreachable endpoint from
+   * pinning the same reports in the queue forever (#2113).
+   */
+  maxPendingReportAgeMs?: number;
 }
 
 /** Hardcoded DSN for community error reporting (anonymous telemetry) */
@@ -141,6 +180,8 @@ class GlitchTipReporter {
   private readonly resolvedIssues: Record<string, string>;
   private readonly pendingQueuePath?: string;
   private readonly maxPendingReports: number;
+  private readonly maxPendingReportAgeMs: number;
+  private lastSendFailureKind: TelemetrySendFailureKind = "none";
   private serverName?: string;
 
   private globalTags: Record<string, string> = {};
@@ -166,6 +207,7 @@ class GlitchTipReporter {
     resolvedIssues?: Record<string, string>,
     pendingQueuePath?: string,
     maxPendingReports?: number,
+    maxPendingReportAgeMs?: number,
   ) {
     const url = new URL(dsn);
     this.publicKey = url.username;
@@ -185,6 +227,14 @@ class GlitchTipReporter {
       typeof maxPendingReports === "number" && Number.isFinite(maxPendingReports) && maxPendingReports > 0
         ? Math.floor(maxPendingReports)
         : MAX_PENDING_REPORTS;
+    this.maxPendingReportAgeMs =
+      typeof maxPendingReportAgeMs === "number" && Number.isFinite(maxPendingReportAgeMs) && maxPendingReportAgeMs > 0
+        ? Math.floor(maxPendingReportAgeMs)
+        : MAX_PENDING_REPORT_AGE_MS;
+  }
+
+  getLastSendFailureKind(): TelemetrySendFailureKind {
+    return this.lastSendFailureKind;
   }
 
   setTag(key: string, value: string): void {
@@ -503,6 +553,19 @@ class GlitchTipReporter {
 
   private prunePendingReportsLocked(): number {
     let pruned = 0;
+    // Age-out first: drop reports older than the retention window so a permanently unreachable
+    // endpoint cannot pin the same backlog across every restart (#2113).
+    if (this.maxPendingReportAgeMs > 0 && this.pendingReports.size > 0) {
+      const cutoff = Date.now() - this.maxPendingReportAgeMs;
+      for (const [id, record] of this.pendingReports) {
+        if (record.enqueuedAt < cutoff) {
+          this.forgetPendingFingerprint(record.event);
+          this.pendingReports.delete(id);
+          pruned++;
+        }
+      }
+    }
+    // Then enforce the size cap: drop oldest first.
     while (this.pendingReports.size > this.maxPendingReports) {
       const oldestId = this.pendingReports.keys().next().value as string | undefined;
       if (!oldestId) break;
@@ -571,19 +634,29 @@ class GlitchTipReporter {
   private async send(event: GlitchTipEvent): Promise<void> {
     const timestamp = Math.floor(Date.now() / 1000);
     const authHeader = `Sentry sentry_version=7, sentry_timestamp=${timestamp}, sentry_client=openclaw-hybrid-memory/native, sentry_key=${this.publicKey}`;
-    const resp = await fetch(this.storeUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Sentry-Auth": authHeader,
-      },
-      body: JSON.stringify(event),
-      signal: AbortSignal.timeout(5000),
-    });
+    let resp: Response;
+    try {
+      resp = await fetch(this.storeUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Sentry-Auth": authHeader,
+        },
+        body: JSON.stringify(event),
+        signal: AbortSignal.timeout(5000),
+      });
+    } catch (err) {
+      // fetch rejects for connectivity failures (DNS, refused, TLS, timeout/abort). Classify as
+      // network so an offline endpoint is reported as transient rather than local corruption (#2113).
+      this.lastSendFailureKind = isNetworkDeliveryError(err) ? "network" : "other";
+      throw err;
+    }
     const body = await resp.text();
     if (!resp.ok) {
+      this.lastSendFailureKind = "http";
       throw new Error(`GlitchTip rejected event: HTTP ${resp.status} ${body}`);
     }
+    this.lastSendFailureKind = "none";
   }
 }
 
@@ -688,6 +761,7 @@ export async function initErrorReporter(
       config.resolvedIssues,
       config.pendingQueuePath,
       config.maxPendingReports,
+      config.maxPendingReportAgeMs,
     );
   } catch (err) {
     logger.warn?.(
@@ -751,6 +825,49 @@ export function computeShutdownFlushTimeoutMs(pendingCount: number): number {
 
 export function getPendingErrorReportCount(): number {
   return reporter?.getPendingCount() ?? 0;
+}
+
+/** Classification of the most recent telemetry delivery outcome (#2113). */
+export function getLastErrorReportSendFailureKind(): TelemetrySendFailureKind {
+  return reporter?.getLastSendFailureKind() ?? "none";
+}
+
+/**
+ * Build the log line for an incomplete telemetry drain/flush (#2113). A transient
+ * network-unreachable failure is reported at info level with wording that makes clear the
+ * backlog is retained for retry (not local corruption); any other failure keeps the louder
+ * warn-level wording so genuine queue problems remain visible.
+ */
+export function describePendingTelemetryDrain(params: {
+  phase: "startup" | "shutdown";
+  pendingCount: number;
+  failureKind: TelemetrySendFailureKind;
+}): { level: "info" | "warn"; message: string } {
+  const { phase, pendingCount, failureKind } = params;
+  // Each phase carries its own idiomatic log prefix so callers can log the message verbatim:
+  // the startup drain runs under the error-reporter's own logger ("[ErrorReporter] …"), while the
+  // shutdown flush runs under the plugin's api.logger ("memory-hybrid: …").
+  const prefix = phase === "startup" ? "[ErrorReporter]" : "memory-hybrid:";
+  if (failureKind === "network") {
+    const detail =
+      phase === "startup"
+        ? `${pendingCount} report(s) retained for retry on next startup`
+        : `${pendingCount} report(s) persisted locally and will retry on next startup`;
+    return {
+      level: "info",
+      message: `${prefix} telemetry endpoint unreachable; ${detail} (expected when the reporting endpoint is offline)`,
+    };
+  }
+  if (phase === "shutdown") {
+    return {
+      level: "warn",
+      message: `${prefix} error reporter flush incomplete (${pendingCount} pending); pending reports will retry on next startup`,
+    };
+  }
+  return {
+    level: "warn",
+    message: `${prefix} Startup drain incomplete (${pendingCount} pending); run \`openclaw hybrid-mem verify\` to inspect the telemetry queue`,
+  };
 }
 
 /** Default on-disk pending queue path next to the SQLite memory DB. */
@@ -881,7 +998,15 @@ export interface OneShotErrorReportFlushResult {
 export async function attemptOneShotErrorReportFlush(
   config: Pick<
     ErrorReporterConfig,
-    "enabled" | "dsn" | "mode" | "consent" | "environment" | "sampleRate" | "resolvedIssues" | "maxPendingReports"
+    | "enabled"
+    | "dsn"
+    | "mode"
+    | "consent"
+    | "environment"
+    | "sampleRate"
+    | "resolvedIssues"
+    | "maxPendingReports"
+    | "maxPendingReportAgeMs"
   >,
   pendingQueuePath: string | undefined,
   pluginVersion: string,
@@ -911,6 +1036,7 @@ export async function attemptOneShotErrorReportFlush(
       config.resolvedIssues,
       pendingQueuePath,
       config.maxPendingReports,
+      config.maxPendingReportAgeMs,
     );
   } catch (err) {
     return {
@@ -954,9 +1080,16 @@ function scheduleStartupErrorReporterDrain(): void {
       }
       const remaining = reporter?.getPendingCount() ?? 0;
       if (remaining > 0) {
-        logger.warn?.(
-          `[ErrorReporter] Startup drain incomplete (${remaining} pending); run \`openclaw hybrid-mem verify\` to inspect the telemetry queue`,
-        );
+        const drainState = describePendingTelemetryDrain({
+          phase: "startup",
+          pendingCount: remaining,
+          failureKind: reporter?.getLastSendFailureKind() ?? "other",
+        });
+        if (drainState.level === "info") {
+          logger.info?.(drainState.message);
+        } else {
+          logger.warn?.(drainState.message);
+        }
       }
     } catch (err) {
       logger.debug?.(`[ErrorReporter] Startup drain failed: ${err instanceof Error ? err.message : String(err)}`);

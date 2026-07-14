@@ -200,6 +200,47 @@ export function blockReloadTeardownBeforeOpen(timeoutMs = TEARDOWN_WAIT_MS): boo
   return reloadTeardownQueueDepth === 0;
 }
 
+/**
+ * Decision for the register-time reload gate: after {@link blockReloadTeardownBeforeOpen}
+ * returns, describe what the new registration should do with the donor's DB handles.
+ *
+ * - `reuse` — donor teardown drained (or the donor generation's teardown is done); the new
+ *   registration may inherit the donor's still-open handles.
+ * - `fresh` — no donor handles to inherit and teardown has drained; open fresh handles.
+ * - `fresh-soft-timeout` — a donor was available but its teardown did not drain in time, so
+ *   inheriting its handles risks a closed-DB race; fall back to a fresh open.
+ * - `fresh-hard-timeout` — full-teardown path (no donor to inherit) where teardown has not
+ *   drained. The donor's handles are being permanently closed on a **separate** teardown
+ *   chain and the new registration opens its own fresh handles, so it is safe to proceed.
+ *   Previously this case threw and failed plugin initialization outright (#2111); it now
+ *   recovers to a fresh open and records the timeout for observability.
+ */
+export type ReloadTeardownGateDecision = "reuse" | "fresh" | "fresh-soft-timeout" | "fresh-hard-timeout";
+
+/**
+ * Pure gate-decision logic shared by register-plugin. Kept side-effect-free (no blocking, no
+ * logging) so it can be unit-tested exhaustively; the caller performs the actual synchronous
+ * teardown wait and acts on the returned decision.
+ *
+ * @param hasDonor    Whether a donor runtime whose handles could be reused is available.
+ * @param drained     Result of the synchronous teardown wait (queue fully drained in time).
+ * @param donorDrained Whether the specific donor generation's teardown has finished, even if
+ *                     newer teardowns are still queued (overlap-queued re-register).
+ */
+export function decideReloadTeardownGate(params: {
+  hasDonor: boolean;
+  drained: boolean;
+  donorDrained: boolean;
+}): ReloadTeardownGateDecision {
+  const { hasDonor, drained, donorDrained } = params;
+  if (drained) return hasDonor ? "reuse" : "fresh";
+  if (hasDonor) return donorDrained ? "reuse" : "fresh-soft-timeout";
+  // No donor runtime to inherit (full-teardown path). The old handles are being closed on a
+  // separate chain; opening fresh handles is safe. Never throw here (#2111) — a hard failure
+  // repeats on every reload attempt and leaves the plugin unregistered.
+  return "fresh-hard-timeout";
+}
+
 /** Reset chain for unit tests only. */
 export function resetReloadTeardownChainForTests(): void {
   reloadTeardownChain = Promise.resolve();

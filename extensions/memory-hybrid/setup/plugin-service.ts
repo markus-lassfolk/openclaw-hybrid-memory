@@ -30,7 +30,10 @@ import { syncCronLastRunFromGuards } from "../services/cron-guard.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import {
   capturePluginError,
+  describePendingTelemetryDrain,
   flushErrorReporter,
+  getLastErrorReportSendFailureKind,
+  getPendingErrorReportCount,
   initErrorReporter,
   isErrorReporterActive,
   setErrorReporterMuted,
@@ -1186,7 +1189,18 @@ export function createPluginService(ctx: PluginServiceContext) {
       if (isErrorReporterActive()) {
         const flushed = await flushErrorReporter().catch(() => false);
         if (!flushed) {
-          api.logger.warn("memory-hybrid: error reporter flush incomplete; pending reports will retry on next startup");
+          // Distinguish a transient offline endpoint (info, expected) from a genuine local queue
+          // problem (warn) so restarts against an unreachable GlitchTip don't look like errors (#2113).
+          const drainState = describePendingTelemetryDrain({
+            phase: "shutdown",
+            pendingCount: getPendingErrorReportCount(),
+            failureKind: getLastErrorReportSendFailureKind(),
+          });
+          if (drainState.level === "info") {
+            api.logger.info?.(drainState.message);
+          } else {
+            api.logger.warn(drainState.message);
+          }
         }
       }
       if (dashboardServer) {

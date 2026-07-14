@@ -347,6 +347,18 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
     this.info.version = opts.pluginVersion;
   }
 
+  /**
+   * True when the FactsDB this engine captured at construction has been permanently closed by a
+   * runtime teardown / plugin re-registration (#2112). OpenClaw can retain a reference to a
+   * superseded ContextEngine instance and still invoke its lifecycle callbacks (e.g. a subagent
+   * that started under the old generation ends after the reload). Those callbacks must no-op
+   * cleanly rather than touching a closed SQLite handle and logging repeated non-fatal errors.
+   */
+  private isFactsDbTornDown(): boolean {
+    const factsDb = this.opts.factsDb as { isPermanentlyClosed?: () => boolean } | undefined;
+    return typeof factsDb?.isPermanentlyClosed === "function" && factsDb.isPermanentlyClosed();
+  }
+
   /** no-op: SessionManager handles message persistence. */
   async ingest(_params: { sessionId: string; message: unknown }): Promise<IngestResult> {
     return { ingested: false };
@@ -557,6 +569,14 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
     ttlMs?: number;
   }): Promise<SubagentSpawnPreparation | undefined> {
     const { factsDb, cfg, logger } = this.opts;
+    // Generation-safety (#2112): a superseded engine can still receive spawn callbacks after
+    // reload teardown closed its FactsDB. No-op cleanly rather than reading a closed handle.
+    if (this.isFactsDbTornDown()) {
+      logger.debug?.(
+        `memory-hybrid: prepareSubagentSpawn — skipped for child=${params.childSessionKey} (runtime generation torn down; DB handle closed)`,
+      );
+      return { rollback: async () => {} };
+    }
     try {
       if (cfg.autoRecall?.enabled) {
         logger.debug?.(
@@ -648,6 +668,15 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
    */
   async onSubagentEnded(params: { childSessionKey: string; reason: string }): Promise<void> {
     const { factsDb, logger } = this.opts;
+    // Generation-safety (#2112): if the plugin generation that registered this engine has been
+    // superseded/torn down, the captured FactsDB handle is permanently closed. No-op cleanly
+    // instead of accessing a closed connection and emitting a repeated non-fatal error log.
+    if (this.isFactsDbTornDown()) {
+      logger.debug?.(
+        `memory-hybrid: context-engine onSubagentEnded — skipped for child=${params.childSessionKey} (runtime generation torn down; DB handle closed)`,
+      );
+      return;
+    }
     try {
       // Count facts captured from the child session (written to the shared store by the
       // child's own agent_end autoCapture hook while the child session was running).
@@ -682,6 +711,16 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
       //       inside the child's session and writes directly to the shared FactsDB)
       //   (b) The typed subagent_ended hook in lifecycle/stage-cleanup.ts (ACTIVE-TASKS.md only; issue #966)
     } catch (err) {
+      // A teardown can race between the isFactsDbTornDown() guard above and the DB read. Treat a
+      // "connection is not open" failure as the same benign torn-down case (#2112): log at debug
+      // and skip telemetry so a normal subagent completion during reload stays quiet.
+      const message = err instanceof Error ? err.message : String(err);
+      if (this.isFactsDbTornDown() || /not open|connection is not open/i.test(message)) {
+        logger.debug?.(
+          `memory-hybrid: context-engine onSubagentEnded — skipped for child=${params.childSessionKey} (DB closed during teardown)`,
+        );
+        return;
+      }
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "context-engine",
         operation: "on-subagent-ended",

@@ -58,6 +58,7 @@ import {
 import {
   blockReloadTeardownBeforeOpen,
   clearTeardownTrackingForGeneration,
+  decideReloadTeardownGate,
   drainOldBootstrap,
   drainOldRecall,
   isTeardownDrainedForGeneration,
@@ -76,6 +77,7 @@ import {
   recordReregisterDatabaseReuse,
   recordReregisterFullTeardown,
   recordReregisterRegistration,
+  recordReregisterTeardownTimeoutRecovery,
   resetReregisterPolicyForTests,
   resolveReregisterPolicy,
 } from "./reregister-policy.js";
@@ -474,17 +476,30 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     const drained = blockReloadTeardownBeforeOpen(TEARDOWN_WAIT_MS);
     if (!drained) {
       const donorDrained = isTeardownDrainedForGeneration(donorGeneration);
-      if (donorRuntime && donorDrained) {
+      const decision = decideReloadTeardownGate({
+        hasDonor: Boolean(donorRuntime),
+        drained,
+        donorDrained,
+      });
+      if (decision === "reuse") {
         // Donor generation's teardown is done even though newer teardowns may still be queued
         // (overlap-queued re-register). Donor handles are safe to hand to the new runtime.
-      } else if (donorRuntime) {
+      } else if (decision === "fresh-soft-timeout") {
         logApi.logger.warn?.(
           `memory-hybrid: reload teardown soft-timeout exceeded (>=${TEARDOWN_SOFT_WAIT_MS}ms) for donor generation ${donorGeneration}; falling back to fresh open to avoid inheriting closed DB handles`,
         );
         donorRuntime = null;
         recordReregisterFullTeardown();
-      } else {
-        throw new Error("memory-hybrid: reload teardown did not drain before opening new databases");
+      } else if (decision === "fresh-hard-timeout") {
+        // Full-teardown path (#2111): the donor's DB handles are being permanently closed on a
+        // separate teardown chain. The new registration opens its own fresh handles, so it is
+        // safe to proceed even though the prior teardown has not finished draining. Previously
+        // this threw and failed plugin initialization on every reload attempt; recover to a
+        // fresh open instead and record the timeout for observability.
+        logApi.logger.warn?.(
+          `memory-hybrid: reload teardown did not drain within ${TEARDOWN_WAIT_MS}ms for donor generation ${donorGeneration}; opening fresh databases anyway (prior teardown continues on its own chain)`,
+        );
+        recordReregisterTeardownTimeoutRecovery();
       }
     }
   }

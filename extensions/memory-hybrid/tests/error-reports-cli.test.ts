@@ -204,7 +204,8 @@ describe("error-reports CLI (#2082)", () => {
 
     it("delivers queued reports and reports the before/after pending count", async () => {
       fetchMock.mockResolvedValue({ ok: true, status: 200, text: async () => "" });
-      writeRecord(queuePath, "a", 1_000, "queued failure");
+      // Recent timestamp so the report is not aged out by the retention window (#2113).
+      writeRecord(queuePath, "a", Date.now(), "queued failure");
       const mem = makeProgram(sqlitePath, {
         enabled: true,
         consent: true,
@@ -222,7 +223,8 @@ describe("error-reports CLI (#2082)", () => {
 
     it("--json emits attempted/pendingBefore/pendingAfter/flushed", async () => {
       fetchMock.mockResolvedValue({ ok: true, status: 200, text: async () => "" });
-      writeRecord(queuePath, "a", 1_000, "queued failure");
+      // Recent timestamp so the report is not aged out by the retention window (#2113).
+      writeRecord(queuePath, "a", Date.now(), "queued failure");
       const mem = makeProgram(sqlitePath, {
         enabled: true,
         consent: true,
