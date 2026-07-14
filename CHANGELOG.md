@@ -25,6 +25,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.217] - 2026-07-14
+
+### Fixed — Reload/teardown lifecycle regressions (#2111, #2112, #2113)
+
+Three production-log regressions in the hot-reload/teardown path, fixed together with dedicated regression tests.
+
+**Plugin re-registration ([#2111](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2111))**
+- The reload gate threw `memory-hybrid: reload teardown did not drain before opening new databases` whenever the prior teardown had not finished draining within the wait budget on the **full-teardown** path (no donor handles to inherit). That failed plugin initialization outright and repeated on every reload attempt — reproduced on two hosts. The gate now recovers to a fresh open instead of throwing: the donor's handles are being permanently closed on a separate teardown chain, so the new registration safely opens its own fresh handles. The decision logic was extracted into a pure, unit-tested `decideReloadTeardownGate()` helper, and a new `reregisterMetrics.teardownTimeoutRecoveries` counter records each recovery for observability. The reuse and soft-timeout paths are unchanged.
+
+**Context engine lifecycle ([#2112](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2112))**
+- `onSubagentEnded` (and `prepareSubagentSpawn`) could run on a superseded plugin generation whose `FactsDB` had already been `permanentClose()`d by a reload, logging repeated `onSubagentEnded failed (non-fatal): Error: The database connection is not open`. Both callbacks are now generation-safe: a new `BaseSqliteStore.isPermanentlyClosed()` predicate lets them no-op cleanly (debug breadcrumb, no telemetry) when the captured DB handle is torn down, and a late "connection is not open" error mid-callback is treated as the same benign case rather than a warning.
+
+**Error reporter ([#2113](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2113))**
+- Startup drain and shutdown flush emitted alarming `Startup drain incomplete` / `flush incomplete` warnings when the only problem was an unreachable telemetry endpoint, and a permanently-offline endpoint kept the same pending reports queued forever (re-warning on every restart). Delivery failures are now classified (`network` vs `http` vs `other`); a transient connectivity failure logs at info level with wording that makes clear the backlog is retained for retry, while genuine local-queue problems keep the louder warn wording (shared `describePendingTelemetryDrain()` helper). Pending reports older than a 14-day retention window are now aged out on load so the queue makes forward progress even when delivery never succeeds.
+
 ## [2026.7.216] - 2026-07-14
 
 ### Fixed / Added — Open issue sweep (#2088, #2091, #2093, #2095, #2098, #2099, #2104–#2108)

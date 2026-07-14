@@ -10,6 +10,12 @@ export type ReregisterMetrics = {
   registrations: number;
   fullTeardowns: number;
   databaseReuses: number;
+  /**
+   * Count of registrations that opened fresh databases even though the prior teardown had not
+   * finished draining within the wait budget (#2111). A non-zero value indicates the reload
+   * gate is recovering from slow teardowns rather than failing plugin initialization.
+   */
+  teardownTimeoutRecoveries: number;
 };
 
 export const reregisterMetrics: ReregisterMetrics = {
@@ -17,6 +23,7 @@ export const reregisterMetrics: ReregisterMetrics = {
   registrations: 0,
   fullTeardowns: 0,
   databaseReuses: 0,
+  teardownTimeoutRecoveries: 0,
 };
 
 /** Resolved once per process from OPENCLAW_HYBRID_MEM_REREGISTER_POLICY. */
@@ -43,6 +50,7 @@ export function resetReregisterPolicyForTests(): void {
   reregisterMetrics.registrations = 0;
   reregisterMetrics.fullTeardowns = 0;
   reregisterMetrics.databaseReuses = 0;
+  reregisterMetrics.teardownTimeoutRecoveries = 0;
 }
 
 export function recordReregisterRegistration(): void {
@@ -56,6 +64,10 @@ export function recordReregisterFullTeardown(): void {
 
 export function recordReregisterDatabaseReuse(): void {
   reregisterMetrics.databaseReuses += 1;
+}
+
+export function recordReregisterTeardownTimeoutRecovery(): void {
+  reregisterMetrics.teardownTimeoutRecoveries += 1;
 }
 
 type PathResolvingApi = { resolvePath: (p: string) => string };

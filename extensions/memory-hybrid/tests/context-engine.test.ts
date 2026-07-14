@@ -263,6 +263,23 @@ describe("HybridMemoryContextEngine.compact()", () => {
 // ---------------------------------------------------------------------------
 
 describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
+  // Regression: #2112 — a superseded engine can still receive spawn callbacks after teardown.
+  it("no-ops without DB access when the FactsDB was permanently closed by teardown", async () => {
+    const engine = makeEngine({ cfg: makeSubagentSpawnConfig() });
+    factsDb.permanentClose();
+
+    const prep = await engine.prepareSubagentSpawn?.({
+      parentSessionKey: "parent-session",
+      childSessionKey: "child-session-torn-down",
+    });
+
+    // Returns a well-formed no-op preparation (rollback present, no injected context).
+    expect(prep).toBeDefined();
+    const extended = prep as { contextAddition?: string; rollback: () => void };
+    expect(extended.contextAddition).toBeUndefined();
+    await expect(Promise.resolve(extended.rollback())).resolves.not.toThrow();
+  });
+
   it("skips injection when autoRecall is enabled", async () => {
     factsDb.store({
       entity: null,
@@ -559,6 +576,52 @@ describe("HybridMemoryContextEngine.onSubagentEnded()", () => {
         engine.onSubagentEnded?.({ childSessionKey: `child-${randomUUID()}`, reason }),
       ).resolves.not.toThrow();
     }
+  });
+
+  // Regression: #2112 — a subagent that started under a prior plugin generation can end after
+  // the hybrid-memory runtime was torn down (reload/teardown permanentClose'd the FactsDB).
+  // The stale engine must no-op cleanly instead of hitting a closed connection and warning.
+  it("no-ops cleanly (no DB access, no warn) when the FactsDB was permanently closed by teardown", async () => {
+    const childSessionKey = `child-torn-down-${randomUUID()}`;
+    const logger = makeLogger();
+    const engine = makeEngine({ logger });
+
+    // Simulate runtime teardown: closeOldDatabases() calls permanentClose() on the store.
+    factsDb.permanentClose();
+    expect(factsDb.isPermanentlyClosed()).toBe(true);
+
+    await expect(
+      engine.onSubagentEnded?.({ childSessionKey, reason: "completed" }),
+    ).resolves.not.toThrow();
+
+    // No warning noise for a normal subagent completion during teardown.
+    const warnCalls = logger.warn.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(warnCalls.some((msg: string) => msg.includes("onSubagentEnded failed"))).toBe(false);
+
+    // A debug breadcrumb explaining the skip is expected.
+    const debugCalls = logger.debug.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(debugCalls.some((msg: string) => msg.includes(childSessionKey) && /torn down|DB closed/i.test(msg))).toBe(
+      true,
+    );
+  });
+
+  it("treats a late 'connection is not open' error as the benign torn-down case (debug, not warn)", async () => {
+    // The DB reports open at the guard check but throws mid-read (teardown races the callback).
+    const racyFactsDb = {
+      isPermanentlyClosed: vi.fn().mockReturnValue(false),
+      countBySource: vi.fn().mockImplementation(() => {
+        throw new Error("The database connection is not open");
+      }),
+    };
+    const logger = makeLogger();
+    const engine = makeEngine({ factsDb: racyFactsDb as never, logger });
+
+    await expect(
+      engine.onSubagentEnded?.({ childSessionKey: "racy-child", reason: "completed" }),
+    ).resolves.not.toThrow();
+
+    const warnCalls = logger.warn.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(warnCalls.some((msg: string) => msg.includes("onSubagentEnded failed"))).toBe(false);
   });
 });
 

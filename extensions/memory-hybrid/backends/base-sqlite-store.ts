@@ -161,6 +161,18 @@ export abstract class BaseSqliteStore {
   }
 
   /**
+   * True once the store has been **permanently** closed via {@link permanentClose} (runtime
+   * teardown / plugin re-registration). Unlike `isOpen()`, this stays false for a deferClose
+   * store whose native handle was merely closed by background maintenance and can still lazily
+   * reopen on the next access. Lifecycle hooks that may fire after teardown (e.g. a context
+   * engine's `onSubagentEnded` on a superseded plugin generation, #2112) use this to no-op
+   * cleanly instead of throwing "The database connection is not open".
+   */
+  isPermanentlyClosed(): boolean {
+    return this.closePhase === "shutdown";
+  }
+
+  /**
    * Permanently close this store, preventing any future reopening via `liveDb`.
    *
    * Unlike `close()`, which is designed for background maintenance and allows

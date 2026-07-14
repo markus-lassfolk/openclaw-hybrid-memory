@@ -159,6 +159,161 @@ describe("error reporter persistent pending queue", () => {
     expect(reporter.countPendingErrorReportsOnDisk(queuePath)).toBe(2);
     expect(reporter.resolvePendingErrorReportCount(join(tempDir, "memory.db"))).toBe(2);
   });
+
+  // Regression: #2113 — a permanently unreachable endpoint must not pin the same reports in the
+  // queue forever. Reports older than the retention window are aged out on load so the queue
+  // eventually empties even when delivery never succeeds.
+  it("ages out stale pending reports older than the retention window on load", async () => {
+    fetchMock.mockRejectedValue(new Error("network down"));
+    // Two records: one ancient (epoch ms 1, ~1970) and one enqueued now. Give them distinct
+    // fingerprints so neither is dropped as a duplicate.
+    const ancient = {
+      id: "ancient",
+      enqueuedAt: 1,
+      event: { event_id: "ancient", exception: { values: [{ type: "Error", value: "old failure" }] } },
+    };
+    const fresh = {
+      id: "fresh",
+      enqueuedAt: Date.now(),
+      event: { event_id: "fresh", exception: { values: [{ type: "Error", value: "recent failure" }] } },
+    };
+    writeFileSync(queuePath, `${JSON.stringify(ancient)}\n${JSON.stringify(fresh)}\n`);
+
+    const reporter = (await import("../services/error-reporter.js")) as ErrorReporterModule;
+    await reporter.initErrorReporter(
+      {
+        enabled: true,
+        consent: true,
+        mode: "community",
+        dsn: "https://testkey@example.com/1",
+        maxBreadcrumbs: 0,
+        sampleRate: 1,
+        pendingQueuePath: queuePath,
+      },
+      "test-build",
+    );
+
+    // Only the fresh record should survive; the ancient one is aged out.
+    const records = readQueueRecords(queuePath);
+    expect(records.map((r) => r.id)).toEqual(["fresh"]);
+  });
+
+  it("respects a custom maxPendingReportAgeMs when aging out reports", async () => {
+    fetchMock.mockRejectedValue(new Error("network down"));
+    const now = Date.now();
+    const stale = {
+      id: "stale",
+      enqueuedAt: now - 10_000,
+      event: { event_id: "stale", exception: { values: [{ type: "Error", value: "stale failure" }] } },
+    };
+    const recent = {
+      id: "recent",
+      enqueuedAt: now - 500,
+      event: { event_id: "recent", exception: { values: [{ type: "Error", value: "recent failure" }] } },
+    };
+    writeFileSync(queuePath, `${JSON.stringify(stale)}\n${JSON.stringify(recent)}\n`);
+
+    const reporter = (await import("../services/error-reporter.js")) as ErrorReporterModule;
+    await reporter.initErrorReporter(
+      {
+        enabled: true,
+        consent: true,
+        mode: "community",
+        dsn: "https://testkey@example.com/1",
+        maxBreadcrumbs: 0,
+        sampleRate: 1,
+        pendingQueuePath: queuePath,
+        maxPendingReportAgeMs: 2_000,
+      },
+      "test-build",
+    );
+
+    const records = readQueueRecords(queuePath);
+    expect(records.map((r) => r.id)).toEqual(["recent"]);
+  });
+
+  it("classifies a connectivity failure as a transient network failure kind", async () => {
+    fetchMock.mockRejectedValue(new Error("fetch failed"));
+    const reporter = (await import("../services/error-reporter.js")) as ErrorReporterModule;
+    await reporter.initErrorReporter(
+      {
+        enabled: true,
+        consent: true,
+        mode: "community",
+        dsn: "https://testkey@example.com/1",
+        maxBreadcrumbs: 0,
+        sampleRate: 1,
+        pendingQueuePath: queuePath,
+      },
+      "test-build",
+    );
+
+    reporter.capturePluginError(new Error("connectivity classify test"), {
+      operation: "classify",
+      subsystem: "tests",
+    });
+    await expect(reporter.flushErrorReporter(500)).resolves.toBe(false);
+    expect(reporter.getLastErrorReportSendFailureKind()).toBe("network");
+  });
+
+  it("classifies an HTTP rejection distinctly from a network failure", async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 500, text: async () => "server error" });
+    const reporter = (await import("../services/error-reporter.js")) as ErrorReporterModule;
+    await reporter.initErrorReporter(
+      {
+        enabled: true,
+        consent: true,
+        mode: "community",
+        dsn: "https://testkey@example.com/1",
+        maxBreadcrumbs: 0,
+        sampleRate: 1,
+        pendingQueuePath: queuePath,
+      },
+      "test-build",
+    );
+
+    reporter.capturePluginError(new Error("http classify test"), { operation: "classify", subsystem: "tests" });
+    await expect(reporter.flushErrorReporter(500)).resolves.toBe(false);
+    expect(reporter.getLastErrorReportSendFailureKind()).toBe("http");
+  });
+});
+
+describe("describePendingTelemetryDrain (#2113)", () => {
+  let mod: ErrorReporterModule;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    mod = (await import("../services/error-reporter.js")) as ErrorReporterModule;
+  });
+
+  it("reports a transient offline endpoint at info level for the startup phase", () => {
+    const state = mod.describePendingTelemetryDrain({ phase: "startup", pendingCount: 4, failureKind: "network" });
+    expect(state.level).toBe("info");
+    expect(state.message).toMatch(/unreachable/i);
+    expect(state.message).toContain("4 report(s)");
+    expect(state.message).not.toMatch(/incomplete/i);
+  });
+
+  it("reports a transient offline endpoint at info level for the shutdown phase", () => {
+    const state = mod.describePendingTelemetryDrain({ phase: "shutdown", pendingCount: 2, failureKind: "network" });
+    expect(state.level).toBe("info");
+    expect(state.message).toMatch(/memory-hybrid:/);
+    expect(state.message).toMatch(/unreachable/i);
+  });
+
+  it("keeps the louder warn wording for a non-network startup drain failure", () => {
+    const state = mod.describePendingTelemetryDrain({ phase: "startup", pendingCount: 3, failureKind: "http" });
+    expect(state.level).toBe("warn");
+    expect(state.message).toMatch(/Startup drain incomplete/);
+    expect(state.message).toContain("hybrid-mem verify");
+  });
+
+  it("keeps the louder warn wording for a non-network shutdown flush failure", () => {
+    const state = mod.describePendingTelemetryDrain({ phase: "shutdown", pendingCount: 5, failureKind: "other" });
+    expect(state.level).toBe("warn");
+    expect(state.message).toMatch(/flush incomplete/i);
+    expect(state.message).toMatch(/retry on next startup/i);
+  });
 });
 
 describe("error-reports CLI helpers (#2082)", () => {
@@ -269,7 +424,8 @@ describe("error-reports CLI helpers (#2082)", () => {
   it("attemptOneShotErrorReportFlush delivers queued records without touching module-level reporter state", async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 200, text: async () => "" });
     const reporter = (await import("../services/error-reporter.js")) as ErrorReporterModule;
-    writeRecord("a", 1000, "queued failure");
+    // Recent timestamp so the report is not aged out by the retention window (#2113).
+    writeRecord("a", Date.now(), "queued failure");
 
     expect(reporter.isErrorReporterActive()).toBe(false);
     const result = await reporter.attemptOneShotErrorReportFlush(
@@ -292,7 +448,8 @@ describe("error-reports CLI helpers (#2082)", () => {
   it("attemptOneShotErrorReportFlush reports pendingAfter unchanged when delivery fails", async () => {
     fetchMock.mockRejectedValue(new Error("network down"));
     const reporter = (await import("../services/error-reporter.js")) as ErrorReporterModule;
-    writeRecord("a", 1000, "queued failure");
+    // Recent timestamp so the report is not aged out by the retention window (#2113).
+    writeRecord("a", Date.now(), "queued failure");
 
     const result = await reporter.attemptOneShotErrorReportFlush(
       { enabled: true, dsn: "https://testkey@example.com/1", mode: "community", consent: true, sampleRate: 1 },
