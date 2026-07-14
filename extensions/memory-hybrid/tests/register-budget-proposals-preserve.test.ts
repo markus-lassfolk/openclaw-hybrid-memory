@@ -67,9 +67,9 @@ describe("preserve command", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
 
-    await expect(mem.parseAsync(["preserve", fact.id, "--until", "1y", "-t", "alpha"], { from: "user" })).rejects.toThrow(
-      "tag write boom",
-    );
+    await expect(
+      mem.parseAsync(["preserve", fact.id, "--until", "1y", "-t", "alpha"], { from: "user" }),
+    ).rejects.toThrow("tag write boom");
 
     const updated = db.getById(fact.id);
     expect(updated?.preserveUntil ?? null).toBe(originalPreserveUntil);

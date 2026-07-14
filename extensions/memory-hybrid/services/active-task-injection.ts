@@ -18,12 +18,10 @@ const ACTIVE_STATUSES = new Set<ActiveTaskStatus>(["In progress", "Waiting", "St
 const LABEL_LIST_CAP = 15;
 
 /** One-line warning when stale active tasks were omitted from the main injection block. */
-export function buildOmittedStaleActiveTasksWarning(
-  ledgerTasks: ActiveTaskEntry[],
-  maxChars = 400,
-): string | null {
+export function buildOmittedStaleActiveTasksWarning(ledgerTasks: ActiveTaskEntry[], maxChars = 400): string | null {
   const omitted = ledgerTasks.filter(
-    (t) => ACTIVE_STATUSES.has(t.status) && t.stale && t.status !== "Failed" && !isNonActionableSubagentPlaceholderTask(t),
+    (t) =>
+      ACTIVE_STATUSES.has(t.status) && t.stale && t.status !== "Failed" && !isNonActionableSubagentPlaceholderTask(t),
   );
   if (omitted.length === 0) return null;
   const labels = omitted

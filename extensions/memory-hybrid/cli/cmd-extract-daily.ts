@@ -256,13 +256,14 @@ export async function runExtractDailyForCli(
               if (!opts.dryRun) {
                 let storedInVault = false;
                 try {
-                  storedInVault = credentialsDb.storeIfNew({
-                    service: parsed.service,
-                    type: parsed.type,
-                    value: parsed.secretValue,
-                    url: parsed.url,
-                    notes: parsed.notes,
-                  }) != null;
+                  storedInVault =
+                    credentialsDb.storeIfNew({
+                      service: parsed.service,
+                      type: parsed.type,
+                      value: parsed.secretValue,
+                      url: parsed.url,
+                      notes: parsed.notes,
+                    }) != null;
                   const sourceDateSec = Math.floor(new Date(dateStr).getTime() / 1000);
                   const pointer = ensureCredentialVaultPointer(
                     factsDb,
@@ -445,8 +446,7 @@ export async function runExtractDailyForCli(
       await flushPendingExtractClassify();
     },
     {
-      progressSupplier: () =>
-        `days=${daysProcessed}/${daysBack} extracted=${totalExtracted} stored=${totalStored}`,
+      progressSupplier: () => `days=${daysProcessed}/${daysBack} extracted=${totalExtracted} stored=${totalStored}`,
     },
   );
   const semanticOutcome = vectorFailures > 0 ? "partial" : "success";

@@ -10,7 +10,11 @@ import { extractBalancedArraySlice, stripThinkingWrapperBlocks } from "../utils/
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { capturePluginError } from "./error-reporter.js";
 import { isMiniMaxModel } from "./model-capabilities.js";
-import { capTimeoutByMaintenanceRunDeadline, getMaintenanceRunAbortSignal, maintenanceRunDeadlineReached } from "../utils/maintenance-run-deadline.js";
+import {
+  capTimeoutByMaintenanceRunDeadline,
+  getMaintenanceRunAbortSignal,
+  maintenanceRunDeadlineReached,
+} from "../utils/maintenance-run-deadline.js";
 
 export type MemoryClassification = {
   action: "ADD" | "UPDATE" | "DELETE" | "NOOP";
@@ -357,9 +361,7 @@ For UPDATE or DELETE, targetId must be one of the existing fact ids listed under
     const out: MemoryClassification[] = [];
     for (const it of items) {
       if (maintenanceRunDeadlineReached()) {
-        logger.warn(
-          "memory-hybrid: batch classify sequential fallback stopped — maintenance run deadline reached",
-        );
+        logger.warn("memory-hybrid: batch classify sequential fallback stopped — maintenance run deadline reached");
         out.push({ action: "ADD", reason: "maintenance run deadline reached; defaulting to ADD" });
         continue;
       }

@@ -19,9 +19,7 @@ describe("tool-search-wrapper-args (#1973)", () => {
   });
 
   it("detects wrapper-only flattened params without tool args", () => {
-    expect(
-      isToolSearchWrapperDroppedArgs({ id: "toolu_123", command: "memory_recall" }, ["query", "id"]),
-    ).toBe(true);
+    expect(isToolSearchWrapperDroppedArgs({ id: "toolu_123", command: "memory_recall" }, ["query", "id"])).toBe(true);
     expect(isSentinelOnlyWrapperDrop({ id: "toolu_123", command: "memory_recall" })).toBe(true);
   });
 

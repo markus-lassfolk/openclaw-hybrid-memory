@@ -215,9 +215,7 @@ async function callLLMForGeneralisation(
     fallbackModels,
     content: prompt,
     maxTokens: 2000,
-    timeoutMs: capTimeoutByMaintenanceRunDeadline(
-      Math.min(40_000, resolveMaintenanceChatTimeoutMs(model)),
-    ),
+    timeoutMs: capTimeoutByMaintenanceRunDeadline(Math.min(40_000, resolveMaintenanceChatTimeoutMs(model))),
     signal: getMaintenanceRunAbortSignal(),
     feature: CostFeature.crossAgentLearning,
   });

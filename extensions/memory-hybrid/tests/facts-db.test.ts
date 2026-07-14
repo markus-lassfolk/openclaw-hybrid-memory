@@ -306,10 +306,7 @@ describe("FactsDB.getBatch", () => {
     // Force every row onto the exact same created_at second to simulate a bursty write window.
     const raw = db.getRawDb();
     const tiedSec = Math.floor(Date.now() / 1000);
-    raw.prepare(`UPDATE facts SET created_at = ? WHERE id IN (${ids.map(() => "?").join(",")})`).run(
-      tiedSec,
-      ...ids,
-    );
+    raw.prepare(`UPDATE facts SET created_at = ? WHERE id IN (${ids.map(() => "?").join(",")})`).run(tiedSec, ...ids);
 
     const seen = new Set<string>();
     for (let offset = 0; offset < ids.length; offset += 2) {
@@ -1433,9 +1430,7 @@ describe("FactsDB fuzzy deduplication", () => {
       });
 
       expect(mergeDb.getById(first.id)?.text.length).toBe(4000);
-      const truncateCalls = captureSpy.mock.calls.filter(
-        ([, ctx]) => ctx?.operation === "dedupe-merge-truncate",
-      );
+      const truncateCalls = captureSpy.mock.calls.filter(([, ctx]) => ctx?.operation === "dedupe-merge-truncate");
       expect(truncateCalls).toHaveLength(1);
       expect(truncateCalls[0][1]).toMatchObject({ subsystem: "facts-db", severity: "warning" });
     } finally {
@@ -1925,9 +1920,7 @@ describe("FactsDB.pruneExpired", () => {
       decayClass: "permanent",
     });
     const raw = db.getRawDb();
-    raw
-      .prepare("UPDATE facts SET expires_at = strftime('%s','now') - 100 WHERE id = ?")
-      .run(expired.id);
+    raw.prepare("UPDATE facts SET expires_at = strftime('%s','now') - 100 WHERE id = ?").run(expired.id);
     raw
       .prepare("INSERT INTO contradictions (id, fact_id_new, fact_id_old, detected_at) VALUES (?, ?, ?, ?)")
       .run("c-expired-1", expired.id, survivor.id, new Date().toISOString());
@@ -2791,7 +2784,9 @@ describe("FactsDB.getByCategory", () => {
       value: null,
       source: "test",
     });
-    db.getRawDb().prepare("UPDATE facts SET superseded_at = ? WHERE id = ?").run(Math.floor(Date.now() / 1000), original.id);
+    db.getRawDb()
+      .prepare("UPDATE facts SET superseded_at = ? WHERE id = ?")
+      .run(Math.floor(Date.now() / 1000), original.id);
     db.store({
       text: "Replacement rule",
       category: "rule",
@@ -2817,7 +2812,9 @@ describe("FactsDB.getByCategory", () => {
       value: null,
       source: "test",
     });
-    db.getRawDb().prepare("UPDATE facts SET expires_at = ? WHERE id = ?").run(nowSec - 100, expired.id);
+    db.getRawDb()
+      .prepare("UPDATE facts SET expires_at = ? WHERE id = ?")
+      .run(nowSec - 100, expired.id);
     db.store({
       text: "Live preference",
       category: "preference",
@@ -3753,9 +3750,9 @@ describe("FactsDB scoping", () => {
 
     db.pruneScopedFacts({ global: true });
 
-    const remainingLinks = raw.prepare("SELECT COUNT(*) AS n FROM memory_links WHERE target_fact_id = ?").get(
-      purged.id,
-    ) as { n: number };
+    const remainingLinks = raw
+      .prepare("SELECT COUNT(*) AS n FROM memory_links WHERE target_fact_id = ?")
+      .get(purged.id) as { n: number };
     expect(remainingLinks.n).toBe(0);
 
     const remainingContradictions = raw

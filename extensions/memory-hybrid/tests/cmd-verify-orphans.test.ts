@@ -303,17 +303,11 @@ describe("runVerifyForCli --reconcile", () => {
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
       const { runVerifyForCli } = await import("../cli/handlers.js");
-      await runVerifyForCli(
-        buildCtx() as never,
-        { fix: true, reconcile: true, verbose: true },
-        { log: () => {} },
-      );
+      await runVerifyForCli(buildCtx() as never, { fix: true, reconcile: true, verbose: true }, { log: () => {} });
 
       const consoleLines = logSpy.mock.calls.map((c) => String(c[0]));
       expect(consoleLines.some((l) => l.includes("verify-reconcile:rebuild-sqlite-orphans — start"))).toBe(true);
-      expect(consoleLines.some((l) => l.includes("verify-reconcile:rebuild-sqlite-orphans — complete in"))).toBe(
-        true,
-      );
+      expect(consoleLines.some((l) => l.includes("verify-reconcile:rebuild-sqlite-orphans — complete in"))).toBe(true);
     });
 
     it("emits start/complete heartbeat lines for the vector-orphan delete path when verbose", async () => {
@@ -328,17 +322,11 @@ describe("runVerifyForCli --reconcile", () => {
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
       const { runVerifyForCli } = await import("../cli/handlers.js");
-      await runVerifyForCli(
-        buildCtx() as never,
-        { fix: true, reconcile: true, verbose: true },
-        { log: () => {} },
-      );
+      await runVerifyForCli(buildCtx() as never, { fix: true, reconcile: true, verbose: true }, { log: () => {} });
 
       const consoleLines = logSpy.mock.calls.map((c) => String(c[0]));
       expect(consoleLines.some((l) => l.includes("verify-reconcile:delete-vector-orphans — start"))).toBe(true);
-      expect(consoleLines.some((l) => l.includes("verify-reconcile:delete-vector-orphans — complete in"))).toBe(
-        true,
-      );
+      expect(consoleLines.some((l) => l.includes("verify-reconcile:delete-vector-orphans — complete in"))).toBe(true);
     });
 
     it("stays silent (no heartbeat lines) without --verbose", async () => {
@@ -358,11 +346,7 @@ describe("runVerifyForCli --reconcile", () => {
 
       const { runVerifyForCli } = await import("../cli/handlers.js");
       const lines: string[] = [];
-      await runVerifyForCli(
-        buildCtx() as never,
-        { fix: true, reconcile: true },
-        { log: (m) => lines.push(m) },
-      );
+      await runVerifyForCli(buildCtx() as never, { fix: true, reconcile: true }, { log: (m) => lines.push(m) });
       const out = lines.join("\n");
 
       expect(out).toContain("stopped early after 0/5 — maintenance run deadline reached");

@@ -72,7 +72,9 @@ function buildDerivedFrom(
   // multi-tenant scope restriction is active for this call, or the fact this edge is attached to
   // already resolved via a non-global (caller-identity-matched) scope. Otherwise fall back to the
   // edge's own stored sourceText snapshot, which is never more revealing than the fact itself.
-  const scopeIsRestrictive = Boolean(scopeFilter && (scopeFilter.userId || scopeFilter.agentId || scopeFilter.sessionId));
+  const scopeIsRestrictive = Boolean(
+    scopeFilter && (scopeFilter.userId || scopeFilter.agentId || scopeFilter.sessionId),
+  );
   const canRevealLiveEvent = !scopeIsRestrictive || factScope !== "global";
   return edges
     .filter((e) => e.edgeType === "DERIVED_FROM")

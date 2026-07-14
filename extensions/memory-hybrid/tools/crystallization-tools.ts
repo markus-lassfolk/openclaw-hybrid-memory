@@ -57,8 +57,7 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
           changeFeedEmit,
         );
         const workerLeases = resolveWorkerLeasesConfig(cfg.maintenance.orchestrator?.workerLeases);
-        const rawDb =
-          workerLeases.enabled && typeof factsDb.getRawDb === "function" ? factsDb.getRawDb() : null;
+        const rawDb = workerLeases.enabled && typeof factsDb.getRawDb === "function" ? factsDb.getRawDb() : null;
         if (workerLeases.enabled && !rawDb) {
           return {
             content: [

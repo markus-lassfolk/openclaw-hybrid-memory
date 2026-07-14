@@ -1127,7 +1127,11 @@ describe("runActiveTaskComplete", () => {
       const stale = await activeTaskModule.readActiveTaskFileWithMtime(...args);
       await writeActiveTaskFile(
         ctx.activeTaskFilePath,
-        [makeEntry({ label: "target-task" }), makeEntry({ label: "other-task" }), makeEntry({ label: "concurrent-task" })],
+        [
+          makeEntry({ label: "target-task" }),
+          makeEntry({ label: "other-task" }),
+          makeEntry({ label: "concurrent-task" }),
+        ],
         [],
       );
       return stale;

@@ -23,7 +23,11 @@ describe("goal index drift (#1987)", () => {
   it("auditGoalIndexDrift reports missing index entry for valid goal file", async () => {
     dir = await makeTempDir();
     const g = await createGoal(dir, { label: "drift_missing", description: "d", acceptanceCriteria: ["c"] }, defaults);
-    await writeFile(join(dir, "_index.json"), JSON.stringify({ updatedAt: "2026-01-01T00:00:00.000Z", goals: [] }), "utf-8");
+    await writeFile(
+      join(dir, "_index.json"),
+      JSON.stringify({ updatedAt: "2026-01-01T00:00:00.000Z", goals: [] }),
+      "utf-8",
+    );
 
     const drift = await auditGoalIndexDrift(dir);
     expect(drift.missingInIndex).toContain(g.id);
@@ -38,8 +42,22 @@ describe("goal index drift (#1987)", () => {
       JSON.stringify({
         updatedAt: "2026-01-01T00:00:00.000Z",
         goals: [
-          { id: g.id, label: g.label, status: g.status, priority: g.priority, createdAt: g.createdAt, lastAssessedAt: null },
-          { id: "ghost-id", label: "ghost", status: "active", priority: "normal", createdAt: g.createdAt, lastAssessedAt: null },
+          {
+            id: g.id,
+            label: g.label,
+            status: g.status,
+            priority: g.priority,
+            createdAt: g.createdAt,
+            lastAssessedAt: null,
+          },
+          {
+            id: "ghost-id",
+            label: "ghost",
+            status: "active",
+            priority: "normal",
+            createdAt: g.createdAt,
+            lastAssessedAt: null,
+          },
         ],
       }),
       "utf-8",
@@ -87,7 +105,11 @@ describe("goal index drift (#1987)", () => {
 
   it("rebuildGoalIndex restores index after manual repair without mutating goal body", async () => {
     dir = await makeTempDir();
-    const g = await createGoal(dir, { label: "idx_rebuild", description: "original", acceptanceCriteria: ["c"] }, defaults);
+    const g = await createGoal(
+      dir,
+      { label: "idx_rebuild", description: "original", acceptanceCriteria: ["c"] },
+      defaults,
+    );
     await writeFile(join(dir, "_index.json"), "{ broken", "utf-8");
 
     await rebuildGoalIndex(dir);
@@ -162,7 +184,11 @@ describe("goal atomic write (#1986)", () => {
 
   it("updateGoal leaves original file intact when atomic rename fails", async () => {
     dir = await makeTempDir();
-    const g = await createGoal(dir, { label: "atomic_fail", description: "before", acceptanceCriteria: ["c"] }, defaults);
+    const g = await createGoal(
+      dir,
+      { label: "atomic_fail", description: "before", acceptanceCriteria: ["c"] },
+      defaults,
+    );
     const goalPath = join(dir, `${g.id}.json`);
     const before = await readFile(goalPath, "utf-8");
 

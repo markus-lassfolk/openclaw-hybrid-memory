@@ -139,11 +139,7 @@ describe("workboard-integration", () => {
       pullChanges: 0,
       errors: [],
     });
-    const isAvailable = vi
-      .fn()
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(true);
+    const isAvailable = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
 
     vi.spyOn(await import("../services/workboard-adapter.js"), "createWorkboardAdapter").mockReturnValue({
       isAvailable,
@@ -268,11 +264,7 @@ describe("workboard-integration", () => {
       pullChanges: 0,
       errors: [],
     });
-    const isAvailable = vi
-      .fn()
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(true);
+    const isAvailable = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
 
     vi.spyOn(await import("../services/workboard-adapter.js"), "createWorkboardAdapter").mockReturnValue({
       isAvailable,

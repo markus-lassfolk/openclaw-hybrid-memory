@@ -16,10 +16,7 @@ function sanitizeField(text: string): string {
   return sanitizePromptInjection(text);
 }
 
-export function buildLightweightStewardshipDirective(
-  goals: Goal[],
-  staleAssessmentHours = 24,
-): string | null {
+export function buildLightweightStewardshipDirective(goals: Goal[], staleAssessmentHours = 24): string | null {
   if (goals.length === 0) return null;
   const staleMs = staleAssessmentHours * 60 * 60 * 1000;
   const now = Date.now();
@@ -51,10 +48,8 @@ export function buildCompactActiveGoalsPrepend(
   if (goals.length === 0) return null;
 
   const sorted = [...goals].sort((a, b) => {
-    const priorityRank = (p: Goal["priority"]) =>
-      p === "critical" ? 4 : p === "high" ? 3 : p === "normal" ? 2 : 1;
-    const statusRank = (s: Goal["status"]) =>
-      s === "blocked" || s === "stalled" ? 3 : s === "verifying" ? 2 : 1;
+    const priorityRank = (p: Goal["priority"]) => (p === "critical" ? 4 : p === "high" ? 3 : p === "normal" ? 2 : 1);
+    const statusRank = (s: Goal["status"]) => (s === "blocked" || s === "stalled" ? 3 : s === "verifying" ? 2 : 1);
     const pr = priorityRank(b.priority) - priorityRank(a.priority);
     if (pr !== 0) return pr;
     const sr = statusRank(b.status) - statusRank(a.status);
@@ -70,8 +65,7 @@ export function buildCompactActiveGoalsPrepend(
   ];
 
   for (const g of selected) {
-    const blockers =
-      g.currentBlockers.length > 0 ? ` | blockers: ${g.currentBlockers.slice(0, 2).join("; ")}` : "";
+    const blockers = g.currentBlockers.length > 0 ? ` | blockers: ${g.currentBlockers.slice(0, 2).join("; ")}` : "";
     lines.push(
       `- [${g.priority}] ${sanitizeField(g.label)} (${g.status}, id: ${g.id}) — ${sanitizeField(g.description.slice(0, 120))}${g.description.length > 120 ? "…" : ""}${blockers}`,
     );
@@ -135,10 +129,7 @@ export async function resolveGoalsForSubagentContext(
   return resolved;
 }
 
-export function buildSubagentLinkedGoalsPrepend(
-  goals: Goal[],
-  opts: { maxChars: number },
-): string | null {
+export function buildSubagentLinkedGoalsPrepend(goals: Goal[], opts: { maxChars: number }): string | null {
   if (goals.length === 0) return null;
   const built = buildCompactActiveGoalsPrepend(goals, {
     maxChars: opts.maxChars,

@@ -375,11 +375,8 @@ export function detectUserStoreDirective(userText: string): UserStoreDirective |
 
   if (storeText.length < 10) return null;
 
-  const effectiveCategories =
-    ruleLike.length > 0 ? ruleLike : (["correction"] as DirectiveCategory[]);
-  const isCorrection = effectiveCategories.some(
-    (c) => c === "correction" || c === "implicit_correction",
-  );
+  const effectiveCategories = ruleLike.length > 0 ? ruleLike : (["correction"] as DirectiveCategory[]);
+  const isCorrection = effectiveCategories.some((c) => c === "correction" || c === "implicit_correction");
 
   return {
     categories: effectiveCategories,

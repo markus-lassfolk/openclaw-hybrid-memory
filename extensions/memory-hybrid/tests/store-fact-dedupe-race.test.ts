@@ -73,10 +73,9 @@ describe("storeFact dedupe check-then-insert race", () => {
     expect(result.newlyStored).toBe(false);
     expect(result.entry.id).toBe(winner.entry.id);
 
-    const rows = factsDb
-      .getRawDb()
-      .prepare("SELECT COUNT(*) AS c FROM facts WHERE text = ?")
-      .get(text) as { c: number };
+    const rows = factsDb.getRawDb().prepare("SELECT COUNT(*) AS c FROM facts WHERE text = ?").get(text) as {
+      c: number;
+    };
     expect(rows.c).toBe(1);
   });
 

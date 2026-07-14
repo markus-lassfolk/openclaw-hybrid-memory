@@ -96,10 +96,7 @@ export type RoutePersonaProposalInput = {
   routing: PersonaRuleRoutingConfig;
   factsDb?: FactsDB | null;
   embedText?: (text: string) => Promise<number[]>;
-  adjudicateContradiction?: (
-    proposed: string,
-    existing: string,
-  ) => Promise<RuleContradictionAdjudication | null>;
+  adjudicateContradiction?: (proposed: string, existing: string) => Promise<RuleContradictionAdjudication | null>;
 };
 
 export const DEFAULT_PERSONA_RULE_ROUTING: PersonaRuleRoutingConfig = {
@@ -323,7 +320,10 @@ async function cachedEmbed(
   }
 }
 
-function readAuthorityFileSections(workspaceRoot: string, files: readonly string[]): Array<{
+function readAuthorityFileSections(
+  workspaceRoot: string,
+  files: readonly string[],
+): Array<{
   file: string;
   text: string;
 }> {
@@ -395,7 +395,9 @@ async function collectSemanticCandidates(input: {
   embedText?: (text: string) => Promise<number[]>;
   topK: number;
   cacheTtlSeconds: number;
-}): Promise<Array<{ source: DedupCandidate["source"]; location: string; id?: string; text: string; similarity: number }>> {
+}): Promise<
+  Array<{ source: DedupCandidate["source"]; location: string; id?: string; text: string; similarity: number }>
+> {
   const queryVector = await cachedEmbed(input.queryText, input.embedText, input.cacheTtlSeconds);
   if (!queryVector) return [];
 
@@ -583,7 +585,11 @@ export async function routePersonaProposal(input: RoutePersonaProposalInput): Pr
   }
 
   if (routing.enabled && input.embedText) {
-    const queryVector = await cachedEmbed(`${input.title}\n${input.suggestedChange}`, input.embedText, routing.routingCacheTtlSeconds);
+    const queryVector = await cachedEmbed(
+      `${input.title}\n${input.suggestedChange}`,
+      input.embedText,
+      routing.routingCacheTtlSeconds,
+    );
     if (queryVector) {
       for (const fact of listRuleFacts(input.factsDb, 100)) {
         const factVector = await cachedEmbed(fact.text, input.embedText, routing.routingCacheTtlSeconds);
@@ -658,9 +664,7 @@ export async function routePersonaProposal(input: RoutePersonaProposalInput): Pr
       : recommendedTargetFile;
   const callerTarget = input.targetFile;
   const routingDisagrees =
-    recommendedFile !== "skill_workshop" &&
-    recommendedFile !== "memory_fact" &&
-    recommendedFile !== callerTarget;
+    recommendedFile !== "skill_workshop" && recommendedFile !== "memory_fact" && recommendedFile !== callerTarget;
 
   let routingSuggestion: PersonaProposalAssessment["routingSuggestion"];
   const routingConfident = routingScore >= 0.7;
@@ -739,9 +743,9 @@ export async function routePersonaProposal(input: RoutePersonaProposalInput): Pr
   };
 }
 
-export function resolvePersonaRuleRoutingConfig(
-  cfg: { personaRuleRouting?: Partial<PersonaRuleRoutingConfig> },
-): PersonaRuleRoutingConfig {
+export function resolvePersonaRuleRoutingConfig(cfg: {
+  personaRuleRouting?: Partial<PersonaRuleRoutingConfig>;
+}): PersonaRuleRoutingConfig {
   return { ...DEFAULT_PERSONA_RULE_ROUTING, ...cfg.personaRuleRouting };
 }
 

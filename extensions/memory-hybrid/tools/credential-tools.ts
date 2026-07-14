@@ -400,9 +400,7 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
             };
           }
           return {
-            content: [
-              { type: "text", text: `Restored revision ${revision} to current for ${service} (${type}).` },
-            ],
+            content: [{ type: "text", text: `Restored revision ${revision} to current for ${service} (${type}).` }],
             details: { restored: true, service, type },
           };
         },

@@ -1816,9 +1816,7 @@ export class VectorDB {
    * Returns the number of IDs accepted for deletion (same semantics as repeated delete()).
    */
   async deleteMany(ids: readonly string[]): Promise<number> {
-    const normalized = [...new Set(ids.map((id) => normalizeVectorId(String(id))))].filter((id) =>
-      isValidVectorId(id),
-    );
+    const normalized = [...new Set(ids.map((id) => normalizeVectorId(String(id))))].filter((id) => isValidVectorId(id));
     if (normalized.length === 0) return 0;
     try {
       if (!this.lanceDbAvailable && this.lanceInitFailed) return 0;
@@ -2056,9 +2054,7 @@ export class VectorDB {
       await this.ensureInitialized();
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table || !this.schemaValid) return out;
 
-      const unique = [...new Set(ids.map((id) => normalizeVectorId(String(id))))].filter((id) =>
-        isValidVectorId(id),
-      );
+      const unique = [...new Set(ids.map((id) => normalizeVectorId(String(id))))].filter((id) => isValidVectorId(id));
       const CHUNK = 300;
       const acquired = this.acquireReader();
       let timedOut = false;

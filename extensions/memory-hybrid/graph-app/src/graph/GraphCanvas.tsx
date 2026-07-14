@@ -56,6 +56,7 @@ export function GraphCanvas() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: nodes/filters are deliberate recompute triggers — the body reads the freshest full state via useGraphStore.getState() rather than these closed-over values.
   const visibleNodes = useMemo(() => selectVisibleNodes(useGraphStore.getState()), [nodes, filters]);
   const visibleIds = useMemo(() => new Set(visibleNodes.map((n) => n.id)), [visibleNodes]);
 
@@ -108,6 +109,7 @@ export function GraphCanvas() {
   // When community detection finishes (400ms after a topology change) it mutates node.clusterId in
   // place, which triggers no repaint on its own. If we're coloring by cluster, nudge the render loop
   // so the new colors actually show without waiting for an unrelated interaction.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: clusters is a deliberate re-render trigger — node.clusterId is mutated in place, so its value is never read here, only its identity change matters.
   useEffect(() => {
     if (colorMode !== "category") fgRef.current?.resumeAnimation();
   }, [clusters, colorMode]);
@@ -230,9 +232,11 @@ export function GraphCanvas() {
           // failure (e.g. missing dashboard token) in the activity feed rather than swallowing it.
           const from = linkingFrom;
           setLinkingFrom(null);
-          addLink(from, id, "RELATED_TO", 0.7).then((res) => {
-            if (!res.ok) addActivity("update", `bond failed — ${res.error ?? "unknown error"}`);
-          });
+          addLink(from, id, "RELATED_TO", 0.7)
+            .then((res) => {
+              if (!res.ok) addActivity("update", `bond failed — ${res.error ?? "unknown error"}`);
+            })
+            .catch((e) => addActivity("update", `bond failed — ${e instanceof Error ? e.message : String(e)}`));
           lastClick.current = { id: "", at: 0 };
           return;
         }
@@ -243,9 +247,11 @@ export function GraphCanvas() {
         lastClick.current = { id, at: now };
         setSelected(id);
         if (isDouble) {
-          expandNeighborhood(id).then((res) => {
-            if (!res.ok) addActivity("update", `expand failed — ${res.error ?? "unknown error"}`);
-          });
+          expandNeighborhood(id)
+            .then((res) => {
+              if (!res.ok) addActivity("update", `expand failed — ${res.error ?? "unknown error"}`);
+            })
+            .catch((e) => addActivity("update", `expand failed — ${e instanceof Error ? e.message : String(e)}`));
         }
       }}
       onBackgroundClick={() => {

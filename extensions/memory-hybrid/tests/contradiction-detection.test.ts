@@ -23,7 +23,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { repairUndetectedContradictions, resolveContradictionsAutonomously } from "../backends/facts-db/contradictions.js";
+import {
+  repairUndetectedContradictions,
+  resolveContradictionsAutonomously,
+} from "../backends/facts-db/contradictions.js";
 import { _testing } from "../index.js";
 
 const { FactsDB } = _testing;

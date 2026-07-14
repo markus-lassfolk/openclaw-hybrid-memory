@@ -107,7 +107,7 @@ afterEach(() => {
 });
 
 describe("MEMORY_STORE with object remediationContent missing text (loop iteration 77 regression)", () => {
-  it("skips storage instead of stringifying the object to \"[object Object]\"", async () => {
+  it('skips storage instead of stringifying the object to "[object Object]"', async () => {
     const remediation = {
       category: "workflow",
       severity: "medium",

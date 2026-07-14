@@ -97,10 +97,7 @@ describe("compaction lifecycle hooks", () => {
 
     await handler?.({ messageCount: 10, tokenCount: 5000 }, {});
 
-    expect(getHotFactsSpy).toHaveBeenCalledWith(
-      4000,
-      expect.objectContaining({ agentId: "sub-agent-x" }),
-    );
+    expect(getHotFactsSpy).toHaveBeenCalledWith(4000, expect.objectContaining({ agentId: "sub-agent-x" }));
     // Must not use api.context's stale agentId ("main") for the filter.
     expect(getHotFactsSpy.mock.calls[0]?.[1]).not.toMatchObject({ agentId: "main" });
   });

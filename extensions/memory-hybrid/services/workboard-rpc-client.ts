@@ -235,11 +235,7 @@ export function createWorkboardHttpRpcClient(
       if (err instanceof Error && err.name === "AbortError") {
         logWorkboardRpcFailure(method, `${method} timed out after ${REQUEST_TIMEOUT_MS}ms`, options?.shouldAbort);
       } else {
-        logWorkboardRpcFailure(
-          method,
-          err instanceof Error ? err.message : String(err),
-          options?.shouldAbort,
-        );
+        logWorkboardRpcFailure(method, err instanceof Error ? err.message : String(err), options?.shouldAbort);
       }
       return null;
     }

@@ -317,9 +317,7 @@ describe("entity surface matching", () => {
     // "mark" (4 chars, over the old MIN_SUBSTRING_ENTITY_KEY_LEN threshold) must not match
     // inside "denmark"/"benchmark"/"supermarket" — those are unrelated words, not mentions.
     const surfaces = [{ key: "mark", displayName: "Mark", label: "OTHER" as const }];
-    expect(matchEntitySurfacesInText("We shipped a new benchmark for the supermarket app", surfaces)).toHaveLength(
-      0,
-    );
+    expect(matchEntitySurfacesInText("We shipped a new benchmark for the supermarket app", surfaces)).toHaveLength(0);
   });
 
   it("still matches a 4+ char entity key when it appears as its own word", () => {

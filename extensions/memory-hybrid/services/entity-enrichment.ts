@@ -16,10 +16,7 @@ import {
 } from "../utils/entity-mention-quality.js";
 import { isEntityStopWord as isConfiguredEntityStopWord } from "../utils/entity-stopwords.js";
 import { stripThinkingWrapperBlocks, parseFirstJsonObjectValue } from "../utils/llm-json-array.js";
-import {
-  capTimeoutByMaintenanceRunDeadline,
-  getMaintenanceRunAbortSignal,
-} from "../utils/maintenance-run-deadline.js";
+import { capTimeoutByMaintenanceRunDeadline, getMaintenanceRunAbortSignal } from "../utils/maintenance-run-deadline.js";
 import {
   chatCompleteWithRetry,
   is403QuotaOrRateLimitLike,

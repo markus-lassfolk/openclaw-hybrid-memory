@@ -169,7 +169,9 @@ function closeStorePermanently(
  * - Post-upgrade pipeline
  * - Cleanup on shutdown
  */
-export function shouldSkipPluginServiceStartForSupersededGeneration(bootRegistrationGeneration: number | undefined): boolean {
+export function shouldSkipPluginServiceStartForSupersededGeneration(
+  bootRegistrationGeneration: number | undefined,
+): boolean {
   return bootRegistrationGeneration !== undefined && isRegistrationSuperseded(bootRegistrationGeneration);
 }
 
@@ -995,7 +997,9 @@ export function createPluginService(ctx: PluginServiceContext) {
                     activeTaskRenderGoalsOpts(cfg, workspaceRoot),
                   );
                 } catch (renderErr) {
-                  api.logger.warn?.(`memory-hybrid: active-task projection render after reconcile failed (non-fatal): ${renderErr}`);
+                  api.logger.warn?.(
+                    `memory-hybrid: active-task projection render after reconcile failed (non-fatal): ${renderErr}`,
+                  );
                 }
               }
             }

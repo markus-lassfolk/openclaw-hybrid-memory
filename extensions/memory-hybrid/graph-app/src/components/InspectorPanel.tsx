@@ -24,6 +24,7 @@ export function InspectorPanel() {
   const [draft, setDraft] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reloadKey is a deliberate refetch trigger, bumped elsewhere to force a refresh; its value is never read in the effect body.
   useEffect(() => {
     if (!selectedId) {
       setFact(null);

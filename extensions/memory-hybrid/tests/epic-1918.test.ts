@@ -344,7 +344,9 @@ describe("maintenance journal (#1913)", () => {
     }
 
     it("does not flag a long-cadence step (5-day guard) that last ran 3 days ago", async () => {
-      const { insertMaintenanceRun, getStaleMaintenanceJobs } = await import("../services/maintenance-audit-journal.js");
+      const { insertMaintenanceRun, getStaleMaintenanceJobs } = await import(
+        "../services/maintenance-audit-journal.js"
+      );
       const db = await makeJournalDb();
       // build-languages has a 5-day (d5) guard interval — a flat 48h cutoff would wrongly flag this.
       insertMaintenanceRun(db, { job: "build-languages", status: "ran" });
@@ -356,7 +358,9 @@ describe("maintenance journal (#1913)", () => {
     });
 
     it("flags a short-cadence step (1-hour guard) once it's well past its own tolerance", async () => {
-      const { insertMaintenanceRun, getStaleMaintenanceJobs } = await import("../services/maintenance-audit-journal.js");
+      const { insertMaintenanceRun, getStaleMaintenanceJobs } = await import(
+        "../services/maintenance-audit-journal.js"
+      );
       const db = await makeJournalDb();
       // prune has a 1-hour (h1) guard interval; default tolerance is 3x = 3h, so 5h ago is overdue.
       insertMaintenanceRun(db, { job: "prune", status: "ran" });
@@ -368,7 +372,9 @@ describe("maintenance journal (#1913)", () => {
     });
 
     it("does not flag a short-cadence step within its own tolerance window", async () => {
-      const { insertMaintenanceRun, getStaleMaintenanceJobs } = await import("../services/maintenance-audit-journal.js");
+      const { insertMaintenanceRun, getStaleMaintenanceJobs } = await import(
+        "../services/maintenance-audit-journal.js"
+      );
       const db = await makeJournalDb();
       insertMaintenanceRun(db, { job: "prune", status: "ran" });
       const thirtyMinAgoSec = Math.floor(Date.now() / 1000) - 30 * 60;

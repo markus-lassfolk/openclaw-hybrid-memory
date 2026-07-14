@@ -242,11 +242,7 @@ describe("PR #1332 unresolved feedback remediation", () => {
       vectorDb,
     } as unknown as ResolverContext;
 
-    await resolvers.Mutation.supersedeFact(
-      null,
-      { oldFactId: "old", newFactId: "new" } as ResolverArgs,
-      context,
-    );
+    await resolvers.Mutation.supersedeFact(null, { oldFactId: "old", newFactId: "new" } as ResolverArgs, context);
 
     expect(vectorDb.delete).toHaveBeenCalledWith("old");
   });

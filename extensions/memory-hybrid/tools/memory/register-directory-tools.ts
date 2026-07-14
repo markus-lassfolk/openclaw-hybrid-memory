@@ -156,7 +156,9 @@ export function registerDirectoryTools(runtime: MemoryToolRuntime): void {
               board.length + management.length > 0
                 ? [
                     board.length ? `Board (${board.length}):\n${board.map(personLine).join("\n")}` : null,
-                    management.length ? `Management (${management.length}):\n${management.map(personLine).join("\n")}` : null,
+                    management.length
+                      ? `Management (${management.length}):\n${management.map(personLine).join("\n")}`
+                      : null,
                     other.length ? `Other (${other.length}):\n${other.map(personLine).join("\n")}` : null,
                   ]
                     .filter((s): s is string => s != null)

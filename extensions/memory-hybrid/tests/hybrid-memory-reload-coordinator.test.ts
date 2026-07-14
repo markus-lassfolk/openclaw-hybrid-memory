@@ -122,10 +122,13 @@ describe("hybrid-memory-reload-coordinator", () => {
       resolveG1 = resolve;
     });
     let ranG1 = false;
-    schedulePluginTeardown(async () => {
-      await g1Done;
-      ranG1 = true;
-    }, { donorGeneration: 1 });
+    schedulePluginTeardown(
+      async () => {
+        await g1Done;
+        ranG1 = true;
+      },
+      { donorGeneration: 1 },
+    );
 
     // Generation 1 teardown is still pending.
     expect(isTeardownDrainedForGeneration(1)).toBe(false);
@@ -144,9 +147,12 @@ describe("hybrid-memory-reload-coordinator", () => {
     const g1Done = new Promise<void>((resolve) => {
       resolveG1 = resolve;
     });
-    schedulePluginTeardown(async () => {
-      await g1Done;
-    }, { donorGeneration: 1 });
+    schedulePluginTeardown(
+      async () => {
+        await g1Done;
+      },
+      { donorGeneration: 1 },
+    );
     schedulePluginTeardown(
       async () => {
         /* already-drained teardown */
@@ -185,9 +191,12 @@ describe("hybrid-memory-reload-coordinator", () => {
   });
 
   it("schedulePluginTeardown resolves the entry's done promise even on teardown error", async () => {
-    schedulePluginTeardown(async () => {
-      throw new Error("synthetic teardown failure");
-    }, { donorGeneration: 7 });
+    schedulePluginTeardown(
+      async () => {
+        throw new Error("synthetic teardown failure");
+      },
+      { donorGeneration: 7 },
+    );
     const promises = listTeardownPromisesForGeneration(7);
     expect(promises).toHaveLength(1);
     // The promise must resolve (not reject) so awaiters can move on. Errors are captured
@@ -201,30 +210,30 @@ describe("hybrid-memory-reload-coordinator", () => {
     expect(TEARDOWN_SOFT_WAIT_MS).toBeLessThanOrEqual(TEARDOWN_WAIT_MS);
   });
 
-  it(
-    "rapid re-register overlap-queues teardowns; donor-generation drain detection tracks the prior generation only",
-    async () => {
-      let resolveG1: () => void = () => {};
-      const g1Done = new Promise<void>((resolve) => {
-        resolveG1 = resolve;
-      });
-      schedulePluginTeardown(async () => {
+  it("rapid re-register overlap-queues teardowns; donor-generation drain detection tracks the prior generation only", async () => {
+    let resolveG1: () => void = () => {};
+    const g1Done = new Promise<void>((resolve) => {
+      resolveG1 = resolve;
+    });
+    schedulePluginTeardown(
+      async () => {
         await g1Done;
-      }, { donorGeneration: 1 });
+      },
+      { donorGeneration: 1 },
+    );
 
-      // Generation 2 schedules its own (immediate) teardown BEFORE generation 1's teardown completes.
-      schedulePluginTeardown(async () => {}, { donorGeneration: 2 });
+    // Generation 2 schedules its own (immediate) teardown BEFORE generation 1's teardown completes.
+    schedulePluginTeardown(async () => {}, { donorGeneration: 2 });
 
-      // At this moment, gen 1 is pending (g1Done hasn't resolved), gen 2's teardown is queued.
-      expect(isTeardownDrainedForGeneration(1)).toBe(false);
+    // At this moment, gen 1 is pending (g1Done hasn't resolved), gen 2's teardown is queued.
+    expect(isTeardownDrainedForGeneration(1)).toBe(false);
 
-      // Release gen 1; both will complete shortly after.
-      resolveG1();
-      expect(await awaitReloadTeardownBeforeOpen(TEARDOWN_WAIT_MS)).toBe(true);
+    // Release gen 1; both will complete shortly after.
+    resolveG1();
+    expect(await awaitReloadTeardownBeforeOpen(TEARDOWN_WAIT_MS)).toBe(true);
 
-      // Both generations are now drained (entries auto-removed after done resolves).
-      expect(isTeardownDrainedForGeneration(1)).toBe(true);
-      expect(isTeardownDrainedForGeneration(2)).toBe(true);
-    },
-  );
+    // Both generations are now drained (entries auto-removed after done resolves).
+    expect(isTeardownDrainedForGeneration(1)).toBe(true);
+    expect(isTeardownDrainedForGeneration(2)).toBe(true);
+  });
 });

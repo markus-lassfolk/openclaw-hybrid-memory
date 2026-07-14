@@ -44,10 +44,7 @@ let scheduledTeardowns: ScheduledTeardown[] = [];
 let reloadTeardownChain: Promise<void> = Promise.resolve();
 let reloadTeardownQueueDepth = 0;
 
-export function schedulePluginTeardown(
-  teardown: () => Promise<void>,
-  options?: { donorGeneration?: number },
-): void {
+export function schedulePluginTeardown(teardown: () => Promise<void>, options?: { donorGeneration?: number }): void {
   reloadTeardownQueueDepth += 1;
   const donorGeneration = options?.donorGeneration ?? -1;
   let resolveDone: () => void = () => {};
@@ -91,9 +88,7 @@ export function schedulePluginTeardown(
  */
 export function clearTeardownTrackingForGeneration(generation: number): void {
   if (generation < 0) return;
-  scheduledTeardowns = scheduledTeardowns.filter(
-    (entry) => entry.donorGeneration !== generation,
-  );
+  scheduledTeardowns = scheduledTeardowns.filter((entry) => entry.donorGeneration !== generation);
 }
 
 /**
@@ -116,9 +111,7 @@ export function listTeardownPromisesForGeneration(donorGeneration: number): Prom
   if (donorGeneration < 0) {
     return scheduledTeardowns.map((entry) => entry.done);
   }
-  return scheduledTeardowns
-    .filter((entry) => entry.donorGeneration === donorGeneration)
-    .map((entry) => entry.done);
+  return scheduledTeardowns.filter((entry) => entry.donorGeneration === donorGeneration).map((entry) => entry.done);
 }
 
 /** Wait for superseded bootstrap work with a short cap; then close old handles regardless. */

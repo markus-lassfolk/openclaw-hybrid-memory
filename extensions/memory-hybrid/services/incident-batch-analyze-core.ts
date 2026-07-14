@@ -4,10 +4,7 @@ import { chatCompleteWithAdaptiveMaintenanceRetry } from "./adaptive-maintenance
 import { maintenanceMaxOutputTokens, type MiniMaxThinkingMode } from "./chat.js";
 import { checkBatchRemediationCoverage, mergeSplitBatchItemsWithOffset } from "./batch-incident-analysis.js";
 import type { CostFeature } from "./cost-feature-labels.js";
-import {
-  getMaintenanceRunAbortSignal,
-  maintenanceRunDeadlineReached,
-} from "../utils/maintenance-run-deadline.js";
+import { getMaintenanceRunAbortSignal, maintenanceRunDeadlineReached } from "../utils/maintenance-run-deadline.js";
 import { estimateTokens } from "../utils/text.js";
 
 export type IncidentBatchAnalyzeDiagnostics = {
@@ -79,8 +76,7 @@ async function callBatchAnalyzeLlm<TIncident>(
   let lastError: unknown;
   for (let attempt = 1; attempt <= 4; attempt++) {
     if (maintenanceDeadlineBlocked()) {
-      const blockedError =
-        lastError instanceof Error ? lastError : new Error("maintenance run deadline reached");
+      const blockedError = lastError instanceof Error ? lastError : new Error("maintenance run deadline reached");
       throw blockedError;
     }
     try {

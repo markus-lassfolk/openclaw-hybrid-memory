@@ -75,7 +75,7 @@ function stripTrailingEmptyFields(fields: string[]): string[] {
 /** Render orgs/people back to the CONTACTS.md format — used by tests and as a starter-file generator. */
 export function formatContactsRoster(orgs: RosterOrg[]): string {
   const lines: string[] = [
-    "<!-- Format: \"## Org Name\" starts a section; \"- Name | email | role | board_status\" lists a person. -->",
+    '<!-- Format: "## Org Name" starts a section; "- Name | email | role | board_status" lists a person. -->',
     "<!-- email, role, board_status are optional. board_status: board|management. -->",
     "",
   ];

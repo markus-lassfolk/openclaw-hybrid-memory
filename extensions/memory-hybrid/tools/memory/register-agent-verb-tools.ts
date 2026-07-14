@@ -127,9 +127,7 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
         }));
 
         const vaultByFactId: Map<string, string> =
-          "vaultByFactId" in result
-            ? (result as MultiVaultRetrievalResult).vaultByFactId
-            : new Map<string, string>();
+          "vaultByFactId" in result ? (result as MultiVaultRetrievalResult).vaultByFactId : new Map<string, string>();
         const vaultHandleByName = new Map(vaultHandles.map((h) => [h.name, h]));
         // SECURITY: scope-check even though ids reaching getEntry are normally already scope-vetted
         // by the initial retrieval — a multi-vault fan-out (vault="all") id collision across two

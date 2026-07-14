@@ -218,7 +218,8 @@ describe("task-ledger-facts", () => {
         id: "n1",
         entity: "orphan-sub",
         key: "next",
-        value: "Auto-reconciled: session transcript not found for agent:main:subagent:dead (subagent bookkeeping cleanup).",
+        value:
+          "Auto-reconciled: session transcript not found for agent:main:subagent:dead (subagent bookkeeping cleanup).",
         createdAt: 2,
       }),
     );
@@ -730,7 +731,10 @@ describe("task-ledger-facts", () => {
       storeTask("hygiene-ok", "Will apply", "failed", staleIso);
       storeTask("hygiene-fail", "Will fail persist", "failed", staleIso);
 
-      vi.spyOn(FactsDB.prototype, "storeWithResult").mockImplementation(function (this: FactsDB, input): StoreFactResult {
+      vi.spyOn(FactsDB.prototype, "storeWithResult").mockImplementation(function (
+        this: FactsDB,
+        input,
+      ): StoreFactResult {
         if (input.source === "active-task" && input.entity === "hygiene-fail" && input.key === "status") {
           return skippedStoreResult(input, "blocked-hygiene-fail");
         }

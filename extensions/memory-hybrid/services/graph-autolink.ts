@@ -20,10 +20,7 @@ export type GraphAutoLinkDeps = {
  * Create semantic RELATED_TO links using embedding similarity when a vector is available.
  * Falls back to entity/FTS classification similarity when embedding search is unavailable.
  */
-export async function autoLinkSemanticallySimilarFacts(
-  deps: GraphAutoLinkDeps,
-  graph: GraphConfig,
-): Promise<number> {
+export async function autoLinkSemanticallySimilarFacts(deps: GraphAutoLinkDeps, graph: GraphConfig): Promise<number> {
   if (!graph.enabled || !graph.autoLink) return 0;
 
   const scope = deps.scope ?? "global";

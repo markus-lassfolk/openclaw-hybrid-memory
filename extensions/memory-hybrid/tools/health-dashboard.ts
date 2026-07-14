@@ -85,9 +85,9 @@ export async function buildHealthReport(
   const activeFacts = activeRow.cnt;
 
   // Superseded facts
-  const supersededRow = db
-    .prepare("SELECT COUNT(*) AS cnt FROM facts WHERE superseded_at IS NOT NULL")
-    .get() as { cnt: number };
+  const supersededRow = db.prepare("SELECT COUNT(*) AS cnt FROM facts WHERE superseded_at IS NOT NULL").get() as {
+    cnt: number;
+  };
   const supersededFacts = supersededRow.cnt;
 
   // Category distribution (active facts only)

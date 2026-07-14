@@ -262,7 +262,11 @@ export function autoLinkEntities(
                    WHERE fact_id_new = ? AND fact_id_old = ?`,
               )
               .get(newFactId, oldFact.id);
-            if (!existingContradiction && oldFact.value != null && newVal.toLowerCase() !== oldFact.value.toLowerCase()) {
+            if (
+              !existingContradiction &&
+              oldFact.value != null &&
+              newVal.toLowerCase() !== oldFact.value.toLowerCase()
+            ) {
               recordContradiction(db, newFactId, oldFact.id, createLink, {
                 score: 1.0,
                 heuristicSignals: ["auto_supersede"],

@@ -66,7 +66,9 @@ function isNetworkDeliveryError(err: unknown): boolean {
   if (err instanceof Error) {
     const name = err.name;
     if (name === "AbortError" || name === "TimeoutError" || name === "TypeError") return true;
-    if (/ENOTFOUND|ECONNREFUSED|ECONNRESET|EAI_AGAIN|ETIMEDOUT|network|fetch failed|timed out|timeout/i.test(err.message)) {
+    if (
+      /ENOTFOUND|ECONNREFUSED|ECONNRESET|EAI_AGAIN|ETIMEDOUT|network|fetch failed|timed out|timeout/i.test(err.message)
+    ) {
       return true;
     }
   }

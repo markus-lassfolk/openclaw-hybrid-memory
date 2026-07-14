@@ -31,10 +31,7 @@ function buildContextEngineOptions(args: {
   };
 }
 
-function reportContextEngineRegistrationFailure(
-  err: unknown,
-  logger: { warn?: (message: string) => void },
-): void {
+function reportContextEngineRegistrationFailure(err: unknown, logger: { warn?: (message: string) => void }): void {
   capturePluginError(err instanceof Error ? err : new Error(String(err)), {
     subsystem: "registration",
     operation: "plugin-register:context-engine",

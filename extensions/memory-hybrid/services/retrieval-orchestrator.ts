@@ -658,7 +658,13 @@ function buildCachedResult(
     acceptedCount++;
   }
 
-  return buildOrchestratorResult(factsDb, fused, orderedEntries, budgetTokens, options.scopeFilter as ScopeFilter | undefined);
+  return buildOrchestratorResult(
+    factsDb,
+    fused,
+    orderedEntries,
+    budgetTokens,
+    options.scopeFilter as ScopeFilter | undefined,
+  );
 }
 
 /**

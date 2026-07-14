@@ -1,9 +1,19 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { addFact } from "../live/curation";
 import { LEGEND_CATEGORIES } from "../theme";
 
 /** Modal to add a new memory (fact) to the store. */
 export function AddFactDialog({ onClose }: { onClose: () => void }) {
+  // Keyboard-equivalent for the backdrop's click-outside-to-close (the close/cancel
+  // buttons below are already independently focusable and keyboard-operable).
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
   const [text, setText] = useState("");
   const [category, setCategory] = useState("fact");
   const [importance, setImportance] = useState(0.5);
@@ -30,8 +40,8 @@ export function AddFactDialog({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-backdrop">
+      <div className="modal">
         <div className="modal-head">
           <strong>New memory</strong>
           <button type="button" className="close" onClick={onClose} aria-label="Close">
@@ -40,7 +50,12 @@ export function AddFactDialog({ onClose }: { onClose: () => void }) {
         </div>
         <label className="control">
           <span>text</span>
-          <textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} placeholder="What should be remembered?" />
+          <textarea
+            rows={3}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="What should be remembered?"
+          />
         </label>
         <label className="control">
           <span>category</span>
@@ -54,7 +69,14 @@ export function AddFactDialog({ onClose }: { onClose: () => void }) {
         </label>
         <label className="control">
           <span>importance · {importance.toFixed(2)}</span>
-          <input type="range" min={0} max={1} step={0.05} value={importance} onChange={(e) => setImportance(Number(e.target.value))} />
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={importance}
+            onChange={(e) => setImportance(Number(e.target.value))}
+          />
         </label>
         <label className="control">
           <span>tags (comma-separated)</span>

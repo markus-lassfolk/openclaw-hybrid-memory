@@ -82,13 +82,9 @@ describe("auto-classifier lease/lock guard (#30)", () => {
 
     expect(acquireStepLock(LOCK_NAME, tmpDir)).toBe(true);
     try {
-      const result = await runAutoClassify(
-        factsDb,
-        openai as never,
-        { model: "test-model", batchSize: 20 },
-        noop,
-        { openclawDir: tmpDir },
-      );
+      const result = await runAutoClassify(factsDb, openai as never, { model: "test-model", batchSize: 20 }, noop, {
+        openclawDir: tmpDir,
+      });
       expect(result.reclassified).toBe(0);
       expect(callCount()).toBe(0);
     } finally {

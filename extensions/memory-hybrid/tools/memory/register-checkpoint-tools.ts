@@ -62,7 +62,9 @@ export function registerCheckpointTools(runtime: MemoryToolRuntime): void {
       next: Type.Optional(Type.String({ description: "Next concrete action for safe resume." })),
       relatedSession: Type.Optional(Type.String({ description: "Related OpenClaw session key/id." })),
       relatedGoal: Type.Optional(
-        Type.String({ description: "Registered goal id to link (writes project fact related_goal for goal_assess guard)." }),
+        Type.String({
+          description: "Registered goal id to link (writes project fact related_goal for goal_assess guard).",
+        }),
       ),
       title: Type.Optional(
         Type.String({ description: "Human-readable task title (defaults to existing or Project task)." }),

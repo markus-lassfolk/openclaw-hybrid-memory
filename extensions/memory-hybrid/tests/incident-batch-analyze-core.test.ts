@@ -5,10 +5,7 @@ import {
   inferFinishReasonFromLlmContent,
 } from "../services/incident-batch-analyze-core.js";
 import { maintenanceMaxOutputTokens } from "../services/chat.js";
-import {
-  clearMaintenanceRunDeadline,
-  setMaintenanceRunDeadlineMs,
-} from "../utils/maintenance-run-deadline.js";
+import { clearMaintenanceRunDeadline, setMaintenanceRunDeadlineMs } from "../utils/maintenance-run-deadline.js";
 
 const SAMPLE_ITEM = { remediationType: "TOOLS_RULE", category: "X", severity: "LOW" };
 

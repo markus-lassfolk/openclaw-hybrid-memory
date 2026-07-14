@@ -46,8 +46,5 @@ export async function loadActiveTasksForTools(
 export function findActiveTaskByLabel(tasks: ActiveTaskEntry[], label: string): ActiveTaskEntry | undefined {
   const want = label.trim();
   if (!want) return undefined;
-  return (
-    tasks.find((t) => t.label === want) ??
-    tasks.find((t) => t.label.toLowerCase() === want.toLowerCase())
-  );
+  return tasks.find((t) => t.label === want) ?? tasks.find((t) => t.label.toLowerCase() === want.toLowerCase());
 }

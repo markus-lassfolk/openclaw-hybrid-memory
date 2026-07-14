@@ -250,9 +250,7 @@ function resolveProjectVectorDuplicateCandidate(
     const sameEntityAndKey = matchedEntity === entity && sameKey;
     if (
       sameEntityAndKey ||
-      (candidateSource === "distillation" &&
-        sameKey &&
-        entitiesCompatibleForDistillation(entity, matchedEntity))
+      (candidateSource === "distillation" && sameKey && entitiesCompatibleForDistillation(entity, matchedEntity))
     ) {
       return vectorDup;
     }

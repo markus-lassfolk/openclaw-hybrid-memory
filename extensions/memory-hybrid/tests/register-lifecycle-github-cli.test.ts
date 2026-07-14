@@ -74,10 +74,12 @@ describe("lifecycle sync github CLI wiring", () => {
   });
 
   it("passes a real (non-no-op) logger into syncLifecycleFromGitHub — the internal info line fires", async () => {
-    syncLifecycleFromGitHubMock.mockImplementation(async (_factsDb: unknown, opts: { logger?: { info: (m: string) => void } }) => {
-      opts.logger?.info("lifecycle.github: scanning 0 candidate row(s) across 1 repo(s)");
-      return EMPTY_REPORT;
-    });
+    syncLifecycleFromGitHubMock.mockImplementation(
+      async (_factsDb: unknown, opts: { logger?: { info: (m: string) => void } }) => {
+        opts.logger?.info("lifecycle.github: scanning 0 candidate row(s) across 1 repo(s)");
+        return EMPTY_REPORT;
+      },
+    );
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     const program = makeProgram();
@@ -93,7 +95,10 @@ describe("lifecycle sync github CLI wiring", () => {
 
   it("--verbose emits a maintenance heartbeat start line and forwards onProgress ticks from a multi-row scan", async () => {
     syncLifecycleFromGitHubMock.mockImplementation(
-      async (_factsDb: unknown, opts: { onProgress?: (p: { scanned: number; total: number; matched: number }) => void }) => {
+      async (
+        _factsDb: unknown,
+        opts: { onProgress?: (p: { scanned: number; total: number; matched: number }) => void },
+      ) => {
         opts.onProgress?.({ scanned: 25, total: 100, matched: 3 });
         opts.onProgress?.({ scanned: 100, total: 100, matched: 9 });
         return { ...EMPTY_REPORT, scanned: 100, matched: 9 };
@@ -122,10 +127,12 @@ describe("lifecycle sync github CLI wiring", () => {
   });
 
   it("--json routes the adapter's logger.info progress to stderr so stdout stays pure JSON", async () => {
-    syncLifecycleFromGitHubMock.mockImplementation(async (_factsDb: unknown, opts: { logger?: { info: (m: string) => void } }) => {
-      opts.logger?.info("lifecycle.github: scanning 0 candidate row(s) across 1 repo(s)");
-      return EMPTY_REPORT;
-    });
+    syncLifecycleFromGitHubMock.mockImplementation(
+      async (_factsDb: unknown, opts: { logger?: { info: (m: string) => void } }) => {
+        opts.logger?.info("lifecycle.github: scanning 0 candidate row(s) across 1 repo(s)");
+        return EMPTY_REPORT;
+      },
+    );
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -133,9 +140,7 @@ describe("lifecycle sync github CLI wiring", () => {
     await program.parseAsync(["lifecycle", "sync", "github", "--json"], { from: "user" });
 
     expect(errSpy.mock.calls.some((c) => String(c[0]).includes("lifecycle.github: scanning 0 candidate"))).toBe(true);
-    expect(logSpy.mock.calls.some((c) => String(c[0]).includes("lifecycle.github: scanning 0 candidate"))).toBe(
-      false,
-    );
+    expect(logSpy.mock.calls.some((c) => String(c[0]).includes("lifecycle.github: scanning 0 candidate"))).toBe(false);
     // stdout must be pure, parseable JSON with --json (no leaked adapter progress lines).
     const jsonCall = logSpy.mock.calls.find((c) => String(c[0]).trim().startsWith("{"));
     expect(jsonCall).toBeDefined();

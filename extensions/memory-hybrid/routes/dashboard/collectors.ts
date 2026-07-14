@@ -36,10 +36,7 @@ import { formatTimestampUtc, nowIso } from "../../utils/dates.js";
 import { pluginLogger } from "../../utils/logger.js";
 import { deleteVectorForFactId } from "../../services/vector-maintenance.js";
 import { isValidGhRepoArg } from "../../utils/gh-repo-arg.js";
-import {
-  isErrorReporterActive,
-  resolvePendingErrorReportCount,
-} from "../../services/error-reporter.js";
+import { isErrorReporterActive, resolvePendingErrorReportCount } from "../../services/error-reporter.js";
 import { listQuarantinedGoalIds, resolveGoalsDir } from "../../services/goal-registry.js";
 import { getEnv } from "../../utils/env-manager.js";
 import { execFile as execFileCb } from "../../utils/process-runner.js";

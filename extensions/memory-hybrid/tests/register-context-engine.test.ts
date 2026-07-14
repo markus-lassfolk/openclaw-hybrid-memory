@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { capturePluginErrorMock, registerHybridContextEngineMock, registerHybridContextEngineSyncMock } =
-  vi.hoisted(() => ({
+const { capturePluginErrorMock, registerHybridContextEngineMock, registerHybridContextEngineSyncMock } = vi.hoisted(
+  () => ({
     capturePluginErrorMock: vi.fn(),
     registerHybridContextEngineMock: vi.fn(),
     registerHybridContextEngineSyncMock: vi.fn(),
-  }));
+  }),
+);
 
 vi.mock("../services/error-reporter.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/error-reporter.js")>();

@@ -51,8 +51,7 @@ export function mapValidVectorCandidates(neighbors: VectorNeighbor[]): VectorCan
       score: candidate.score,
     }))
     .filter(
-      (candidate) =>
-        typeof candidate.id === "string" && candidate.id.length > 0 && Number.isFinite(candidate.score),
+      (candidate) => typeof candidate.id === "string" && candidate.id.length > 0 && Number.isFinite(candidate.score),
     );
 }
 

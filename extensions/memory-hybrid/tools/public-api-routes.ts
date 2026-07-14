@@ -23,11 +23,7 @@ import {
   readActiveTaskRowsFromFacts,
   refreshActiveTaskProjectionBestEffort,
 } from "../services/task-ledger-facts.js";
-import {
-  scopeFieldsFromEntry,
-  scopeFieldsFromFilter,
-  scopeFilterFromIdentityHeaders,
-} from "../utils/scope-filter.js";
+import { scopeFieldsFromEntry, scopeFieldsFromFilter, scopeFilterFromIdentityHeaders } from "../utils/scope-filter.js";
 import { pluginLogger } from "../utils/logger.js";
 import type { ScopeFilter } from "../types/memory.js";
 import { parseDuration } from "../utils/duration.js";
@@ -789,9 +785,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
           subsystem: "public-api",
           operation: "fact-mutate",
         });
-        pluginLogger.error(
-          `memory-hybrid: /fact/mutate failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        pluginLogger.error(`memory-hybrid: /fact/mutate failed: ${err instanceof Error ? err.message : String(err)}`);
         return toJson(500, { error: "InternalServerError" });
       }
     });

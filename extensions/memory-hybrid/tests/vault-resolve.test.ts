@@ -122,7 +122,8 @@ describe("resolveToolVaultWal (#1917)", () => {
     return mockRuntime({
       wal: { path: "default-wal" } as unknown as MemoryToolRuntime["wal"],
       resolveVaultWal: (name?: string) => {
-        if (name === "work") return { path: "work-wal" } as unknown as ReturnType<NonNullable<MemoryToolRuntime["resolveVaultWal"]>>;
+        if (name === "work")
+          return { path: "work-wal" } as unknown as ReturnType<NonNullable<MemoryToolRuntime["resolveVaultWal"]>>;
         throw new Error(`Unknown vault "${name}". Configured: work`);
       },
     });

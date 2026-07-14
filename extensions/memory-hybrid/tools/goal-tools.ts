@@ -35,10 +35,7 @@ import { listGoals } from "../services/goal-registry.js";
 import { verifyGoalMechanically } from "../services/goal-health.js";
 import { runActiveTaskCheckpoint } from "../services/active-task-checkpoint.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
-import {
-  formatGoalClarityRejection,
-  validateGoalRegisterClarity,
-} from "../services/goal-register-validation.js";
+import { formatGoalClarityRejection, validateGoalRegisterClarity } from "../services/goal-register-validation.js";
 import { guardAgainstWrapperArgsDropped } from "../services/tool-args-guard.js";
 import { formatDateUtc, nowIso, nowSec } from "../utils/dates.js";
 import { globalOnlyScopeFilter, scopeFieldsFromFilter } from "../utils/scope-filter.js";
@@ -76,8 +73,18 @@ async function flushGoalOutcomeToMemory(memoryDir: string, title: string, lines:
 }
 
 export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi): void {
-  const { cfg, goalsDir, factsDb, vectorDb, embeddings, eventLog, memoryDir, workspaceRoot, currentAgentIdRef, buildToolScopeFilter } =
-    ctx;
+  const {
+    cfg,
+    goalsDir,
+    factsDb,
+    vectorDb,
+    embeddings,
+    eventLog,
+    memoryDir,
+    workspaceRoot,
+    currentAgentIdRef,
+    buildToolScopeFilter,
+  } = ctx;
   const gs = cfg.goalStewardship;
   const defaults = goalStewardshipDefaultsFromConfig(gs);
   const notEnabled = () => ({
@@ -308,13 +315,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
 
           let taskLinkMessage = "";
           const taskEntity = p.task_entity?.trim();
-          if (
-            taskEntity &&
-            cfg.activeTask.enabled &&
-            factsDb &&
-            vectorDb &&
-            embeddings
-          ) {
+          if (taskEntity && cfg.activeTask.enabled && factsDb && vectorDb && embeddings) {
             const cp = await runActiveTaskCheckpoint(
               {
                 factsDb,
@@ -745,8 +746,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
         reason: Type.String(),
         confirmed: Type.Optional(
           Type.Boolean({
-            description:
-              "Set true to complete without passing mechanical verification (document why in reason).",
+            description: "Set true to complete without passing mechanical verification (document why in reason).",
           }),
         ),
       }),

@@ -41,19 +41,21 @@ function makeEntry(id: string): MemoryEntry {
 
 describe("runMultiVaultExplicitDeepRetrieval partial vault failure (regression)", () => {
   it("returns results from healthy vaults instead of failing entirely when one vault errors", async () => {
-    runExplicitDeepRetrievalMock.mockImplementation(async (_q: string, _v: unknown, _db: unknown, _vec: unknown, factsDb: { getRawDb: () => { name?: string } }) => {
-      const raw = factsDb.getRawDb() as unknown as { vaultName?: string };
-      if (raw.vaultName === "vault-b") {
-        throw new Error("SQLITE_BUSY: database is locked");
-      }
-      return {
-        fused: [makeFused("fact-a", 0.9)],
-        packed: ["fact-a text"],
-        packedFactIds: ["fact-a"],
-        tokensUsed: 5,
-        entries: [makeEntry("fact-a")],
-      };
-    });
+    runExplicitDeepRetrievalMock.mockImplementation(
+      async (_q: string, _v: unknown, _db: unknown, _vec: unknown, factsDb: { getRawDb: () => { name?: string } }) => {
+        const raw = factsDb.getRawDb() as unknown as { vaultName?: string };
+        if (raw.vaultName === "vault-b") {
+          throw new Error("SQLITE_BUSY: database is locked");
+        }
+        return {
+          fused: [makeFused("fact-a", 0.9)],
+          packed: ["fact-a text"],
+          packedFactIds: ["fact-a"],
+          tokensUsed: 5,
+          entries: [makeEntry("fact-a")],
+        };
+      },
+    );
 
     const handleA = makeHandle("vault-a");
     handleA.factsDb = { getRawDb: () => ({ vaultName: "vault-a" }) } as unknown as VaultHandle["factsDb"];

@@ -111,9 +111,7 @@ describe("sql schema registry — static vs runtime", () => {
 
   it("static registry covers all columns present in migrated facts.db", () => {
     const staticRegistry = buildSchemaRegistry(PLUGIN_ROOT);
-    const runtime = runtimeSchemaFromDb(
-      factsDb as Parameters<typeof runtimeSchemaFromDb>[0],
-    );
+    const runtime = runtimeSchemaFromDb(factsDb as Parameters<typeof runtimeSchemaFromDb>[0]);
     const missing = diffMissingColumns(runtime, staticRegistry).filter(
       (m) => staticRegistry.has(m.table) && !m.table.includes("_fts_"),
     );
@@ -124,9 +122,7 @@ describe("sql schema registry — static vs runtime", () => {
     const staticRegistry = buildSchemaRegistry(PLUGIN_ROOT);
     const wfDb = new DatabaseSync(join(wfTmp, "workflow.db"));
     try {
-      const runtime = runtimeSchemaFromDb(
-        wfDb as Parameters<typeof runtimeSchemaFromDb>[0],
-      );
+      const runtime = runtimeSchemaFromDb(wfDb as Parameters<typeof runtimeSchemaFromDb>[0]);
       const missing = diffMissingColumns(runtime, staticRegistry).filter((m) => m.table === "workflow_traces");
       expect(missing).toEqual([]);
     } finally {

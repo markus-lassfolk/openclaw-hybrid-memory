@@ -254,18 +254,7 @@ describe("credentials revisions (#2104)", () => {
 
     lines.length = 0;
     await mem.parseAsync(
-      [
-        "credentials",
-        "revisions",
-        "get",
-        "--service",
-        "svc",
-        "--type",
-        "token",
-        "--revision",
-        "rev-1",
-        "--show-value",
-      ],
+      ["credentials", "revisions", "get", "--service", "svc", "--type", "token", "--revision", "rev-1", "--show-value"],
       { from: "user" },
     );
     expect(lines.some((l) => l.includes("old-secret"))).toBe(true);

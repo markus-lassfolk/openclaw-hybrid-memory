@@ -4,10 +4,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { FactsDB } from "../backends/facts-db.js";
-import {
-  buildProcedureNotFoundToolResult,
-  executeProcedureFeedbackTool,
-} from "../services/procedure-feedback-tool.js";
+import { buildProcedureNotFoundToolResult, executeProcedureFeedbackTool } from "../services/procedure-feedback-tool.js";
 
 describe("procedure-feedback-tool (#1965–#1967)", () => {
   let db: FactsDB;

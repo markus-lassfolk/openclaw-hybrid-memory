@@ -12,7 +12,11 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vite
 import { FactsDB } from "../backends/facts-db.js";
 import { disposeToolEffectivenessStore, registerFrustrationHandlers } from "../lifecycle/stage-frustration.js";
 import { BaseSqliteStore } from "../backends/base-sqlite-store.js";
-import { buildRecallLifecycleContext, makeMockStageApi, makeRecallSessionState } from "./helpers/lifecycle-recall-harness.js";
+import {
+  buildRecallLifecycleContext,
+  makeMockStageApi,
+  makeRecallSessionState,
+} from "./helpers/lifecycle-recall-harness.js";
 
 describe("stage-frustration ToolEffectivenessStore dispose", () => {
   let tmpDir: string;

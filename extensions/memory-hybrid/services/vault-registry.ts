@@ -116,7 +116,7 @@ export function createVaultRegistry(opts: {
         throw new Error(
           `Vault "${name}" resolves to the same LanceDB path as vault "${lanceCollidesWith}" (${resolvedLancePath}), ` +
             `even though their sqlite paths differ. Vault sqlite paths must not differ only by a ".db" suffix ` +
-            "(e.g. \"personal.db\" and \"personal\" both derive lance path \"personal.lance\") — " +
+            '(e.g. "personal.db" and "personal" both derive lance path "personal.lance") — ' +
             "sharing a LanceDB dataset would silently merge embeddings that other vault code assumes is isolated.",
         );
       }
@@ -127,7 +127,7 @@ export function createVaultRegistry(opts: {
       if (walCollidesWith) {
         throw new Error(
           `Vault "${name}" resolves to the same WAL path as vault "${walCollidesWith}" (${resolvedWalPath}), ` +
-            "even though their sqlite paths differ. Vault sqlite paths must not differ only by a \".db\" suffix.",
+            'even though their sqlite paths differ. Vault sqlite paths must not differ only by a ".db" suffix.',
         );
       }
       seenWalPaths.set(resolvedWalPath, name);

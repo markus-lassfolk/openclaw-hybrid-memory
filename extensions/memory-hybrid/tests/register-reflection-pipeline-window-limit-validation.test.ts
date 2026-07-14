@@ -16,14 +16,11 @@ import { registerManageReflectionPipeline } from "../cli/commands/manage/registe
 function makeProgram(overrides: Partial<ManageBindings>): Command {
   const mem = new Command("hybrid-mem");
   mem.exitOverride();
-  registerManageReflectionPipeline(
-    mem,
-    {
-      cfg: {},
-      reflectionConfig: { defaultWindow: 14, model: "test-model" },
-      ...overrides,
-    } as unknown as ManageBindings,
-  );
+  registerManageReflectionPipeline(mem, {
+    cfg: {},
+    reflectionConfig: { defaultWindow: 14, model: "test-model" },
+    ...overrides,
+  } as unknown as ManageBindings);
   return mem;
 }
 

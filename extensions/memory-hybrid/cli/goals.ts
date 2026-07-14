@@ -396,7 +396,9 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
       }
       const restored = repairResults.filter((r) => r.action === "restored").length;
       const failed = repairResults.filter((r) => r.action === "failed").length;
-      console.log(`\nSummary: restored=${restored} failed=${failed} skipped=${repairResults.length - restored - failed}`);
+      console.log(
+        `\nSummary: restored=${restored} failed=${failed} skipped=${repairResults.length - restored - failed}`,
+      );
       if (failed > 0) process.exitCode = 1;
     });
 }

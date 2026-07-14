@@ -259,9 +259,7 @@ export async function runBackup(ctx: BackupContext): Promise<BackupCliResult> {
   }
 
   const snapshotSkewMs =
-    sqliteSnapshotAt !== null && lancedbSnapshotAt !== null
-      ? Math.abs(lancedbSnapshotAt - sqliteSnapshotAt)
-      : 0;
+    sqliteSnapshotAt !== null && lancedbSnapshotAt !== null ? Math.abs(lancedbSnapshotAt - sqliteSnapshotAt) : 0;
 
   const manifest: BackupManifest = {
     version: 1,

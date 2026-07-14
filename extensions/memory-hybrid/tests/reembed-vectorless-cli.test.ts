@@ -299,10 +299,9 @@ describe("reembed-vectorless CLI partial success reporting", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    await mem.parseAsync(
-      ["reembed-vectorless", "--apply", "--limit", "3", "--batch-size", "3", "--json"],
-      { from: "user" },
-    );
+    await mem.parseAsync(["reembed-vectorless", "--apply", "--limit", "3", "--batch-size", "3", "--json"], {
+      from: "user",
+    });
 
     await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(2));
     const payload = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {

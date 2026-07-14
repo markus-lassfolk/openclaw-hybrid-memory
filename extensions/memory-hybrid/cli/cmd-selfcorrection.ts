@@ -1165,9 +1165,7 @@ export async function runSelfCorrectionRunForCli(
         async () => {
           for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
             if (maintenanceRunDeadlineReached()) {
-              logger.warn?.(
-                `memory-hybrid: ${SCAN_TYPE} stopped — maintenance run deadline reached`,
-              );
+              logger.warn?.(`memory-hybrid: ${SCAN_TYPE} stopped — maintenance run deadline reached`);
               break;
             }
             if (completedBatchIndexes.has(batchIndex)) continue;
@@ -1175,9 +1173,7 @@ export async function runSelfCorrectionRunForCli(
             const globalIncidentOffset = globalIncidentOffsetForBatch(batches, batchIndex);
             batchesStarted++;
             heartbeatBatchLabel = `batch ${batchIndex + 1}/${batches.length}`;
-            logger.info?.(
-              `memory-hybrid: ${SCAN_TYPE} ${heartbeatBatchLabel} start incidents=${batch.length}`,
-            );
+            logger.info?.(`memory-hybrid: ${SCAN_TYPE} ${heartbeatBatchLabel} start incidents=${batch.length}`);
             await processBatchResult(batchIndex, batch, globalIncidentOffset);
             if (batchDelayMs > 0 && batchIndex < batches.length - 1 && !maintenanceRunDeadlineReached()) {
               await sleepSelfCorrectionBackoff(batchDelayMs);
@@ -1362,11 +1358,7 @@ export async function runSelfCorrectionRunForCli(
       const sessionPaths = [...new Set(incidents.map((i) => i.sessionFile).filter(Boolean))];
       const lastSessionTs = sessionPaths.length > 0 ? (getMaxMtime(sessionPaths) ?? Date.now()) : Date.now();
       const sessionsProcessedThisRun =
-        extractSessionsScanned > 0
-          ? extractSessionsScanned
-          : sessionPaths.length > 0
-            ? sessionPaths.length
-            : 1;
+        extractSessionsScanned > 0 ? extractSessionsScanned : sessionPaths.length > 0 ? sessionPaths.length : 1;
       factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs, sessionsProcessedThisRun);
     }
 

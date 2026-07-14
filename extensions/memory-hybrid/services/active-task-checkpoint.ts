@@ -276,8 +276,7 @@ function normalizeCheckpointInput(
   }
 
   const defaultRefresh = opts.defaultRefreshProjection === true;
-  const refreshProjection =
-    input.refreshProjection === true || (input.refreshProjection !== false && defaultRefresh);
+  const refreshProjection = input.refreshProjection === true || (input.refreshProjection !== false && defaultRefresh);
 
   return {
     normalized: {

@@ -3,10 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
-  filterDistillVectorCandidates,
-  resolveDistillVectorCandidates,
-} from "../cli/vector-dedupe-helpers.js";
+import { filterDistillVectorCandidates, resolveDistillVectorCandidates } from "../cli/vector-dedupe-helpers.js";
 import { applyDedupe, resolveDedupeProfile } from "../services/dedupe-policy.js";
 import { DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
 import { _testing } from "../index.js";

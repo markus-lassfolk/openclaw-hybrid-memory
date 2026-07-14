@@ -46,7 +46,10 @@ function escapeRegExp(s: string): string {
 
 // Longest-first so e.g. "chief executive officer" matches before the bare "chief" fragments.
 const ROLE_KEYWORD_PATTERN = new RegExp(
-  `\\b(${[...ROLE_KEYWORDS].sort((a, b) => b.length - a.length).map(escapeRegExp).join("|")})\\b`,
+  `\\b(${[...ROLE_KEYWORDS]
+    .sort((a, b) => b.length - a.length)
+    .map(escapeRegExp)
+    .join("|")})\\b`,
   "i",
 );
 

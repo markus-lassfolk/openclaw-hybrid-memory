@@ -596,13 +596,16 @@ describe("sweepAll", () => {
 
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            current_condition: [{ temp_C: "20", FeelsLikeC: "19", humidity: "50", weatherDesc: [{ value: "Sunny" }] }],
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              current_condition: [
+                { temp_C: "20", FeelsLikeC: "19", humidity: "50", weatherDesc: [{ value: "Sunny" }] },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
       ),
     );
 

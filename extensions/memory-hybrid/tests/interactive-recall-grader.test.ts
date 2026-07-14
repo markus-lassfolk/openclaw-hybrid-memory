@@ -30,7 +30,12 @@ describe("filterCandidatesByInteractiveGrading", () => {
 
   it("returns all candidates when grading is disabled", async () => {
     const candidates = [makeCandidate("a", "alpha"), makeCandidate("b", "beta")];
-    const out = await filterCandidatesByInteractiveGrading("q", candidates, { enabled: false, timeoutMs: undefined }, {} as never);
+    const out = await filterCandidatesByInteractiveGrading(
+      "q",
+      candidates,
+      { enabled: false, timeoutMs: undefined },
+      {} as never,
+    );
     expect(out).toEqual(candidates);
   });
 

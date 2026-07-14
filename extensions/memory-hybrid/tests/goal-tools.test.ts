@@ -182,7 +182,10 @@ describe("goal tools registry primitives", () => {
     });
     const tools = new Map<string, { execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }>();
     const api: Pick<ClawdbotPluginApi, "registerTool"> = {
-      registerTool(toolDefinition: { name: string; execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }) {
+      registerTool(toolDefinition: {
+        name: string;
+        execute: (id: string, params: Record<string, unknown>) => Promise<unknown>;
+      }) {
         tools.set(toolDefinition.name, { execute: toolDefinition.execute });
       },
     };
@@ -236,7 +239,10 @@ describe("goal tools registry primitives", () => {
     });
     const tools = new Map<string, { execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }>();
     const api: Pick<ClawdbotPluginApi, "registerTool"> = {
-      registerTool(toolDefinition: { name: string; execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }) {
+      registerTool(toolDefinition: {
+        name: string;
+        execute: (id: string, params: Record<string, unknown>) => Promise<unknown>;
+      }) {
         tools.set(toolDefinition.name, { execute: toolDefinition.execute });
       },
     };
@@ -305,7 +311,10 @@ describe("goal tools registry primitives", () => {
     });
     const tools = new Map<string, { execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }>();
     const api: Pick<ClawdbotPluginApi, "registerTool"> = {
-      registerTool(toolDefinition: { name: string; execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }) {
+      registerTool(toolDefinition: {
+        name: string;
+        execute: (id: string, params: Record<string, unknown>) => Promise<unknown>;
+      }) {
         tools.set(toolDefinition.name, { execute: toolDefinition.execute });
       },
     };
@@ -346,7 +355,10 @@ describe("goal tools registry primitives", () => {
     });
     const tools = new Map<string, { execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }>();
     const api: Pick<ClawdbotPluginApi, "registerTool"> = {
-      registerTool(toolDefinition: { name: string; execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }) {
+      registerTool(toolDefinition: {
+        name: string;
+        execute: (id: string, params: Record<string, unknown>) => Promise<unknown>;
+      }) {
         tools.set(toolDefinition.name, { execute: toolDefinition.execute });
       },
     };
@@ -401,7 +413,10 @@ describe("goal tools registry primitives", () => {
     });
     const tools = new Map<string, { execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }>();
     const api: Pick<ClawdbotPluginApi, "registerTool"> = {
-      registerTool(toolDefinition: { name: string; execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }) {
+      registerTool(toolDefinition: {
+        name: string;
+        execute: (id: string, params: Record<string, unknown>) => Promise<unknown>;
+      }) {
         tools.set(toolDefinition.name, { execute: toolDefinition.execute });
       },
     };
@@ -469,7 +484,10 @@ describe("goal tools registry primitives", () => {
     });
     const tools = new Map<string, { execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }>();
     const api: Pick<ClawdbotPluginApi, "registerTool"> = {
-      registerTool(toolDefinition: { name: string; execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }) {
+      registerTool(toolDefinition: {
+        name: string;
+        execute: (id: string, params: Record<string, unknown>) => Promise<unknown>;
+      }) {
         tools.set(toolDefinition.name, { execute: toolDefinition.execute });
       },
     };

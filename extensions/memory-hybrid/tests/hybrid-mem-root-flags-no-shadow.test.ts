@@ -94,8 +94,6 @@ describe("hybrid-mem upgrade-only fast path — config parse guard (#62)", () =>
     const api = makeApi();
     expect(() => registerWithBrokenSchema(api as never)).not.toThrow();
     expect(api.registerCli).not.toHaveBeenCalled();
-    expect(api.logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("upgrade-only CLI registration skipped"),
-    );
+    expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("upgrade-only CLI registration skipped"));
   });
 });

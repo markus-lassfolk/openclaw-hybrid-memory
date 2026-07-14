@@ -54,9 +54,7 @@ export async function runContactsImport(
     // keeps re-imports idempotent — no duplicate roster facts or PART_OF links on repeat runs.
     let orgRosterFactId: string | null = null;
     if (org.people.length > 0) {
-      const rosterSummary = org.people
-        .map((p) => [p.name, p.email, p.role].filter(Boolean).join(" — "))
-        .join("; ");
+      const rosterSummary = org.people.map((p) => [p.name, p.email, p.role].filter(Boolean).join(" — ")).join("; ");
       const orgRosterResult = await runStore({
         text: `${org.name} contacts: ${rosterSummary}`,
         category: "entity",
@@ -182,7 +180,9 @@ export function registerManageContacts(mem: Chainable, b: ManageBindings): void 
 
   contacts
     .command("suggest-merges")
-    .description("List contacts that look like partial-name duplicates of another contact (candidates for `contacts merge`)")
+    .description(
+      "List contacts that look like partial-name duplicates of another contact (candidates for `contacts merge`)",
+    )
     .option("--json", "Emit JSON")
     .action(
       withExit(async (opts?: { json?: boolean }) => {
@@ -194,8 +194,7 @@ export function registerManageContacts(mem: Chainable, b: ManageBindings): void 
           const candidates = factsDb.findContactMergeCandidates(c.normalizedKey, c.id);
           if (candidates.length === 1) {
             const other = candidates[0];
-            const [shorter, longer] =
-              c.normalizedKey.length < other.normalizedKey.length ? [c, other] : [other, c];
+            const [shorter, longer] = c.normalizedKey.length < other.normalizedKey.length ? [c, other] : [other, c];
             if (!seen.has(shorter.id)) {
               suggestions.push({ from: shorter, into: longer });
               seen.add(shorter.id);
@@ -223,7 +222,9 @@ export function registerManageContacts(mem: Chainable, b: ManageBindings): void 
         }
         console.log(`Suggested merges (${suggestions.length}):`);
         for (const s of suggestions) {
-          console.log(`  contacts merge ${s.from.id} ${s.into.id}   # "${s.from.displayName}" -> "${s.into.displayName}"`);
+          console.log(
+            `  contacts merge ${s.from.id} ${s.into.id}   # "${s.from.displayName}" -> "${s.into.displayName}"`,
+          );
         }
       }),
     );

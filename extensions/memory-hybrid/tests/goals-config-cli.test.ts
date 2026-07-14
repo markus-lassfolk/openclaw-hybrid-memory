@@ -5,13 +5,7 @@ import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { registerGoalCommands } from "../cli/goals.js";
 import { hybridConfigSchema } from "../config.js";
-import {
-  createGoal,
-  GOAL_CORRUPT_SUFFIX,
-  readGoal,
-  resolveGoalsDir,
-  updateGoal,
-} from "../services/goal-registry.js";
+import { createGoal, GOAL_CORRUPT_SUFFIX, readGoal, resolveGoalsDir, updateGoal } from "../services/goal-registry.js";
 import { setEnv } from "../utils/env-manager.js";
 
 function makeCfg() {
@@ -143,7 +137,12 @@ describe("goals config CLI", () => {
           escalationKind: "circuit_breaker",
           humanEscalationSummary: "Circuit breaker tripped after 3 repeats.",
         },
-        { timestamp: new Date().toISOString(), action: "circuit-breaker-tripped", detail: "test setup", actor: "agent" },
+        {
+          timestamp: new Date().toISOString(),
+          action: "circuit-breaker-tripped",
+          detail: "test setup",
+          actor: "agent",
+        },
       );
 
       const program = new Command("hybrid-mem");

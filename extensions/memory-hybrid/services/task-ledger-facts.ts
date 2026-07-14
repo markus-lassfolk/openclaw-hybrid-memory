@@ -301,8 +301,7 @@ export function buildTaskEntriesFromGroupedFacts(byEntity: Map<string, Map<strin
       entry.status = inferredTerminal;
       disp = inferredTerminal;
     }
-    const effectivelyTerminal =
-      isTerminalFactStatus(statusRaw) || disp === "Done" || inferredTerminal !== null;
+    const effectivelyTerminal = isTerminalFactStatus(statusRaw) || disp === "Done" || inferredTerminal !== null;
     if (effectivelyTerminal) {
       completed.push({ ...entry, status: disp === "Failed" ? "Failed" : "Done" });
     } else {
@@ -319,10 +318,7 @@ function factStatusOverrideForInferredTerminal(inferred: ActiveTaskStatus): stri
 }
 
 /** Rows whose `next`/title imply closure but stored status is still non-terminal. */
-export function findActiveTaskCoherenceRepairs(
-  factsDb: FactsDB,
-  scopeFilter?: ScopeFilter | null,
-): ActiveTaskEntry[] {
+export function findActiveTaskCoherenceRepairs(factsDb: FactsDB, scopeFilter?: ScopeFilter | null): ActiveTaskEntry[] {
   const facts = factsDb.getProjectFacts(8000, scopeFilter);
   const grouped = groupProjectFactsByEntity(facts);
   const repairs: ActiveTaskEntry[] = [];
