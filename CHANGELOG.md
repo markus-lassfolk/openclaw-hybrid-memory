@@ -25,6 +25,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.218] - 2026-07-14
+
+### Fixed — Packaging & install correctness (#2115, #2116, #2117)
+
+Three production-upgrade issues from the Maeve/Doris `2026.7.217` rollout, each fixed at the root cause with new tests and CI/packaging gates.
+
+**Published version metadata drift ([#2115](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2115))**
+- `openclaw.plugin.json.version` (read by the OpenClaw host for `plugins inspect`) and the standalone installer package version were separate hand-maintained literals that nothing synced, so they drifted (`2026.7.212` / `2026.7.208`) from `package.json.version` (`2026.7.217`) and produced contradictory operator output. `package.json.version` is now the single source of truth: a new `scripts/sync-plugin-version.cjs` writes it into both files (run in `prepack` and via `npm run sync:version`), a new `tests/version-consistency.test.ts` fails CI on any drift, and `verify-publish.cjs` (plus the release workflow) enforces parity before publish.
+
+**Missing `apache-arrow` peer dependency ([#2116](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2116))**
+- `@lancedb/lancedb@0.31` declares `apache-arrow` as a peer dependency; the plugin imported it only transitively and declared it nowhere, so a fresh install failed at runtime with `Cannot find module 'apache-arrow'`. `apache-arrow@18.1.0` is now a direct dependency (so it ships in the generated `npm-shrinkwrap.json`), the installer/postinstall/verify runtime-dependency lists include it, and — generalizing the fix — `verify-publish.cjs` now fails on **any** unmet required peer dependency of an installed dependency. The `install-smoke` CI job now loads `@lancedb/lancedb` + `apache-arrow` from inside the installed tarball, the exact path the shallow `dist/index.js` import missed.
+
+**Duplicate plugin copies after migration ([#2117](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2117))**
+- Migrating to OpenClaw's managed npm plugin path left the stale legacy `~/.openclaw/extensions/<id>` copy on disk beside the managed copy, causing "duplicate plugin id detected" warnings. Existing reconcile logic only handled the extensions-canonical direction; a new mirror, `removeRedundantExtensionsTreeWhenNpmProjectCanonical`, quarantines the stale extensions copy to `~/.openclaw/.cache/<id>.removed-duplicate-<ts>` when the managed npm-project copy is strictly newer (the two directions are disjoint by version, so upgrade/verify safely try both). `openclaw hybrid-mem doctor` gained a duplicate-install check that reports both paths, both versions, and the winning canonical source; `doctor --fix` quarantines the stale copy. Wired into `upgrade` and `verify --fix` as well.
+
 ## [2026.7.217] - 2026-07-14
 
 ### Fixed — Reload/teardown lifecycle regressions (#2111, #2112, #2113)

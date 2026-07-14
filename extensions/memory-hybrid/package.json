@@ -1,6 +1,6 @@
 {
   "name": "openclaw-hybrid-memory",
-  "version": "2026.7.217",
+  "version": "2026.7.218",
   "type": "module",
   "description": "Give your OpenClaw agent lasting memory: structured facts, semantic search, auto-capture & recall, decay, optional credential vault. Part of Hybrid Memory v3.",
   "files": [
@@ -56,6 +56,7 @@
   "dependencies": {
     "@lancedb/lancedb": "^0.31.0",
     "@types/node": "^25.2.3",
+    "apache-arrow": "18.1.0",
     "commander": "^13.1.0",
     "franc": "^6.2.0",
     "graphql": "^16.14.0",
@@ -104,7 +105,8 @@
     "test:schema-gate": "node ../../scripts/run-with-supported-node.mjs vitest run tests/plugin-graph-schema-parity.test.ts tests/agent-tool-contracts.test.ts",
     "verify:gate": "npm run typecheck:gate && npm run test:maintenance-gate && npm run test:schema-gate",
     "postinstall": "node scripts/postinstall-rebuild.cjs",
-    "prepack": "npm run build:graph-app && npm run build && node scripts/manage-shrinkwrap.cjs create",
+    "sync:version": "node scripts/sync-plugin-version.cjs",
+    "prepack": "node scripts/sync-plugin-version.cjs && npm run build:graph-app && npm run build && node scripts/manage-shrinkwrap.cjs create",
     "postpack": "node scripts/manage-shrinkwrap.cjs clean",
     "verify:publish": "node scripts/verify-publish.cjs",
     "release:publish": "npm run verify:publish && npm publish --otp=$OTP"

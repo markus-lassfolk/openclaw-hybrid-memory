@@ -14,6 +14,7 @@ import {
   buildNpmProjectNewerGuidance,
   syncKnownNpmProjectPinWhenExtensionsCanonical,
   removeRedundantNpmProjectTreeWhenExtensionsCanonical,
+  removeRedundantExtensionsTreeWhenNpmProjectCanonical,
   UPGRADE_REQUIRED_BUNDLE_PATHS,
   verifyNpmProjectDependencyPin,
   verifyUpgradePluginBundle,
@@ -216,6 +217,107 @@ describe("runUpgrade helpers", () => {
     expect(res.attempted).toBe(false);
     expect(res.skippedReason).toBe("extensions-dir-is-npm-project-layout");
     expect(existsSync(npmPluginDir)).toBe(true);
+  });
+
+  describe("removeRedundantExtensionsTreeWhenNpmProjectCanonical (#2117)", () => {
+    let prevHome: string | undefined;
+    let openclawHome: string;
+
+    /** Build a loadable npm-project plugin dir (manifest + dist/index.js + version). */
+    function makeNpmProject(version: string): string {
+      const projectRoot = join(tmp, "npm", "projects", "openclaw-hybrid-memory");
+      const npmPluginDir = join(projectRoot, "node_modules", "openclaw-hybrid-memory");
+      mkdirSync(join(npmPluginDir, "dist"), { recursive: true });
+      writeFileSync(
+        join(projectRoot, "package.json"),
+        JSON.stringify({ dependencies: { "openclaw-hybrid-memory": version } }),
+      );
+      writeFileSync(join(npmPluginDir, "openclaw.plugin.json"), "{}");
+      writeFileSync(join(npmPluginDir, "package.json"), JSON.stringify({ version }));
+      writeFileSync(join(npmPluginDir, "dist", "index.js"), "export default {};\n");
+      return npmPluginDir;
+    }
+
+    function makeExtensions(version: string): string {
+      const extDir = join(openclawHome, "extensions", "openclaw-hybrid-memory");
+      mkdirSync(extDir, { recursive: true });
+      writeFileSync(join(extDir, "openclaw.plugin.json"), "{}");
+      writeFileSync(join(extDir, "package.json"), JSON.stringify({ version }));
+      return extDir;
+    }
+
+    beforeEach(() => {
+      prevHome = process.env.OPENCLAW_HOME;
+      openclawHome = join(tmp, ".openclaw");
+      mkdirSync(openclawHome, { recursive: true });
+      process.env.OPENCLAW_HOME = openclawHome;
+    });
+
+    afterEach(() => {
+      if (prevHome === undefined) delete process.env.OPENCLAW_HOME;
+      else process.env.OPENCLAW_HOME = prevHome;
+    });
+
+    it("quarantines the stale extensions copy when the npm-project copy is strictly newer", () => {
+      const npmPluginDir = makeNpmProject("2026.7.217");
+      const extDir = makeExtensions("2026.7.212");
+
+      const res = removeRedundantExtensionsTreeWhenNpmProjectCanonical({
+        extensionsPluginDir: extDir,
+        npmProjectPluginDir: npmPluginDir,
+      });
+      expect(res.attempted).toBe(true);
+      expect(res.quarantined).toBe(true);
+      expect(existsSync(extDir)).toBe(false);
+      expect(res.destinationPath).toBeDefined();
+      expect(res.destinationPath).toContain(join(openclawHome, ".cache"));
+      expect(res.destinationPath).toContain("removed-duplicate-");
+      expect(existsSync(res.destinationPath as string)).toBe(true);
+      // npm-project copy is untouched.
+      expect(existsSync(join(npmPluginDir, "openclaw.plugin.json"))).toBe(true);
+    });
+
+    it("refuses to quarantine when the extensions copy is newer or equal (disjoint from extensions-canonical path)", () => {
+      const npmPluginDir = makeNpmProject("2026.7.212");
+      const extDir = makeExtensions("2026.7.217");
+
+      const res = removeRedundantExtensionsTreeWhenNpmProjectCanonical({
+        extensionsPluginDir: extDir,
+        npmProjectPluginDir: npmPluginDir,
+      });
+      expect(res.attempted).toBe(false);
+      expect(res.quarantined).toBe(false);
+      expect(res.skippedReason).toBe("npm-project-not-newer");
+      expect(existsSync(extDir)).toBe(true);
+    });
+
+    it("refuses when the npm-project copy is not loadable (missing dist/index.js)", () => {
+      const npmPluginDir = makeNpmProject("2026.7.217");
+      rmSync(join(npmPluginDir, "dist", "index.js"), { force: true });
+      const extDir = makeExtensions("2026.7.212");
+
+      const res = removeRedundantExtensionsTreeWhenNpmProjectCanonical({
+        extensionsPluginDir: extDir,
+        npmProjectPluginDir: npmPluginDir,
+      });
+      expect(res.attempted).toBe(false);
+      expect(res.skippedReason).toBe("npm-project-not-loadable");
+      expect(existsSync(extDir)).toBe(true);
+    });
+
+    it("refuses when the npm-project version can't be read", () => {
+      const npmPluginDir = makeNpmProject("2026.7.217");
+      writeFileSync(join(npmPluginDir, "package.json"), "{ not json");
+      const extDir = makeExtensions("2026.7.212");
+
+      const res = removeRedundantExtensionsTreeWhenNpmProjectCanonical({
+        extensionsPluginDir: extDir,
+        npmProjectPluginDir: npmPluginDir,
+      });
+      expect(res.attempted).toBe(false);
+      expect(res.skippedReason).toBe("npm-project-version-unreadable");
+      expect(existsSync(extDir)).toBe(true);
+    });
   });
 
   it("syncKnownNpmProjectPinWhenExtensionsCanonical skips npm-project layout (#2008)", () => {
