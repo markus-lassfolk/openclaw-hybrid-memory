@@ -44,7 +44,18 @@ jobs:
       actionlint_required: ${{ steps.classify.outputs.actionlint_required }}
       security_required: ${{ steps.classify.outputs.security_required }}
     steps:
+      # fetch-depth: 0 (full history) is required so `git diff origin/<base>...HEAD`
+      # in classify-changes.mjs can find a merge-base. A shallow (depth-1) checkout
+      # here combined with the script's own shallow base-ref fetch left the two refs
+      # with no shared history, so the diff failed with "no merge base"; the script's
+      # error-swallowing fallback then silently reported zero changed files, which
+      # made every ci_required/heavy_ci_required flag false — skipping ALL real
+      # typecheck/lint/test jobs in favor of the harmless "no changes" passthrough
+      # stubs, on every PR. This job only runs `git diff` (no install/build), so the
+      # extra clone cost is worth the correctness guarantee.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - name: Classify changed paths (policy)
         id: classify
         run: node .github/scripts/classify-changes.mjs

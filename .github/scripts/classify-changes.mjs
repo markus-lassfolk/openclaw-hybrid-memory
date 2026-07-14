@@ -10,6 +10,15 @@ function sh(cmd, args, fallback = '') {
   }
 }
 
+function shOk(cmd, args) {
+  try {
+    execFileSync(cmd, args, { encoding: 'utf8', stdio: 'pipe' })
+    return true
+  } catch {
+    return false
+  }
+}
+
 function uniq(arr) {
   return [...new Set(arr)]
 }
@@ -76,26 +85,49 @@ function isMetadata(path) {
   )
 }
 
+/**
+ * Resolve the diff range, or `null` when it can't be determined (e.g. a shallow
+ * checkout leaves the base and head refs with no shared history, so a three-dot
+ * diff has no merge-base). Callers MUST treat `null` as "assume everything
+ * changed" — the previous behavior silently fell back to an empty diff on any
+ * git failure, which made every required-check gate (ci_required,
+ * heavy_ci_required, ...) false and let real typecheck/lint/test jobs be
+ * skipped in favor of the harmless "no changes" passthrough stubs.
+ */
 function targetRange() {
   const event = process.env.GITHUB_EVENT_NAME || ''
   const baseRef = process.env.GITHUB_BASE_REF || ''
   if (event === 'pull_request' && baseRef) {
-    sh('git', ['fetch', '--no-tags', '--depth=1', 'origin', baseRef], '')
-    return `origin/${baseRef}...HEAD`
+    // Progressively deepen the fetch until a merge-base is found, in case the
+    // checkout is shallow. The ci.yml checkout for this job now uses
+    // fetch-depth: 0 (full history), so this is defense-in-depth, not the
+    // primary fix.
+    for (const depth of [1, 50, 500]) {
+      sh('git', ['fetch', '--no-tags', `--depth=${depth}`, 'origin', baseRef], '')
+      if (shOk('git', ['merge-base', `origin/${baseRef}`, 'HEAD'])) {
+        return `origin/${baseRef}...HEAD`
+      }
+    }
+    sh('git', ['fetch', '--no-tags', '--unshallow', 'origin', baseRef], '')
+    if (shOk('git', ['merge-base', `origin/${baseRef}`, 'HEAD'])) {
+      return `origin/${baseRef}...HEAD`
+    }
+    return null
   }
 
   const before = process.env.GITHUB_EVENT_BEFORE || ''
-  if (before && before !== '0000000000000000000000000000000000000000') {
+  if (before && before !== '0000000000000000000000000000000000000000' && shOk('git', ['cat-file', '-e', before])) {
     return `${before}...HEAD`
   }
 
   const mergeBase = sh('git', ['merge-base', 'HEAD', 'origin/main'], '')
   if (mergeBase) return `${mergeBase}...HEAD`
-  return 'HEAD~1...HEAD'
+  return null
 }
 
 const range = targetRange()
-const namesRaw = sh('git', ['diff', '--name-only', range], '')
+const rangeResolved = range !== null
+const namesRaw = rangeResolved ? sh('git', ['diff', '--name-only', range], '') : ''
 const files = uniq(
   namesRaw
     .split('\n')
@@ -103,20 +135,21 @@ const files = uniq(
     .filter(Boolean),
 )
 
-const docsOnly = files.length > 0 && files.every((f) => isDocs(f))
-const workflowChanged = files.some((f) => isWorkflow(f))
-const sourceChanged = files.some((f) => isSource(f))
-const testsChanged = files.some((f) => isTest(f))
-const packageOrLockChanged = files.some((f) => isPackageOrLock(f))
-const scriptsChanged = files.some((f) => isScript(f))
-const metadataOnly = files.length > 0 && files.every((f) => isMetadata(f) || isDocs(f))
+const docsOnly = rangeResolved && files.length > 0 && files.every((f) => isDocs(f))
+const workflowChanged = !rangeResolved || files.some((f) => isWorkflow(f))
+const sourceChanged = !rangeResolved || files.some((f) => isSource(f))
+const testsChanged = !rangeResolved || files.some((f) => isTest(f))
+const packageOrLockChanged = !rangeResolved || files.some((f) => isPackageOrLock(f))
+const scriptsChanged = !rangeResolved || files.some((f) => isScript(f))
+const metadataOnly = rangeResolved && files.length > 0 && files.every((f) => isMetadata(f) || isDocs(f))
 
-const ciRequired = sourceChanged || packageOrLockChanged || scriptsChanged || testsChanged
-const heavyCiRequired = sourceChanged || packageOrLockChanged || scriptsChanged
-const actionlintRequired = workflowChanged
-const securityRequired = sourceChanged || packageOrLockChanged || scriptsChanged || workflowChanged
+const ciRequired = !rangeResolved || sourceChanged || packageOrLockChanged || scriptsChanged || testsChanged
+const heavyCiRequired = !rangeResolved || sourceChanged || packageOrLockChanged || scriptsChanged
+const actionlintRequired = !rangeResolved || workflowChanged
+const securityRequired = !rangeResolved || sourceChanged || packageOrLockChanged || scriptsChanged || workflowChanged
 
 const outputs = {
+  range_resolved: String(rangeResolved),
   docs_only: String(docsOnly),
   workflow_changed: String(workflowChanged),
   source_changed: String(sourceChanged),
@@ -143,7 +176,13 @@ if (summaryFile) {
   const lines = []
   lines.push('## Changed-path policy classification')
   lines.push('')
-  lines.push(`Range: \`${range}\``)
+  if (!rangeResolved) {
+    lines.push(
+      '**⚠️ Could not resolve a diff range (no merge-base found) — failing open: all CI-required flags forced to `true` so real checks still run.**',
+    )
+    lines.push('')
+  }
+  lines.push(`Range: \`${range ?? '<unresolved>'}\``)
   lines.push(`Changed files: **${files.length}**`)
   lines.push('')
   lines.push('| Signal | Value |')
