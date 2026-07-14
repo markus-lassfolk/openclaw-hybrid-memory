@@ -20,6 +20,7 @@ import type { EdictStore } from "../backends/edict-store.js";
 import type { EventLog } from "../backends/event-log.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { IssueStore } from "../backends/issue-store.js";
+import type { SerendipityStore } from "../backends/serendipity-store.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
@@ -99,6 +100,7 @@ export interface MemoryPluginAPI {
   narrativesDb: NarrativesDB | null;
   provenanceService: ProvenanceService | null;
   issueStore: IssueStore | null;
+  serendipityStore: SerendipityStore | null;
   workflowStore: WorkflowStore | null;
   crystallizationStore: CrystallizationStore | null;
   toolProposalStore: ToolProposalStore | null;

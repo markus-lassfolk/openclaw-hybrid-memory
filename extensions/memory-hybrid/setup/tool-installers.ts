@@ -15,6 +15,7 @@ import { type GoalToolsContext, registerGoalTools } from "../tools/goal-tools.js
 import { registerHealthTools } from "../tools/health-dashboard.js";
 import { type PluginContext as GraphToolsContext, registerGraphTools } from "../tools/graph-tools.js";
 import { registerIssueTools } from "../tools/issue-tools.js";
+import { registerSerendipityTools } from "../tools/serendipity-tools.js";
 import { type MemoryToolsContext, registerMemoryTools } from "../tools/memory-tools.js";
 import { type PluginContext as PersonaToolsContext, registerPersonaTools } from "../tools/persona-tools.js";
 import { registerProvenanceTools } from "../tools/provenance-tools.js";
@@ -67,6 +68,10 @@ type VerificationInstallerContext = Pick<
 type IssueInstallerContext = Pick<
   ToolsContext,
   "issueStore" | "factsDb" | "cfg" | "currentAgentIdRef" | "buildToolScopeFilter"
+>;
+type SerendipityInstallerContext = Pick<
+  ToolsContext,
+  "serendipityStore" | "issueStore" | "cfg" | "currentAgentIdRef" | "buildToolScopeFilter"
 >;
 type WorkflowInstallerContext = Pick<ToolsContext, "workflowStore" | "cfg">;
 type CrystallizationInstallerContext = Pick<
@@ -380,6 +385,31 @@ function installIssueTools(ctx: IssueInstallerContext, api: ClawdbotPluginApi): 
   }
 }
 
+function selectSerendipityToolsContext({
+  serendipityStore,
+  issueStore,
+  cfg,
+  currentAgentIdRef,
+  buildToolScopeFilter,
+}: ToolsContext): SerendipityInstallerContext {
+  return { serendipityStore, issueStore, cfg, currentAgentIdRef, buildToolScopeFilter };
+}
+
+function installSerendipityTools(ctx: SerendipityInstallerContext, api: ClawdbotPluginApi): void {
+  if (ctx.cfg.serendipityProtocol.enabled && ctx.serendipityStore) {
+    registerSerendipityTools(
+      {
+        serendipityStore: ctx.serendipityStore,
+        issueStore: ctx.issueStore,
+        cfg: ctx.cfg,
+        currentAgentIdRef: ctx.currentAgentIdRef,
+        buildToolScopeFilter: ctx.buildToolScopeFilter,
+      },
+      api,
+    );
+  }
+}
+
 function selectWorkflowToolsContext({ workflowStore, cfg }: ToolsContext): WorkflowInstallerContext {
   return { workflowStore, cfg };
 }
@@ -681,6 +711,12 @@ export const toolInstallers = orderByBootstrapPhase<ToolInstaller>([
     bootstrapPhase: "optional",
     selectContext: (ctx) => selectIssueToolsContext(ctx),
     install: installIssueTools,
+  }),
+  defineToolInstaller({
+    id: "serendipity",
+    bootstrapPhase: "optional",
+    selectContext: (ctx) => selectSerendipityToolsContext(ctx),
+    install: installSerendipityTools,
   }),
   defineToolInstaller({
     id: "workflow",

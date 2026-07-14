@@ -199,6 +199,7 @@ export interface HybridMemCliRegistrationContext {
   verificationStore?: import("../../services/verification-store.js").VerificationStore | null;
   provenanceService?: import("../../services/provenance.js").ProvenanceService | null;
   issueStore?: import("../../backends/issue-store.js").IssueStore | null;
+  serendipityStore?: import("../../backends/serendipity-store.js").SerendipityStore | null;
   resolvedSqlitePath: string;
   resolvedLancePath: string;
   pluginId: string;

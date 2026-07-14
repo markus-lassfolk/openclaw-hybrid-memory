@@ -110,6 +110,7 @@ export interface PluginServiceContext {
   // Memory Viewer stores (Issue #1023)
   verificationStore?: VerificationStore | null;
   issueStore?: IssueStore | null;
+  serendipityStore?: import("../backends/serendipity-store.js").SerendipityStore | null;
   workflowStore?: WorkflowStore | null;
   narrativesDb?: NarrativesDB | null;
   crystallizationStore?: import("../backends/crystallization-store.js").CrystallizationStore | null;
@@ -201,6 +202,7 @@ export function createPluginService(ctx: PluginServiceContext) {
     pythonBridge,
     verificationStore,
     issueStore,
+    serendipityStore,
     workflowStore,
     narrativesDb,
     crystallizationStore,
@@ -1266,6 +1268,7 @@ export function createPluginService(ctx: PluginServiceContext) {
       closeStorePermanently(eventLog, "eventLog", api.logger);
       closeStorePermanently(narrativesDb, "narrativesDb", api.logger);
       closeStorePermanently(issueStore, "issueStore", api.logger);
+      closeStorePermanently(serendipityStore, "serendipityStore", api.logger);
       closeStorePermanently(workflowStore, "workflowStore", api.logger);
       closeStorePermanently(crystallizationStore, "crystallizationStore", api.logger);
       closeStorePermanently(toolProposalStore, "toolProposalStore", api.logger);

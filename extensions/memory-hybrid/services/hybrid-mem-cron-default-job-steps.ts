@@ -39,6 +39,7 @@ export const HYBRID_MEM_CRON_DEFAULT_JOB_STEPS: Record<string, string[]> = {
   "hybrid-mem:nightly-doctor-repair": ["doctor-fix-reconcile"],
   "hybrid-mem:weekly-pending-digest": ["digest-pending"],
   "hybrid-mem:weekly-pending-digest-autopilot": ["digest-autopilot-cron"],
+  "hybrid-mem:daily-serendipity-sweep": ["serendipity-sweep"],
   /** Twice-daily operator reminder (#1921); same underlying command as weekly-pending-digest. */
   "hybrid-mem:workshop-approval-reminder": ["digest-pending"],
   "hybrid-mem:daily-lifecycle-sync": ["lifecycle-sync-github"],

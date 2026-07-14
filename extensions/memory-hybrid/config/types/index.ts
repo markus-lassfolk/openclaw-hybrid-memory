@@ -492,6 +492,47 @@ export type GoalStewardshipConfig = {
   allowPrVerification: boolean;
 };
 
+/**
+ * Serendipity Protocol — bounded proactive noticing/recording/triage of adjacent
+ * improvements (Issue #2119). Distinct from the recall-time `autoRecall.serendipity`
+ * slot. Whole subsystem is gated behind `enabled` (default false).
+ */
+export type SerendipityProtocolConfig = {
+  /** Enable the SerendipityStore + serendipity_* tools + CLI (default: false). */
+  enabled: boolean;
+  /** Default engagement level 0–4 when no scoped pref applies (default: 2.5). */
+  defaultLevel: number;
+  /** Inject a compact policy summary on turn start (default: true). */
+  injectPolicy: boolean;
+  /** Character cap for the injected policy/backlog lines (default: 400). */
+  injectionMaxChars: number;
+  /** Dedup lookback window in days for serendipity_record (default: 30). */
+  dedupWindowDays: number;
+  /** TTL (days) applied to new findings for the deferred backlog; 0 = never expire (default: 30). */
+  deferredTtlDays: number;
+  /** On-demand digest availability (default: true). */
+  digest: { enabled: boolean };
+  /** Heartbeat resurfacing of the top actionable deferred finding. */
+  resurface: {
+    enabled: boolean;
+    /** Minimum effective level to resurface backlog items (default: 3). */
+    minLevel: number;
+    /** Surface at most once per this many prompts per session (default: 10). */
+    cooldownPrompts: number;
+    /** Character cap for the resurfaced backlog line (default: 200). */
+    maxChars: number;
+  };
+  /** Opt-in Level-4 cron sweep of the deferred backlog. */
+  sweep: {
+    /** Install/run the scheduled sweep (default: false). */
+    enabled: boolean;
+    /** Minimum effective level for the sweep to act (default: 4). */
+    minLevel: number;
+    /** When false (default), the sweep only reports; it never dispatches the agent. */
+    dispatch: boolean;
+  };
+};
+
 /** Self-correction pipeline: semantic dedup, TOOLS.md sectioning, auto-rewrite vs approve */
 export type SelfCorrectionConfig = {
   /** Enable self-correction pipeline (default: true). */
@@ -759,6 +800,8 @@ export type HybridMemoryConfig = {
   activeTask: ActiveTaskConfig;
   /** Goal stewardship — autonomous long-running goals (default: disabled). */
   goalStewardship: GoalStewardshipConfig;
+  /** Serendipity Protocol — bounded proactive findings + backlog (default: disabled). */
+  serendipityProtocol: SerendipityProtocolConfig;
   /** Vector store configuration (LanceDB schema validation and auto-repair, issue #128). */
   vector: VectorConfig;
   /** Enhanced ambient retrieval with multi-query generation (Issue #156, default: disabled). */

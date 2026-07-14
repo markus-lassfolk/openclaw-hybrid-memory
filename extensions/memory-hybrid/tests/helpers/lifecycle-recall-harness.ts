@@ -88,6 +88,7 @@ export function buildRecallLifecycleContext(
     pendingLLMWarnings: { drain: () => [] } as unknown as LifecycleContext["pendingLLMWarnings"],
     auditStore: null,
     issueStore: null,
+    serendipityStore: null,
     recallInFlightRef: { value: 0 },
     lastAutoRecallPromptRef: { value: null },
     prependBudgetRef: { value: null },

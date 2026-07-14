@@ -5,6 +5,7 @@
 - Maintenance validation: ignore guard/gate skipped `reflect-rules` runs in semantic zero-stored checks, suppress the analyzer's own current in-flight HM_EXIT ledger, and classify nested distill abort/timeout errors as retryable within the existing fallback/shrink budget.
 
 ### Added
+- Serendipity Protocol (#2119): bounded proactive findings with a dedicated `SerendipityStore`, a configurable engagement level (0–4, default 2.5) resolved per user/agent/session/repo/channel, and five agent tools (`serendipity_record`/`_list`/`_decide`/`_resolve`/`_digest`). Includes a deterministic decision policy, a TTL-bounded deferred backlog with heartbeat resurfacing and an opt-in Level-4 cron sweep (off by default, surface-only), a compact policy-summary injection, an `openclaw hybrid-mem serendipity …` CLI, and docs at `docs/SERENDIPITY-PROTOCOL.md`. External/destructive/privacy-sensitive actions always require approval; the plugin surfaces findings but never edits code. Disabled by default (`serendipityProtocol.enabled: false`).
 - Added `produkt/hybrid-memory-productisation.md` to track shipped capabilities and open productisation lanes.
 
 ### Changed

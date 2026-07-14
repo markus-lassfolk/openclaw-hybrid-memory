@@ -31,6 +31,7 @@ import {
 import type { MaintenanceStepRunner } from "../../../services/maintenance-orchestrator.js";
 import { runPassiveObserver } from "../../../services/passive-observer.js";
 import { runPendingDigestAutopilotCron } from "../../../services/pending-digest-autopilot-cron.js";
+import { runSerendipitySweep } from "../../../services/serendipity-sweep-cron.js";
 import { buildPendingReviewDigestReport } from "../../../services/pending-review-digest.js";
 import { runFactsPruneStep } from "../../../services/prune-step.js";
 import { runResearchTrigger } from "../../../services/research-trigger.js";
@@ -857,6 +858,12 @@ export function buildCliMaintenanceRunners(
       );
     }
     return `status=${result.summary.status} semantic=${semantic}`;
+  });
+
+  set("serendipity-sweep", async () => {
+    const summary = runSerendipitySweep({ cfg: b.cfg, store: b.serendipityStore ?? null });
+    const reason = summary.skipReason ? ` reason=${summary.skipReason}` : "";
+    return `status=${summary.status}${reason} level=${summary.level} actionable=${summary.actionable} pruned=${summary.prunedExpired} semantic=success`;
   });
 
   set("consolidate", async () => {

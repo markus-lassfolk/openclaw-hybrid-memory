@@ -85,6 +85,7 @@ export interface LifecycleContext {
   pendingLLMWarnings: PendingLLMWarnings;
   auditStore: AuditStore | null;
   issueStore: import("../backends/issue-store.js").IssueStore | null;
+  serendipityStore: import("../backends/serendipity-store.js").SerendipityStore | null;
   recallInFlightRef: { value: number };
   /** @deprecated Use lastAutoRecallPromptBySession. */
   lastAutoRecallPromptRef: { value: string | null };
