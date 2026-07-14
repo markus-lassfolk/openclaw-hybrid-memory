@@ -36,11 +36,14 @@ let tmpDir: string;
 let store: SerendipityStore;
 let issueStore: IssueStore;
 let api: ReturnType<typeof makeMockApi>;
+let savedStateDir: string | undefined;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "serendipity-tools-test-"));
   store = new SerendipityStore(join(tmpDir, "serendipity.db"));
   issueStore = new IssueStore(join(tmpDir, "issues.db"));
+  savedStateDir = process.env.OPENCLAW_STATE_DIR;
+  process.env.OPENCLAW_STATE_DIR = tmpDir; // route Skill Workshop proposals into tmp
   api = makeMockApi();
   registerSerendipityTools(
     {
@@ -57,17 +60,21 @@ beforeEach(() => {
 afterEach(() => {
   store.close();
   issueStore.close();
+  if (savedStateDir === undefined) delete process.env.OPENCLAW_STATE_DIR;
+  else process.env.OPENCLAW_STATE_DIR = savedStateDir;
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
 describe("serendipity tools — registration", () => {
-  it("registers all five tools", () => {
+  it("registers all tools", () => {
     for (const name of [
       "serendipity_record",
       "serendipity_list",
       "serendipity_decide",
       "serendipity_resolve",
       "serendipity_digest",
+      "serendipity_promote",
+      "serendipity_set_level",
     ]) {
       expect(api.getTool(name)).toBeDefined();
     }
@@ -158,6 +165,27 @@ describe("serendipity_digest", () => {
     const dg = await api.call("serendipity_digest", { since: "7d" });
     expect(dg.content[0].text).toContain("Serendipity digest");
     expect(dg.details.report.backlog.actionable).toBe(1);
+  });
+});
+
+describe("serendipity_promote", () => {
+  it("promotes a finding to a Skill Workshop proposal", async () => {
+    const rec = await api.call("serendipity_record", {
+      title: "recurring friction",
+      description: "d",
+      finding_type: "repeated_friction",
+    });
+    const res = await api.call("serendipity_promote", { finding_id: rec.details.id, target: "skill" });
+    expect(res.details.ok).toBe(true);
+    expect(store.get(rec.details.id)?.status).toBe("proposed");
+  });
+});
+
+describe("serendipity_set_level", () => {
+  it("stores a scoped engagement level", async () => {
+    const res = await api.call("serendipity_set_level", { level: 3, scope: "user", target: "markus" });
+    expect(res.details.pref.level).toBe(3);
+    expect(store.getLevelPref("user", "markus")?.level).toBe(3);
   });
 });
 

@@ -71,8 +71,16 @@ type IssueInstallerContext = Pick<
 >;
 type SerendipityInstallerContext = Pick<
   ToolsContext,
-  "serendipityStore" | "issueStore" | "cfg" | "currentAgentIdRef" | "buildToolScopeFilter"
->;
+  | "serendipityStore"
+  | "issueStore"
+  | "cfg"
+  | "currentAgentIdRef"
+  | "buildToolScopeFilter"
+  | "factsDb"
+  | "vectorDb"
+  | "embeddings"
+  | "eventLog"
+> & { goalsDir?: string; workspaceRoot?: string };
 type WorkflowInstallerContext = Pick<ToolsContext, "workflowStore" | "cfg">;
 type CrystallizationInstallerContext = Pick<
   ToolsContext,
@@ -385,14 +393,25 @@ function installIssueTools(ctx: IssueInstallerContext, api: ClawdbotPluginApi): 
   }
 }
 
-function selectSerendipityToolsContext({
-  serendipityStore,
-  issueStore,
-  cfg,
-  currentAgentIdRef,
-  buildToolScopeFilter,
-}: ToolsContext): SerendipityInstallerContext {
-  return { serendipityStore, issueStore, cfg, currentAgentIdRef, buildToolScopeFilter };
+function selectSerendipityToolsContext(ctx: ToolsContext): SerendipityInstallerContext {
+  const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? pathJoin(homedir(), ".openclaw", "workspace");
+  const goalsDir =
+    ctx.cfg.goalStewardship?.enabled === true
+      ? resolveGoalsDir(workspaceRoot, ctx.cfg.goalStewardship.goalsDir)
+      : undefined;
+  return {
+    serendipityStore: ctx.serendipityStore,
+    issueStore: ctx.issueStore,
+    cfg: ctx.cfg,
+    currentAgentIdRef: ctx.currentAgentIdRef,
+    buildToolScopeFilter: ctx.buildToolScopeFilter,
+    factsDb: ctx.factsDb,
+    vectorDb: ctx.vectorDb,
+    embeddings: ctx.embeddings,
+    eventLog: ctx.eventLog,
+    goalsDir,
+    workspaceRoot,
+  };
 }
 
 function installSerendipityTools(ctx: SerendipityInstallerContext, api: ClawdbotPluginApi): void {
@@ -404,6 +423,12 @@ function installSerendipityTools(ctx: SerendipityInstallerContext, api: Clawdbot
         cfg: ctx.cfg,
         currentAgentIdRef: ctx.currentAgentIdRef,
         buildToolScopeFilter: ctx.buildToolScopeFilter,
+        factsDb: ctx.factsDb,
+        vectorDb: ctx.vectorDb,
+        embeddings: ctx.embeddings,
+        eventLog: ctx.eventLog,
+        goalsDir: ctx.goalsDir,
+        workspaceRoot: ctx.workspaceRoot,
       },
       api,
     );

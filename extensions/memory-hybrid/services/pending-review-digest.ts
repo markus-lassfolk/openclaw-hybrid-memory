@@ -123,6 +123,20 @@ export type PendingReviewDigestReport = {
     ageHygiene: PendingQueueAgeHygiene;
   };
   verifiedFacts: { pendingReview: number; reviewCommand: string };
+  /** #2119: actionable serendipity backlog (present only when a store is supplied and enabled). */
+  serendipity?: {
+    enabled: boolean;
+    actionableBacklog: number;
+    byType: Record<string, number>;
+    topEntries: Array<{
+      id: string;
+      title: string;
+      findingType: string;
+      riskLevel: string;
+      ageDays: number;
+      reviewCommand: string;
+    }>;
+  };
 };
 
 export function parsePendingDigestSinceDays(value?: string): number {
@@ -263,6 +277,8 @@ export function buildPendingReviewDigestReport(opts: {
   factsDb: FactsDbForPendingDigest;
   since?: string;
   now?: Date;
+  /** #2119: when supplied and serendipity is enabled, adds the actionable backlog section. */
+  serendipityStore?: import("../backends/serendipity-store.js").SerendipityStore | null;
 }): PendingReviewDigestReport {
   const cfg = opts.cfg;
   const factsDb = opts.factsDb;
@@ -436,7 +452,29 @@ export function buildPendingReviewDigestReport(opts: {
       pendingReview: pendingReview.verified,
       reviewCommand: "openclaw hybrid-mem verified list",
     },
+    ...(buildSerendipitySection(opts.serendipityStore, cfg, now) ?? {}),
   };
+}
+
+function buildSerendipitySection(
+  store: import("../backends/serendipity-store.js").SerendipityStore | null | undefined,
+  cfg: HybridMemoryConfig,
+  now: Date,
+): Pick<PendingReviewDigestReport, "serendipity"> | undefined {
+  if (!store || !cfg.serendipityProtocol.enabled) return undefined;
+  const actionable = store.listActionableDeferred({ level: 4 });
+  const byType: Record<string, number> = {};
+  for (const f of actionable) byType[f.findingType] = (byType[f.findingType] ?? 0) + 1;
+  const nowMs = now.getTime();
+  const topEntries = actionable.slice(0, 5).map((f) => ({
+    id: f.id,
+    title: f.title,
+    findingType: f.findingType,
+    riskLevel: f.riskLevel,
+    ageDays: Math.max(0, Math.floor((nowMs - (parseTimestamp(f.createdAt) ?? 0) * 1000) / 86_400_000)),
+    reviewCommand: `openclaw hybrid-mem serendipity show ${f.id.slice(0, 8)}`,
+  }));
+  return { serendipity: { enabled: true, actionableBacklog: actionable.length, byType, topEntries } };
 }
 
 /** Render one queue's age-bucket hygiene as a compact line + recommended action (#2098). */
@@ -521,6 +559,16 @@ export function renderPendingReviewDigestMarkdown(report: PendingReviewDigestRep
     `## Verified-fact reviews (${report.verifiedFacts.pendingReview})`,
     `- Review: ${report.verifiedFacts.reviewCommand}`,
   );
+  if (report.serendipity) {
+    const byType =
+      Object.entries(report.serendipity.byType)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(", ") || "none";
+    lines.push("", `## Serendipity backlog (${report.serendipity.actionableBacklog})`, `- By type: ${byType}`);
+    report.serendipity.topEntries.forEach((e, i) => {
+      lines.push(`${i + 1}. [${e.riskLevel}, ${e.ageDays}d] ${e.title} (${e.findingType}) — ${e.reviewCommand}`);
+    });
+  }
   return lines.join("\n");
 }
 

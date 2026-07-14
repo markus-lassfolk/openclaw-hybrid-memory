@@ -44,7 +44,9 @@ New findings are **deduplicated** against recent findings by `repo + entity + fi
 - **`serendipity_list`** — list/filter findings; `backlog: true` returns the ranked actionable deferred backlog.
 - **`serendipity_decide`** — recommend an action for the current level. **Recommends only — never executes.**
 - **`serendipity_resolve`** — record the outcome (fixed/filed/remembered/proposed/dismissed/deferred). `status: filed` creates a linked local issue (real GitHub filing stays an approval-gated agent action).
+- **`serendipity_promote`** — hand a finding off to durable work: a **goal** (goal stewardship then drives it), an **active task**, or a **Skill Workshop proposal**. Links back and marks the finding `proposed`; the target system enforces its own guardrails.
 - **`serendipity_digest`** — a compact, low-noise digest of findings + backlog.
+- **`serendipity_set_level`** — set the engagement level for a scope (also available via CLI).
 
 ## Decision policy
 
@@ -64,7 +66,9 @@ Low confidence downgrades a would-be `fix_now` to `remember`.
 Findings left in `observed`/`deferred` form a **TTL-bounded backlog** (`deferredTtlDays`, default 30; expired findings are pruned by `archiveExpired()`). Two revisit drivers surface backlog items — **neither edits code; the agent acts under approval:**
 
 - **Heartbeat resurfacing** (`resurface`, level-gated ≥ `minLevel`, default 3): on heartbeat / low-activity turns, the single top actionable deferred finding is injected as a bounded, cooldown-gated one-liner.
-- **Opt-in Level-4 cron sweep** (`sweep.enabled`, off by default): a scheduled job prunes expired findings and reports the backlog. It is **surface-only** unless `sweep.dispatch` is enabled, and even then only surfaces candidates.
+- **Opt-in Level-4 cron sweep** (`sweep.enabled`, off by default): a scheduled job prunes expired findings and reports the backlog. It is **surface-only** unless `sweep.dispatch` is enabled; when dispatch is on it **promotes** the top in-bounds findings (up to `sweep.maxDispatch`) into goals or active tasks (`sweep.target`, default `goal`) so their existing dispatch/approval loops drive the work. The sweep never edits code itself.
+
+The **pending-review digest** (`openclaw hybrid-mem digest`) also gains a "Serendipity backlog" section when the protocol is enabled, so the actionable backlog shows up in the regular weekly review.
 
 ```bash
 openclaw hybrid-mem serendipity backlog        # ranked actionable backlog
@@ -99,7 +103,7 @@ When `injectPolicy` is on, a compact one-line policy summary is injected once pe
     "deferredTtlDays": 30,     // 0 = never expire
     "digest": { "enabled": true },
     "resurface": { "enabled": true, "minLevel": 3, "cooldownPrompts": 10, "maxChars": 200 },
-    "sweep": { "enabled": false, "minLevel": 4, "dispatch": false }
+    "sweep": { "enabled": false, "minLevel": 4, "dispatch": false, "target": "goal", "maxDispatch": 3 }
   }
 }
 ```
@@ -112,6 +116,7 @@ openclaw hybrid-mem serendipity show <id> [--json]
 openclaw hybrid-mem serendipity record <title> --type <t> [--description d] [--risk r] [--repo r] [--evidence e...]
 openclaw hybrid-mem serendipity resolve <id> --status <s> [--action text]
 openclaw hybrid-mem serendipity backlog [--limit n] [--json]
+openclaw hybrid-mem serendipity promote <id> --target goal|task|skill   (agent tool: serendipity_promote)
 openclaw hybrid-mem serendipity digest [--since 7d] [--format md|json] [--out path|-]
 openclaw hybrid-mem serendipity sweep [--json]
 openclaw hybrid-mem serendipity level get [--json]

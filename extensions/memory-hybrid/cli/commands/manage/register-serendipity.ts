@@ -1,5 +1,5 @@
 /**
- * CLI registration for `serendipity list|show|record|resolve|digest|backlog|sweep|level` (Issue #2119).
+ * CLI registration for `serendipity list|show|record|resolve|promote|digest|backlog|sweep|level` (Issue #2119).
  *
  * Operator-facing surface over the SerendipityStore: inspect findings, resolve
  * them, manage scoped engagement levels, and run the opt-in Level-4 sweep.
@@ -10,7 +10,12 @@ import type { SerendipityStore } from "../../../backends/serendipity-store.js";
 import { buildSerendipityDigestReport, writeSerendipityDigestOutput } from "../../../services/serendipity-digest.js";
 import { parsePendingDigestSinceDays } from "../../../services/pending-review-digest.js";
 import { decideSerendipityAction } from "../../../services/serendipity-policy.js";
-import { renderSerendipitySweepSummary, runSerendipitySweep } from "../../../services/serendipity-sweep-cron.js";
+import { type PromotionTarget, promoteFinding } from "../../../services/serendipity-promotion.js";
+import {
+  renderSerendipitySweepSummary,
+  resolveSweepPromotionDeps,
+  runSerendipitySweep,
+} from "../../../services/serendipity-sweep-cron.js";
 import type {
   SerendipityFindingType,
   SerendipityRiskLevel,
@@ -165,6 +170,30 @@ export function registerManageSerendipity(mem: Chainable, b: ManageBindings): vo
     );
 
   ser
+    .command("promote <id>")
+    .description("Promote a finding to a goal, active task, or Skill Workshop proposal.")
+    .requiredOption("--target <target>", "goal|task|skill")
+    .option("--json", "Output as JSON")
+    .action(
+      withExit(async (id: string, opts?: { target?: string; json?: boolean }) => {
+        const store = requireStore(b.serendipityStore);
+        const finding = store.resolve(id);
+        if (!finding) throw new Error(`Finding not found: ${id}`);
+        const target = opts?.target as PromotionTarget | undefined;
+        if (target !== "goal" && target !== "task" && target !== "skill") {
+          throw new Error("--target must be goal|task|skill");
+        }
+        const result = await promoteFinding(finding, target, {
+          store,
+          cfg,
+          ...resolveSweepPromotionDeps(cfg, { factsDb: b.factsDb, vectorDb: b.vectorDb, embeddings: b.embeddings }),
+        });
+        console.log(opts?.json ? JSON.stringify(result, null, 2) : result.message);
+        if (!result.ok) process.exitCode = 1;
+      }),
+    );
+
+  ser
     .command("backlog")
     .description("Show the actionable deferred backlog ranked by urgency and leverage.")
     .option("--limit <n>", "Max rows (default 20)", "20")
@@ -212,7 +241,15 @@ export function registerManageSerendipity(mem: Chainable, b: ManageBindings): vo
     .option("--json", "Output as JSON")
     .action(
       withExit(async (opts?: { json?: boolean }) => {
-        const summary = runSerendipitySweep({ cfg, store: b.serendipityStore ?? null });
+        const summary = await runSerendipitySweep({
+          cfg,
+          store: b.serendipityStore ?? null,
+          promotion: resolveSweepPromotionDeps(cfg, {
+            factsDb: b.factsDb,
+            vectorDb: b.vectorDb,
+            embeddings: b.embeddings,
+          }),
+        });
         if (opts?.json) {
           console.log(JSON.stringify(summary, null, 2));
           return;

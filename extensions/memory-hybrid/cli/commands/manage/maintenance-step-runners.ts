@@ -31,7 +31,7 @@ import {
 import type { MaintenanceStepRunner } from "../../../services/maintenance-orchestrator.js";
 import { runPassiveObserver } from "../../../services/passive-observer.js";
 import { runPendingDigestAutopilotCron } from "../../../services/pending-digest-autopilot-cron.js";
-import { runSerendipitySweep } from "../../../services/serendipity-sweep-cron.js";
+import { resolveSweepPromotionDeps, runSerendipitySweep } from "../../../services/serendipity-sweep-cron.js";
 import { buildPendingReviewDigestReport } from "../../../services/pending-review-digest.js";
 import { runFactsPruneStep } from "../../../services/prune-step.js";
 import { runResearchTrigger } from "../../../services/research-trigger.js";
@@ -861,9 +861,18 @@ export function buildCliMaintenanceRunners(
   });
 
   set("serendipity-sweep", async () => {
-    const summary = runSerendipitySweep({ cfg: b.cfg, store: b.serendipityStore ?? null });
+    const summary = await runSerendipitySweep({
+      cfg: b.cfg,
+      store: b.serendipityStore ?? null,
+      promotion: resolveSweepPromotionDeps(b.cfg, {
+        factsDb: b.factsDb,
+        vectorDb: b.vectorDb,
+        embeddings: b.embeddings,
+      }),
+    });
     const reason = summary.skipReason ? ` reason=${summary.skipReason}` : "";
-    return `status=${summary.status}${reason} level=${summary.level} actionable=${summary.actionable} pruned=${summary.prunedExpired} semantic=success`;
+    const promoted = summary.dispatched.filter((d) => d.ok).length;
+    return `status=${summary.status}${reason} level=${summary.level} actionable=${summary.actionable} pruned=${summary.prunedExpired} promoted=${promoted} semantic=success`;
   });
 
   set("consolidate", async () => {

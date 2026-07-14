@@ -12,9 +12,13 @@ import { Type } from "@sinclair/typebox";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 
 import type { BuildToolScopeFilterFn } from "../api/memory-plugin-api.js";
+import type { EventLog } from "../backends/event-log.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import type { IssueStore } from "../backends/issue-store.js";
 import { SerendipityStore, serendipityDedupHash } from "../backends/serendipity-store.js";
+import type { VectorDB } from "../backends/vector-db.js";
 import type { HybridMemoryConfig } from "../config.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import {
   buildSerendipityDigestReport,
@@ -23,6 +27,11 @@ import {
 } from "../services/serendipity-digest.js";
 import { decideSerendipityAction } from "../services/serendipity-policy.js";
 import { parsePendingDigestSinceDays } from "../services/pending-review-digest.js";
+import {
+  type PromotionTarget,
+  type SerendipityPromotionDeps,
+  promoteFinding,
+} from "../services/serendipity-promotion.js";
 import type { IssueSeverity } from "../types/issue-types.js";
 import {
   SERENDIPITY_ADJACENCIES,
@@ -30,11 +39,13 @@ import {
   SERENDIPITY_LOAD_REDUCTIONS,
   SERENDIPITY_REVERSIBILITIES,
   SERENDIPITY_RISK_LEVELS,
+  SERENDIPITY_SCOPES,
   SERENDIPITY_SUGGESTED_ACTIONS,
   type CreateSerendipityFindingInput,
   type SerendipityFinding,
   type SerendipityFindingType,
   type SerendipityRiskLevel,
+  type SerendipityScope,
   type SerendipityScopeContext,
   type SerendipityStatus,
   type SerendipitySuggestedAction,
@@ -47,6 +58,13 @@ export interface SerendipityToolsContext {
   cfg: HybridMemoryConfig;
   currentAgentIdRef: { value: string | null };
   buildToolScopeFilter: BuildToolScopeFilterFn;
+  /** Promotion deps (serendipity_promote → goal/task/skill). */
+  factsDb?: FactsDB | null;
+  vectorDb?: VectorDB | null;
+  embeddings?: EmbeddingProvider | null;
+  eventLog?: EventLog | null;
+  goalsDir?: string;
+  workspaceRoot?: string;
 }
 
 const RESOLVE_STATUSES = ["fixed", "filed", "remembered", "proposed", "dismissed", "deferred"] as const;
@@ -89,6 +107,20 @@ export function registerSerendipityTools(ctx: SerendipityToolsContext, api: Claw
   };
   const resolveLevel = (repo?: string | null): number =>
     store ? store.resolveLevel(scopeContext(repo), sp.defaultLevel) : sp.defaultLevel;
+
+  const buildPromotionDeps = (): SerendipityPromotionDeps => ({
+    store: store as SerendipityStore,
+    cfg,
+    goalsDir: ctx.goalsDir,
+    eventLog: ctx.eventLog,
+    factsDb: ctx.factsDb,
+    vectorDb: ctx.vectorDb,
+    embeddings: ctx.embeddings,
+    workspaceRoot: ctx.workspaceRoot,
+    scopeFilter: buildToolScopeFilter({}, currentAgentIdRef.value, cfg) ?? null,
+    api,
+    logger: api.logger,
+  });
 
   // --- serendipity_record ---------------------------------------------------
   api.registerTool(
@@ -401,5 +433,82 @@ export function registerSerendipityTools(ctx: SerendipityToolsContext, api: Claw
       },
     },
     { name: "serendipity_digest" },
+  );
+
+  // --- serendipity_promote --------------------------------------------------
+  api.registerTool(
+    {
+      name: "serendipity_promote",
+      label: "Promote Serendipity Finding",
+      description:
+        "Turn a finding into durable work: a goal (goal stewardship then drives it), an active task, or a Skill Workshop proposal. Links back and marks the finding proposed. The target system enforces its own guardrails/approval.",
+      parameters: Type.Object({
+        finding_id: Type.String({ description: "Finding id or short id prefix." }),
+        target: stringEnum(["goal", "task", "skill"] as const),
+      }),
+      async execute(_id: string, params: Record<string, unknown>) {
+        if (!sp.enabled || !store) return notEnabled();
+        try {
+          const p = params as { finding_id?: string; target?: PromotionTarget };
+          const findingId = String(p.finding_id ?? "").trim();
+          if (!findingId || !p.target) {
+            return {
+              content: [{ type: "text", text: "Provide finding_id and target (goal|task|skill)." }],
+              details: { error: "missing_args" },
+            };
+          }
+          const finding = store.resolve(findingId);
+          if (!finding) {
+            return { content: [{ type: "text", text: "Finding not found." }], details: { error: "not_found" } };
+          }
+          const result = await promoteFinding(finding, p.target, buildPromotionDeps());
+          return { content: [{ type: "text", text: result.message }], details: result };
+        } catch (err) {
+          return fail(err, "serendipity_promote");
+        }
+      },
+    },
+    { name: "serendipity_promote" },
+  );
+
+  // --- serendipity_set_level ------------------------------------------------
+  api.registerTool(
+    {
+      name: "serendipity_set_level",
+      label: "Set Serendipity Level",
+      description:
+        "Set the engagement level (0–4) for a scope (global|user|agent|session|repo|channel). Higher = more proactive; guardrails still apply. Use --disabled semantics via enabled:false to turn serendipity off for a scope.",
+      parameters: Type.Object({
+        level: Type.Number({ description: "Engagement level 0–4." }),
+        scope: stringEnum(SERENDIPITY_SCOPES as unknown as readonly string[]),
+        target: Type.Optional(Type.String({ description: "Scope target (id/name); omit for global." })),
+        enabled: Type.Optional(Type.Boolean({ description: "Set false to disable serendipity for this scope." })),
+      }),
+      async execute(_id: string, params: Record<string, unknown>) {
+        if (!sp.enabled || !store) return notEnabled();
+        try {
+          const p = params as { level?: number; scope?: SerendipityScope; target?: string; enabled?: boolean };
+          if (typeof p.level !== "number" || !p.scope) {
+            return {
+              content: [{ type: "text", text: "Provide level (0–4) and scope." }],
+              details: { error: "missing_args" },
+            };
+          }
+          const pref = store.setLevel(p.scope, p.target ?? null, p.level, p.enabled !== false);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Set ${pref.scope}${pref.scopeTarget ? `:${pref.scopeTarget}` : ""} = ${pref.level}${pref.enabled ? "" : " (disabled)"}`,
+              },
+            ],
+            details: { pref },
+          };
+        } catch (err) {
+          return fail(err, "serendipity_set_level");
+        }
+      },
+    },
+    { name: "serendipity_set_level" },
   );
 }

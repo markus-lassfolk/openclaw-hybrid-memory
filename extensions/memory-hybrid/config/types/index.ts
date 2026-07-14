@@ -528,8 +528,12 @@ export type SerendipityProtocolConfig = {
     enabled: boolean;
     /** Minimum effective level for the sweep to act (default: 4). */
     minLevel: number;
-    /** When false (default), the sweep only reports; it never dispatches the agent. */
+    /** When false (default), the sweep only reports; when true it promotes top findings to work. */
     dispatch: boolean;
+    /** What dispatched findings become: a goal (stewardship-driven) or an active task (default: goal). */
+    target: "goal" | "task";
+    /** Max findings promoted per sweep run when dispatch is on (default: 3). */
+    maxDispatch: number;
   };
 };
 

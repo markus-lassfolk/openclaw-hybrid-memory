@@ -596,6 +596,8 @@ export function parseSerendipityProtocolConfig(cfg: Record<string, unknown>): Se
       enabled: sweepRaw?.enabled === true,
       minLevel: num(sweepRaw?.minLevel, 4, 0, 4),
       dispatch: sweepRaw?.dispatch === true,
+      target: sweepRaw?.target === "task" ? "task" : "goal",
+      maxDispatch: int(sweepRaw?.maxDispatch, 3, 1, 100),
     },
   };
 }

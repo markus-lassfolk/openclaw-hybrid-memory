@@ -92,8 +92,10 @@ export const AGENT_TOOL_CONTRACT_NAMES = [
   "serendipity_decide",
   "serendipity_digest",
   "serendipity_list",
+  "serendipity_promote",
   "serendipity_record",
   "serendipity_resolve",
+  "serendipity_set_level",
 ] as const;
 
 export type AgentToolContractName = (typeof AGENT_TOOL_CONTRACT_NAMES)[number];

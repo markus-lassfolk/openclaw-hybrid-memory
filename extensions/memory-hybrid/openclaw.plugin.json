@@ -93,8 +93,10 @@
       "serendipity_decide",
       "serendipity_digest",
       "serendipity_list",
+      "serendipity_promote",
       "serendipity_record",
-      "serendipity_resolve"
+      "serendipity_resolve",
+      "serendipity_set_level"
     ]
   },
   "uiHints": {
@@ -2766,7 +2768,16 @@
               },
               "dispatch": {
                 "type": "boolean",
-                "description": "When false (default), the sweep only reports; it never dispatches the agent."
+                "description": "When false (default), the sweep only reports; when true it promotes top findings to work."
+              },
+              "target": {
+                "type": "string",
+                "enum": ["goal", "task"],
+                "description": "What dispatched findings become: a goal (stewardship-driven) or an active task (default: goal)."
+              },
+              "maxDispatch": {
+                "type": "number",
+                "description": "Max findings promoted per sweep run when dispatch is on (default: 3)."
               }
             },
             "description": "Opt-in Level-4 cron sweep of the deferred backlog (off by default; surface-only by default)."
