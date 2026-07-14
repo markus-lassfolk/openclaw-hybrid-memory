@@ -132,6 +132,8 @@ describe("ensureMaintenanceCronJobs verify --fix (#1971, #1972)", () => {
       "lifecycle.adapters.github.enabled": true,
       // research is the one default-ON gate (proactive research loop ships enabled)
       "research.enabled": true,
+      // opt-in Level-4 serendipity sweep (off unless explicitly enabled)
+      "serendipityProtocol.sweep.enabled": false,
     });
   });
 

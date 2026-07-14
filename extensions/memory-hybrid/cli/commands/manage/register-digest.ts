@@ -49,6 +49,7 @@ export function registerManageDigest(mem: Chainable, b: ManageBindings): void {
           cfg: b.cfg,
           factsDb: b.factsDb,
           since: opts?.since,
+          serendipityStore: b.serendipityStore,
         });
         writePendingReviewDigestOutput({ report, format, outPath });
       }),

@@ -89,7 +89,14 @@
       "memory_workshop",
       "memory_workflows",
       "persona_propose",
-      "persona_proposals_list"
+      "persona_proposals_list",
+      "serendipity_decide",
+      "serendipity_digest",
+      "serendipity_list",
+      "serendipity_promote",
+      "serendipity_record",
+      "serendipity_resolve",
+      "serendipity_set_level"
     ]
   },
   "uiHints": {
@@ -2687,6 +2694,103 @@
           }
         },
         "description": "Long-running goal registry, stewardship injection, and watchdog (see docs/GOAL-STEWARDSHIP-DESIGN.md)"
+      },
+      "serendipityProtocol": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable the SerendipityStore + serendipity_* tools + CLI + policy injection (default: false)."
+          },
+          "defaultLevel": {
+            "type": "number",
+            "description": "Default engagement level 0–4 when no scoped pref applies (default: 2.5). 0=requested-only, 1=safety, 2=adjacent cleanup, 3=improvement scout, 4=steward."
+          },
+          "injectPolicy": {
+            "type": "boolean",
+            "description": "Inject a compact policy summary on turn start (default: true)."
+          },
+          "injectionMaxChars": {
+            "type": "number",
+            "description": "Character cap for the injected policy/backlog lines (default: 400)."
+          },
+          "dedupWindowDays": {
+            "type": "number",
+            "description": "Dedup lookback window in days for serendipity_record (default: 30)."
+          },
+          "deferredTtlDays": {
+            "type": "number",
+            "description": "TTL (days) applied to new findings for the deferred backlog; 0 = never expire (default: 30)."
+          },
+          "digest": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Enable the on-demand serendipity digest (default: true)."
+              }
+            },
+            "description": "On-demand, low-noise digest of findings."
+          },
+          "resurface": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Surface the top actionable deferred finding on heartbeat turns (default: true)."
+              },
+              "minLevel": {
+                "type": "number",
+                "description": "Minimum effective level to resurface backlog items (default: 3)."
+              },
+              "cooldownPrompts": {
+                "type": "number",
+                "description": "Surface at most once per this many prompts per session (default: 10)."
+              },
+              "maxChars": {
+                "type": "number",
+                "description": "Character cap for the resurfaced backlog line (default: 200)."
+              },
+              "promote": {
+                "type": "boolean",
+                "description": "When true, a resurfaced finding is promoted to a goal (requires goal stewardship) instead of only injecting a pointer. Default: false."
+              }
+            },
+            "description": "Heartbeat resurfacing of the deferred backlog (index-only, bounded, cooldown-gated)."
+          },
+          "sweep": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Install/run the scheduled Level-4 deferred-backlog sweep (default: false)."
+              },
+              "minLevel": {
+                "type": "number",
+                "description": "Minimum effective level for the sweep to act (default: 4)."
+              },
+              "dispatch": {
+                "type": "boolean",
+                "description": "When false (default), the sweep only reports; when true it promotes top findings to work."
+              },
+              "target": {
+                "type": "string",
+                "enum": ["goal", "task"],
+                "description": "What dispatched findings become: a goal (stewardship-driven) or an active task (default: goal)."
+              },
+              "maxDispatch": {
+                "type": "number",
+                "description": "Max findings promoted per sweep run when dispatch is on (default: 3)."
+              }
+            },
+            "description": "Opt-in Level-4 cron sweep of the deferred backlog (off by default; surface-only by default)."
+          }
+        },
+        "description": "Serendipity Protocol: bounded proactive findings, deferred backlog, and scoped engagement levels (Issue #2119; see docs/SERENDIPITY-PROTOCOL.md)"
       },
       "wikiIntegration": {
         "type": "object",

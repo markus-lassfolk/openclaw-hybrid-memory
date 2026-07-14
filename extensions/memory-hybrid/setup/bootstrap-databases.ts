@@ -84,6 +84,7 @@ interface DatabaseContext {
   health: HealthStatus;
   initialized: Promise<void>;
   apitapStore: ApitapStore;
+  serendipityStore: import("../backends/serendipity-store.js").SerendipityStore | null;
 }
 
 // Module-level guard: tracks an in-progress Ollama auto-start promise so concurrent calls to
@@ -761,6 +762,7 @@ export function initializeDatabases(
     verificationStore,
     provenanceService,
     apitapStore,
+    serendipityStore,
   } = installOptionalBootstrapServices({
     cfg,
     api,
@@ -1212,6 +1214,7 @@ export function initializeDatabases(
     health,
     initialized,
     apitapStore,
+    serendipityStore,
   };
 }
 
@@ -1239,6 +1242,7 @@ export function closeOldDatabases(context: {
   provenanceService?: ProvenanceService | null;
   learningsDb?: import("../backends/learnings-db.js").LearningsDB | null;
   apitapStore?: ApitapStore | null;
+  serendipityStore?: import("../backends/serendipity-store.js").SerendipityStore | null;
   auditStore?: import("../backends/audit-store.js").AuditStore | null;
   agentHealthStore?: import("../backends/agent-health-store.js").AgentHealthStore | null;
 }): void {
@@ -1262,6 +1266,7 @@ export function closeOldDatabases(context: {
     provenanceService,
     learningsDb,
     apitapStore,
+    serendipityStore,
     auditStore,
     agentHealthStore,
   } = context;
@@ -1349,6 +1354,16 @@ export function closeOldDatabases(context: {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
         subsystem: "personaStateStore",
+      });
+    }
+  }
+  if (serendipityStore) {
+    try {
+      serendipityStore.permanentClose();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "close-databases",
+        subsystem: "serendipityStore",
       });
     }
   }

@@ -463,6 +463,7 @@ export function createHybridMemCliContext(
     changeFeed: handlerCtx.changeFeed ?? null,
     provenanceService: handlerCtx.provenanceService ?? null,
     issueStore: handlerCtx.issueStore ?? null,
+    serendipityStore: handlerCtx.serendipityStore ?? null,
     versionInfo: services.versionInfo,
     embeddings: handlerCtx.embeddings,
     mergeResults: services.mergeResults,

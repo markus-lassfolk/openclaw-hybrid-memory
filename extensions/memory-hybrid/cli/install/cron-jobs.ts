@@ -228,6 +228,7 @@ export function buildMaintenanceCronFeatureGates(cfg: {
   workshop?: { enabled?: boolean };
   lifecycle?: { adapters?: { github?: { enabled?: boolean } } };
   research?: { enabled?: boolean };
+  serendipityProtocol?: { sweep?: { enabled?: boolean } };
 }): Record<string, boolean> {
   return {
     "sensorSweep.enabled": cfg.sensorSweep?.enabled === true,
@@ -237,6 +238,8 @@ export function buildMaintenanceCronFeatureGates(cfg: {
     "lifecycle.adapters.github.enabled": cfg.lifecycle?.adapters?.github?.enabled === true,
     // Default-ON gate (unlike the opt-in features above): the research loop ships enabled.
     "research.enabled": cfg.research?.enabled !== false,
+    // Opt-in Level-4 serendipity sweep (off by default).
+    "serendipityProtocol.sweep.enabled": cfg.serendipityProtocol?.sweep?.enabled === true,
   };
 }
 
@@ -547,6 +550,26 @@ const MAINTENANCE_CRON_JOBS: Array<
     enabled: true,
     minIntervalMs: MIN_INTERVAL_MS.weekly,
     supersededByOrchestrator: false,
+  },
+
+  // Daily 09:10 UTC | daily-serendipity-sweep | opt-in Level-4 deferred-backlog sweep (#2119)
+  {
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}daily-serendipity-sweep`,
+    sessionTarget: "isolated",
+    name: "daily-serendipity-sweep",
+    schedule: { kind: "cron", expr: "10 9 * * *" },
+    channel: "system",
+    message: buildHybridMemCronTaskMessage("daily-serendipity-sweep", {
+      preamble:
+        "Opt-in Level-4 serendipity sweep. Prune expired findings and report the actionable deferred backlog. Surface-only unless serendipityProtocol.sweep.dispatch is enabled; never edit code — the agent acts under approval.",
+      steps: [{ name: "serendipity-sweep", cmd: "openclaw hybrid-mem serendipity sweep --json" }],
+    }),
+    isolated: true,
+    modelTier: "nano",
+    enabled: false,
+    minIntervalMs: MIN_INTERVAL_MS.daily,
+    supersededByOrchestrator: false,
+    featureGate: "serendipityProtocol.sweep.enabled",
   },
 
   // Twice daily 01:50 + 13:50 UTC | workshop-approval-reminder | digest pending for operator announce (#1921)

@@ -9,6 +9,7 @@ import { IdentityReflectionStore } from "../backends/identity-reflection-store.j
 import { IssueStore } from "../backends/issue-store.js";
 import { PersonaStateStore } from "../backends/persona-state-store.js";
 import { ProposalsDB } from "../backends/proposals-db.js";
+import { SerendipityStore } from "../backends/serendipity-store.js";
 import { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import { WriteAheadLog } from "../backends/wal.js";
 import { WorkflowStore } from "../backends/workflow-store.js";
@@ -40,6 +41,7 @@ export interface OptionalBootstrapServices {
   verificationStore: VerificationStore | null;
   provenanceService: ProvenanceService | null;
   apitapStore: ApitapStore;
+  serendipityStore: SerendipityStore | null;
 }
 
 type OptionalBootstrapInstaller = BootstrapPhaseConfig & {
@@ -155,6 +157,13 @@ export const optionalBootstrapInstaller: OptionalBootstrapInstaller = {
     const apitapStore = new ApitapStore(apitapStorePath);
     api.logger.info(`memory-hybrid: apitap store initialized (${apitapStorePath})`);
 
+    let serendipityStore: SerendipityStore | null = null;
+    if (cfg.serendipityProtocol.enabled) {
+      const serendipityStorePath = join(baseDir, "serendipity.db");
+      serendipityStore = new SerendipityStore(serendipityStorePath);
+      api.logger.info(`memory-hybrid: serendipity store initialized (${serendipityStorePath})`);
+    }
+
     return {
       credentialsDb,
       wal,
@@ -170,6 +179,7 @@ export const optionalBootstrapInstaller: OptionalBootstrapInstaller = {
       verificationStore,
       provenanceService,
       apitapStore,
+      serendipityStore,
     };
   },
 };

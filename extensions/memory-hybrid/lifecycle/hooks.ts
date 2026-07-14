@@ -42,6 +42,7 @@ import { registerCredentialHint } from "./stage-credential-hint.js";
 import { registerDirectiveStoreNudge } from "./stage-directive-store-nudge.js";
 import { registerFrustrationHandlers } from "./stage-frustration.js";
 import { registerGoalContextInjection } from "./stage-goal-context.js";
+import { registerSerendipityPolicyInjection } from "./stage-serendipity-policy.js";
 import { registerGoalStewardshipInjection, resolvedGoalsDirForLifecycle } from "./stage-goal-stewardship.js";
 import { registerGoalSubagentHandlers } from "./stage-goal-subagent.js";
 import { runInjectionStage } from "./stage-injection.js";
@@ -233,6 +234,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       ctx.cfg.activeTask.enabled ? resolvedActiveTaskPath : undefined,
     );
     registerGoalContextInjection(api, ctx, resolvedGoalsDir);
+    registerSerendipityPolicyInjection(api, ctx);
 
     registerCheckpointGuardAdvisoryInjection(api, ctx, sessionState);
     registerActiveTaskInjection(api, ctx, resolvedActiveTaskPath, workspaceRoot);

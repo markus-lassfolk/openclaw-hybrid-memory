@@ -20,6 +20,7 @@ import type {
   CredentialsConfig,
   GatewayConfig,
   GoalStewardshipConfig,
+  SerendipityProtocolConfig,
   LLMConfig,
   LLMProviderConfig,
   ResolvedGatewayAuthConfig,
@@ -563,6 +564,43 @@ export function parseGoalStewardshipConfig(cfg: Record<string, unknown>): GoalSt
     },
     allowCommandVerification: raw?.allowCommandVerification === true,
     allowPrVerification: raw?.allowPrVerification === true,
+  };
+}
+
+export function parseSerendipityProtocolConfig(cfg: Record<string, unknown>): SerendipityProtocolConfig {
+  const raw = cfg.serendipityProtocol as Record<string, unknown> | undefined;
+  const num = (v: unknown, fallback: number, min: number, max: number): number =>
+    typeof v === "number" && Number.isFinite(v) && v >= min && v <= max ? v : fallback;
+  const int = (v: unknown, fallback: number, min: number, max: number): number =>
+    Math.floor(num(v, fallback, min, max));
+
+  const enabled = raw?.enabled === true;
+  const resurfaceRaw = raw?.resurface as Record<string, unknown> | undefined;
+  const sweepRaw = raw?.sweep as Record<string, unknown> | undefined;
+  const digestRaw = raw?.digest as Record<string, unknown> | undefined;
+
+  return {
+    enabled,
+    defaultLevel: num(raw?.defaultLevel, 2.5, 0, 4),
+    injectPolicy: raw?.injectPolicy !== false,
+    injectionMaxChars: int(raw?.injectionMaxChars, 400, 80, 4000),
+    dedupWindowDays: int(raw?.dedupWindowDays, 30, 0, 3650),
+    deferredTtlDays: int(raw?.deferredTtlDays, 30, 0, 3650),
+    digest: { enabled: digestRaw?.enabled !== false },
+    resurface: {
+      enabled: resurfaceRaw?.enabled !== false,
+      minLevel: num(resurfaceRaw?.minLevel, 3, 0, 4),
+      cooldownPrompts: int(resurfaceRaw?.cooldownPrompts, 10, 1, 1000),
+      maxChars: int(resurfaceRaw?.maxChars, 200, 40, 2000),
+      promote: resurfaceRaw?.promote === true,
+    },
+    sweep: {
+      enabled: sweepRaw?.enabled === true,
+      minLevel: num(sweepRaw?.minLevel, 4, 0, 4),
+      dispatch: sweepRaw?.dispatch === true,
+      target: sweepRaw?.target === "task" ? "task" : "goal",
+      maxDispatch: int(sweepRaw?.maxDispatch, 3, 1, 100),
+    },
   };
 }
 

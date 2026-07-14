@@ -33,6 +33,8 @@ export type ManageContext = {
   aliasDb?: import("../services/retrieval-aliases.js").AliasDB | null;
   /** Issue lifecycle store backing memory_issue_* tools and the `issues` CLI (#2090). */
   issueStore?: import("../backends/issue-store.js").IssueStore | null;
+  /** Serendipity findings store backing serendipity_* tools and the `serendipity` CLI (#2119). */
+  serendipityStore?: import("../backends/serendipity-store.js").SerendipityStore | null;
   /** Provenance chain store backing memory_provenance and the `provenance` CLI (#2090). */
   provenanceService?: import("../services/provenance.js").ProvenanceService | null;
   versionInfo: { pluginVersion: string; memoryManagerVersion: string; schemaVersion: number };

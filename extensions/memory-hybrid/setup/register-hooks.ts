@@ -194,6 +194,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       pendingLLMWarnings: ctx.pendingLLMWarnings,
       auditStore: ctx.auditStore ?? null,
       issueStore: ctx.issueStore,
+      serendipityStore: ctx.serendipityStore ?? null,
       recallInFlightRef: ctx.recallInFlightRef,
       lastAutoRecallPromptRef: ctx.lastAutoRecallPromptRef,
       prependBudgetRef: ctx.prependBudgetRef,
