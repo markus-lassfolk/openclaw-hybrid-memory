@@ -590,9 +590,7 @@ describe("HybridMemoryContextEngine.onSubagentEnded()", () => {
     factsDb.permanentClose();
     expect(factsDb.isPermanentlyClosed()).toBe(true);
 
-    await expect(
-      engine.onSubagentEnded?.({ childSessionKey, reason: "completed" }),
-    ).resolves.not.toThrow();
+    await expect(engine.onSubagentEnded?.({ childSessionKey, reason: "completed" })).resolves.not.toThrow();
 
     // No warning noise for a normal subagent completion during teardown.
     const warnCalls = logger.warn.mock.calls.map((c: unknown[]) => String(c[0]));

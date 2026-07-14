@@ -4,10 +4,7 @@
 
 import type { MemoryCategory } from "../types/memory.js";
 import { CAPTURE_FILTER_PATTERNS } from "./auto-capture.js";
-import {
-  getCorrectionSignalRegex,
-  getDirectiveSignalRegex,
-} from "../utils/language-keywords.js";
+import { getCorrectionSignalRegex, getDirectiveSignalRegex } from "../utils/language-keywords.js";
 
 /**
  * Returns true if the text is a memory-classifier artifact or LLM reasoning trace.

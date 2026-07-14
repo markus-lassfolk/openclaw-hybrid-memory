@@ -22,6 +22,7 @@ import {
   detectStaleLegacyInstallIndexEntry,
   formatStaleInstallIndexWarning,
   reconcileLegacyInstallIndex,
+  removeRedundantExtensionsTreeWhenNpmProjectCanonical,
   removeRedundantNpmProjectTreeWhenExtensionsCanonical,
   resolveCanonicalLivePluginPathForInstallIndex,
 } from "../../install/install-index-reconcile.js";
@@ -121,14 +122,23 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
                 `  → Synced npm-project dependency pin to ${extVer} (legacy install-index sidecar is checked separately below)`,
               );
             } else if (sync.skippedReason === "npm-project-not-older") {
-              // The extensions copy we were about to pin to is OLDER than the currently
-              // installed npm-project copy — writing it would silently downgrade a newer,
-              // possibly-active install (#2077). Fail closed and surface a real issue rather
-              // than a warning, so `verify` (with or without --fix) reports non-zero.
-              const msg = `Refusing to downgrade npm-project ${PLUGIN_ID} ${sync.npmVersion} -> ${extVer} during verify --fix: npm-project copy at ${npmProjectPluginDir} is newer than the extensions copy at ${extensionsPluginDir}.${sync.guidance ? ` ${sync.guidance}` : ""}`;
-              issues.push(msg);
-              state.installReconcileOk = false;
-              log(`${FAIL} ${msg}`);
+              // The npm-project copy is NEWER than the extensions copy — it is the canonical
+              // managed install. Quarantine the stale extensions copy so the gateway stops
+              // fighting over duplicate plugin ids and loads the managed copy (#2117).
+              const quarantine = removeRedundantExtensionsTreeWhenNpmProjectCanonical({
+                extensionsPluginDir,
+                npmProjectPluginDir,
+              });
+              if (quarantine.quarantined) {
+                const msg = `Quarantined stale extensions copy at ${quarantine.quarantinedPath} -> ${quarantine.destinationPath} (managed npm-project copy at ${npmProjectPluginDir} is canonical). Restart the gateway to load it.`;
+                fixes.push(msg);
+                log(`  → ${msg}`);
+              } else {
+                const msg = `Refusing to downgrade npm-project ${PLUGIN_ID} ${sync.npmVersion} -> ${extVer} during verify --fix: npm-project copy at ${npmProjectPluginDir} is newer than the extensions copy at ${extensionsPluginDir}.${quarantine.error ? ` Could not quarantine the stale extensions copy: ${quarantine.error}` : ""}${sync.guidance ? ` ${sync.guidance}` : ""}`;
+                issues.push(msg);
+                state.installReconcileOk = false;
+                log(`${FAIL} ${msg}`);
+              }
             } else if (sync.error) {
               log(`  → Could not sync npm-project pin: ${sync.error}`);
             }

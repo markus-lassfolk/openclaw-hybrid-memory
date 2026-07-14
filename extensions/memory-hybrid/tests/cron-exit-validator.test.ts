@@ -457,12 +457,7 @@ error: unknown command 'bar'
       writeFileSync(exitPath, "");
       writeFileSync(
         logPath,
-        [
-          "HM_JOB=maintenance",
-          "RUN_ID=20260625T160532Z-17113",
-          "HM_STEP_EXIT=64",
-          "FAILED: maintenance",
-        ].join("\n"),
+        ["HM_JOB=maintenance", "RUN_ID=20260625T160532Z-17113", "HM_STEP_EXIT=64", "FAILED: maintenance"].join("\n"),
       );
 
       const result = validateMaintenanceExecution(exitPath, logPath, ["maintenance"]);
@@ -472,9 +467,7 @@ error: unknown command 'bar'
       expect(result.wrapperExitCode).toBe(64);
       expect(result.missingSteps).toEqual([]);
       expect(result.failedSteps).toEqual([]);
-      expect(result.error).toBe(
-        "Wrapper aborted before steps (exit=64); no maintenance steps recorded in HM_EXIT",
-      );
+      expect(result.error).toBe("Wrapper aborted before steps (exit=64); no maintenance steps recorded in HM_EXIT");
       expect(result.reportableIssues.some((i) => i.failureClass === "wrapper_aborted_before_steps")).toBe(true);
       expect(result.reportableIssues.some((i) => i.failureClass === "missing_required_step")).toBe(false);
     });
@@ -508,9 +501,9 @@ error: unknown command 'bar'
       expect(result.error).toContain("continuous-verification (exit=2 errors_present)");
     });
 
-    it.each([["errors_present", 12] as const])(
-      "fails dream-cycle validation when continuous verification reports degraded %s machine status",
-      (reason, errors) => {
+    it.each([
+      ["errors_present", 12] as const,
+    ])("fails dream-cycle validation when continuous verification reports degraded %s machine status", (reason, errors) => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "test.exit.txt");
       const logPath = join(tmpDir, "test.log");
@@ -2434,8 +2427,7 @@ error: unknown command 'bar'
             {
               name: "extract-implicit",
               status: "ok",
-              summary:
-                "128 signals (106+/22-) from 116/471 sessions semantic=monitoring",
+              summary: "128 signals (106+/22-) from 116/471 sessions semantic=monitoring",
               durationMs: 1200000,
               semanticOutcome: "monitoring",
             },

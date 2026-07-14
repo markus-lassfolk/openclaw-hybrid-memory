@@ -45,9 +45,12 @@ describe("register-plugin reload-teardown drain gate", () => {
     const blocker = new Promise<void>((resolve) => {
       neverResolve = resolve;
     });
-    schedulePluginTeardown(async () => {
-      await blocker;
-    }, { donorGeneration: 1 });
+    schedulePluginTeardown(
+      async () => {
+        await blocker;
+      },
+      { donorGeneration: 1 },
+    );
     // Use a short timeout to keep the test fast.
     expect(await awaitReloadTeardownBeforeOpen(500)).toBe(false);
     // Cleanup: resolve the blocker so the chain doesn't leak into the next test.

@@ -740,9 +740,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
 
 let loggedMissingRegisterContextEngine = false;
 
-async function resolveRegisterContextEngine(
-  explicit?: ContextEngineRegistrar,
-): Promise<ContextEngineRegistrar | null> {
+async function resolveRegisterContextEngine(explicit?: ContextEngineRegistrar): Promise<ContextEngineRegistrar | null> {
   if (typeof explicit === "function") return explicit;
 
   try {

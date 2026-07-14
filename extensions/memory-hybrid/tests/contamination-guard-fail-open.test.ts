@@ -55,10 +55,15 @@ describe("contamination-guard LLM layer fail-closed behavior", () => {
       // text, so Layer 1 (deterministic entity check) passes and this actually reaches Layer 2
       // (the LLM check under test) — a draft entity absent from the source would be rejected by
       // Layer 1 before the LLM is ever called.
-      const result = await runContaminationGuard("Acme Corp expanded operations", ["Acme Corp expanded operations report"], [], {
-        openai: {} as never,
-        skipLlm: false,
-      });
+      const result = await runContaminationGuard(
+        "Acme Corp expanded operations",
+        ["Acme Corp expanded operations report"],
+        [],
+        {
+          openai: {} as never,
+          skipLlm: false,
+        },
+      );
       expect(result.allowed).toBe(false);
       expect(result.layer).toBe("llm");
     } finally {

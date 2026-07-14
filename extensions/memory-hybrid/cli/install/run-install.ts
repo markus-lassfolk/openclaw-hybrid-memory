@@ -28,6 +28,7 @@ import {
 } from "./cron-jobs.js";
 import { applyDetectedEmbeddingSetup, detectRecommendedEmbeddingSetup, getDashboardUrl } from "./embedding-detect.js";
 import {
+  removeRedundantExtensionsTreeWhenNpmProjectCanonical,
   removeRedundantNpmProjectTreeWhenExtensionsCanonical,
   runInstallIndexReconcileForPlugin,
 } from "./install-index-reconcile.js";
@@ -727,13 +728,24 @@ export async function runUpgradeForCli(
         logger?.info?.(`memory-hybrid: upgrade — reconciled stale npm-project pin to ${installedVersion} (#2008)`);
       } else if (staleSync.skippedReason === "npm-project-not-older") {
         // The just-upgraded extensions copy is OLDER than the existing npm-project install —
-        // leave the npm-project pin untouched rather than downgrade it (#2077). The primary
-        // upgrade (extensions copy) already succeeded, so this does not fail the command, but
-        // it is loud: a stale npm-project copy silently left ahead of the extensions copy is
-        // exactly the confusing dual-install state operators need to reconcile manually.
-        logger?.warn?.(
-          `memory-hybrid: upgrade — refusing to downgrade npm-project ${PLUGIN_ID} ${staleSync.npmVersion} -> ${installedVersion}: npm-project copy is newer than the just-upgraded extensions copy.${staleSync.guidance ? ` ${staleSync.guidance}` : ""}`,
-        );
+        // the managed npm-project copy is the canonical/newer one, so quarantine the stale
+        // extensions copy rather than leaving a confusing dual-install (#2117). The two
+        // directions are disjoint by version, so this only fires when npm-project is newer.
+        const quarantine = removeRedundantExtensionsTreeWhenNpmProjectCanonical({
+          extensionsPluginDir: installedPluginDir,
+        });
+        if (quarantine.quarantined) {
+          logger?.info?.(
+            `memory-hybrid: upgrade — npm-project ${PLUGIN_ID} copy is newer; quarantined stale extensions copy ${quarantine.quarantinedPath} -> ${quarantine.destinationPath}. Restart the gateway to load the managed copy (#2117).`,
+          );
+        } else {
+          if (quarantine.error) {
+            logger?.warn?.(`memory-hybrid: upgrade — ${quarantine.error}`);
+          }
+          logger?.warn?.(
+            `memory-hybrid: upgrade — refusing to downgrade npm-project ${PLUGIN_ID} ${staleSync.npmVersion} -> ${installedVersion}: npm-project copy is newer than the just-upgraded extensions copy.${staleSync.guidance ? ` ${staleSync.guidance}` : ""}`,
+          );
+        }
       } else if (staleSync.attempted && staleSync.error) {
         logger?.warn?.(
           `memory-hybrid: upgrade — could not reconcile npm-project pin: ${staleSync.error}${staleSync.guidance ? ` (${staleSync.guidance})` : ""}`,

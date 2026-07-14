@@ -333,11 +333,7 @@ describe("routePersonaProposal", () => {
   });
 
   it("regression fixture de5ac67f surfaces routing suggestion and cross-file awareness", async () => {
-    writeFileSync(
-      join(tmpDir, "AGENTS.md"),
-      `# AGENTS\n${LIVE_GITHUB_RULE}\n`,
-      "utf-8",
-    );
+    writeFileSync(join(tmpDir, "AGENTS.md"), `# AGENTS\n${LIVE_GITHUB_RULE}\n`, "utf-8");
 
     const assessment = await routePersonaProposal({
       targetFile: REGRESSION_PROPOSAL.targetFile,

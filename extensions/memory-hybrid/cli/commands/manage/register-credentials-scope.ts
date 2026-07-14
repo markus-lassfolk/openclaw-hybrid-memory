@@ -509,44 +509,42 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
     .option("--all", "Purge every revision for this service/type")
     .option("--yes", "Apply the purge (default: dry-run preview)")
     .action(
-      withExit(
-        async (opts: { service: string; type: string; revision?: string; all?: boolean; yes?: boolean }) => {
-          const type = parseRevisionCredentialType(opts.type);
-          if (!type) return;
-          if (!opts.revision && !opts.all) {
-            console.error("error: specify --revision <id> or --all");
-            process.exitCode = 1;
-            return;
-          }
-          const existing = runCredentialRevisionList({ service: opts.service, type });
-          if (existing === null) {
-            console.log("Credentials vault is not available (disabled or not configured).");
-            return;
-          }
-          const targets = opts.all ? existing : existing.filter((r) => r.id === opts.revision);
-          if (targets.length === 0) {
-            console.log(
-              opts.all
-                ? `No revisions to purge for ${opts.service} (${type}).`
-                : `No revision "${opts.revision}" found for ${opts.service} (${type}).`,
-            );
-            return;
-          }
-          if (!opts.yes) {
-            console.log(`Would purge ${targets.length} revision(s) for ${opts.service} (${type}):`);
-            for (const r of targets) console.log(`  ${r.id}`);
-            console.log("Dry-run only. Run with --yes to apply.");
-            return;
-          }
-          const result = runCredentialRevisionPurge({
-            service: opts.service,
-            type,
-            revision: opts.revision,
-            all: opts.all,
-          });
-          console.log(`Purged ${result?.purged ?? 0} revision(s) for ${opts.service} (${type}).`);
-        },
-      ),
+      withExit(async (opts: { service: string; type: string; revision?: string; all?: boolean; yes?: boolean }) => {
+        const type = parseRevisionCredentialType(opts.type);
+        if (!type) return;
+        if (!opts.revision && !opts.all) {
+          console.error("error: specify --revision <id> or --all");
+          process.exitCode = 1;
+          return;
+        }
+        const existing = runCredentialRevisionList({ service: opts.service, type });
+        if (existing === null) {
+          console.log("Credentials vault is not available (disabled or not configured).");
+          return;
+        }
+        const targets = opts.all ? existing : existing.filter((r) => r.id === opts.revision);
+        if (targets.length === 0) {
+          console.log(
+            opts.all
+              ? `No revisions to purge for ${opts.service} (${type}).`
+              : `No revision "${opts.revision}" found for ${opts.service} (${type}).`,
+          );
+          return;
+        }
+        if (!opts.yes) {
+          console.log(`Would purge ${targets.length} revision(s) for ${opts.service} (${type}):`);
+          for (const r of targets) console.log(`  ${r.id}`);
+          console.log("Dry-run only. Run with --yes to apply.");
+          return;
+        }
+        const result = runCredentialRevisionPurge({
+          service: opts.service,
+          type,
+          revision: opts.revision,
+          all: opts.all,
+        });
+        console.log(`Purged ${result?.purged ?? 0} revision(s) for ${opts.service} (${type}).`);
+      }),
     );
 
   revisions
@@ -571,7 +569,9 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
           process.exitCode = 1;
           return;
         }
-        console.log(`Revision ${opts.revision} for ${opts.service} (${type}) is now ${pinned ? "pinned" : "unpinned"}.`);
+        console.log(
+          `Revision ${opts.revision} for ${opts.service} (${type}) is now ${pinned ? "pinned" : "unpinned"}.`,
+        );
       }),
     );
 

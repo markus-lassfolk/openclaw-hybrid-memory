@@ -234,7 +234,10 @@ function selectProvenanceToolsContext({
 function installProvenanceTools(ctx: ProvenanceInstallerContext, api: ClawdbotPluginApi): void {
   const { factsDb, eventLog, provenanceService, cfg, currentAgentIdRef, buildToolScopeFilter } = ctx;
   if (cfg.provenance.enabled && provenanceService) {
-    registerProvenanceTools({ factsDb, eventLog, provenanceService, cfg, currentAgentIdRef, buildToolScopeFilter }, api);
+    registerProvenanceTools(
+      { factsDb, eventLog, provenanceService, cfg, currentAgentIdRef, buildToolScopeFilter },
+      api,
+    );
   }
 }
 

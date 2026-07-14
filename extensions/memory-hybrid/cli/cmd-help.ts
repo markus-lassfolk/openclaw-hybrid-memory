@@ -51,8 +51,8 @@ export function registerHelpCommand(mem: Chainable): void {
   const helpCmd = mem.command("help").description("Curated guide to common hybrid-mem workflows");
   helpCmd.argument?.("[topic]", "Optional topic (currently shows the general guide)");
   helpCmd.action(
-      withExit(async () => {
-        console.log(WORKFLOW_GUIDE);
-      }),
-    );
+    withExit(async () => {
+      console.log(WORKFLOW_GUIDE);
+    }),
+  );
 }

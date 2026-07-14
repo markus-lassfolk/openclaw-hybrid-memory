@@ -141,7 +141,9 @@ export async function runPendingDigestAutopilotCron(
     const entry = { name, ...row };
     stepRows.set(name, entry);
     appendStepLine(hmExit, entry);
-    emitProgress(`step=${name} status=${row.status} reason=${row.reason} exit=${row.exit} duration_ms=${row.durationMs}`);
+    emitProgress(
+      `step=${name} status=${row.status} reason=${row.reason} exit=${row.exit} duration_ms=${row.durationMs}`,
+    );
   };
 
   const skipRemaining = (reason: string): void => {

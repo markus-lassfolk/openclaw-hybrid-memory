@@ -6,10 +6,7 @@ import type OpenAI from "openai";
 import type { HybridMemoryConfig } from "../config.js";
 import { getCronModelConfig, getLLMModelPreference } from "../config.js";
 import { tryParseFirstJsonObject } from "../utils/llm-json-array.js";
-import {
-  capTimeoutByMaintenanceRunDeadline,
-  getMaintenanceRunAbortSignal,
-} from "../utils/maintenance-run-deadline.js";
+import { capTimeoutByMaintenanceRunDeadline, getMaintenanceRunAbortSignal } from "../utils/maintenance-run-deadline.js";
 import { chatCompleteWithRetry, resolveMaintenanceChatTimeoutMs } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 

@@ -450,7 +450,9 @@ export class CredentialsDB extends BaseSqliteStore {
         // transformation and is dropped here rather than left permanently unreadable via
         // assertValidCredentialType()).
         const droppedRows = this.liveDb
-          .prepare(`SELECT service, type FROM credentials WHERE type NOT IN (${CREDENTIAL_TYPES.map(() => "?").join(", ")})`)
+          .prepare(
+            `SELECT service, type FROM credentials WHERE type NOT IN (${CREDENTIAL_TYPES.map(() => "?").join(", ")})`,
+          )
           .all(...CREDENTIAL_TYPES) as Array<{ service: string; type: string }>;
         this.liveDb
           .prepare(`DELETE FROM credentials WHERE type NOT IN (${CREDENTIAL_TYPES.map(() => "?").join(", ")})`)
@@ -1129,7 +1131,13 @@ export class CredentialsDB extends BaseSqliteStore {
     const existing = this.liveDb
       .prepare("SELECT value, url, notes, created, expires FROM credentials WHERE service = ? AND type = ?")
       .get(service, type) as
-      | { value: Uint8Array | Buffer; url: string | null; notes: string | null; created: number; expires: number | null }
+      | {
+          value: Uint8Array | Buffer;
+          url: string | null;
+          notes: string | null;
+          created: number;
+          expires: number | null;
+        }
       | undefined;
     if (!existing) return;
     const ttl = ttlDays ?? DEFAULT_REVISION_TTL_DAYS;
@@ -1215,9 +1223,7 @@ export class CredentialsDB extends BaseSqliteStore {
   listRevisions(service: string, type: CredentialType): CredentialRevisionMeta[] {
     this.pruneExpiredRevisions(service, type);
     const rows = this.liveDb
-      .prepare(
-        "SELECT * FROM credential_revisions WHERE service = ? AND type = ? ORDER BY replaced_at DESC",
-      )
+      .prepare("SELECT * FROM credential_revisions WHERE service = ? AND type = ? ORDER BY replaced_at DESC")
       .all(service, type) as Array<Record<string, unknown>>;
     return rows.map((row) => this.rowToRevisionMeta(row));
   }
@@ -1266,7 +1272,13 @@ export class CredentialsDB extends BaseSqliteStore {
     const row = this.liveDb
       .prepare("SELECT * FROM credential_revisions WHERE id = ? AND service = ? AND type = ?")
       .get(revisionId, service, type) as
-      | { value: Uint8Array | Buffer; url: string | null; notes: string | null; created: number; cred_expires: number | null }
+      | {
+          value: Uint8Array | Buffer;
+          url: string | null;
+          notes: string | null;
+          created: number;
+          cred_expires: number | null;
+        }
       | undefined;
     if (!row) return null;
     const now = Math.floor(Date.now() / 1000);

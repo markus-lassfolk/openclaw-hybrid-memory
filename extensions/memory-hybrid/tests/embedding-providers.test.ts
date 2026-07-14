@@ -1721,7 +1721,8 @@ describe("createEmbeddingProvider — Google chained with a local-only Ollama mo
     createEmbeddingProvider(cfg);
 
     const warned = warnSpy.mock.calls.some(
-      (call) => typeof call[0] === "string" && call[0].includes("local-only model") && call[0].includes("mxbai-embed-large"),
+      (call) =>
+        typeof call[0] === "string" && call[0].includes("local-only model") && call[0].includes("mxbai-embed-large"),
     );
     expect(warned).toBe(true);
   });

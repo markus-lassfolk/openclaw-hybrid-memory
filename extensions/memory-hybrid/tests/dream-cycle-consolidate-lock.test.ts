@@ -61,7 +61,7 @@ describe("dream-cycle / consolidate CLI commands acquire the orchestrator's step
     process.exitCode = undefined;
   });
 
-  it("dream-cycle acquires and releases the \"dream-cycle-core\" lock around the core run", async () => {
+  it('dream-cycle acquires and releases the "dream-cycle-core" lock around the core run', async () => {
     acquireStepLockMock.mockReturnValue(true);
     const runDreamCycle = vi.fn().mockResolvedValue({
       skipped: false,
@@ -101,7 +101,7 @@ describe("dream-cycle / consolidate CLI commands acquire the orchestrator's step
     expect(lines.join("\n")).toContain("already in progress");
   });
 
-  it("consolidate acquires and releases the \"consolidate\" lock around a real (non-dry-run) run", async () => {
+  it('consolidate acquires and releases the "consolidate" lock around a real (non-dry-run) run', async () => {
     acquireStepLockMock.mockReturnValue(true);
     const runConsolidate = vi.fn().mockResolvedValue({ clustersFound: 1, merged: 1, deleted: 1 });
     const mem = makeProgram(makeMinimalBindings({ runConsolidate }));

@@ -62,11 +62,7 @@ describe("tools-md-section", () => {
 
   it("keeps rule bullets as one unbroken list across repeated inserts, instead of a blank line before every new batch (#2067-followup)", () => {
     const path = join(tmpDir, "TOOLS.md");
-    writeFileSync(
-      path,
-      "# TOOLS\n\n## Self-correction rules\n- First batch rule.\n\n## Other\n- Rest.",
-      "utf-8",
-    );
+    writeFileSync(path, "# TOOLS\n\n## Self-correction rules\n- First batch rule.\n\n## Other\n- Rest.", "utf-8");
     insertRulesUnderSection(path, "Self-correction rules", ["Second batch rule."]);
     insertRulesUnderSection(path, "Self-correction rules", ["Third batch rule."]);
 

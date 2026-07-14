@@ -52,10 +52,7 @@ export function isProtectedBeforeAgentStartStage(stage: string): boolean {
   return PROTECTED_BEFORE_AGENT_START_STAGES.has(stage);
 }
 
-export function shouldSkipOptionalBeforeAgentStartStage(
-  ref?: BeforeAgentStartTurnRef,
-  stage?: string,
-): boolean {
+export function shouldSkipOptionalBeforeAgentStartStage(ref?: BeforeAgentStartTurnRef, stage?: string): boolean {
   const minMs =
     stage && isProtectedBeforeAgentStartStage(stage)
       ? BEFORE_AGENT_START_PROTECTED_STAGE_MIN_MS

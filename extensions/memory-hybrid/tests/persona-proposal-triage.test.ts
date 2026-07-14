@@ -460,7 +460,10 @@ describe("persona proposal triage", () => {
 
     const result = await runPersonaProposalTriage({
       proposalsDb,
-      cfg: { ...cfg, personaProposals: { ...cfg.personaProposals, allowedFiles: ["../USER.md" as never, "IDENTITY.md"] } },
+      cfg: {
+        ...cfg,
+        personaProposals: { ...cfg.personaProposals, allowedFiles: ["../USER.md" as never, "IDENTITY.md"] },
+      },
       workspace: tmpDir,
       mode: "dry-run",
       policy: "cautious",

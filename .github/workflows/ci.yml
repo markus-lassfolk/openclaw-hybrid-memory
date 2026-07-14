@@ -44,7 +44,18 @@ jobs:
       actionlint_required: ${{ steps.classify.outputs.actionlint_required }}
       security_required: ${{ steps.classify.outputs.security_required }}
     steps:
+      # fetch-depth: 0 (full history) is required so `git diff origin/<base>...HEAD`
+      # in classify-changes.mjs can find a merge-base. A shallow (depth-1) checkout
+      # here combined with the script's own shallow base-ref fetch left the two refs
+      # with no shared history, so the diff failed with "no merge base"; the script's
+      # error-swallowing fallback then silently reported zero changed files, which
+      # made every ci_required/heavy_ci_required flag false — skipping ALL real
+      # typecheck/lint/test jobs in favor of the harmless "no changes" passthrough
+      # stubs, on every PR. This job only runs `git diff` (no install/build), so the
+      # extra clone cost is worth the correctness guarantee.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - name: Classify changed paths (policy)
         id: classify
         run: node .github/scripts/classify-changes.mjs
@@ -412,6 +423,16 @@ jobs:
           # Just import the compiled entry — verifies the bundle is at least
           # syntactically valid and resolvable on this Node version.
           node --input-type=module -e "import('openclaw-hybrid-memory/dist/index.js').then(m => { if (typeof m.default !== 'object' && typeof m.default !== 'function') { console.error('FAIL: default export missing'); process.exit(1); } console.log('OK: dist/index.js loaded, default=', typeof m.default); }).catch(e => { console.error('FAIL:', e.message); process.exit(1); })"
+      - name: Exercise lancedb + apache-arrow load path (issue #2116)
+        run: |
+          set -euo pipefail
+          # The shallow dist/index.js import above lazy-loads lancedb, so it does
+          # NOT trigger @lancedb/lancedb/dist/arrow.js requiring apache-arrow — the
+          # exact gap that broke Doris. Load lancedb (and apache-arrow directly)
+          # from INSIDE the installed plugin dir so module resolution matches the
+          # real gateway path. Fails hard if apache-arrow is missing from the tree.
+          cd /tmp/smoke-test/node_modules/openclaw-hybrid-memory
+          node -e "require.resolve('apache-arrow'); require('apache-arrow'); require('@lancedb/lancedb'); console.log('OK: @lancedb/lancedb + apache-arrow load from installed plugin');"
 
   lint-arch:
     name: Architectural Lint

@@ -129,10 +129,7 @@ describe("dream-cycle follow-up heartbeat logging", () => {
       stale: 0,
       uncertain: 5,
       errors: 0,
-      errorSummaries: [
-        "fact=abc12345…: provider timeout",
-        "fact=def67890…: provider timeout",
-      ],
+      errorSummaries: ["fact=abc12345…: provider timeout", "fact=def67890…: provider timeout"],
     });
 
     expect(assessment.status).toBe("degraded");

@@ -104,11 +104,7 @@ export class IssueStore extends BaseSqliteStore {
     return this.rowToIssue(row);
   }
 
-  update(
-    id: string,
-    patch: Partial<Omit<Issue, "id" | "createdAt">>,
-    opts?: { expectedStatus?: IssueStatus },
-  ): Issue {
+  update(id: string, patch: Partial<Omit<Issue, "id" | "createdAt">>, opts?: { expectedStatus?: IssueStatus }): Issue {
     const existing = this.get(id);
     if (!existing) throw new Error(`Issue not found: ${id}`);
 

@@ -54,10 +54,7 @@ describe("recordStorageGrowthSample same-day guard", () => {
     expect(first.inserted).toBe(true);
     expect(second.inserted).toBe(false);
     expect(second.reason).toBe("already_sampled_today");
-    const rows = factsDb
-      .getRawDb()
-      .prepare("SELECT COUNT(*) AS c FROM storage_growth_history")
-      .get() as { c: number };
+    const rows = factsDb.getRawDb().prepare("SELECT COUNT(*) AS c FROM storage_growth_history").get() as { c: number };
     expect(rows.c).toBe(1);
   });
 });

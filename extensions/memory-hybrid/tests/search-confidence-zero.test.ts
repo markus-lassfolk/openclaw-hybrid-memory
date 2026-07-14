@@ -98,7 +98,10 @@ describe("search score freshness=0 consistency (#2074-followup-2)", () => {
       value: null,
       source: "conversation",
     });
-    factsDb.getRawDb().prepare("UPDATE facts SET expires_at = ? WHERE id = ?").run(nowSec + 1_000_000, fact.id);
+    factsDb
+      .getRawDb()
+      .prepare("UPDATE facts SET expires_at = ? WHERE id = ?")
+      .run(nowSec + 1_000_000, fact.id);
 
     const beforeResults = factsDb.search("Ephemeral gadget wombat", 5, { includeExpired: true });
     expect(beforeResults.length).toBe(1);
@@ -107,7 +110,10 @@ describe("search score freshness=0 consistency (#2074-followup-2)", () => {
     // searchFacts computes freshness=0.0 for an already-expired fact (expires_at <= now) -- but
     // that branch is only reached when a caller explicitly opts into includeExpired: true, since
     // the default filter excludes expired facts outright.
-    factsDb.getRawDb().prepare("UPDATE facts SET expires_at = ? WHERE id = ?").run(nowSec - 100, fact.id);
+    factsDb
+      .getRawDb()
+      .prepare("UPDATE facts SET expires_at = ? WHERE id = ?")
+      .run(nowSec - 100, fact.id);
 
     const afterResults = factsDb.search("Ephemeral gadget wombat", 5, { includeExpired: true });
     expect(afterResults.length).toBe(1);

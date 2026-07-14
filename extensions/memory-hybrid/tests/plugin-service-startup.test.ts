@@ -421,11 +421,9 @@ describe("createPluginService stop() — resource cleanup (#57, #58)", () => {
       errorReporting: { enabled: false, consent: false },
     });
     // stop() now closes via permanentClose() (#86), not close() — see closeStorePermanently().
-    const closeSpy = vi
-      .spyOn(ctx.factsDb as InstanceType<typeof FactsDB>, "permanentClose")
-      .mockImplementation(() => {
-        order.push("db-closed");
-      });
+    const closeSpy = vi.spyOn(ctx.factsDb as InstanceType<typeof FactsDB>, "permanentClose").mockImplementation(() => {
+      order.push("db-closed");
+    });
 
     const service = createPluginService(ctx);
     await service.start();

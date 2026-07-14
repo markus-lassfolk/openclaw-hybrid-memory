@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  formatGoalClarityRejection,
-  validateGoalRegisterClarity,
-} from "../services/goal-register-validation.js";
+import { formatGoalClarityRejection, validateGoalRegisterClarity } from "../services/goal-register-validation.js";
 
 describe("goal-register-validation", () => {
   it("rejects vague criteria and suggests improvements", () => {

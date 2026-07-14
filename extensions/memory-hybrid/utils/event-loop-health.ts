@@ -28,7 +28,10 @@ export function resolveEventLoopDegradedThresholdMs(): number {
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_DEGRADED_MS;
 }
 
-export function classifyEventLoopLag(maxLagMs: number | null, thresholdMs = resolveEventLoopDegradedThresholdMs()): EventLoopHealthStatus {
+export function classifyEventLoopLag(
+  maxLagMs: number | null,
+  thresholdMs = resolveEventLoopDegradedThresholdMs(),
+): EventLoopHealthStatus {
   if (maxLagMs === null || !Number.isFinite(maxLagMs)) return "unknown";
   return maxLagMs > thresholdMs ? "degraded" : "healthy";
 }

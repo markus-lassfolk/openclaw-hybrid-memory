@@ -49,9 +49,7 @@ describe("storeFact reports resolveEntityForeignKeys failures (#85)", () => {
     expect(entry.id).toBeTruthy();
     expect(db.getById(entry.id)?.text).toBe("Fact whose entity FK resolution will fail");
 
-    const fkFailureCalls = captureSpy.mock.calls.filter(
-      ([, ctx]) => ctx?.operation === "resolve-entity-foreign-keys",
-    );
+    const fkFailureCalls = captureSpy.mock.calls.filter(([, ctx]) => ctx?.operation === "resolve-entity-foreign-keys");
     expect(fkFailureCalls).toHaveLength(1);
     expect(fkFailureCalls[0][1]).toMatchObject({
       subsystem: "facts-db",
@@ -73,9 +71,7 @@ describe("storeFact reports resolveEntityForeignKeys failures (#85)", () => {
       source: "test",
     });
 
-    const fkFailureCalls = captureSpy.mock.calls.filter(
-      ([, ctx]) => ctx?.operation === "resolve-entity-foreign-keys",
-    );
+    const fkFailureCalls = captureSpy.mock.calls.filter(([, ctx]) => ctx?.operation === "resolve-entity-foreign-keys");
     expect(fkFailureCalls).toHaveLength(0);
   });
 });

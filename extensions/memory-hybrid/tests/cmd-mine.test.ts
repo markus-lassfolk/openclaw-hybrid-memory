@@ -36,11 +36,7 @@ describe("executeMineCommand scope", () => {
   });
 
   it("stores facts under the requested non-global scope instead of always global", async () => {
-    await executeMineCommand(
-      transcriptPath,
-      { source: "text", scope: "user", scopeTarget: "user-42" },
-      factsDb,
-    );
+    await executeMineCommand(transcriptPath, { source: "text", scope: "user", scopeTarget: "user-42" }, factsDb);
     const rows = factsDb
       .getRawDb()
       .prepare("SELECT scope, scope_target FROM facts WHERE source LIKE 'mine:%'")
@@ -102,10 +98,9 @@ describe("executeMineCommand --undo scope isolation (loop iteration 78 regressio
     // user --scope-target user-42, so it defaults to global — must not touch the user-scoped fact.
     await executeMineCommand("", { undo: batchId }, factsDb);
 
-    const row = factsDb
-      .getRawDb()
-      .prepare("SELECT superseded_at FROM facts WHERE mine_batch_id = ?")
-      .get(batchId) as { superseded_at: number | null };
+    const row = factsDb.getRawDb().prepare("SELECT superseded_at FROM facts WHERE mine_batch_id = ?").get(batchId) as {
+      superseded_at: number | null;
+    };
     expect(row.superseded_at).toBeNull();
   });
 
@@ -119,10 +114,9 @@ describe("executeMineCommand --undo scope isolation (loop iteration 78 regressio
 
     await executeMineCommand("", { undo: batchId, scope: "user", scopeTarget: "user-42" }, factsDb);
 
-    const row = factsDb
-      .getRawDb()
-      .prepare("SELECT superseded_at FROM facts WHERE mine_batch_id = ?")
-      .get(batchId) as { superseded_at: number | null };
+    const row = factsDb.getRawDb().prepare("SELECT superseded_at FROM facts WHERE mine_batch_id = ?").get(batchId) as {
+      superseded_at: number | null;
+    };
     expect(row.superseded_at).not.toBeNull();
   });
 });
@@ -145,10 +139,9 @@ describe("executeMineCommand embed ordering", () => {
       console.warn = warnSpy;
     }
 
-    const row = factsDb
-      .getRawDb()
-      .prepare("SELECT embedding_model FROM facts WHERE source LIKE 'mine:%'")
-      .get() as { embedding_model: string | null } | undefined;
+    const row = factsDb.getRawDb().prepare("SELECT embedding_model FROM facts WHERE source LIKE 'mine:%'").get() as
+      | { embedding_model: string | null }
+      | undefined;
     expect(row?.embedding_model ?? null).toBeNull();
   });
 
@@ -165,10 +158,9 @@ describe("executeMineCommand embed ordering", () => {
 
     await executeMineCommand(transcriptPath, { source: "text", embed: true }, factsDb, vectorDb, embeddings);
 
-    const row = factsDb
-      .getRawDb()
-      .prepare("SELECT id, embedding_model FROM facts WHERE source LIKE 'mine:%'")
-      .get() as { id: string; embedding_model: string | null } | undefined;
+    const row = factsDb.getRawDb().prepare("SELECT id, embedding_model FROM facts WHERE source LIKE 'mine:%'").get() as
+      | { id: string; embedding_model: string | null }
+      | undefined;
     expect(row?.embedding_model).toBe("test-model");
     expect(stored).toEqual([row?.id]);
   });

@@ -18,7 +18,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetPluginRegistrationStateForTests, runtimeRef } from "../setup/register-plugin.js";
-import { type FullStackApi, getFullStackConfig, makeFullStackApi, registerFullPlugin } from "./helpers/comprehensive-e2e-harness.js";
+import {
+  type FullStackApi,
+  getFullStackConfig,
+  makeFullStackApi,
+  registerFullPlugin,
+} from "./helpers/comprehensive-e2e-harness.js";
 
 vi.mock("../setup/reregister-policy.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../setup/reregister-policy.js")>();

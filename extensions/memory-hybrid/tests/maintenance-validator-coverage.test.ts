@@ -159,7 +159,14 @@ describe("maintenance validator coverage registry", () => {
     const semanticOnly: ExitValidationResult = {
       maintenanceStatus: "failed",
       semanticStatus: "semantic_fail",
-      steps: [{ timestamp: "2026-01-01T00:00:00Z", step: "reflect-rules", exitCode: 0, line: "2026-01-01T00:00:00Z reflect-rules exit=0" }],
+      steps: [
+        {
+          timestamp: "2026-01-01T00:00:00Z",
+          step: "reflect-rules",
+          exitCode: 0,
+          line: "2026-01-01T00:00:00Z reflect-rules exit=0",
+        },
+      ],
       missingSteps: [],
       failedSteps: [],
       guardUpdated: false,
@@ -168,7 +175,14 @@ describe("maintenance validator coverage registry", () => {
     };
     const mechanical: ExitValidationResult = {
       ...semanticOnly,
-      failedSteps: [{ timestamp: "2026-01-01T00:00:00Z", step: "distill", exitCode: 1, line: "2026-01-01T00:00:00Z distill exit=1" }],
+      failedSteps: [
+        {
+          timestamp: "2026-01-01T00:00:00Z",
+          step: "distill",
+          exitCode: 1,
+          line: "2026-01-01T00:00:00Z distill exit=1",
+        },
+      ],
       reportableIssues: [],
     };
     const partial: ExitValidationResult = {

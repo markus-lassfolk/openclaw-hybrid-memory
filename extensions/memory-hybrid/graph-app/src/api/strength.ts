@@ -36,7 +36,7 @@ export function estimateStrength(f: StrengthInputs): number {
   const bodyLen = f.textLength ?? 100;
   const lengthNorm = Math.max(0.3, 1 / (1 + 0.5 * Math.log2(Math.max(bodyLen / 500, 1))));
   // freqBoost = min(0.10, log1p((recallCount+1 revisions → 2*recallCount) ) * 0.03)
-  const freqSignal = Math.max(0, (f.recallCount ?? 0)) * 2;
+  const freqSignal = Math.max(0, f.recallCount ?? 0) * 2;
   const freqBoost = Math.min(0.1, Math.log1p(freqSignal) * 0.03);
   const pinBoost = f.pinned ? 0.3 : 0;
   // qualityMult defaults to 1.0 (quality 0.5) — omitted.

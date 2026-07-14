@@ -11,7 +11,12 @@ const { execFileSync } = require("node:child_process");
 const root = path.resolve(__dirname, "..");
 const pkgPath = path.join(root, "package.json");
 const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-const requiredRuntimeDeps = ["@lancedb/lancedb"];
+// Runtime deps that MUST be declared as direct dependencies (not optional/peer):
+// - @lancedb/lancedb: native vector store.
+// - apache-arrow: peer dependency of @lancedb/lancedb@0.31 (>=15 <=18.1). We import
+//   it only transitively, so npm never installs it unless we declare it — a fresh
+//   install then fails at runtime with "Cannot find module 'apache-arrow'" (issue #2116).
+const requiredRuntimeDeps = ["@lancedb/lancedb", "apache-arrow"];
 let failed = false;
 
 // 0. Compiled runtime artifacts (issue #1171)
@@ -153,6 +158,112 @@ for (const dep of requiredRuntimeDeps) {
 }
 if (!depsCheckFailed) {
   console.log("OK: required native runtime dependencies are declared correctly");
+}
+
+// 1d. Version parity (issue #2115): package.json is the single source of truth;
+// openclaw.plugin.json (read by the OpenClaw host) and the installer package must
+// match it, or `plugins inspect` contradicts `hybrid-mem version`. Delegates to the
+// same sync script the repo uses, in --check mode (no writes).
+try {
+  execFileSync(process.execPath, [path.join(root, "scripts", "sync-plugin-version.cjs"), "--check"], {
+    cwd: root,
+    stdio: "pipe",
+    encoding: "utf8",
+  });
+  console.log("OK: release-version literals are in sync (package.json = openclaw.plugin.json = installer)");
+} catch (e) {
+  const out = [e?.stdout, e?.stderr].filter(Boolean).join("").trim();
+  console.error(out || "FAIL: version parity check failed (run `npm run sync:version`)");
+  failed = true;
+}
+
+// 1e. apache-arrow must satisfy @lancedb/lancedb's declared peer range (issue #2116).
+// Reading the range from the installed lancedb keeps this honest even if lancedb bumps
+// the range in a future upgrade — a mismatched pin would then fail here instead of at
+// a user's runtime.
+try {
+  const declaredArrow = pkg.dependencies?.["apache-arrow"];
+  const lancePkgPath = path.join(root, "node_modules", "@lancedb", "lancedb", "package.json");
+  if (declaredArrow && fs.existsSync(lancePkgPath)) {
+    const lancePkg = JSON.parse(fs.readFileSync(lancePkgPath, "utf8"));
+    const peerRange = lancePkg.peerDependencies?.["apache-arrow"];
+    if (peerRange) {
+      let semver;
+      try {
+        semver = require("semver");
+      } catch {
+        semver = null;
+      }
+      // Our pin is an exact version (e.g. "18.1.0"); check it against the lancedb range.
+      if (semver && semver.valid(declaredArrow) && !semver.satisfies(declaredArrow, peerRange)) {
+        console.error(
+          `FAIL: declared apache-arrow "${declaredArrow}" does not satisfy @lancedb/lancedb peer range "${peerRange}" (issue #2116)`,
+        );
+        failed = true;
+      } else {
+        console.log(`OK: apache-arrow "${declaredArrow}" satisfies @lancedb/lancedb peer range "${peerRange}"`);
+      }
+    }
+  }
+} catch (e) {
+  console.error("FAIL: could not verify apache-arrow vs lancedb peer range:", e instanceof Error ? e.message : String(e));
+  failed = true;
+}
+
+// 1f. Generic packaging best-practice guard (issue #2116, generalized): no installed
+// dependency may have an unmet REQUIRED peer dependency. This is what would have caught
+// apache-arrow before publish — and catches any future peer gap without a hard-coded list.
+try {
+  const nodeModules = path.join(root, "node_modules");
+  const missingPeers = [];
+  const seen = new Set();
+  /** Collect direct dependency package dirs (incl. scoped) that exist on disk. */
+  function depDirs() {
+    const names = Object.keys({ ...(pkg.dependencies || {}), ...(pkg.optionalDependencies || {}) });
+    const dirs = [];
+    for (const name of names) {
+      const dir = path.join(nodeModules, ...name.split("/"));
+      if (fs.existsSync(path.join(dir, "package.json"))) dirs.push({ name, dir });
+    }
+    return dirs;
+  }
+  function isResolvableFromRoot(name) {
+    // Present at the package root (hoisted or direct)?
+    return fs.existsSync(path.join(nodeModules, ...name.split("/"), "package.json"));
+  }
+  for (const { name, dir } of depDirs()) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+    let depPkg;
+    try {
+      depPkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+    } catch {
+      continue;
+    }
+    const peers = depPkg.peerDependencies || {};
+    const meta = depPkg.peerDependenciesMeta || {};
+    for (const peer of Object.keys(peers)) {
+      if (meta[peer]?.optional) continue; // optional peers are fine to omit
+      // A peer satisfied by our own direct deps or hoisted at the root is fine.
+      if (isResolvableFromRoot(peer)) continue;
+      // Peers the consumer is expected to provide (the OpenClaw host, openai, typebox)
+      // are declared as OUR peerDependencies — skip those, the host installs them.
+      if (pkg.peerDependencies?.[peer]) continue;
+      missingPeers.push(`${peer} (required peer of ${name})`);
+    }
+  }
+  if (missingPeers.length > 0) {
+    console.error(
+      "FAIL: installed dependencies have unmet required peer dependencies — declare them as direct dependencies (issue #2116):\n  " +
+        missingPeers.join("\n  "),
+    );
+    failed = true;
+  } else {
+    console.log("OK: no unmet required peer dependencies among installed deps");
+  }
+} catch (e) {
+  console.error("FAIL: peer-dependency completeness check errored:", e instanceof Error ? e.message : String(e));
+  failed = true;
 }
 
 // 1c. npm-shrinkwrap.json should ship with the package, but it must be generated

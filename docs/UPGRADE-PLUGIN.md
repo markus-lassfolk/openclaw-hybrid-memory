@@ -98,6 +98,17 @@ rm -rf ~/.openclaw/npm/projects/openclaw-hybrid-memory
 openclaw gateway stop && openclaw gateway start
 ```
 
+**Reverse case — the managed npm copy is newer (#2117).** If instead a managed
+`npm/projects` install is the newer, canonical copy and an older
+`~/.openclaw/extensions/openclaw-hybrid-memory` copy is the stale leftover, the
+same commands do the opposite thing automatically: `openclaw hybrid-mem doctor`
+reports both paths, both versions, and the winning (canonical) source, and
+`openclaw hybrid-mem doctor --fix` (or `verify --fix`) **quarantines the stale
+extensions copy** to `~/.openclaw/.cache/openclaw-hybrid-memory.removed-duplicate-<ts>`
+(preserved, not deleted). `hybrid-mem upgrade` does the same when it detects the
+npm-project copy is newer than the copy it just installed. Restart the gateway
+afterward so it loads the single remaining copy.
+
 ---
 
 ## When "plugin not found" blocks install
@@ -302,6 +313,17 @@ openclaw hybrid-mem verify --fix       # removes the redundant npm/projects tree
 rm -rf ~/.openclaw/npm/projects/openclaw-hybrid-memory
 openclaw gateway stop && openclaw gateway start
 ```
+
+**Reverse case — the managed npm copy is newer (#2117).** If instead a managed
+`npm/projects` install is the newer, canonical copy and an older
+`~/.openclaw/extensions/openclaw-hybrid-memory` copy is the stale leftover, the
+same commands do the opposite thing automatically: `openclaw hybrid-mem doctor`
+reports both paths, both versions, and the winning (canonical) source, and
+`openclaw hybrid-mem doctor --fix` (or `verify --fix`) **quarantines the stale
+extensions copy** to `~/.openclaw/.cache/openclaw-hybrid-memory.removed-duplicate-<ts>`
+(preserved, not deleted). `hybrid-mem upgrade` does the same when it detects the
+npm-project copy is newer than the copy it just installed. Restart the gateway
+afterward so it loads the single remaining copy.
 
 ---
 

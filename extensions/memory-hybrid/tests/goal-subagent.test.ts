@@ -58,7 +58,11 @@ describe("updateGoalOnSubagentEnd concurrency", () => {
 
   it("does not lose a concurrent consecutiveFailures increment from a parallel failure", async () => {
     dir = await mkdtemp(join(tmpdir(), "goal-subagent-race-fail-"));
-    const goal = await createGoal(dir, { label: "race_fail_goal", description: "d", acceptanceCriteria: ["a"] }, defaults);
+    const goal = await createGoal(
+      dir,
+      { label: "race_fail_goal", description: "d", acceptanceCriteria: ["a"] },
+      defaults,
+    );
     await linkSubagentToGoal(dir, goal.id, { label: "task-a", sessionKey: "session-a", status: "in_progress" });
     await linkSubagentToGoal(dir, goal.id, { label: "task-b", sessionKey: "session-b", status: "in_progress" });
 
@@ -88,7 +92,11 @@ describe("goal-subagent TOCTOU terminal-status re-check (#37)", () => {
 
   it("linkSubagentToGoal does not resurrect a goal terminated between the pre-check read and the lock", async () => {
     dir = await mkdtemp(join(tmpdir(), "goal-subagent-toctou-link-"));
-    const goal = await createGoal(dir, { label: "toctou_link_goal", description: "d", acceptanceCriteria: ["a"] }, defaults);
+    const goal = await createGoal(
+      dir,
+      { label: "toctou_link_goal", description: "d", acceptanceCriteria: ["a"] },
+      defaults,
+    );
 
     // Simulate a concurrent goal_complete landing between linkSubagentToGoal's pre-lock
     // readGoal() and its updateGoal() call: the spy returns the STALE (still-active) snapshot,
@@ -97,12 +105,17 @@ describe("goal-subagent TOCTOU terminal-status re-check (#37)", () => {
     const readGoalSpy = vi.spyOn(goalRegistry, "readGoal");
     readGoalSpy.mockImplementationOnce(async (goalsDir, id) => {
       const stale = await goalRegistry.readGoal(goalsDir, id);
-      await goalRegistry.updateGoal(goalsDir, id, { status: "completed" }, {
-        timestamp: new Date().toISOString(),
-        action: "completed",
-        detail: "concurrent completion",
-        actor: "user",
-      });
+      await goalRegistry.updateGoal(
+        goalsDir,
+        id,
+        { status: "completed" },
+        {
+          timestamp: new Date().toISOString(),
+          action: "completed",
+          detail: "concurrent completion",
+          actor: "user",
+        },
+      );
       return stale;
     });
 
@@ -127,12 +140,17 @@ describe("goal-subagent TOCTOU terminal-status re-check (#37)", () => {
     const readGoalSpy = vi.spyOn(goalRegistry, "readGoal");
     readGoalSpy.mockImplementationOnce(async (goalsDir, id) => {
       const stale = await goalRegistry.readGoal(goalsDir, id);
-      await goalRegistry.updateGoal(goalsDir, id, { status: "abandoned" }, {
-        timestamp: new Date().toISOString(),
-        action: "abandoned",
-        detail: "concurrent abandonment",
-        actor: "user",
-      });
+      await goalRegistry.updateGoal(
+        goalsDir,
+        id,
+        { status: "abandoned" },
+        {
+          timestamp: new Date().toISOString(),
+          action: "abandoned",
+          detail: "concurrent abandonment",
+          actor: "user",
+        },
+      );
       return stale;
     });
 
@@ -151,18 +169,27 @@ describe("goal-subagent TOCTOU terminal-status re-check (#37)", () => {
 
   it("updateGoalOnSubagentEnd does not resurrect a goal terminated between the pre-check read and the lock", async () => {
     dir = await mkdtemp(join(tmpdir(), "goal-subagent-toctou-end-"));
-    const goal = await createGoal(dir, { label: "toctou_end_goal", description: "d", acceptanceCriteria: ["a"] }, defaults);
+    const goal = await createGoal(
+      dir,
+      { label: "toctou_end_goal", description: "d", acceptanceCriteria: ["a"] },
+      defaults,
+    );
     await linkSubagentToGoal(dir, goal.id, { label: "task-a", sessionKey: "session-a", status: "in_progress" });
 
     const listActiveGoalsSpy = vi.spyOn(goalRegistry, "listActiveGoals");
     listActiveGoalsSpy.mockImplementationOnce(async (goalsDir) => {
       const stale = await goalRegistry.listActiveGoals(goalsDir);
-      await goalRegistry.updateGoal(goalsDir, goal.id, { status: "failed" }, {
-        timestamp: new Date().toISOString(),
-        action: "failed",
-        detail: "concurrent failure",
-        actor: "user",
-      });
+      await goalRegistry.updateGoal(
+        goalsDir,
+        goal.id,
+        { status: "failed" },
+        {
+          timestamp: new Date().toISOString(),
+          action: "failed",
+          detail: "concurrent failure",
+          actor: "user",
+        },
+      );
       return stale;
     });
 

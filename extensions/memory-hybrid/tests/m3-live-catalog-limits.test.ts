@@ -90,7 +90,9 @@ live("live MiniMax M3 catalog limits", () => {
       300_000,
     );
     expect(fail.status).toBe(400);
-    expect(fail.json.error?.message ?? fail.json.base_resp?.status_msg ?? "").toMatch(/invalid params|context window exceeds limit/i);
+    expect(fail.json.error?.message ?? fail.json.base_resp?.status_msg ?? "").toMatch(
+      /invalid params|context window exceeds limit/i,
+    );
   }, 600_000);
 
   it("rejects provider-prefixed model id on direct api.minimax.io (gateway strips prefix)", async () => {

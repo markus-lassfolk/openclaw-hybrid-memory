@@ -250,7 +250,10 @@ export function formatManualUpgradeFallback(version: string): string {
   return `When openclaw hybrid-mem is unavailable (invalid plugin config), run: ${STANDALONE_UPGRADE_CMD} ${version}. See ${MANUAL_UPGRADE_DOC_URL}`;
 }
 
-export function runStandaloneUpgradeInstall(version: string, extensionsParentDir: string): { ok: boolean; error?: string } {
+export function runStandaloneUpgradeInstall(
+  version: string,
+  extensionsParentDir: string,
+): { ok: boolean; error?: string } {
   const r = spawnSync(npxExecutable(), ["-y", STANDALONE_UPGRADE_PACKAGE, version], {
     stdio: "inherit",
     cwd: homedir(),

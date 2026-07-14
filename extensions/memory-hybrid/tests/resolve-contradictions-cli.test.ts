@@ -941,10 +941,9 @@ describe("resolve-contradictions CLI contract mode", () => {
       const mem = makeProgram(makeBindings({ runResolveContradictionsAuto }));
       vi.spyOn(console, "log").mockImplementation(() => {});
 
-      await mem.parseAsync(
-        ["resolve-contradictions", "--auto", "--apply", "--degraded-ambiguous-threshold", "1"],
-        { from: "user" },
-      );
+      await mem.parseAsync(["resolve-contradictions", "--auto", "--apply", "--degraded-ambiguous-threshold", "1"], {
+        from: "user",
+      });
 
       expect(readConsecutiveNoProgressRuns(tmpHome)).toBe(1);
     } finally {

@@ -364,7 +364,9 @@ describe("reregister-policy closed donor handle guard", () => {
   it("rejects reuse when the donor vector DB is closed", () => {
     const api = { resolvePath: (p: string) => `/home/markus/.openclaw/${p}` };
     const cfg = minimalCfg();
-    expect(canReuseDatabasesOnReregister(runtimeWithStores(cfg, api, { vectorDb: vector(false) }), cfg, api)).toBe(false);
+    expect(canReuseDatabasesOnReregister(runtimeWithStores(cfg, api, { vectorDb: vector(false) }), cfg, api)).toBe(
+      false,
+    );
   });
 
   it("rejects reuse when the enabled credentials vault is closed", () => {
@@ -374,6 +376,8 @@ describe("reregister-policy closed donor handle guard", () => {
       enabled: true,
       encryptionKey: "k",
     };
-    expect(canReuseDatabasesOnReregister(runtimeWithStores(cfg, api, { credentialsDb: store(false) }), cfg, api)).toBe(false);
+    expect(canReuseDatabasesOnReregister(runtimeWithStores(cfg, api, { credentialsDb: store(false) }), cfg, api)).toBe(
+      false,
+    );
   });
 });

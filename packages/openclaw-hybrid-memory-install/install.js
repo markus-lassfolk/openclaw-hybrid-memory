@@ -21,7 +21,10 @@ const extDir =
 	path.join(os.homedir(), ".openclaw", "extensions");
 const pluginDir = path.join(extDir, "openclaw-hybrid-memory");
 const tmpDir = path.join(os.tmpdir(), `openclaw-plugin-install-${process.pid}`);
-const requiredRuntimeDependencies = ["@lancedb/lancedb"];
+// apache-arrow is a peer dependency of @lancedb/lancedb@0.31 that npm does not
+// auto-install; declare it here so the installer installs it explicitly if the
+// staged tree is missing it (issue #2116).
+const requiredRuntimeDependencies = ["@lancedb/lancedb", "apache-arrow"];
 
 function run(cmd, args = [], opts = {}) {
 	const isWindows = process.platform === "win32";

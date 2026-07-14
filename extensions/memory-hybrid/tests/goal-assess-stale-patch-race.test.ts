@@ -54,11 +54,7 @@ describe("goal_assess stale-patch write race", () => {
   });
 
   it("does not clobber a concurrent writer's assessmentCount (function-form patch re-reads fresh state)", async () => {
-    const g = await createGoal(
-      goalsDir,
-      { label: "race-goal", description: "d", acceptanceCriteria: ["a"] },
-      defaults,
-    );
+    const g = await createGoal(goalsDir, { label: "race-goal", description: "d", acceptanceCriteria: ["a"] }, defaults);
     expect(g.assessmentCount).toBe(0);
 
     const cfg = hybridConfigSchema.parse({
@@ -125,11 +121,7 @@ describe("goal_assess stale-patch write race", () => {
   });
 
   it("still trips the circuit breaker and blocks the goal on repeated identical blockers", async () => {
-    const g = await createGoal(
-      goalsDir,
-      { label: "cb-goal", description: "d", acceptanceCriteria: ["a"] },
-      defaults,
-    );
+    const g = await createGoal(goalsDir, { label: "cb-goal", description: "d", acceptanceCriteria: ["a"] }, defaults);
 
     const cfg = hybridConfigSchema.parse({
       embedding: { apiKey: "sk-test-key-that-is-long-enough-to-pass", model: "text-embedding-3-small" },
@@ -316,12 +308,17 @@ describe("goal_assess stale-patch write race", () => {
     const resolveSpy = vi.spyOn(goalStewardship, "resolveGoalIdResult");
     resolveSpy.mockImplementationOnce(async (dir, idOrLabel) => {
       const staleResult = await goalStewardship.resolveGoalIdResult(dir, idOrLabel);
-      await goalStewardship.updateGoal(goalsDir, g.id, { assessmentCount: 1 }, {
-        timestamp: new Date().toISOString(),
-        action: "assessed",
-        detail: "concurrent call",
-        actor: "steward",
-      });
+      await goalStewardship.updateGoal(
+        goalsDir,
+        g.id,
+        { assessmentCount: 1 },
+        {
+          timestamp: new Date().toISOString(),
+          action: "assessed",
+          detail: "concurrent call",
+          actor: "steward",
+        },
+      );
       return staleResult;
     });
 
@@ -385,12 +382,17 @@ describe("goal_assess stale-patch write race", () => {
     const resolveSpy = vi.spyOn(goalStewardship, "resolveGoalIdResult");
     resolveSpy.mockImplementationOnce(async (dir, idOrLabel) => {
       const staleResult = await goalStewardship.resolveGoalIdResult(dir, idOrLabel);
-      await goalStewardship.updateGoal(goalsDir, g.id, { dispatchCount: 1 }, {
-        timestamp: new Date().toISOString(),
-        action: "assessed",
-        detail: "concurrent dispatch",
-        actor: "steward",
-      });
+      await goalStewardship.updateGoal(
+        goalsDir,
+        g.id,
+        { dispatchCount: 1 },
+        {
+          timestamp: new Date().toISOString(),
+          action: "assessed",
+          detail: "concurrent dispatch",
+          actor: "steward",
+        },
+      );
       return staleResult;
     });
 

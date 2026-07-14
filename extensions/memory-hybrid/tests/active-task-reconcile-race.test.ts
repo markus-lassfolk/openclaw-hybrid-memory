@@ -20,7 +20,11 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { reconcileActiveTaskInProgressSessions, writeActiveTaskFile, readActiveTaskFile } from "../services/active-task.js";
+import {
+  reconcileActiveTaskInProgressSessions,
+  writeActiveTaskFile,
+  readActiveTaskFile,
+} from "../services/active-task.js";
 import { ActiveTaskReconcileProgressReporter } from "../services/active-task-reconcile-progress.js";
 
 describe("reconcileActiveTaskInProgressSessions concurrent-write race (loop iteration 66 regression)", () => {

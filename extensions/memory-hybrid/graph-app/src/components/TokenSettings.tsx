@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchRequiresToken, getToken, setToken } from "../api/client";
+import { useGraphStore } from "../store/graphStore";
 
 /**
  * When the dashboard is configured with a token, mutations require it. This surfaces a small
@@ -11,14 +12,17 @@ export function TokenSettings() {
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState(getToken());
   const [saved, setSaved] = useState(Boolean(getToken()));
+  const addActivity = useGraphStore((s) => s.addActivity);
 
   useEffect(() => {
-    fetchRequiresToken().then((r) => {
-      setRequires(r);
-      // Auto-open the prompt if a token is needed but none is set yet.
-      if (r && !getToken()) setOpen(true);
-    });
-  }, []);
+    fetchRequiresToken()
+      .then((r) => {
+        setRequires(r);
+        // Auto-open the prompt if a token is needed but none is set yet.
+        if (r && !getToken()) setOpen(true);
+      })
+      .catch((e) => addActivity("update", `token check failed — ${e instanceof Error ? e.message : String(e)}`));
+  }, [addActivity]);
 
   if (!requires) return null;
 

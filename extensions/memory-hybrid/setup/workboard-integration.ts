@@ -172,9 +172,7 @@ export async function armWorkboardIntegration(ctx: WorkboardIntegrationContext):
       verbose: uiIntegrationVerbose,
     });
 
-    const probeAttempts = usesColdStartProbeStrategy(connectLabel)
-      ? WORKBOARD_STARTUP_PROBE_MAX_ATTEMPTS
-      : 1;
+    const probeAttempts = usesColdStartProbeStrategy(connectLabel) ? WORKBOARD_STARTUP_PROBE_MAX_ATTEMPTS : 1;
     const probeBackoff = usesColdStartProbeStrategy(connectLabel) ? WORKBOARD_STARTUP_PROBE_BACKOFF_MS : 0;
     const available = await probeWorkboardAdapterAvailable(adapter, {
       maxAttempts: probeAttempts,
@@ -252,9 +250,7 @@ function scheduleWorkboardDeferredIntegration(ctx: WorkboardIntegrationContext, 
     return;
   }
 
-  api.logger.debug?.(
-    `memory-hybrid: Workboard ${connectLabel} probe deferred ${deferMs}ms (cold gateway start)`,
-  );
+  api.logger.debug?.(`memory-hybrid: Workboard ${connectLabel} probe deferred ${deferMs}ms (cold gateway start)`);
   timers.workboardStartupTimeout = {
     value: setTimeout(() => {
       timers.workboardStartupTimeout!.value = null;
@@ -281,9 +277,7 @@ export function createWorkboardStartupShouldAbort(
   bootRegistrationGeneration: number,
   shuttingDownRef: { value: boolean },
 ): () => boolean {
-  return () =>
-    shuttingDownRef.value ||
-    isRegistrationSuperseded(bootRegistrationGeneration);
+  return () => shuttingDownRef.value || isRegistrationSuperseded(bootRegistrationGeneration);
 }
 
 /** Capture the registration generation when plugin-service.start() schedules Workboard. */

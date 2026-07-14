@@ -46,20 +46,14 @@ describe("printVersionFlag", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     printVersionFlag(buildVersionReport("2026.6.292", "2026.6.292", "2026.6.300"));
     expect(log).toHaveBeenNthCalledWith(1, "openclaw-hybrid-memory 2026.6.292");
-    expect(log).toHaveBeenNthCalledWith(
-      2,
-      "Update available: npm 2026.6.300 (run: openclaw hybrid-mem upgrade)",
-    );
+    expect(log).toHaveBeenNthCalledWith(2, "Update available: npm 2026.6.300 (run: openclaw hybrid-mem upgrade)");
     log.mockRestore();
   });
 
   it("prints GitHub update notice when only GitHub is newer", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     printVersionFlag(buildVersionReport("2026.6.292", "2026.6.300", "2026.6.292"));
-    expect(log).toHaveBeenNthCalledWith(
-      2,
-      "Update available: GitHub 2026.6.300 (run: openclaw hybrid-mem upgrade)",
-    );
+    expect(log).toHaveBeenNthCalledWith(2, "Update available: GitHub 2026.6.300 (run: openclaw hybrid-mem upgrade)");
     log.mockRestore();
   });
 
@@ -155,9 +149,7 @@ describe("registerHybridMemVersionFlag (#2012)", () => {
     const mem = program.command("hybrid-mem");
     registerHybridMemVersionFlag(mem);
 
-    await expect(program.parseAsync(["hybrid-mem", "--version", "--json"], { from: "user" })).rejects.toThrow(
-      "exit:0",
-    );
+    await expect(program.parseAsync(["hybrid-mem", "--version", "--json"], { from: "user" })).rejects.toThrow("exit:0");
 
     const payload = JSON.parse(String(log.mock.calls[0]?.[0]));
     expect(payload.installed).toBe(versionInfo.pluginVersion);

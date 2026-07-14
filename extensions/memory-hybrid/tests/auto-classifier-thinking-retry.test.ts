@@ -347,7 +347,6 @@ describe("auto-classify MiniMax thinking-only retry (#2006)", () => {
     expect(requestLog[1].thinking).toEqual({ type: "disabled" });
   });
 
-
   it("returns batchFailures when JSON array length mismatches fact count", async () => {
     factsDb = makeFactsDb(tmpDir, 5);
     const requestLog: Array<{ maxTokens?: number; thinking?: { type?: string }; model?: string }> = [];

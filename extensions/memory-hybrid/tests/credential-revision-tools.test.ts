@@ -106,7 +106,11 @@ function getTool(name: string): { execute: ToolExecuteFn } {
 
 describe("credential_store — retention note (#2104)", () => {
   it("mentions revision retention when overwriting an existing credential", async () => {
-    await getTool("credential_store").execute("c1", { service: "doris-gateway", type: "other", value: "192.168.1.195" });
+    await getTool("credential_store").execute("c1", {
+      service: "doris-gateway",
+      type: "other",
+      value: "192.168.1.195",
+    });
     const result = await getTool("credential_store").execute("c2", {
       service: "doris-gateway",
       type: "other",
@@ -226,7 +230,9 @@ describe("credential_revision_purge (#2104)", () => {
 
   it("throws when neither revision nor all is specified", async () => {
     await getTool("credential_store").execute("c1", { service: "svc", type: "token", value: "v1" });
-    await expect(getTool("credential_revision_purge").execute("p1", { service: "svc", type: "token" })).rejects.toThrow();
+    await expect(
+      getTool("credential_revision_purge").execute("p1", { service: "svc", type: "token" }),
+    ).rejects.toThrow();
   });
 });
 

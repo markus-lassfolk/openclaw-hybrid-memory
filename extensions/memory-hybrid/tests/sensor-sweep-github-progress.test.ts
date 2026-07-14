@@ -52,15 +52,12 @@ describe("sweepGitHub --verbose progress", () => {
         return;
       }
       if (args[0] === "pr" && args[1] === "list") {
-        cb(
-          null,
-          {
-            stdout: JSON.stringify([
-              { number: 1, title: "PR one", state: "open", url: "https://example/1" },
-              { number: 2, title: "PR two", state: "open", url: "https://example/2" },
-            ]),
-          },
-        );
+        cb(null, {
+          stdout: JSON.stringify([
+            { number: 1, title: "PR one", state: "open", url: "https://example/1" },
+            { number: 2, title: "PR two", state: "open", url: "https://example/2" },
+          ]),
+        });
         return;
       }
       if (args[0] === "pr" && args[1] === "checks") {

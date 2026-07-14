@@ -280,8 +280,7 @@ async function completeClassifyJsonArray(
   };
 
   const needsRetry = (parsed: unknown[] | null): boolean =>
-    parsed === null ||
-    (expectedLength !== undefined && (parsed.length !== expectedLength));
+    parsed === null || (expectedLength !== undefined && parsed.length !== expectedLength);
 
   let raw = await chatCompleteWithRetry({ ...baseOpts, maxTokens, label });
   let parsed = parseLlmJsonArrayResponse(raw);

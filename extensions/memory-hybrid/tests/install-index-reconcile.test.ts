@@ -324,7 +324,9 @@ describe("install-index reconciliation (#2008)", () => {
     // silently lost" backup disappear. (The test fixture's own stateDir happens to live under
     // tmpdir() too, so this asserts colocation with legacyPath specifically, not "outside /tmp".)
     if (result.backupPath) {
-      expect(dirname(result.backupPath)).toBe(join(dirname(legacyPath), "openclaw-hybrid-memory-install-index-backups"));
+      expect(dirname(result.backupPath)).toBe(
+        join(dirname(legacyPath), "openclaw-hybrid-memory-install-index-backups"),
+      );
     }
   });
 

@@ -46,7 +46,9 @@ describe("detectEpisodeFailureContradictions (#1976)", () => {
   });
 
   it("stripLeadingSqlAnd removes AND without requiring a leading space", () => {
-    expect(stripLeadingSqlAnd("AND ( scope = 'global' OR scope = 'agent' )")).toBe("( scope = 'global' OR scope = 'agent' )");
+    expect(stripLeadingSqlAnd("AND ( scope = 'global' OR scope = 'agent' )")).toBe(
+      "( scope = 'global' OR scope = 'agent' )",
+    );
   });
 
   it("does not throw near AND syntax error when agent scope filter is applied", () => {

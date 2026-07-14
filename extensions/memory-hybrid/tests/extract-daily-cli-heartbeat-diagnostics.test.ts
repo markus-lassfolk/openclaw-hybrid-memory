@@ -213,9 +213,7 @@ describe("runExtractDailyForCli — heartbeat + no-op-sink diagnostics survival"
       value: "the old backup folder for photos",
       source: "conversation",
     });
-    writeTodayMemoryFile(dir, [
-      "I prefer to back up photos to /home/alice/Pictures every night automatically.",
-    ]);
+    writeTodayMemoryFile(dir, ["I prefer to back up photos to /home/alice/Pictures every night automatically."]);
     const logger = { info: vi.fn(), warn: vi.fn() };
 
     const ctx = makeCtx(db, logger, async () => [0.1]);
@@ -225,7 +223,9 @@ describe("runExtractDailyForCli — heartbeat + no-op-sink diagnostics survival"
     // A fast, working classification response avoids the adaptive-retry backoff path a broken
     // openai stub would otherwise trigger (which hangs under fake timers in this test).
     ctx.openai = {
-      chat: { completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content: "ADD | test" } }] }) } },
+      chat: {
+        completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content: "ADD | test" } }] }) },
+      },
     } as unknown as HandlerContext["openai"];
     const vectorDbStore = (ctx.vectorDb as unknown as { store: ReturnType<typeof vi.fn> }).store;
 

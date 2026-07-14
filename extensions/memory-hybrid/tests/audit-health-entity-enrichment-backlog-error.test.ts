@@ -24,9 +24,9 @@ describe("buildAuditHealthReport entityEnrichmentBacklog error handling", () => 
 
     expect(report.entityEnrichmentBacklog).toBeNull();
     expect(report.errorCount).toBeGreaterThan(0);
-    expect(report.errors.some((e) => e.section === "entityEnrichmentBacklog" && e.message.includes("backlog query boom"))).toBe(
-      true,
-    );
+    expect(
+      report.errors.some((e) => e.section === "entityEnrichmentBacklog" && e.message.includes("backlog query boom")),
+    ).toBe(true);
 
     db.close();
   });

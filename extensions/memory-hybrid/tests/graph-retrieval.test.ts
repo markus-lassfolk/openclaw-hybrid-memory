@@ -1013,7 +1013,11 @@ describe("expandGraph: excludes superseded facts (mock DB)", () => {
   it("iterative-BFS path (no expandGraphWithCTE): drops a superseded fact from expansion results", () => {
     const a = makeEntry("a");
     const b = makeEntry("b", { supersededAt: 1_700_000_500 });
-    const mockDb = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
+    const mockDb = buildMockDb(
+      [a, b],
+      { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] },
+      {},
+    );
     const { expandGraphWithCTE: _unused, ...dbWithoutCTE } = mockDb;
     const { results: result } = expandGraph(dbWithoutCTE, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
     expect(result.map((r) => r.factId)).not.toContain("b");

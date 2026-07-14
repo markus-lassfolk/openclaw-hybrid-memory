@@ -69,9 +69,7 @@ export function registerTaskHygieneTools(ctx: TaskHygieneToolsContext, api: Claw
       description:
         "List active tasks from the configured ledger (facts or ACTIVE-TASKS.md). Use instead of memory_recall for tactical task state.",
       parameters: Type.Object({
-        include_stale: Type.Optional(
-          Type.Boolean({ description: "When true, include stale tasks (default: true)." }),
-        ),
+        include_stale: Type.Optional(Type.Boolean({ description: "When true, include stale tasks (default: true)." })),
       }),
       async execute(_id: string, params: Record<string, unknown>) {
         if (!cfg.activeTask.enabled) return disabled();
@@ -86,7 +84,9 @@ export function registerTaskHygieneTools(ctx: TaskHygieneToolsContext, api: Claw
           );
           if (!loaded) {
             return {
-              content: [{ type: "text", text: "Active task ledger unavailable (facts DB required when ledger=facts)." }],
+              content: [
+                { type: "text", text: "Active task ledger unavailable (facts DB required when ledger=facts)." },
+              ],
               details: { error: "ledger_unavailable" },
             };
           }

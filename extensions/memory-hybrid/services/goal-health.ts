@@ -278,9 +278,7 @@ function fetchStatusViaPinnedIp(parsed: URL, ip: string, signal: AbortSignal): P
   });
 }
 
-type VerificationHostResolution =
-  | { allowed: false; blocked: string }
-  | { allowed: true; blocked: null; ip: string };
+type VerificationHostResolution = { allowed: false; blocked: string } | { allowed: true; blocked: null; ip: string };
 
 async function resolveVerificationHost(hostname: string): Promise<VerificationHostResolution> {
   const h = hostname
@@ -514,7 +512,9 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
             ),
             consecutiveFailures: fresh.consecutiveFailures + 1,
             status: "blocked",
-            currentBlockers: fresh.currentBlockers.includes(reason) ? fresh.currentBlockers : [...fresh.currentBlockers, reason],
+            currentBlockers: fresh.currentBlockers.includes(reason)
+              ? fresh.currentBlockers
+              : [...fresh.currentBlockers, reason],
             lastOutcome: reason,
           }),
           { timestamp: nowIso(), action: "dispatch-metadata-missing", detail: reason, actor: "watchdog" },

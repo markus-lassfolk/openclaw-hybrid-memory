@@ -158,18 +158,18 @@ function vectorlessWhereClause(): string {
 /** Count of active, unstructured facts — the population diagnostics should compare against LanceDB. */
 export function countExpectedVectorFacts(db: DatabaseSync): number {
   const nowSec = Math.floor(Date.now() / 1000);
-  const row = db.prepare(`SELECT COUNT(*) AS cnt FROM facts f WHERE ${activeUnstructuredFactWhereClause()}`).get(
-    nowSec,
-  ) as { cnt: number } | undefined;
+  const row = db
+    .prepare(`SELECT COUNT(*) AS cnt FROM facts f WHERE ${activeUnstructuredFactWhereClause()}`)
+    .get(nowSec) as { cnt: number } | undefined;
   return Number(row?.cnt ?? 0);
 }
 
 /** IDs of active, unstructured facts — the population diagnostics should compare against LanceDB. */
 export function listExpectedVectorFactIds(db: DatabaseSync): string[] {
   const nowSec = Math.floor(Date.now() / 1000);
-  const rows = db.prepare(`SELECT f.id AS id FROM facts f WHERE ${activeUnstructuredFactWhereClause()}`).all(
-    nowSec,
-  ) as Array<{ id: string }>;
+  const rows = db
+    .prepare(`SELECT f.id AS id FROM facts f WHERE ${activeUnstructuredFactWhereClause()}`)
+    .all(nowSec) as Array<{ id: string }>;
   return rows.map((row) => row.id);
 }
 

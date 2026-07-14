@@ -186,7 +186,12 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
         limit: Type.Optional(Type.Number({ description: "Maximum number of results (default: 50)" })),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const { status, severity, tags, limit: limitRaw } = params as {
+        const {
+          status,
+          severity,
+          tags,
+          limit: limitRaw,
+        } = params as {
           status?: IssueStatus[];
           severity?: string[];
           tags?: string[];

@@ -50,7 +50,8 @@ describe("stripThinkingWrapperBlocks (#2006)", () => {
   // --- Unclosed / truncated tags (the #2006 regression) ---
 
   it("strips unclosed <redacted_thinking>... suffix when response is truncated", () => {
-    const raw = '<redacted_thinking>Let me analyze each fact and determine the appropriate category:\n\n1. "Need to revert" ...';
+    const raw =
+      '<redacted_thinking>Let me analyze each fact and determine the appropriate category:\n\n1. "Need to revert" ...';
     expect(stripThinkingWrapperBlocks(raw)).toBe("");
   });
 
@@ -228,11 +229,7 @@ describe("extractItemArray (loop iteration 63 regression)", () => {
     const isFactItem = (item: unknown): item is { text: string } =>
       typeof item === "object" && item !== null && typeof (item as { text?: unknown }).text === "string";
     const raw = [{ text: "solo" }, { items: [{ text: "nested-1" }, { text: "nested-2" }] }];
-    expect(extractItemArray(raw, isFactItem)).toEqual([
-      { text: "solo" },
-      { text: "nested-1" },
-      { text: "nested-2" },
-    ]);
+    expect(extractItemArray(raw, isFactItem)).toEqual([{ text: "solo" }, { text: "nested-1" }, { text: "nested-2" }]);
   });
 });
 

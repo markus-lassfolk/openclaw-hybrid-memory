@@ -274,9 +274,9 @@ describe("extract-reinforcement batch heartbeat (cron silence audit)", () => {
     // Simulate the batch's LLM call blocking for a full heartbeat interval (default 60s) without
     // resolving — this is exactly the silent-hang scenario the audit flagged.
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(
-      logs.some((line) => line.includes("memory-hybrid: extract-reinforcement — still running after 60s")),
-    ).toBe(true);
+    expect(logs.some((line) => line.includes("memory-hybrid: extract-reinforcement — still running after 60s"))).toBe(
+      true,
+    );
 
     resolveCreate?.({
       choices: [

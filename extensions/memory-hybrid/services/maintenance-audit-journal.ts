@@ -152,7 +152,10 @@ export const DEFAULT_STALE_GUARD_MULTIPLIER = 3;
  * (with `staleGuardMultiplier` tolerance for missed/gated cycles) keeps doctor's signal consistent
  * with the rest of the maintenance health model instead of contradicting it.
  */
-export function getStaleMaintenanceJobs(db: DatabaseSync, staleGuardMultiplier = DEFAULT_STALE_GUARD_MULTIPLIER): string[] {
+export function getStaleMaintenanceJobs(
+  db: DatabaseSync,
+  staleGuardMultiplier = DEFAULT_STALE_GUARD_MULTIPLIER,
+): string[] {
   const nowSec = Math.floor(Date.now() / 1000);
   const monitored = new Map(MAINTENANCE_STEPS.map((step) => [step.name, step]));
   const stale: string[] = [];

@@ -245,6 +245,10 @@ function isNumericEpochString(value: string): boolean {
 function parseCompactDateDigits(value: string): number | null {
   const match = /^(\d{4})(\d{2})(\d{2})$/.exec(value);
   if (!match) return null;
-  const ms = dateUtcMsOrNull(Number.parseInt(match[1], 10), Number.parseInt(match[2], 10) - 1, Number.parseInt(match[3], 10));
+  const ms = dateUtcMsOrNull(
+    Number.parseInt(match[1], 10),
+    Number.parseInt(match[2], 10) - 1,
+    Number.parseInt(match[3], 10),
+  );
   return ms == null ? null : Math.floor(ms / 1000);
 }

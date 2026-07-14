@@ -184,8 +184,7 @@ export function registerFactMutationGatewayMethods(ctx: FactMutationGatewayConte
       if (!isValidCategory(category)) {
         return respond(false, undefined, { message: `invalid category "${category}"` });
       }
-      const importance =
-        typeof params.importance === "number" ? Math.max(0, Math.min(1, params.importance)) : 0.5;
+      const importance = typeof params.importance === "number" ? Math.max(0, Math.min(1, params.importance)) : 0.5;
       const entity = typeof params.entity === "string" ? params.entity : null;
       const key = typeof params.key === "string" ? params.key : null;
       const value = typeof params.value === "string" ? params.value : null;

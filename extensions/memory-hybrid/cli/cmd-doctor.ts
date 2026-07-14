@@ -27,11 +27,19 @@ import {
   STORAGE_REPAIR_REMEDIATION,
 } from "../services/storage-sync-diagnostics.js";
 import { getWalCircuitBreakerState } from "../services/wal-helpers.js";
+import { PLUGIN_ID } from "../utils/constants.js";
 import { nowIso } from "../utils/dates.js";
 import { formatBytes, WAL_SIZE_WARN_BYTES } from "../utils/format.js";
+import { resolveOpenclawHomeDir } from "../utils/openclaw-workspace.js";
 import { detectAvailableProviders } from "../utils/provider-detection.js";
 import { withTimeout } from "../utils/timeout.js";
 import { workspaceRootForCli } from "./config-feature-summaries.js";
+import {
+  comparePluginVersions,
+  removeRedundantExtensionsTreeWhenNpmProjectCanonical,
+  removeRedundantNpmProjectTreeWhenExtensionsCanonical,
+} from "./install/install-index-reconcile.js";
+import { readPluginPackageVersion, resolveKnownNpmProjectPluginDir } from "./install/workspace.js";
 import { type Chainable, withExit } from "./shared.js";
 
 /**
@@ -236,6 +244,80 @@ export function registerDoctorCommand(
               status: "warn",
               message: "No embedding provider configured",
               fix: "Run: openclaw hybrid-mem setup --interactive",
+            });
+          }
+
+          // Check 4b: Duplicate plugin install (#2117)
+          // Both ~/.openclaw/extensions/<id> and the managed npm-project copy can be left on
+          // disk after a migration, so the gateway logs "duplicate plugin id detected" and may
+          // read stale metadata from the losing copy. Report both paths, both versions, and the
+          // winning (canonical) source; under --fix, quarantine the stale copy.
+          try {
+            const openclawHome = resolveOpenclawHomeDir();
+            const extensionsPluginDir = join(openclawHome, "extensions", PLUGIN_ID);
+            const npmProjectPluginDir = resolveKnownNpmProjectPluginDir();
+            const extInstalled = existsSync(join(extensionsPluginDir, "openclaw.plugin.json"));
+            const npmInstalled = !!npmProjectPluginDir && existsSync(join(npmProjectPluginDir, "openclaw.plugin.json"));
+
+            if (extInstalled && npmInstalled && npmProjectPluginDir) {
+              const extVer = readPluginPackageVersion(extensionsPluginDir) ?? "<unknown>";
+              const npmVer = readPluginPackageVersion(npmProjectPluginDir) ?? "<unknown>";
+              // OpenClaw's managed npm-project copy wins when it is strictly newer; otherwise the
+              // extensions copy is canonical (mirrors the reconcile guards).
+              const npmNewer =
+                extVer !== "<unknown>" && npmVer !== "<unknown>" && comparePluginVersions(npmVer, extVer) > 0;
+              const winner = npmNewer ? npmProjectPluginDir : extensionsPluginDir;
+              const winnerVer = npmNewer ? npmVer : extVer;
+              const staleDir = npmNewer ? extensionsPluginDir : npmProjectPluginDir;
+              const staleVer = npmNewer ? extVer : npmVer;
+              const baseMessage =
+                `Two discoverable copies of ${PLUGIN_ID}:\n` +
+                `    extensions:  ${extensionsPluginDir} (${extVer})\n` +
+                `    npm-project: ${npmProjectPluginDir} (${npmVer})\n` +
+                `    winning (canonical) source: ${winner} (${winnerVer})`;
+
+              if (opts?.fix) {
+                const result = npmNewer
+                  ? removeRedundantExtensionsTreeWhenNpmProjectCanonical({ extensionsPluginDir, npmProjectPluginDir })
+                  : removeRedundantNpmProjectTreeWhenExtensionsCanonical({ extensionsPluginDir, npmProjectPluginDir });
+                const done = npmNewer
+                  ? (result as { quarantined?: boolean }).quarantined
+                  : (result as { removed?: boolean }).removed;
+                if (done) {
+                  const movedTo = npmNewer
+                    ? (result as { destinationPath?: string }).destinationPath
+                    : `${(result as { removedPath?: string }).removedPath}.redundant-*`;
+                  checks.push({
+                    name: "Plugin install (duplicate id)",
+                    status: "pass",
+                    message: `${baseMessage}\n    → Quarantined stale copy at ${staleDir} (${staleVer}) to ${movedTo}. Restart the gateway to clear the duplicate warning.`,
+                  });
+                } else {
+                  const reason =
+                    (result as { error?: string; skippedReason?: string }).error ??
+                    (result as { skippedReason?: string }).skippedReason ??
+                    "skipped";
+                  checks.push({
+                    name: "Plugin install (duplicate id)",
+                    status: "warn",
+                    message: `${baseMessage}\n    → Could not auto-quarantine the stale copy (${reason}).`,
+                    fix: `Manually move ${staleDir} to ${join(openclawHome, ".cache")} and restart the gateway.`,
+                  });
+                }
+              } else {
+                checks.push({
+                  name: "Plugin install (duplicate id)",
+                  status: "warn",
+                  message: baseMessage,
+                  fix: "Run: openclaw hybrid-mem doctor --fix (quarantines the stale copy), then restart the gateway.",
+                });
+              }
+            }
+          } catch (error) {
+            checks.push({
+              name: "Plugin install (duplicate id)",
+              status: "warn",
+              message: `Could not check for duplicate plugin installs: ${error instanceof Error ? error.message : String(error)}`,
             });
           }
 

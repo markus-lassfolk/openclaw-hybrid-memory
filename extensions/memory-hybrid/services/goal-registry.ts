@@ -330,10 +330,10 @@ function normalizeGoalJson(g: Goal): Goal {
           .map((b) => b.trim())
           .filter(Boolean)
       : [],
-    assessmentCount: typeof g.assessmentCount === "number" && Number.isFinite(g.assessmentCount) ? g.assessmentCount : 0,
+    assessmentCount:
+      typeof g.assessmentCount === "number" && Number.isFinite(g.assessmentCount) ? g.assessmentCount : 0,
     dispatchCount: typeof g.dispatchCount === "number" && Number.isFinite(g.dispatchCount) ? g.dispatchCount : 0,
-    maxAssessments:
-      typeof g.maxAssessments === "number" && Number.isFinite(g.maxAssessments) ? g.maxAssessments : 10,
+    maxAssessments: typeof g.maxAssessments === "number" && Number.isFinite(g.maxAssessments) ? g.maxAssessments : 10,
     maxDispatches: typeof g.maxDispatches === "number" && Number.isFinite(g.maxDispatches) ? g.maxDispatches : 5,
     lastOutcome: typeof g.lastOutcome === "string" ? g.lastOutcome : null,
     lastAssessedAt: typeof g.lastAssessedAt === "string" ? g.lastAssessedAt : null,
@@ -539,9 +539,7 @@ export async function readGoal(goalsDir: string, id: string): Promise<Goal | nul
   try {
     return await readGoalJsonFile(goalsDir, legacyFilename);
   } catch (err) {
-    throw new Error(
-      `Goal file is corrupt or unreadable (${join(goalsDir, legacyFilename)}): ${String(err)}`,
-    );
+    throw new Error(`Goal file is corrupt or unreadable (${join(goalsDir, legacyFilename)}): ${String(err)}`);
   }
 }
 
@@ -845,10 +843,7 @@ export async function resolveGoalIdResult(
   return { ok: false, code: "not_found", message: "Goal not found." };
 }
 
-export async function resolveGoalId(
-  goalsDir: string,
-  idOrLabel: string | undefined | null,
-): Promise<Goal | null> {
+export async function resolveGoalId(goalsDir: string, idOrLabel: string | undefined | null): Promise<Goal | null> {
   const result = await resolveGoalIdResult(goalsDir, idOrLabel);
   return result.ok ? result.goal : null;
 }

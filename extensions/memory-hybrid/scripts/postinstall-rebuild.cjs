@@ -10,7 +10,12 @@ const { execSync } = require("child_process");
 const path = require("path");
 
 const root = path.join(__dirname, "..");
+// Native modules that need a platform rebuild after install.
 const REQUIRED_NATIVE_MODULES = ["@lancedb/lancedb"];
+// Pure-JS runtime modules that must merely be PRESENT (no rebuild). apache-arrow
+// is a peer dependency of @lancedb/lancedb; if an older/oddly-resolved tree left
+// it out, ensure it's installed so the plugin can load (issue #2116).
+const REQUIRED_RUNTIME_MODULES = ["apache-arrow"];
 
 function run(cmd, desc) {
   try {
@@ -60,6 +65,15 @@ for (const moduleName of REQUIRED_NATIVE_MODULES) {
     ok = run(`npm rebuild ${moduleName}`, moduleName) && ok;
   } else {
     console.log(`${moduleName} bindings OK — skipping rebuild`);
+  }
+}
+
+// Pure-JS runtime modules: ensure present, never rebuild.
+for (const moduleName of REQUIRED_RUNTIME_MODULES) {
+  if (isInstalled(moduleName)) {
+    console.log(`${moduleName} present — OK`);
+  } else if (!ensureInstalled(moduleName)) {
+    ok = false;
   }
 }
 

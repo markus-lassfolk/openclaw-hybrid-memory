@@ -58,13 +58,15 @@ export async function executeMineCommand(
     // happens to know a batch id from a different tenant/scope (Issue: cross-tenant supersede).
     const undoScope = opts.scope ?? "global";
     const undoScopeTarget = undoScope === "global" ? null : (opts.scopeTarget?.trim() ?? null);
-    const factIds = (db
-      .prepare(
-        `SELECT id FROM facts WHERE mine_batch_id = ? AND superseded_at IS NULL
+    const factIds = (
+      db
+        .prepare(
+          `SELECT id FROM facts WHERE mine_batch_id = ? AND superseded_at IS NULL
          AND scope = ? AND (scope_target IS ? OR scope_target IS NULL)
          AND id NOT IN (SELECT fact_id FROM verified_facts)`,
-      )
-      .all(opts.undo, undoScope, undoScopeTarget) as Array<{ id: string }>).map((r) => r.id);
+        )
+        .all(opts.undo, undoScope, undoScopeTarget) as Array<{ id: string }>
+    ).map((r) => r.id);
     const result = db
       .prepare(
         `UPDATE facts SET superseded_at = ?, superseded_by = 'mine-undo'

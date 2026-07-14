@@ -407,8 +407,7 @@ export function workshopReject(
       if (!ctx.crystallizationStore || !ctx.workflowStore) return { ok: false, error: "Crystallization not available" };
       const existing = ctx.crystallizationStore.getById(parsed.storeId);
       if (!existing) return { ok: false, error: `Proposal not found: ${unifiedKey}` };
-      const crystallizationPending =
-        existing.status === "drafted" || existing.status === "validated";
+      const crystallizationPending = existing.status === "drafted" || existing.status === "validated";
       if (!crystallizationPending) {
         if (existing.status === "rejected") return { ok: true, message: "Crystallization proposal already rejected" };
         return { ok: false, error: "Proposal not pending" };

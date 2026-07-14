@@ -47,30 +47,20 @@ describe("plugin graph config schema parity", () => {
 
     const schemaKeys = new Set(Object.keys(graphSchema?.properties ?? {}));
     const missing = GRAPH_CONFIG_INPUT_KEYS.filter((key) => !schemaKeys.has(key));
-    expect(missing, `add to openclaw.plugin.json graph.properties: ${missing.join(", ")}`).toEqual(
-      [],
-    );
+    expect(missing, `add to openclaw.plugin.json graph.properties: ${missing.join(", ")}`).toEqual([]);
   });
 
   it("Maeve-style graph config keys are all declared (no additionalProperties rejection)", () => {
     const manifest = loadManifest();
-    const schemaKeys = new Set(
-      Object.keys(manifest.configSchema?.properties?.graph?.properties ?? {}),
-    );
+    const schemaKeys = new Set(Object.keys(manifest.configSchema?.properties?.graph?.properties ?? {}));
     const unknown = Object.keys(MAEVE_GRAPH_SAMPLE).filter((key) => !schemaKeys.has(key));
-    expect(unknown, `unknown graph keys would fail gateway validation: ${unknown.join(", ")}`).toEqual(
-      [],
-    );
+    expect(unknown, `unknown graph keys would fail gateway validation: ${unknown.join(", ")}`).toEqual([]);
   });
 
   it("uiHints cover graph config keys shown in settings UI", () => {
     const manifest = loadManifest();
     const uiHints = manifest.uiHints ?? {};
-    const labelKeys = [
-      "graph.coOccurrenceWeight",
-      "graph.autoSupersede",
-      "graph.hubScorePenalty",
-    ] as const;
+    const labelKeys = ["graph.coOccurrenceWeight", "graph.autoSupersede", "graph.hubScorePenalty"] as const;
     for (const key of labelKeys) {
       expect(uiHints[key], `missing uiHints.${key}`).toBeDefined();
     }

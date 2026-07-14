@@ -145,7 +145,9 @@ describe("UnconfiguredProviderError guard with mocked fetch", () => {
   });
 
   it("applies 24h dedupe only to invalid_goal_registry_entry, not other fingerprinted warnings (#1988)", async () => {
-    const { capturePluginError, flushErrorReporter, resetErrorDedupForTests } = await import("../services/error-reporter.js");
+    const { capturePluginError, flushErrorReporter, resetErrorDedupForTests } = await import(
+      "../services/error-reporter.js"
+    );
     const fp = ["test-chronic-scope", "unit-file.json"];
     const t0 = Date.now();
 

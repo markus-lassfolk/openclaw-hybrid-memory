@@ -9,16 +9,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 
 export const TOOL_SEARCH_WRAPPER_UPSTREAM_ISSUE = "https://github.com/openclaw/openclaw/issues/96115";
 
-const WRAPPER_SENTINEL_KEYS = new Set([
-  "id",
-  "command",
-  "toolName",
-  "name",
-  "tool",
-  "input",
-  "arguments",
-  "args",
-]);
+const WRAPPER_SENTINEL_KEYS = new Set(["id", "command", "toolName", "name", "tool", "input", "arguments", "args"]);
 
 const STRONG_WRAPPER_SENTINEL_KEYS = new Set(["command", "toolName", "tool", "input", "arguments", "args"]);
 
@@ -206,9 +197,7 @@ export function wrapMemoryToolExecuteForWrapperArgs<T extends readonly unknown[]
   logger?: { warn?: (message: string, meta?: Record<string, unknown>) => void },
 ): (
   ...args: T
-) => Promise<
-  R | { content: Array<{ type: "text"; text: string }>; details: ToolSearchWrapperDroppedArgsDetails }
-> {
+) => Promise<R | { content: Array<{ type: "text"; text: string }>; details: ToolSearchWrapperDroppedArgsDetails }> {
   const mode = resolveWrapperDropMode(toolName);
   if (!mode) return async (...args: T) => execute(...args);
 
@@ -238,10 +227,7 @@ export function patchMemoryToolRegistrationApi(api: ClawdbotPluginApi): Clawdbot
   const registerTool = api.registerTool.bind(api);
   return {
     ...api,
-    registerTool(
-      toolDef: Parameters<typeof registerTool>[0],
-      options: Parameters<typeof registerTool>[1],
-    ) {
+    registerTool(toolDef: Parameters<typeof registerTool>[0], options: Parameters<typeof registerTool>[1]) {
       if (typeof toolDef.name === "string" && typeof toolDef.execute === "function") {
         const toolName = toolDef.name;
         if (shouldWrapToolForWrapperArgs(toolName)) {

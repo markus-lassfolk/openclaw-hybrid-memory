@@ -7,11 +7,8 @@ describe("runCaptureStoreWithDedupWindow", () => {
       skipped: false,
       entry: { id: "fact-1" },
     });
-    const result = runCaptureStoreWithDedupWindow(
-      {},
-      30,
-      { text: "hello", scope: "global", scopeTarget: null },
-      () => storeWithResult({ text: "hello" }),
+    const result = runCaptureStoreWithDedupWindow({}, 30, { text: "hello", scope: "global", scopeTarget: null }, () =>
+      storeWithResult({ text: "hello" }),
     );
 
     expect(result.skipped).toBe(false);

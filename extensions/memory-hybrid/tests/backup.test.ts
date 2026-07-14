@@ -364,9 +364,7 @@ describe("backup", () => {
       // no replacement fact, so superseded_by stays NULL. Filtering on superseded_by IS NULL
       // (the pre-fix behavior) would have miscounted this as still active.
       const db = new DatabaseSync(sqlitePath);
-      db.exec(
-        "INSERT INTO facts (content, superseded_by, superseded_at) VALUES ('evicted fact', NULL, 1700000000);",
-      );
+      db.exec("INSERT INTO facts (content, superseded_by, superseded_at) VALUES ('evicted fact', NULL, 1700000000);");
       db.close();
 
       const result = runBackupVerify({ resolvedSqlitePath: sqlitePath });

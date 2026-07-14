@@ -82,11 +82,7 @@ export async function fetchLatestPluginVersions(
   return { github, npm };
 }
 
-export function buildVersionReport(
-  installed: string,
-  github: string | null,
-  npm: string | null,
-): VersionReport {
+export function buildVersionReport(installed: string, github: string | null, npm: string | null): VersionReport {
   return {
     name: HYBRID_MEM_PACKAGE_NAME,
     installed,
@@ -122,8 +118,7 @@ export function printVersionFlag(report: VersionReport, opts?: { json?: boolean 
 
   console.log(`${report.name} ${report.installed}`);
 
-  const npmUpdate =
-    report.npm != null && comparePluginVersions(report.installed, report.npm) < 0 ? report.npm : null;
+  const npmUpdate = report.npm != null && comparePluginVersions(report.installed, report.npm) < 0 ? report.npm : null;
   const githubUpdate =
     report.github != null && comparePluginVersions(report.installed, report.github) < 0 ? report.github : null;
 

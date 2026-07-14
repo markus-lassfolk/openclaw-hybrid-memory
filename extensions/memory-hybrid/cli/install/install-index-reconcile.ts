@@ -31,7 +31,7 @@
  * core state migrations consult on startup.
  */
 
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve as pathResolve } from "node:path";
 import { atomicWriteFile } from "../../utils/atomic-write.js";
 import { PLUGIN_ID } from "../../utils/constants.js";
@@ -228,6 +228,142 @@ export function removeRedundantNpmProjectTreeWhenExtensionsCanonical(opts: {
       removed: false,
       removedPath: projectRoot,
       error: `Could not remove redundant npm-project tree at ${projectRoot}: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+export type QuarantineExtensionsTreeResult = {
+  /** True when the guards passed and quarantine was actually tried. */
+  attempted: boolean;
+  /** True when the stale extensions copy was moved out of the discoverable path. */
+  quarantined: boolean;
+  /** The original extensions plugin dir that was quarantined. */
+  quarantinedPath?: string;
+  /** Where the stale copy was moved to (under ~/.openclaw/.cache). */
+  destinationPath?: string;
+  /** The canonical npm-project plugin dir that "won" (kept). */
+  canonicalNpmProjectDir?: string;
+  /** Populated when quarantine was tried but failed. */
+  error?: string;
+  /** Populated when quarantine was intentionally skipped (guard tripped). */
+  skippedReason?:
+    | "no-npm-project-tree"
+    | "npm-project-not-loadable"
+    | "npm-project-version-unreadable"
+    | "extensions-not-installed"
+    | "extensions-version-unreadable"
+    | "extensions-dir-is-npm-project-layout"
+    | "same-tree"
+    | "npm-project-not-newer";
+};
+
+/**
+ * Quarantine the stale legacy `~/.openclaw/extensions/<plugin>` copy when the
+ * managed npm-project install is canonical (#2117).
+ *
+ * This is the mirror of {@link removeRedundantNpmProjectTreeWhenExtensionsCanonical}.
+ * When a host migrates to OpenClaw's managed npm plugin path
+ * (`~/.openclaw/npm/projects/<plugin>/node_modules/<plugin>`) but the older
+ * extensions copy is left behind, the gateway emits "duplicate plugin id
+ * detected; global plugin will be overridden by ... npm/projects/..." and reads
+ * stale metadata from the losing copy. The managed copy is the one that loads, so
+ * the durable fix is to move the stale extensions copy out of the discoverable
+ * path (matching the manual remediation in #2117: `mv` it into `~/.openclaw/.cache`).
+ *
+ * The two directions are disjoint by version: this fires ONLY when the npm-project
+ * copy is STRICTLY newer than the extensions copy, whereas the extensions-canonical
+ * removal fires when the npm-project copy is not strictly newer. So an upgrade/verify
+ * can safely try both — at most one acts.
+ *
+ * Guards (all must hold, else returns `attempted: false` with a `skippedReason`):
+ * - a managed npm-project tree exists and is LOADABLE (has openclaw.plugin.json +
+ *   dist/index.js) with a readable version;
+ * - the extensions copy exists with a readable version and is not itself an
+ *   npm-project layout;
+ * - the two are distinct on-disk trees;
+ * - the npm-project version is strictly newer than the extensions version (never
+ *   quarantine a newer/equal extensions copy — the host may still load from it).
+ *
+ * The stale copy is PRESERVED (moved, not deleted) under
+ * `~/.openclaw/.cache/<id>.removed-duplicate-<ts>` so operators can inspect/restore
+ * it; a cross-filesystem rename falls back to copy-then-remove.
+ */
+export function removeRedundantExtensionsTreeWhenNpmProjectCanonical(opts: {
+  extensionsPluginDir: string;
+  /** npm-project plugin dir (defaults to the known Maeve/Doris layout). */
+  npmProjectPluginDir?: string;
+  pluginId?: string;
+}): QuarantineExtensionsTreeResult {
+  const pluginId = opts.pluginId ?? PLUGIN_ID;
+  const npmPluginDir = opts.npmProjectPluginDir ?? resolveKnownNpmProjectPluginDir();
+  if (!npmPluginDir) {
+    return { attempted: false, quarantined: false, skippedReason: "no-npm-project-tree" };
+  }
+  // The managed copy must actually be loadable — never quarantine the extensions
+  // copy in favour of a half-installed / broken npm-project tree.
+  const npmLoadable =
+    existsSync(join(npmPluginDir, "openclaw.plugin.json")) && existsSync(join(npmPluginDir, "dist", "index.js"));
+  if (!npmLoadable) {
+    return { attempted: false, quarantined: false, skippedReason: "npm-project-not-loadable" };
+  }
+  const npmVer = readPluginPackageVersion(npmPluginDir);
+  if (!npmVer) {
+    return { attempted: false, quarantined: false, skippedReason: "npm-project-version-unreadable" };
+  }
+  if (isNpmProjectPluginLayout(opts.extensionsPluginDir)) {
+    return { attempted: false, quarantined: false, skippedReason: "extensions-dir-is-npm-project-layout" };
+  }
+  if (!existsSync(join(opts.extensionsPluginDir, "openclaw.plugin.json"))) {
+    return { attempted: false, quarantined: false, skippedReason: "extensions-not-installed" };
+  }
+  const extVer = readPluginPackageVersion(opts.extensionsPluginDir);
+  if (!extVer) {
+    return { attempted: false, quarantined: false, skippedReason: "extensions-version-unreadable" };
+  }
+  if (samePath(npmPluginDir, opts.extensionsPluginDir)) {
+    return { attempted: false, quarantined: false, skippedReason: "same-tree" };
+  }
+  if (compareVersions(npmVer, extVer) <= 0) {
+    // Extensions copy is newer-or-equal — leave it; the extensions-canonical path
+    // (removeRedundantNpmProjectTreeWhenExtensionsCanonical) handles that direction.
+    return {
+      attempted: false,
+      quarantined: false,
+      canonicalNpmProjectDir: npmPluginDir,
+      skippedReason: "npm-project-not-newer",
+    };
+  }
+  try {
+    const cacheDir = join(resolveOpenclawHomeDir(), ".cache");
+    mkdirSync(cacheDir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const dest = join(cacheDir, `${basename(opts.extensionsPluginDir)}.removed-duplicate-${stamp}`);
+    try {
+      renameSync(opts.extensionsPluginDir, dest);
+    } catch (err) {
+      // Cross-device rename (EXDEV) or similar — copy then remove so the stale copy
+      // is still gone from the discoverable extensions path.
+      if ((err as NodeJS.ErrnoException)?.code === "EXDEV") {
+        cpSync(opts.extensionsPluginDir, dest, { recursive: true });
+        rmSync(opts.extensionsPluginDir, { recursive: true, force: true });
+      } else {
+        throw err;
+      }
+    }
+    return {
+      attempted: true,
+      quarantined: true,
+      quarantinedPath: opts.extensionsPluginDir,
+      destinationPath: dest,
+      canonicalNpmProjectDir: npmPluginDir,
+    };
+  } catch (err) {
+    return {
+      attempted: true,
+      quarantined: false,
+      quarantinedPath: opts.extensionsPluginDir,
+      canonicalNpmProjectDir: npmPluginDir,
+      error: `Could not quarantine stale extensions copy at ${opts.extensionsPluginDir}: ${err instanceof Error ? err.message : String(err)} (plugin=${pluginId})`,
     };
   }
 }

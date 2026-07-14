@@ -52,12 +52,22 @@ describe("memory_graph connected-facts stepping-stone leak (#2067-followup)", ()
       getLinksFrom: vi.fn((id: string) =>
         links
           .filter((l) => l.sourceFactId === id)
-          .map(({ id: linkId, targetFactId, linkType, strength }) => ({ id: linkId, targetFactId, linkType, strength })),
+          .map(({ id: linkId, targetFactId, linkType, strength }) => ({
+            id: linkId,
+            targetFactId,
+            linkType,
+            strength,
+          })),
       ),
       getLinksTo: vi.fn((id: string) =>
         links
           .filter((l) => l.targetFactId === id)
-          .map(({ id: linkId, sourceFactId, linkType, strength }) => ({ id: linkId, sourceFactId, linkType, strength })),
+          .map(({ id: linkId, sourceFactId, linkType, strength }) => ({
+            id: linkId,
+            sourceFactId,
+            linkType,
+            strength,
+          })),
       ),
       // Raw, unscoped, real multi-hop BFS -- exactly what the buggy code used to call directly
       // (and exactly why it leaked: it happily walks straight through a hidden intermediate
