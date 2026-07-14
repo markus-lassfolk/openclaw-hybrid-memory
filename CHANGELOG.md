@@ -25,6 +25,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.216] - 2026-07-14
+
+### Fixed / Added — Open issue sweep (#2088, #2091, #2093, #2095, #2098, #2099, #2104–#2108)
+
+Eleven issues — the tail of the #2079–#2100 sweep plus four filed after it shipped — fixed together in one PR.
+
+**Storage & dedupe**
+- Fixed ([#2093](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2093)): added `vectorlessActiveFactsByCategory()` alongside the existing by-source breakdown, surfaced in `storage stats` and `storage reembed` output, so an operator can tell "mostly structured-adjacent categories" apart from a genuine indexing gap.
+- Fixed ([#2091](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2091)): `services/consolidation.ts`'s merged-fact store call always degraded to lexical-only dedupe even with `cfg.store.fuzzyDedupe` enabled, because no embedding existed yet at store time. The embed is now computed before the store call and real LanceDB neighbour candidates are resolved and passed through, reusing the same vector for the post-store upsert instead of re-embedding. The shared candidate-resolution helper moved from `cli/vector-dedupe-helpers.ts` to `services/vector-dedupe-helpers.ts` (old path is a re-export shim) so a `services/` file can use it without inverting the documented `cli → services` layer direction.
+
+**Credentials**
+- Added ([#2104](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2104)): historical revision support for the credential vault. Overwriting an existing credential (same `service`+`type`) now preserves the replaced value as a revision instead of discarding it — 30-day retention by default, extended on access, pinnable, purgeable. New `credential_revisions`/`credential_revision_audit` tables (same encryption as current values; `enableEncryptionAtRest`/`encryptVaultSafe`/`rekeyVaultSafe` re-encrypt revisions too), 5 new agent tools (`credential_revision_list/get/restore/purge/pin`), and matching `credentials revisions list/get/restore/purge/pin` CLI commands. Scoped to the issue's "Must have" (credential/vault history); structured fact/entity history is a follow-up.
+- Fixed ([#2099](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2099)): the legacy-literal-`file:`-key vault warning fired on every `hybrid-mem` invocation regardless of subcommand; now scoped to `credentials`/`doctor`/`verify` or `--verbose`. `rekey-vault --dry-run` also gained a non-mutating preflight (backup-directory writability, target key-file readability).
+
+**CLI surface**
+- Added ([#2088](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2088)): `smoke e2e` gained `--no-cleanup` (leave disposable artifacts for inspection) and a `graph-autolink` step verifying the auto-link pipeline actually creates a `RELATED_TO` edge, not just that the command exits 0.
+- Added ([#2095](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2095)): `--quiet`/`-q` flag (plus `OPENCLAW_HYBRID_MEM_QUIET=1`) suppresses bootstrap-time log noise.
+- Added ([#2098](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2098)): `digest batch-reject` bulk-rejects stale/low-confidence pending-review candidates across the persona/tools/crystallization queues, with duplicate detection and a dry-run preview.
+
+**Verify / doctor / observability**
+- Fixed ([#2105](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2105)): `verify --fix --reconcile --verbose` silently dropped `--verbose` before it reached the reconcile section, and neither the vector-orphan delete path nor the SQLite-orphan rebuild loop logged anything mid-operation — a genuinely long repair looked hung for minutes. `--verbose` now threads through properly, both loops are wrapped in a 20s-cadence progress heartbeat (reusing the existing `runMaintenanceHeartbeat` helper), and the rebuild loop checks the orchestrator-wide maintenance run deadline each iteration and stops early instead of ignoring it.
+- Fixed ([#2108](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2108)): `doctor`'s "Maintenance health" check compared every job against one flat 48-hour cutoff regardless of its actual guard cadence (1 hour to 5 days), so any longer-cadence step was guaranteed to look stale, contradicting `maintenance status`'s cadence-aware model. Now compares each job against its own guard interval (3x tolerance).
+- Added ([#2106](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2106)): [`docs/CLI-OBSERVABILITY-CONTRACT.md`](docs/CLI-OBSERVABILITY-CONTRACT.md) documents the heartbeat/phase/summary/interruption conventions for long-running mutating commands, with a compliance audit across command families. Streaming JSON progress events are explicitly out of scope for this pass (documented decision, not an oversight).
+- Investigated ([#2107](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2107)): the gateway's "no loaded plugin registered a memory embedding provider" warning comes from the gateway's own, architecturally separate built-in `memory-core` embedding registry — hybrid-memory intentionally replaces that subsystem rather than plugging into its provider contract. Documented the discrepancy in [`docs/LLM-AND-PROVIDERS.md`](docs/LLM-AND-PROVIDERS.md) (which diagnostics actually reflect hybrid-memory's health); a real adapter registration is a considered, deferred follow-up rather than an unverified implementation against a gateway this environment can't test against.
+
+### Notes
+- No `schemaVersion` bump — the new `credential_revisions`/`credential_revision_audit` tables are additive and created idempotently on open, matching the precedent set by prior credential-schema additions.
+- No agent-tool contract removals — 5 new tool names added (`credential_revision_list/get/restore/purge/pin`), registered in both `contracts/agent-tool-names.ts` and `openclaw.plugin.json`.
+- Full local gate green: `npx tsc --noEmit`, `npm run lint`, `npm test` (742 files / 9694 tests), `npm run verify:gate`; CI green on both Node 22 and Node 24.
+
 ## [2026.7.215] - 2026-07-12
 
 ### Fixed — Open issue sweep from a live storage-repair incident and memory smoke sweep (#2079–#2100)
