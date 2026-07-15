@@ -273,6 +273,22 @@ Direct links (3):
 Total connected facts (depth 2): 5
 ```
 
+### 5. Backfilling orphan links (#2127)
+
+`autoLink` only creates links at store time. A store that enabled `autoLink` late, imported facts in bulk, or simply has a lot of pre-existing facts can end up with a large fraction of active facts having **no explicit graph link at all** — `memory_health` reports this as `orphanRate` and warns above 70%.
+
+`openclaw hybrid-mem maintenance graph-link-enrichment` backfills one safe, deterministic signal for those orphans: facts that share a recorded source event (`facts.provenance_json.sourceEventIds`) are linked via `RELATED_TO`. It never invents a similarity judgment and never touches a fact that already has any link (of any type):
+
+```bash
+# Dry-run (default) — report what would be linked
+openclaw hybrid-mem maintenance graph-link-enrichment
+
+# Actually create the links, bounded per run
+openclaw hybrid-mem maintenance graph-link-enrichment --apply --limit 500
+```
+
+Run it repeatedly (e.g. as a periodic maintenance job) to work through the backlog — each run scans the oldest still-orphaned facts first, so it makes steady forward progress. This intentionally does not use embedding similarity; pair it with `autoLink`/`memory_link` for broader coverage.
+
 ---
 
 ## Performance
@@ -445,6 +461,10 @@ SELECT strength, COUNT(*) FROM memory_links
 WHERE link_type = 'RELATED_TO' 
 GROUP BY ROUND(strength, 1);
 ```
+
+### `/graph` dashboard or `/api/graph` looks disconnected (#2126)
+
+If `memory_health` reports thousands of links but the graph explorer looks sparse or edge-free, it's likely a sampling artifact, not a broken graph: `/api/graph` defaults to `mode=connected`, which samples recent facts plus their direct link-neighbors. Pass `?mode=recent` to see the old recency-only sample, or check the response's `coverage` block (`totalExplicitLinks`, `selectedEdges`, `orphanNodesInView`) to distinguish "the sample is small" from "the graph really is that sparse" — see [Backfilling orphan links](#5-backfilling-orphan-links-2127) if it's the latter.
 
 ### Graph Traversal Slow
 

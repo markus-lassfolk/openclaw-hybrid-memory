@@ -5,6 +5,7 @@
  * required steps completed successfully and fail the job if they didn't.
  */
 
+import { writeFileSync } from "node:fs";
 import type { HybridMemoryConfig } from "../../../config.js";
 import {
   type ExitValidationResult,
@@ -34,6 +35,12 @@ export function registerValidateCronExit(hybrid: Chainable, context?: ValidateCr
     .option("--allow-skip", "Allow skip variants (e.g., distill-skipped) to count as success")
     .option("--summary-path <path>", "Orchestrator summary.json (preferred when present)")
     .option("--json", "Output JSON result")
+    .option(
+      "--output-json <path>",
+      "Write JSON result directly to this file via fs, bypassing stdout entirely. Immune to " +
+        "host/plugin bootstrap logs that print to stdout before this command runs, unlike --json " +
+        "(#2133); cron harnesses should prefer this over parsing stdout.",
+    )
     .action(
       withExit(
         async (opts: {
@@ -43,6 +50,7 @@ export function registerValidateCronExit(hybrid: Chainable, context?: ValidateCr
           allowSkip?: boolean;
           summaryPath?: string;
           json?: boolean;
+          outputJson?: string;
         }) => {
           const result = opts.summaryPath?.trim()
             ? validateFromSummaryJson(
@@ -53,6 +61,10 @@ export function registerValidateCronExit(hybrid: Chainable, context?: ValidateCr
                 !!opts.allowSkip,
               )
             : validateMaintenanceExecution(opts.exitPath, opts.logPath, opts.requiredSteps, !!opts.allowSkip);
+
+          if (opts.outputJson?.trim()) {
+            writeFileSync(opts.outputJson.trim(), generateCronStatusReport(result), "utf8");
+          }
 
           if (opts.json) {
             console.log(generateCronStatusReport(result));

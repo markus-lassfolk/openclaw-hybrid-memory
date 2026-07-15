@@ -26,11 +26,17 @@ else
   exit 1
 fi
 
+# Stop the gateway BEFORE mutating node_modules in place (#2130). A live gateway process can
+# lazily `import()` plugin modules (e.g. on first use of a given code path) at any time; if
+# `npm install` is still rewriting dist/node_modules underneath it, that import can transiently
+# fail with ERR_MODULE_NOT_FOUND even though the final on-disk state is healthy.
+echo "Stopping OpenClaw gateway before reinstalling deps ..."
+openclaw gateway stop 2>/dev/null || true
+
 echo "Reinstalling deps in $PLUGIN_DIR ..."
 (cd "$PLUGIN_DIR" && npm install)
 
-echo "Restarting OpenClaw gateway ..."
-openclaw gateway stop 2>/dev/null || true
+echo "Starting OpenClaw gateway ..."
 openclaw gateway start
 
 echo "Post-upgrade done. Check logs for your memory plugin (e.g. 'memory-hybrid: initialized' or 'memory-lancedb: initialized')."

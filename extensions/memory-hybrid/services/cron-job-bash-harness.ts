@@ -81,6 +81,16 @@ export function buildHybridMemCronBashBody(
     `HM_REQUIRED_STEPS=(${requiredArgs})`,
     ': >"$HM_LOG"',
     ': >"$HM_EXIT"',
+    // Durable bootstrap marker, written immediately after HM_LOG/HM_EXIT exist and before
+    // anything else (including the hm_validate/trap definitions below) can fail or be killed
+    // (#2131). Without this, a run that aborts (e.g. SIGKILL/OOM) between artifact creation and
+    // the first trap left BOTH files at 0 bytes with zero diagnostics — the next day's analyzer
+    // could only report a generic "empty exit ledger", with no clue whether the run ever even
+    // started. This row is exit=0 (never itself a failure) and is specifically recognized by
+    // maintenance-log-analyzer.ts so a run that never progresses past this point is still
+    // reported with a specific bootstrap-failure class, and a normal successful run is unaffected.
+    'echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) harness-bootstrap: HM_JOB=${HM_JOB} RUN_ID=${RUN_ID}" >>"$HM_LOG"',
+    'echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) harness-bootstrap exit=0 status=started reason=harness_bootstrap_started" >>"$HM_EXIT"',
     // hm_validate + its EXIT/TERM/INT/HUP/QUIT traps are installed here, immediately after
     // HM_EXIT is created, rather than after the much longer hm_step definition below (#2094).
     // Every HM_* variable hm_validate references (HM_EXIT, HM_LOG, HM_SUMMARY,
@@ -104,7 +114,14 @@ export function buildHybridMemCronBashBody(
     '  echo "--- validate-cron-exit ---" | tee -a "$HM_LOG"',
     "  local validate_output",
     '  validate_output="$(mktemp "${TMPDIR:-/tmp}/hm-validate-XXXXXX")"',
-    '  openclaw hybrid-mem validate-cron-exit --exit-path "$HM_EXIT" --log-path "$HM_LOG" --summary-path "$HM_SUMMARY" --required-steps "${HM_REQUIRED_STEPS[@]}" --allow-skip --json 2>&1 | tee -a "$HM_LOG" "$validate_output"',
+    // --output-json writes the JSON payload directly to $validate_output via fs, bypassing
+    // stdout entirely (#2133). Bootstrap/plugin-loader logs the OpenClaw host prints to stdout
+    // before this command's own code runs can never be suppressed by the plugin (see
+    // docs/JSON-CLI-OUTPUT.md), so a stdout-only capture (the old `tee ... "$validate_output"`)
+    // could still land those logs ahead of the JSON, making HM_VALIDATION_JSON unparseable.
+    // Writing the file from inside the command sidesteps that entirely; `--json` is kept only so
+    // the mixed stdout+stderr stream still ends up in HM_LOG for human debugging.
+    '  openclaw hybrid-mem validate-cron-exit --exit-path "$HM_EXIT" --log-path "$HM_LOG" --summary-path "$HM_SUMMARY" --required-steps "${HM_REQUIRED_STEPS[@]}" --allow-skip --json --output-json "$validate_output" 2>&1 | tee -a "$HM_LOG"',
     '  local validation_ec="${PIPESTATUS[0]}"',
     '  local maintenance_status=""',
     "  # Parse maintenanceStatus without jq to keep cron harness dependencies minimal/portable.",

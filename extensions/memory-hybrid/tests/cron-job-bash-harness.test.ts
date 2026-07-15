@@ -104,6 +104,11 @@ describe("cron-job-bash-harness", () => {
       fakeOpenclaw,
       `#!/usr/bin/env bash
 set -euo pipefail
+output_json=""
+_hm_args=("$@")
+for ((_hm_i=0; _hm_i<\${#_hm_args[@]}; _hm_i++)); do
+  if [ "\${_hm_args[$_hm_i]}" = "--output-json" ]; then output_json="\${_hm_args[$((_hm_i+1))]}"; fi
+done
 if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "prune" ]; then echo "pruned"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
@@ -116,7 +121,7 @@ if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
     esac
   done
   if grep -q "distill exit=0" "$exit_path"; then exit 0; fi
-  echo '{"maintenanceStatus":"partial","missingSteps":["distill"]}'
+  echo '{"maintenanceStatus":"partial","missingSteps":["distill"]}' | tee \${output_json:+"$output_json"}
   exit 1
 fi
 echo "unexpected openclaw args: $*" >&2
@@ -152,9 +157,14 @@ exit 2
       fakeOpenclaw,
       `#!/usr/bin/env bash
 set -euo pipefail
+output_json=""
+_hm_args=("$@")
+for ((_hm_i=0; _hm_i<\${#_hm_args[@]}; _hm_i++)); do
+  if [ "\${_hm_args[$_hm_i]}" = "--output-json" ]; then output_json="\${_hm_args[$((_hm_i+1))]}"; fi
+done
 if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "prune" ]; then echo "pruned"; exit 0; fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"partial"}'; exit 1; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"partial"}' | tee \${output_json:+"$output_json"}; exit 1; fi
 echo "unexpected openclaw args: $*" >&2
 exit 2
 `,
@@ -193,13 +203,18 @@ exit 2
       fakeOpenclaw,
       `#!/usr/bin/env bash
 set -euo pipefail
+output_json=""
+_hm_args=("$@")
+for ((_hm_i=0; _hm_i<\${#_hm_args[@]}; _hm_i++)); do
+  if [ "\${_hm_args[$_hm_i]}" = "--output-json" ]; then output_json="\${_hm_args[$((_hm_i+1))]}"; fi
+done
 if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "distill" ]; then
   echo "distill stored=5 sessions=3 batchFailures=2 semantic=partial"
   exit 0
 fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
-  echo '{"maintenanceStatus":"failed","semanticStatus":"degraded","recommendedExitCode":2}'
+  echo '{"maintenanceStatus":"failed","semanticStatus":"degraded","recommendedExitCode":2}' | tee \${output_json:+"$output_json"}
   exit 2
 fi
 echo "unexpected openclaw args: $*" >&2
@@ -238,13 +253,18 @@ exit 2
       fakeOpenclaw,
       `#!/usr/bin/env bash
 set -euo pipefail
+output_json=""
+_hm_args=("$@")
+for ((_hm_i=0; _hm_i<\${#_hm_args[@]}; _hm_i++)); do
+  if [ "\${_hm_args[$_hm_i]}" = "--output-json" ]; then output_json="\${_hm_args[$((_hm_i+1))]}"; fi
+done
 if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "reflect-meta" ]; then
   echo "Implicit-feedback collapse summary: scanned 10387, collapsed 0, status=no_changes"
   exit 0
 fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
-  echo '{"maintenanceStatus":"failed"}'
+  echo '{"maintenanceStatus":"failed"}' | tee \${output_json:+"$output_json"}
   exit 1
 fi
 echo "unexpected openclaw args: $*" >&2
@@ -288,9 +308,14 @@ exit 2
       fakeOpenclaw,
       `#!/usr/bin/env bash
 set -euo pipefail
+output_json=""
+_hm_args=("$@")
+for ((_hm_i=0; _hm_i<\${#_hm_args[@]}; _hm_i++)); do
+  if [ "\${_hm_args[$_hm_i]}" = "--output-json" ]; then output_json="\${_hm_args[$((_hm_i+1))]}"; fi
+done
 if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "prune" ]; then echo "pruned"; exit 0; fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}'; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}' | tee \${output_json:+"$output_json"}; exit 0; fi
 echo "unexpected openclaw args: $*" >&2
 exit 2
 `,
@@ -324,6 +349,11 @@ exit 2
       fakeOpenclaw,
       `#!/usr/bin/env bash
 set -euo pipefail
+output_json=""
+_hm_args=("$@")
+for ((_hm_i=0; _hm_i<\${#_hm_args[@]}; _hm_i++)); do
+  if [ "\${_hm_args[$_hm_i]}" = "--output-json" ]; then output_json="\${_hm_args[$((_hm_i+1))]}"; fi
+done
 if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "prune" ]; then
   echo "prune failed"
@@ -343,7 +373,7 @@ if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
     esac
   done
   cp "$exit_path" ${JSON.stringify(exitCapture)}
-  echo '{"maintenanceStatus":"failed","failedSteps":["prune"]}'
+  echo '{"maintenanceStatus":"failed","failedSteps":["prune"]}' | tee \${output_json:+"$output_json"}
   exit 1
 fi
 echo "unexpected openclaw args: $*" >&2
@@ -385,6 +415,11 @@ exit 2
       fakeOpenclaw,
       `#!/usr/bin/env bash
 set -euo pipefail
+output_json=""
+_hm_args=("$@")
+for ((_hm_i=0; _hm_i<\${#_hm_args[@]}; _hm_i++)); do
+  if [ "\${_hm_args[$_hm_i]}" = "--output-json" ]; then output_json="\${_hm_args[$((_hm_i+1))]}"; fi
+done
 if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "prune" ]; then
   echo "pruned"
@@ -408,10 +443,10 @@ if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
   done
   cp "$exit_path" ${JSON.stringify(exitCapture)}
   if grep -q "extract-daily exit=1" "$exit_path" && grep -q "resolve-contradictions exit=0" "$exit_path"; then
-    echo '{"maintenanceStatus":"partial","failedSteps":["extract-daily"]}'
+    echo '{"maintenanceStatus":"partial","failedSteps":["extract-daily"]}' | tee \${output_json:+"$output_json"}
     exit 1
   fi
-  echo '{"maintenanceStatus":"failed"}'
+  echo '{"maintenanceStatus":"failed"}' | tee \${output_json:+"$output_json"}
   exit 1
 fi
 echo "unexpected openclaw args: $*" >&2
@@ -460,6 +495,11 @@ exit 2
       fakeOpenclaw,
       `#!/usr/bin/env bash
 set -euo pipefail
+output_json=""
+_hm_args=("$@")
+for ((_hm_i=0; _hm_i<\${#_hm_args[@]}; _hm_i++)); do
+  if [ "\${_hm_args[$_hm_i]}" = "--output-json" ]; then output_json="\${_hm_args[$((_hm_i+1))]}"; fi
+done
 if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "self-correction-run" ]; then
   echo "Skipping self-correction-run: cooldown active. status=skipped_cooldown"
@@ -474,7 +514,7 @@ if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
     esac
   done
   cp "$exit_path" ${JSON.stringify(marker)}
-  echo '{"maintenanceStatus":"skipped"}'
+  echo '{"maintenanceStatus":"skipped"}' | tee \${output_json:+"$output_json"}
   exit 0
 fi
 echo "unexpected openclaw args: $*" >&2
@@ -507,13 +547,18 @@ exit 2
       fakeOpenclaw,
       `#!/usr/bin/env bash
 set -euo pipefail
+output_json=""
+_hm_args=("$@")
+for ((_hm_i=0; _hm_i<\${#_hm_args[@]}; _hm_i++)); do
+  if [ "\${_hm_args[$_hm_i]}" = "--output-json" ]; then output_json="\${_hm_args[$((_hm_i+1))]}"; fi
+done
 if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "self-correction-run" ]; then
   echo "Error: simulated first-batch LLM API failure status=failed"
   exit 1
 fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
-  echo '{"maintenanceStatus":"failed"}'
+  echo '{"maintenanceStatus":"failed"}' | tee \${output_json:+"$output_json"}
   exit 1
 fi
 echo "unexpected openclaw args: $*" >&2
@@ -551,13 +596,18 @@ exit 2
       fakeOpenclaw,
       `#!/usr/bin/env bash
 set -euo pipefail
+output_json=""
+_hm_args=("$@")
+for ((_hm_i=0; _hm_i<\${#_hm_args[@]}; _hm_i++)); do
+  if [ "\${_hm_args[$_hm_i]}" = "--output-json" ]; then output_json="\${_hm_args[$((_hm_i+1))]}"; fi
+done
 if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "self-correction-run" ]; then
   echo "Error: simulated partial batch failure status=failed_partial"
   exit 1
 fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
-  echo '{"maintenanceStatus":"failed"}'
+  echo '{"maintenanceStatus":"failed"}' | tee \${output_json:+"$output_json"}
   exit 1
 fi
 echo "unexpected openclaw args: $*" >&2
@@ -597,9 +647,14 @@ exit 2
       fakeOpenclaw,
       `#!/usr/bin/env bash
 set -euo pipefail
+output_json=""
+_hm_args=("$@")
+for ((_hm_i=0; _hm_i<\${#_hm_args[@]}; _hm_i++)); do
+  if [ "\${_hm_args[$_hm_i]}" = "--output-json" ]; then output_json="\${_hm_args[$((_hm_i+1))]}"; fi
+done
 if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "prune" ]; then echo "pruned"; exit 0; fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}'; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}' | tee \${output_json:+"$output_json"}; exit 0; fi
 echo "unexpected openclaw args: $*" >&2
 exit 2
 `,
@@ -634,12 +689,17 @@ exit 2
       fakeOpenclaw,
       `#!/usr/bin/env bash
 set -euo pipefail
+output_json=""
+_hm_args=("$@")
+for ((_hm_i=0; _hm_i<\${#_hm_args[@]}; _hm_i++)); do
+  if [ "\${_hm_args[$_hm_i]}" = "--output-json" ]; then output_json="\${_hm_args[$((_hm_i+1))]}"; fi
+done
 if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "extract-procedures" ]; then
   printf '%s\n' "$*" > ${JSON.stringify(marker)}
   exit 0
 fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}'; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}' | tee \${output_json:+"$output_json"}; exit 0; fi
 echo "unexpected openclaw args: $*" >&2
 exit 2
 `,
@@ -675,12 +735,17 @@ exit 2
       fakeOpenclaw,
       `#!/usr/bin/env bash
 set -euo pipefail
+output_json=""
+_hm_args=("$@")
+for ((_hm_i=0; _hm_i<\${#_hm_args[@]}; _hm_i++)); do
+  if [ "\${_hm_args[$_hm_i]}" = "--output-json" ]; then output_json="\${_hm_args[$((_hm_i+1))]}"; fi
+done
 if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "distill" ]; then
   printf '%s\n' "$*" > ${JSON.stringify(marker)}
   exit 0
 fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}'; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}' | tee \${output_json:+"$output_json"}; exit 0; fi
 echo "unexpected openclaw args: $*" >&2
 exit 2
 `,
@@ -716,12 +781,17 @@ exit 2
       fakeOpenclaw,
       `#!/usr/bin/env bash
 set -euo pipefail
+output_json=""
+_hm_args=("$@")
+for ((_hm_i=0; _hm_i<\${#_hm_args[@]}; _hm_i++)); do
+  if [ "\${_hm_args[$_hm_i]}" = "--output-json" ]; then output_json="\${_hm_args[$((_hm_i+1))]}"; fi
+done
 if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "extract-daily" ]; then
   printf '%s\n' "$*" > ${JSON.stringify(marker)}
   exit 0
 fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}'; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}' | tee \${output_json:+"$output_json"}; exit 0; fi
 echo "unexpected openclaw args: $*" >&2
 exit 2
 `,
@@ -757,12 +827,17 @@ exit 2
       fakeOpenclaw,
       `#!/usr/bin/env bash
 set -euo pipefail
+output_json=""
+_hm_args=("$@")
+for ((_hm_i=0; _hm_i<\${#_hm_args[@]}; _hm_i++)); do
+  if [ "\${_hm_args[$_hm_i]}" = "--output-json" ]; then output_json="\${_hm_args[$((_hm_i+1))]}"; fi
+done
 if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "reflect" ]; then
   printf '%s\n' "$*" > ${JSON.stringify(marker)}
   exit 0
 fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}'; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}' | tee \${output_json:+"$output_json"}; exit 0; fi
 echo "unexpected openclaw args: $*" >&2
 exit 2
 `,
@@ -799,12 +874,17 @@ exit 2
       fakeOpenclaw,
       `#!/usr/bin/env bash
 set -euo pipefail
+output_json=""
+_hm_args=("$@")
+for ((_hm_i=0; _hm_i<\${#_hm_args[@]}; _hm_i++)); do
+  if [ "\${_hm_args[$_hm_i]}" = "--output-json" ]; then output_json="\${_hm_args[$((_hm_i+1))]}"; fi
+done
 if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "extract-daily" ]; then
   printf '%s\n' "$*" > ${JSON.stringify(marker)}
   exit 0
 fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}'; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}' | tee \${output_json:+"$output_json"}; exit 0; fi
 echo "unexpected openclaw args: $*" >&2
 exit 2
 `,
@@ -840,6 +920,11 @@ exit 2
       fakeOpenclaw,
       `#!/usr/bin/env bash
 set -euo pipefail
+output_json=""
+_hm_args=("$@")
+for ((_hm_i=0; _hm_i<\${#_hm_args[@]}; _hm_i++)); do
+  if [ "\${_hm_args[$_hm_i]}" = "--output-json" ]; then output_json="\${_hm_args[$((_hm_i+1))]}"; fi
+done
 if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "extract-daily" ]; then
   echo "extract-daily failed"
@@ -849,7 +934,7 @@ if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "resolve-contradictions" ]; the
   echo "resolve-contradictions ran" > ${JSON.stringify(secondStepMarker)}
   exit 0
 fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"partial"}'; exit 1; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"partial"}' | tee \${output_json:+"$output_json"}; exit 1; fi
 echo "unexpected openclaw args: $*" >&2
 exit 2
 `,
@@ -878,5 +963,110 @@ exit 2
     const exitContents = readFileSync(exitPath, "utf-8");
     expect(exitContents).toContain("extract-daily exit=1 status=failed");
     expect(exitContents).toContain("resolve-contradictions exit=0");
+  });
+
+  // #2131: a run that is killed (SIGKILL, uncatchable) before any real step or trap fires must
+  // never leave both HM_LOG and HM_EXIT at 0 bytes — the durable bootstrap marker, written
+  // immediately after the files are created, must survive.
+  it("writes a durable bootstrap marker to HM_LOG/HM_EXIT that survives a SIGKILL before any step runs (#2131)", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
+    const bin = join(tmp, "bin");
+    const home = join(tmp, "oc-home");
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(home, { recursive: true });
+    const fakeOpenclaw = join(bin, "openclaw");
+    writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
+echo "unexpected openclaw args: $*" >&2
+exit 2
+`,
+    );
+    chmodSync(fakeOpenclaw, 0o755);
+
+    // The step command kills the whole script with SIGKILL, which bypasses every trap — the
+    // strongest possible simulation of the production "wrapper aborted before steps" evidence.
+    const bash = buildHybridMemCronBashBody("nightly-memory-sweep", [{ name: "prune", cmd: "kill -9 $$" }]);
+    const result = spawnSync("bash", ["-c", bash], {
+      encoding: "utf-8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, OPENCLAW_HOME: home },
+    });
+
+    expect(result.signal).toBe("SIGKILL");
+    const logDir = join(home, "logs", "cron-hybrid-mem");
+    const files = readdirSync(logDir);
+    const logPath = files.filter((f) => f.endsWith(".log")).map((f) => join(logDir, f))[0];
+    const exitPath = files.filter((f) => f.endsWith(".exit.txt")).map((f) => join(logDir, f))[0];
+    expect(logPath).toBeDefined();
+    expect(exitPath).toBeDefined();
+    const logContents = readFileSync(logPath!, "utf-8");
+    const exitContents = readFileSync(exitPath!, "utf-8");
+    expect(logContents.length).toBeGreaterThan(0);
+    expect(exitContents.length).toBeGreaterThan(0);
+    expect(logContents).toContain("harness-bootstrap");
+    expect(exitContents).toContain("harness-bootstrap exit=0 status=started reason=harness_bootstrap_started");
+  });
+
+  // #2133: validate-cron-exit's JSON must reach HM_VALIDATION_JSON uncorrupted even when the
+  // invoked command prints unrelated noise to stdout before its JSON payload — reproducing the
+  // OpenClaw host's "[plugins] loading ..." bootstrap lines that print before this command's own
+  // code (and therefore its stdout-clean JSON contract) can run.
+  it("keeps HM_VALIDATION_JSON parseable even when validate-cron-exit's stdout has bootstrap noise before the JSON (#2133)", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
+    const bin = join(tmp, "bin");
+    const home = join(tmp, "oc-home");
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(home, { recursive: true });
+    const fakeOpenclaw = join(bin, "openclaw");
+    writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+output_json=""
+_hm_args=("$@")
+for ((_hm_i=0; _hm_i<\${#_hm_args[@]}; _hm_i++)); do
+  if [ "\${_hm_args[$_hm_i]}" = "--output-json" ]; then output_json="\${_hm_args[$((_hm_i+1))]}"; fi
+done
+if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "prune" ]; then echo "pruned"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
+  # Simulate host/plugin bootstrap logs landing on stdout ahead of the JSON payload — exactly the
+  # pollution --output-json is meant to be immune to, since it writes the file directly.
+  echo "[plugins] loading openclaw-hybrid-memory from /fake/dist/index.js"
+  echo "[plugins] loaded 1 plugin(s) (1 attempted) in 12.3ms"
+  if [ -n "\${output_json}" ]; then
+    printf '%s' '{"maintenanceStatus":"success"}' > "\${output_json}"
+  fi
+  echo '{"maintenanceStatus":"success"}'
+  exit 0
+fi
+echo "unexpected openclaw args: $*" >&2
+exit 2
+`,
+    );
+    chmodSync(fakeOpenclaw, 0o755);
+
+    const bash = buildHybridMemCronBashBody("nightly-memory-sweep", [
+      { name: "prune", cmd: "openclaw hybrid-mem prune --verbose" },
+    ]);
+    const result = spawnSync("bash", ["-c", bash], {
+      encoding: "utf-8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, OPENCLAW_HOME: home },
+    });
+
+    expect(result.status).toBe(0);
+    const dayDir = readdirSync(join(home, "logs", "cron-hybrid-mem")).find((f) => /^\d{8}$/.test(f));
+    expect(dayDir).toBeDefined();
+    const dayDirPath = join(home, "logs", "cron-hybrid-mem", dayDir!);
+    const validationPath = readdirSync(dayDirPath)
+      .filter((f) => f.endsWith(".validation.json"))
+      .map((f) => join(dayDirPath, f))[0];
+    expect(validationPath).toBeDefined();
+    const validationRaw = readFileSync(validationPath!, "utf-8");
+    // Must be pure, parseable JSON from byte 0 — no "[plugins] loading ..." prelude.
+    expect(() => JSON.parse(validationRaw)).not.toThrow();
+    expect(JSON.parse(validationRaw)).toMatchObject({ maintenanceStatus: "success" });
   });
 });

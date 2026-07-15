@@ -36,15 +36,15 @@ import { basename, dirname, isAbsolute, join, resolve as pathResolve } from "nod
 import { atomicWriteFile } from "../../utils/atomic-write.js";
 import { PLUGIN_ID } from "../../utils/constants.js";
 import { getEnv } from "../../utils/env-manager.js";
+import { resolveOpenclawHomeDir } from "../../utils/openclaw-workspace.js";
 import { findPluginRoot } from "../../utils/plugin-root.js";
 import {
-  readPluginPackageVersion,
   isNpmProjectPluginLayout,
+  readPluginPackageVersion,
   resolveKnownNpmProjectPluginDir,
   resolveKnownNpmProjectRoot,
   resolveNpmProjectRootForPlugin,
 } from "./workspace.js";
-import { resolveOpenclawHomeDir } from "../../utils/openclaw-workspace.js";
 
 /** Relative path of the legacy install-index sidecar under the OpenClaw state dir. */
 const LEGACY_INSTALL_INDEX_REL_PATH = join("plugins", "installs.json");
@@ -366,6 +366,122 @@ export function removeRedundantExtensionsTreeWhenNpmProjectCanonical(opts: {
       error: `Could not quarantine stale extensions copy at ${opts.extensionsPluginDir}: ${err instanceof Error ? err.message : String(err)} (plugin=${pluginId})`,
     };
   }
+}
+
+export type KnownStaleInstallRootCandidate = {
+  /** Short identifier for logging/tests, e.g. "root-node-modules". */
+  id: string;
+  /** Absolute candidate path. */
+  path: string;
+};
+
+/**
+ * Known historical/accidental install-root locations for the plugin, beyond the two canonical
+ * locations (extensions/, npm/projects/) the directional reconcile functions above already
+ * handle. Discovered on a production host during #2125 — not hypothetical:
+ *
+ *   - `${home}/node_modules/<pluginId>` — a root state-dir copy. The gateway never loads a
+ *     plugin from here, but plain Node `require.resolve('<pluginId>/package.json')` from
+ *     `$OPENCLAW_STATE_DIR`/workspace-adjacent code DOES resolve here, so a stale version can
+ *     still be picked up by tooling that isn't the gateway's own explicit plugin loader.
+ *   - `${home}/.openclaw/npm/projects/<pluginId>/node_modules/<pluginId>` and
+ *     `${home}/.openclaw/node_modules/<pluginId>` — an accidental *nested* state dir
+ *     (`~/.openclaw/.openclaw/...`), consistent with a historical path-join bug rather than a
+ *     legitimate install location.
+ *
+ * Already-quarantined artifacts (`.backup-*`, `.redundant-*`, `.removed-duplicate-*` suffixed
+ * dirs from prior remediation) are never candidates here — those are intentional timestamped
+ * preserves, not active install surfaces, and this list only ever contains exact canonical-shaped
+ * paths, never a glob over sibling directories.
+ */
+export function knownStaleInstallRootCandidates(pluginId: string = PLUGIN_ID): KnownStaleInstallRootCandidate[] {
+  const home = resolveOpenclawHomeDir();
+  return [
+    { id: "root-node-modules", path: join(home, "node_modules", pluginId) },
+    {
+      id: "nested-state-dir-npm-project",
+      path: join(home, ".openclaw", "npm", "projects", pluginId, "node_modules", pluginId),
+    },
+    { id: "nested-state-dir-node-modules", path: join(home, ".openclaw", "node_modules", pluginId) },
+  ];
+}
+
+export type StaleInstallRootDetection = KnownStaleInstallRootCandidate & {
+  /** True when the candidate path exists and has a readable package.json (i.e. is loadable). */
+  present: boolean;
+  /** Version read from the candidate's package.json, when present/loadable. */
+  version?: string;
+};
+
+/**
+ * Detect (read-only, no mutation) which known stale install-root candidates are actually present
+ * on disk, distinct from the canonical live plugin path. Used both for `doctor`'s report-only
+ * path and to decide what `quarantineKnownStaleInstallRoots` should act on.
+ */
+export function detectKnownStaleInstallRoots(opts: {
+  canonicalLivePath: string;
+  pluginId?: string;
+}): StaleInstallRootDetection[] {
+  const pluginId = opts.pluginId ?? PLUGIN_ID;
+  return knownStaleInstallRootCandidates(pluginId)
+    .filter((candidate) => !samePath(candidate.path, opts.canonicalLivePath))
+    .map((candidate) => {
+      const manifestPath = join(candidate.path, "package.json");
+      const present = existsSync(candidate.path) && existsSync(manifestPath);
+      return { ...candidate, present, version: present ? readPluginPackageVersion(candidate.path) : undefined };
+    });
+}
+
+export type StaleInstallRootQuarantineResult = StaleInstallRootDetection & {
+  attempted: boolean;
+  quarantined: boolean;
+  destinationPath?: string;
+  error?: string;
+};
+
+/**
+ * Quarantine (move, never delete) every present known stale install root — the same
+ * move-to-`.cache` pattern already used by {@link removeRedundantExtensionsTreeWhenNpmProjectCanonical}
+ * (#2117), extended to the additional root/nested-state-dir locations found in #2125. Each
+ * quarantined copy is preserved under `~/.openclaw/.cache/<id>.<candidateId>.removed-duplicate-<ts>`
+ * so an operator can inspect/restore it; a cross-filesystem rename falls back to copy-then-remove.
+ */
+export function quarantineKnownStaleInstallRoots(opts: {
+  canonicalLivePath: string;
+  pluginId?: string;
+}): StaleInstallRootQuarantineResult[] {
+  const pluginId = opts.pluginId ?? PLUGIN_ID;
+  const detections = detectKnownStaleInstallRoots({ canonicalLivePath: opts.canonicalLivePath, pluginId });
+
+  return detections.map((detection) => {
+    if (!detection.present) {
+      return { ...detection, attempted: false, quarantined: false };
+    }
+    try {
+      const cacheDir = join(resolveOpenclawHomeDir(), ".cache");
+      mkdirSync(cacheDir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const dest = join(cacheDir, `${pluginId}.${detection.id}.removed-duplicate-${stamp}`);
+      try {
+        renameSync(detection.path, dest);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException)?.code === "EXDEV") {
+          cpSync(detection.path, dest, { recursive: true });
+          rmSync(detection.path, { recursive: true, force: true });
+        } else {
+          throw err;
+        }
+      }
+      return { ...detection, attempted: true, quarantined: true, destinationPath: dest };
+    } catch (err) {
+      return {
+        ...detection,
+        attempted: true,
+        quarantined: false,
+        error: `Could not quarantine stale install root at ${detection.path}: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  });
 }
 
 /**

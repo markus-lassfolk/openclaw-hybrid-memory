@@ -27,6 +27,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.219] - 2026-07-15
+
+### Fixed — Cron harness & maintenance observability (#2133, #2131, #2132)
+
+Three related production incidents surfaced by the same overnight `hybrid-mem:maintenance-log-analyzer` run on Maeve, fixed together with regression tests.
+
+- **`validate-cron-exit --json` produced unparseable validation JSON ([#2133](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2133))** — the OpenClaw host prints plugin bootstrap logs (`[plugins] loading ...`) to stdout *before* this plugin's own code runs, so no in-process stdout patch can keep them out of a `--json` invocation's stdout. `validate-cron-exit` gains a new `--output-json <path>` flag that writes the JSON payload directly to a file via `fs`, bypassing stdout entirely; the cron harness now passes `--output-json` when capturing `HM_VALIDATION_JSON`, so the artifact is guaranteed byte-0-parseable regardless of what the host prints. `--json`/stdout output is unchanged for existing callers.
+- **Cron harness could leave a truly zero-byte `.log` + `.exit.txt` pair ([#2131](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2131))** — a run that aborted (e.g. `SIGKILL`/OOM) between artifact creation and the first trap left no diagnostics at all. The harness now writes a durable `harness-bootstrap` marker to both files immediately after they're created, before anything else can fail. The analyzer recognizes a ledger containing only that marker as a new `orchestration-bootstrap-only-exit` finding (gated on staleness, so an in-progress run isn't falsely flagged) instead of the generic empty-exit class.
+- **`maintenance-log-analyzer` recursively failed on its own prior-run artifacts ([#2132](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2132))** — once one analyzer run strict-failed while reporting a root-cause finding, the next run rescanned that run's own `analyze-maintenance-logs`/`validate-cron-exit` exit-ledger rows as fresh "unclassified" findings, compounding daily. The analyzer now recognizes and suppresses its own job's self-referential rows (only when nothing else — a genuine crash, orchestration bug, etc. — already classified them as actionable); the root finding is still reported once.
+
+### Fixed — Memory health & graph (#2129, #2126, #2127)
+
+- **`memory_health` reported an impossible far-future "Last prune" timestamp ([#2129](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2129))** — `formatTimestampUtc`/`formatDateUtc` unconditionally multiplied their input by 1000, so a value that was accidentally already milliseconds (rather than the expected epoch seconds) produced a date ~56,000 years in the future. Both now self-correct a millisecond-scale input, mirroring the existing `parseTimestamp`/`parseTimestampMs` guard. `memory_health` additionally sanity-checks `lastPruneAt`/`lastReflectionAt` against a future-skew window and reports `invalid (corrupt stored value: N)` instead of ever displaying a fabricated date.
+- **`/api/graph` returned nodes but zero edges despite thousands of explicit links ([#2126](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2126))** — the endpoint sampled the most-recent N facts as nodes, then only kept edges where *both* endpoints were in that sample; on an append-heavy corpus, recently-created facts are rarely linked to each other yet, so edges were routinely empty. The default (`mode=connected`) now reserves headroom in the node budget for the seed facts' direct link-neighbors (`mode=recent` preserves the old recency-only sample), and edges are fetched with a new `FactsDB.getEdgesForFactIds()` scoped directly to the selected node set instead of filtering an arbitrary, unordered, LIMIT-truncated global edge sample. The payload also gains a `coverage` block (total facts/links, selected nodes/edges, orphans-in-view, hubs-skipped) and an edge `layer` field (`"explicit"` today) so the dashboard can be honest about what a sampled subgraph does and doesn't show (#2128).
+- **Memory graph under-linked: ~88% of active facts had no explicit link ([#2127](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2127))** — new bounded, dry-run-by-default `openclaw hybrid-mem maintenance graph-link-enrichment [--apply] [--limit N]` promotes one deterministic, already-computed signal into the explicit graph: orphan facts that share a recorded source event (`facts.provenance_json.sourceEventIds`) are linked via `RELATED_TO` (star topology per shared-event group, so a large group doesn't produce an O(n²) edge blowup). It never touches a fact that already has any link. `memory_health` also reports `orphanRate` and warns when it exceeds 70%.
+
+### Fixed — Installer & upgrade safety (#2125, #2130)
+
+- **Duplicate-install cleanup missed stale root/nested copies ([#2125](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2125))** — the existing reconcile logic only ever compared the `extensions/` copy against the managed `npm/projects/` copy. A stale root `~/.openclaw/node_modules/<id>` copy (which plain Node `require.resolve` from state/workspace-adjacent code still resolves to) or an accidental nested `~/.openclaw/.openclaw/...` state dir went undetected. `openclaw hybrid-mem doctor` and `verify --fix` now also detect and quarantine (move to `~/.openclaw/.cache`, never delete) these known stale install roots.
+- **Live upgrade could mutate the active package path underneath a running gateway ([#2130](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2130))** — `scripts/post-upgrade.sh` ran `npm install` directly in the live plugin directory before stopping the gateway, and `scripts/upgrade-plugin-manual.sh` `rm -rf`'d the live directory with no gateway stop at all; either could produce a transient `ERR_MODULE_NOT_FOUND` if the gateway lazily imported a module mid-mutation. `post-upgrade.sh` now stops the gateway before running `npm install`; `upgrade-plugin-manual.sh` now builds the new version entirely in a staging directory (`npm pack` + `npm install`), then stops the gateway and atomically swaps it in, preserving the previous version as a timestamped backup.
+
+### Notes
+
+- No `schemaVersion` bump — no storage-schema changes.
+- No agent-tool contract changes.
+- The managed `~/.openclaw/npm/projects/<id>` upgrade path itself is driven by OpenClaw core's own plugin manager, not this plugin's scripts — #2130's fix covers this plugin's own shipped upgrade helpers.
+
 ## [2026.7.218] - 2026-07-14
 
 ### Fixed — Packaging & install correctness (#2115, #2116, #2117)

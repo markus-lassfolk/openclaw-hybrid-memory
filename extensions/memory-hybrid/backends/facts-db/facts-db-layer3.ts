@@ -10,6 +10,7 @@ import {
   getAllLinks as getAllLinksImpl,
   getClusterMembers as getClusterMembersImpl,
   getClusters as getClustersImpl,
+  getEdgesForFactIds as getEdgesForFactIdsImpl,
   getFactClusterId as getFactClusterIdImpl,
   saveClusters as saveClustersImpl,
 } from "./clusters.js";
@@ -483,6 +484,10 @@ export class FactsDB extends FactsDBLayer2 {
 
   getAllEdges(limit = 5000): ReturnType<typeof getAllEdgesImpl> {
     return getAllEdgesImpl(this.liveDb, limit);
+  }
+
+  getEdgesForFactIds(ids: string[], limit = 5000): ReturnType<typeof getEdgesForFactIdsImpl> {
+    return getEdgesForFactIdsImpl(this.liveDb, ids, limit);
   }
 
   saveClusters(

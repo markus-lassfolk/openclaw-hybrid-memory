@@ -30,12 +30,32 @@ interface MemoryGraphEdge {
   target: string;
   linkType: string;
   strength: number;
+  /**
+   * Relationship layer this edge belongs to (#2128). Only "explicit" (memory_links rows) is
+   * materialized as graph edges today; semantic/provenance/metadata-derived layers are surfaced
+   * separately (memory_health, provenance_json) but not yet promoted into this graph payload.
+   * Present on every edge so the dashboard can label/style edges honestly as more layers land.
+   */
+  layer: "explicit";
+}
+
+/** Coverage counters so a sampled subgraph is never mistaken for "the whole graph" (#2126, #2128). */
+interface GraphCoverage {
+  totalActiveFacts: number;
+  totalExplicitLinks: number;
+  selectedNodes: number;
+  selectedEdges: number;
+  /** Nodes in the returned payload with no edge among the returned edges. */
+  orphanNodesInView: number;
+  /** 1-hop neighbors skipped because a seed node's degree exceeded the hub cap. */
+  hubsSkipped: number;
 }
 
 interface GraphPayload {
   generatedAt: string;
   nodes: MemoryGraphNode[];
   edges: MemoryGraphEdge[];
+  coverage: GraphCoverage;
 }
 
 interface GraphRecallPayload extends GraphPayload {
@@ -49,16 +69,73 @@ interface GraphRecallPayload extends GraphPayload {
   };
 }
 
-export function collectGraphPayload(factsDb: FactsDB, days: number, maxNodes: number): GraphPayload {
+function toGraphNode(entry: {
+  id: string;
+  text: string;
+  category: string;
+  importance: number;
+  decayClass?: string | null;
+  provenanceJson?: string | null;
+}): MemoryGraphNode {
+  return {
+    id: entry.id,
+    label: entry.text.length > 120 ? `${entry.text.slice(0, 120)}…` : entry.text,
+    category: entry.category,
+    importance: entry.importance,
+    decayClass: entry.decayClass ?? "stable",
+    provenance: parseProvenance(entry.provenanceJson ?? null),
+  };
+}
+
+function toGraphEdges(
+  edges: Array<{ source: string; target: string; linkType: string; strength: number }>,
+): MemoryGraphEdge[] {
+  return edges.map((e) => ({
+    source: e.source,
+    target: e.target,
+    linkType: e.linkType,
+    strength: e.strength,
+    layer: "explicit" as const,
+  }));
+}
+
+function countOrphansInView(nodes: MemoryGraphNode[], edges: MemoryGraphEdge[]): number {
+  const connected = new Set<string>();
+  for (const e of edges) {
+    connected.add(e.source);
+    connected.add(e.target);
+  }
+  return nodes.filter((n) => !connected.has(n.id)).length;
+}
+
+/**
+ * mode="connected" (default): recent facts plus their direct explicit-link neighbors, so a
+ * link-rich corpus reliably shows edges instead of a near-always-empty recency-only sample
+ * (#2126 — on an append-heavy store, recently-created facts are rarely linked to each other yet).
+ * mode="recent": the original recency-only node sample, for callers that specifically want that.
+ */
+export function collectGraphPayload(
+  factsDb: FactsDB,
+  days: number,
+  maxNodes: number,
+  opts?: { mode?: "connected" | "recent"; hubDegreeCap?: number | null },
+): GraphPayload {
   const nowSec = Math.floor(Date.now() / 1000);
   const cutoff = nowSec - days * 86400;
   const capped = Math.min(2000, Math.max(20, maxNodes));
   const db = factsDb.getRawDb();
-  const rows = db
+  const mode = opts?.mode === "recent" ? "recent" : "connected";
+  // Reserve headroom for neighbor expansion instead of letting the recency query alone fill the
+  // entire node budget (#2126) — on any corpus with >= maxNodes recent facts (the common case),
+  // an unreserved budget would leave literally zero room for neighbor expansion, since the seed
+  // query would already have consumed the whole cap.
+  const seedLimit = mode === "connected" ? Math.max(1, Math.ceil(capped * 0.6)) : capped;
+
+  const recentRows = db
     .prepare(
       "SELECT id, text, category, importance, decay_class, provenance_json FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?) AND created_at >= ? ORDER BY created_at DESC LIMIT ?",
     )
-    .all(nowSec, cutoff, capped) as Array<{
+    .all(nowSec, cutoff, seedLimit) as Array<{
     id: string;
     text: string;
     category: string;
@@ -66,26 +143,69 @@ export function collectGraphPayload(factsDb: FactsDB, days: number, maxNodes: nu
     decay_class: string | null;
     provenance_json: string | null;
   }>;
-  const idSet = new Set(rows.map((r) => r.id));
-  const allEdges = factsDb.getAllEdges(12000);
-  const edges = allEdges.filter((e) => idSet.has(e.source) && idSet.has(e.target)).slice(0, 2000);
-  const nodes: MemoryGraphNode[] = rows.map((r) => ({
-    id: r.id,
-    label: r.text.length > 120 ? `${r.text.slice(0, 120)}…` : r.text,
-    category: r.category,
-    importance: r.importance,
-    decayClass: r.decay_class ?? "stable",
-    provenance: parseProvenance(r.provenance_json),
-  }));
+
+  const nodes: MemoryGraphNode[] = recentRows.map((r) =>
+    toGraphNode({
+      id: r.id,
+      text: r.text,
+      category: r.category,
+      importance: r.importance,
+      decayClass: r.decay_class,
+      provenanceJson: r.provenance_json,
+    }),
+  );
+  let finalIds = recentRows.map((r) => r.id);
+  let hubsSkipped = 0;
+
+  if (mode === "connected" && finalIds.length > 0) {
+    const hubDegreeCap = opts?.hubDegreeCap === undefined ? 50 : opts.hubDegreeCap;
+    const stats: GraphConnectedStats = { nodesConsidered: 0, nodesSkipped: 0, hubsSkipped: 0 };
+    const connected = factsDb.getConnectedFactIds(finalIds, 1, { hubDegreeCap, stats });
+    hubsSkipped = stats.hubsSkipped;
+    const seedSet = new Set(finalIds);
+    const neighborIds = connected.filter((id) => !seedSet.has(id));
+    const budget = Math.max(0, capped - finalIds.length);
+    const chosenNeighbors = neighborIds.slice(0, budget);
+    if (chosenNeighbors.length > 0) {
+      const neighborEntries = factsDb.getByIds(chosenNeighbors);
+      for (const id of chosenNeighbors) {
+        const entry = neighborEntries.get(id);
+        if (!entry) continue;
+        nodes.push(
+          toGraphNode({
+            id: entry.id,
+            text: entry.text,
+            category: entry.category,
+            importance: entry.importance,
+            decayClass: entry.decayClass,
+            provenanceJson: entry.provenanceJson,
+          }),
+        );
+      }
+      finalIds = [...finalIds, ...chosenNeighbors];
+    }
+  }
+
+  const rawEdges = factsDb.getEdgesForFactIds(finalIds, 2000);
+  const edges = toGraphEdges(rawEdges);
+
+  const totalActiveRow = db
+    .prepare("SELECT COUNT(*) AS cnt FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)")
+    .get(nowSec) as { cnt: number };
+  const totalLinksRow = db.prepare("SELECT COUNT(*) AS cnt FROM memory_links").get() as { cnt: number };
+
   return {
     generatedAt: nowIso(),
     nodes,
-    edges: edges.map((e) => ({
-      source: e.source,
-      target: e.target,
-      linkType: e.linkType,
-      strength: e.strength,
-    })),
+    edges,
+    coverage: {
+      totalActiveFacts: totalActiveRow.cnt,
+      totalExplicitLinks: totalLinksRow.cnt,
+      selectedNodes: nodes.length,
+      selectedEdges: edges.length,
+      orphanNodesInView: countOrphansInView(nodes, edges),
+      hubsSkipped,
+    },
   };
 }
 
@@ -108,7 +228,20 @@ export function collectGraphRecallPayload(
 ): GraphRecallPayload {
   const q = query.trim();
   if (!q) {
-    return { generatedAt: nowIso(), nodes: [], edges: [], activated: [] };
+    return {
+      generatedAt: nowIso(),
+      nodes: [],
+      edges: [],
+      activated: [],
+      coverage: {
+        totalActiveFacts: 0,
+        totalExplicitLinks: 0,
+        selectedNodes: 0,
+        selectedEdges: 0,
+        orphanNodesInView: 0,
+        hubsSkipped: 0,
+      },
+    };
   }
   const results = factsDb.search(q, 12, {
     includeSuperseded: false,
@@ -129,28 +262,28 @@ export function collectGraphRecallPayload(
   for (const id of ids) {
     const f = entryMap.get(id);
     if (!f) continue;
-    nodes.push({
-      id: f.id,
-      label: f.text.length > 120 ? `${f.text.slice(0, 120)}…` : f.text,
-      category: f.category,
-      importance: f.importance,
-      decayClass: f.decayClass ?? "stable",
-      provenance: parseProvenance(f.provenanceJson ?? null),
-    });
+    nodes.push(toGraphNode(f));
   }
-  const nodeIdSet = new Set(nodes.map((n) => n.id));
-  const allEdges = factsDb.getAllEdges(10000);
-  const edges = allEdges.filter((e) => nodeIdSet.has(e.source) && nodeIdSet.has(e.target)).slice(0, 2000);
+  const rawEdges = factsDb.getEdgesForFactIds(ids, 2000);
+  const edges = toGraphEdges(rawEdges);
+  const db = factsDb.getRawDb();
+  const totalActiveRow = db
+    .prepare("SELECT COUNT(*) AS cnt FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)")
+    .get(Math.floor(Date.now() / 1000)) as { cnt: number };
+  const totalLinksRow = db.prepare("SELECT COUNT(*) AS cnt FROM memory_links").get() as { cnt: number };
   return {
     generatedAt: nowIso(),
     nodes,
-    edges: edges.map((e) => ({
-      source: e.source,
-      target: e.target,
-      linkType: e.linkType,
-      strength: e.strength,
-    })),
+    edges,
     activated: seeds,
+    coverage: {
+      totalActiveFacts: totalActiveRow.cnt,
+      totalExplicitLinks: totalLinksRow.cnt,
+      selectedNodes: nodes.length,
+      selectedEdges: edges.length,
+      orphanNodesInView: countOrphansInView(nodes, edges),
+      hubsSkipped: connected.hubsSkipped,
+    },
     graphHubGuard: {
       configuredCap: hubDegreeCap,
       effectiveCap: resolveGraphHubDegreeCap(hubDegreeCap),

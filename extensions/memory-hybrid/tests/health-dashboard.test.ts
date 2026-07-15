@@ -258,6 +258,29 @@ describe("buildHealthReport", () => {
     expect(report.avgLinksPerFact).toBe(0);
   });
 
+  // #2127: memory_health should surface an excessive orphan rate instead of only exposing raw
+  // counts an operator has to compute themselves.
+  it("orphanRate is computed and no warning fires below the threshold", async () => {
+    const a = storeMinimalFact(factsDb);
+    const b = storeMinimalFact(factsDb);
+    addLink(factsDb, a, b);
+    storeMinimalFact(factsDb); // 1 of 3 active facts orphaned = 33%
+    const report = await buildHealthReport(factsDb, join(tmpDir, "facts.db"), join(tmpDir, "lance"));
+    expect(report.orphanRate).toBeCloseTo(1 / 3, 2);
+    expect(report.orphanRateWarning).toBeNull();
+  });
+
+  it("orphanRateWarning fires when the orphan rate exceeds the threshold", async () => {
+    const a = storeMinimalFact(factsDb);
+    const b = storeMinimalFact(factsDb);
+    addLink(factsDb, a, b);
+    for (let i = 0; i < 20; i++) storeMinimalFact(factsDb); // 20 of 22 active facts orphaned
+    const report = await buildHealthReport(factsDb, join(tmpDir, "facts.db"), join(tmpDir, "lance"));
+    expect(report.orphanRate).toBeGreaterThan(0.7);
+    expect(report.orphanRateWarning).not.toBeNull();
+    expect(report.orphanRateWarning).toContain("graph-link-enrichment");
+  });
+
   it("lastReflectionAt is null when no reflection facts exist", async () => {
     storeMinimalFact(factsDb, { source: "conversation" });
     const report = await buildHealthReport(factsDb, join(tmpDir, "facts.db"), join(tmpDir, "lance"));
@@ -275,6 +298,26 @@ describe("buildHealthReport", () => {
     storeMinimalFact(factsDb);
     const report = await buildHealthReport(factsDb, join(tmpDir, "facts.db"), join(tmpDir, "lance"));
     expect(report.lastPruneAt).toBeNull();
+  });
+
+  // #2129: memory_health reported "Last prune: +058459-01-18T10:26:40.000Z" — an ms-scale value
+  // stored where seconds were expected then multiplied by 1000 again by formatTimestampUtc.
+  it("self-corrects a superseded_at value that is actually epoch milliseconds", async () => {
+    storeMinimalFact(factsDb); // active
+    storeMinimalFact(factsDb, { supersededAt: 1782622204000 }); // ms-scale mistake, not seconds
+    const report = await buildHealthReport(factsDb, join(tmpDir, "facts.db"), join(tmpDir, "lance"));
+    expect(report.lastPruneAt).toBe(new Date(1782622204000).toISOString());
+    expect(report.lastPruneInvalidRaw).toBeNull();
+  });
+
+  it("reports lastPruneAt as invalid (not a fabricated far-future date) when the stored value is still nonsensical", async () => {
+    storeMinimalFact(factsDb); // active
+    // Neither a plausible seconds value nor a plausible ms value — still implausibly far in the
+    // future even after formatTimestampUtc's ms self-correction.
+    storeMinimalFact(factsDb, { supersededAt: 5_000_000_000_000 });
+    const report = await buildHealthReport(factsDb, join(tmpDir, "facts.db"), join(tmpDir, "lance"));
+    expect(report.lastPruneAt).toBeNull();
+    expect(report.lastPruneInvalidRaw).toBe(5_000_000_000_000);
   });
 
   it("generatedAt is a valid ISO date string", async () => {
