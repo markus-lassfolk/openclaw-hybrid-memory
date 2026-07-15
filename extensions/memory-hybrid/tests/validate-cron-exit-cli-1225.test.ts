@@ -3,7 +3,7 @@
  * does not linger on plugin handles.
  */
 
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Command } from "commander";
@@ -65,6 +65,107 @@ describe("validate-cron-exit CLI (#1225)", () => {
     );
 
     await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(0));
+    const payload = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as { maintenanceStatus: string };
+    expect(payload.maintenanceStatus).toBe("success");
+  });
+
+  // #2133: --output-json must write a clean, parseable JSON file directly via fs, independent of
+  // whatever else may be printed to stdout (e.g. host/plugin bootstrap logs that print before this
+  // command's own code runs and that the plugin cannot suppress).
+  it("--output-json writes valid JSON to the given file, independent of stdout", async () => {
+    stubOpenclawArgv();
+    const dir = mkdtempSync(join(tmpdir(), "hm-val-cron-"));
+    const exitPath = join(dir, "success.exit");
+    const logPath = join(dir, "success.log");
+    const outputJsonPath = join(dir, "out.json");
+    writeFileSync(
+      exitPath,
+      `2026-05-08T21:10:00Z prune exit=0
+2026-05-08T21:10:01Z distill exit=0
+2026-05-08T21:10:02Z extract-daily exit=0
+`,
+    );
+    writeFileSync(logPath, "all good\n");
+
+    const mem = new Command("hybrid-mem");
+    registerValidateCronExit(mem);
+
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    // Simulate host bootstrap noise landing on stdout ahead of anything this command prints.
+    process.stdout.write("[plugins] loading openclaw-hybrid-memory from /fake/dist/index.js\n");
+
+    await mem.parseAsync(
+      [
+        "validate-cron-exit",
+        "--exit-path",
+        exitPath,
+        "--log-path",
+        logPath,
+        "--required-steps",
+        "prune",
+        "distill",
+        "extract-daily",
+        "--allow-skip",
+        "--output-json",
+        outputJsonPath,
+      ],
+      { from: "user" },
+    );
+
+    await vi.waitFor(() => expect(exitSpy).toHaveBeenCalled());
+    const raw = readFileSync(outputJsonPath, "utf-8");
+    expect(() => JSON.parse(raw)).not.toThrow();
+    const payload = JSON.parse(raw) as { maintenanceStatus: string };
+    expect(payload.maintenanceStatus).toBe("success");
+  });
+
+  // #2134 QA follow-up: a writeFileSync failure for --output-json (e.g. ENOSPC, bad path) must not
+  // swallow the already-computed validation result — --json/console output and the exit code must
+  // still happen.
+  it("--output-json write failure does not suppress --json console output or the exit code", async () => {
+    stubOpenclawArgv();
+    const dir = mkdtempSync(join(tmpdir(), "hm-val-cron-"));
+    const exitPath = join(dir, "success.exit");
+    const logPath = join(dir, "success.log");
+    // A path under a nonexistent parent directory always fails writeFileSync (ENOENT).
+    const outputJsonPath = join(dir, "nonexistent-subdir", "out.json");
+    writeFileSync(
+      exitPath,
+      `2026-05-08T21:10:00Z prune exit=0
+2026-05-08T21:10:01Z distill exit=0
+2026-05-08T21:10:02Z extract-daily exit=0
+`,
+    );
+    writeFileSync(logPath, "all good\n");
+
+    const mem = new Command("hybrid-mem");
+    registerValidateCronExit(mem);
+
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await mem.parseAsync(
+      [
+        "validate-cron-exit",
+        "--exit-path",
+        exitPath,
+        "--log-path",
+        logPath,
+        "--required-steps",
+        "prune",
+        "distill",
+        "extract-daily",
+        "--allow-skip",
+        "--json",
+        "--output-json",
+        outputJsonPath,
+      ],
+      { from: "user" },
+    );
+
+    await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(0));
+    expect(errorSpy).toHaveBeenCalled();
     const payload = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as { maintenanceStatus: string };
     expect(payload.maintenanceStatus).toBe("success");
   });

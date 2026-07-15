@@ -17,6 +17,7 @@ import {
   registerBackfillMaintenanceCommands,
   registerMaintenanceCoverageCommand,
 } from "./manage/register-backfill-maintenance.js";
+import { registerGraphLinkEnrichmentCommand } from "./manage/register-graph-link-enrichment.js";
 import { registerMaintenanceHealthCommands } from "./manage/register-maintenance-health.js";
 import { registerMaintenanceOrchestratorCommands } from "./manage/register-maintenance-orchestrator.js";
 import { registerMaintenanceRunCommands } from "./manage/register-maintenance-run.js";
@@ -73,6 +74,7 @@ export function registerMaintenanceGroup(mem: Chainable, b: ManageBindings, ctx:
     resolvedSqlitePath: ctx.resolvedSqlitePath,
   });
   registerReconcileCronLedgers(groupedCmds);
+  registerGraphLinkEnrichmentCommand(groupedCmds, b);
 
   const backfill = maintenance.command("backfill").description("Backfill maintenance data gaps");
   registerBackfillMaintenanceCommands(wrapChainableWithRenames(backfill, BACKFILL_RENAMES), b, {

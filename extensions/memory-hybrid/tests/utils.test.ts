@@ -295,11 +295,24 @@ describe("formatTimestampUtc", () => {
   it("formats epoch seconds as ISO Z", () => {
     expect(formatTimestampUtc(1700000000)).toMatch(/^2023-11-14T22:13:20\.\d{3}Z$/);
   });
+
+  // #2129: a value that is actually epoch milliseconds (e.g. superseded_at accidentally stored
+  // as Date.now() instead of nowSec()) must self-correct instead of exploding into a
+  // multiply-by-1000-too-far-future date like +058459-01-18.
+  it("self-corrects a value that is actually epoch milliseconds", () => {
+    const msValue = 1782622204000; // ~2026-06-28T04:50:04Z if treated as ms
+    expect(formatTimestampUtc(msValue)).toBe(new Date(msValue).toISOString());
+  });
 });
 
 describe("formatDateUtc", () => {
   it("formats epoch seconds as YYYY-MM-DD", () => {
     expect(formatDateUtc(1700000000)).toBe("2023-11-14");
+  });
+
+  it("self-corrects a value that is actually epoch milliseconds (#2129)", () => {
+    const msValue = 1782622204000;
+    expect(formatDateUtc(msValue)).toBe(new Date(msValue).toISOString().slice(0, 10));
   });
 });
 

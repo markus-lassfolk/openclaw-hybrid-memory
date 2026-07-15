@@ -13,8 +13,8 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { detectClusters } from "../services/topic-clusters.js";
-import { getDirSize, getFileSizeAsync } from "../utils/fs.js";
 import { formatTimestampUtc, nowIso } from "../utils/dates.js";
+import { getDirSize, getFileSizeAsync } from "../utils/fs.js";
 
 interface HealthPluginContext {
   factsDb: FactsDB;
@@ -33,6 +33,15 @@ interface HealthReport {
   tierDistribution: Record<string, number>;
   avgConfidence: number;
   orphanFacts: number;
+  /** Fraction of active facts with no explicit graph link, 0-1 (#2127). */
+  orphanRate: number;
+  /**
+   * Set when orphanRate exceeds a high-orphan threshold, so a dashboard/agent surfaces it instead
+   * of only exposing the raw counts. Points at `maintenance graph-link-enrichment` as one lever;
+   * a high orphan rate does not necessarily indicate a problem (recall can work fine via
+   * FTS/vector search without explicit links), just that graph-native navigation is limited.
+   */
+  orphanRateWarning: string | null;
   staleFacts: number;
   avgLinksPerFact: number;
   totalLinks: number;
@@ -49,13 +58,44 @@ interface HealthReport {
   topClusters: Array<{ id: string; label: string; factCount: number }>;
   unresolvedContradictions: number;
   lastReflectionAt: string | null;
+  /** Raw stored value for lastReflectionAt when it failed the future-skew sanity check (#2129). */
+  lastReflectionInvalidRaw: number | null;
   lastPruneAt: string | null;
+  /** Raw stored value for lastPruneAt when it failed the future-skew sanity check (#2129). */
+  lastPruneInvalidRaw: number | null;
   storageSizeBytes: {
     sqlite: number;
     lance: number;
     total: number;
   };
   generatedAt: string;
+}
+
+/** Maintenance timestamps more than this far in the future than "now" are treated as corrupt (#2129). */
+const MAINTENANCE_TIMESTAMP_FUTURE_SKEW_SEC = 2 * 24 * 60 * 60;
+
+/**
+ * Format a maintenance-metadata epoch-seconds value, guarding against corrupt/out-of-range
+ * values (e.g. a stray milliseconds value) rendering as an implausible far-future date.
+ * `formatTimestampUtc` already self-corrects the common ms-vs-seconds mismatch; this catches
+ * whatever is still nonsensical afterward instead of silently displaying it as real.
+ */
+function formatMaintenanceTimestampOrNull(
+  raw: number | null,
+  nowSec: number,
+): { display: string | null; invalidRaw: number | null } {
+  if (raw == null) return { display: null, invalidRaw: null };
+  let formatted: string;
+  try {
+    formatted = formatTimestampUtc(raw);
+  } catch {
+    return { display: null, invalidRaw: raw };
+  }
+  const ms = Date.parse(formatted);
+  if (!Number.isFinite(ms) || ms / 1000 > nowSec + MAINTENANCE_TIMESTAMP_FUTURE_SKEW_SEC) {
+    return { display: null, invalidRaw: raw };
+  }
+  return { display: formatted, invalidRaw: null };
 }
 
 export async function buildHealthReport(
@@ -148,6 +188,13 @@ export async function buildHealthReport(
     )
     .get(nowSec) as { cnt: number };
   const orphanFacts = orphanRow.cnt;
+  const orphanRate = activeFacts > 0 ? orphanFacts / activeFacts : 0;
+  const ORPHAN_RATE_WARNING_THRESHOLD = 0.7;
+  const orphanRateWarning =
+    activeFacts > 0 && orphanRate > ORPHAN_RATE_WARNING_THRESHOLD
+      ? `${(orphanRate * 100).toFixed(1)}% of active facts have no explicit graph link. Recall via FTS/vector ` +
+        "search is unaffected, but graph navigation is limited. Consider `maintenance graph-link-enrichment`."
+      : null;
 
   // Stale facts: confidence < 0.3, not permanent decay class, active
   const staleRow = db
@@ -253,13 +300,17 @@ export async function buildHealthReport(
   const reflRow = db.prepare(`SELECT MAX(created_at) AS last_at FROM facts WHERE source = 'reflection'`).get() as {
     last_at: number | null;
   };
-  const lastReflectionAt = reflRow.last_at != null ? formatTimestampUtc(reflRow.last_at) : null;
+  const lastReflectionResult = formatMaintenanceTimestampOrNull(reflRow.last_at, nowSec);
+  const lastReflectionAt = lastReflectionResult.display;
+  const lastReflectionInvalidRaw = lastReflectionResult.invalidRaw;
 
   // Last prune: derived from MAX(superseded_at) of superseded facts (best approximation)
   const pruneRow = db
     .prepare("SELECT MAX(superseded_at) AS last_at FROM facts WHERE superseded_at IS NOT NULL")
     .get() as { last_at: number | null };
-  const lastPruneAt = pruneRow.last_at != null ? formatTimestampUtc(pruneRow.last_at) : null;
+  const lastPruneResult = formatMaintenanceTimestampOrNull(pruneRow.last_at, nowSec);
+  const lastPruneAt = lastPruneResult.display;
+  const lastPruneInvalidRaw = lastPruneResult.invalidRaw;
 
   // Storage sizes (async I/O — avoids sync stat hot-path blocking; Issue #880)
   const [sqliteSize, sqliteWalSize, sqliteShmSize, lanceSize] = await Promise.all([
@@ -279,6 +330,8 @@ export async function buildHealthReport(
     tierDistribution,
     avgConfidence,
     orphanFacts,
+    orphanRate,
+    orphanRateWarning,
     staleFacts,
     avgLinksPerFact,
     totalLinks,
@@ -287,7 +340,9 @@ export async function buildHealthReport(
     topClusters,
     unresolvedContradictions,
     lastReflectionAt,
+    lastReflectionInvalidRaw,
     lastPruneAt,
+    lastPruneInvalidRaw,
     storageSizeBytes: {
       sqlite: totalSqliteSize,
       lance: lanceSize,
@@ -325,7 +380,8 @@ export function registerHealthTools(ctx: HealthPluginContext, api: ClawdbotPlugi
             "",
             `Facts: ${report.activeFacts} active / ${report.totalFacts} total (${report.supersededFacts} superseded)`,
             `Stale facts (confidence < 0.3, non-permanent): ${report.staleFacts}`,
-            `Orphan facts (no links): ${report.orphanFacts}`,
+            `Orphan facts (no links): ${report.orphanFacts} (${(report.orphanRate * 100).toFixed(1)}%)`,
+            ...(report.orphanRateWarning ? [`⚠ ${report.orphanRateWarning}`] : []),
             `Avg confidence: ${report.avgConfidence.toFixed(3)}`,
             `Retrieval hit rate (7d): ${(report.retrievalHitRate7d * 100).toFixed(1)}%`,
             `Unresolved contradictions: ${report.unresolvedContradictions}`,
@@ -355,8 +411,18 @@ export function registerHealthTools(ctx: HealthPluginContext, api: ClawdbotPlugi
                 : "none"
             }`,
             "",
-            `Last reflection: ${report.lastReflectionAt ?? "never"}`,
-            `Last prune: ${report.lastPruneAt ?? "none recorded"}`,
+            `Last reflection: ${
+              report.lastReflectionAt ??
+              (report.lastReflectionInvalidRaw != null
+                ? `invalid (corrupt stored value: ${report.lastReflectionInvalidRaw})`
+                : "never")
+            }`,
+            `Last prune: ${
+              report.lastPruneAt ??
+              (report.lastPruneInvalidRaw != null
+                ? `invalid (corrupt stored value: ${report.lastPruneInvalidRaw})`
+                : "none recorded")
+            }`,
             "",
             `Storage: SQLite ${(report.storageSizeBytes.sqlite / 1024).toFixed(1)} KB, ` +
               `LanceDB ${(report.storageSizeBytes.lance / 1024).toFixed(1)} KB, ` +

@@ -110,6 +110,16 @@ The proper fix requires changes to the OpenClaw CLI host:
 
 **This is tracked as an OpenClaw core issue** and cannot be fixed in the plugin alone.
 
+### `--output-json <path>`: a plugin-side workaround for automation (#2133)
+
+For commands that automation depends on being byte-0-parseable — today, `validate-cron-exit` —
+a `--output-json <path>` flag writes the JSON payload directly to a file via `fs`, entirely
+bypassing stdout. Because the write happens from inside the command's own code, it is immune to
+host bootstrap logs printed before the command runs, no matter how the invocation's stdout is
+captured. The cron harness (`services/cron-job-bash-harness.ts`) uses this instead of parsing
+`validate-cron-exit`'s stdout when writing `HM_VALIDATION_JSON`. `--json`/stdout output is
+unaffected — `--output-json` is an addition, not a replacement.
+
 ## Commands Fixed in #1234/#1268
 
 The following commands now correctly:
