@@ -20,19 +20,19 @@ function makeDb(tmpDir: string): InstanceType<typeof FactsDB> {
 
 function storeFactWithProvenance(
   db: InstanceType<typeof FactsDB>,
-  overrides: { text?: string; sourceEventIds?: string[]; createdAt?: number } = {},
+  overrides: { text?: string; sourceEventIds?: string[]; createdAt?: number; expiresAt?: number | null } = {},
 ): string {
   const raw = db.getRawDb();
   const id = `test-${Math.random().toString(36).slice(2)}`;
   const nowSec = Math.floor(Date.now() / 1000);
-  const { text = "test fact", sourceEventIds, createdAt = nowSec } = overrides;
+  const { text = "test fact", sourceEventIds, createdAt = nowSec, expiresAt = null } = overrides;
   const provenanceJson = sourceEventIds ? JSON.stringify({ sourceEventIds }) : null;
   raw
     .prepare(
       `INSERT INTO facts (id, text, category, importance, source, created_at, decay_class, confidence, tier, valid_until, expires_at, superseded_at, provenance_json)
-     VALUES (?, ?, 'fact', 0.7, 'conversation', ?, 'stable', 1.0, 'warm', NULL, NULL, NULL, ?)`,
+     VALUES (?, ?, 'fact', 0.7, 'conversation', ?, 'stable', 1.0, 'warm', NULL, ?, NULL, ?)`,
     )
-    .run(id, text, createdAt, provenanceJson);
+    .run(id, text, createdAt, expiresAt, provenanceJson);
   return id;
 }
 
@@ -153,5 +153,23 @@ describe("enrichOrphanFactLinksBySharedSourceEvent (#2127)", () => {
 
     expect(result.factsScanned).toBe(0);
     expect(result.linksCreated).toBe(0);
+  });
+
+  it("excludes an expired-but-not-superseded orphan from the scan (#2134 QA follow-up)", () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    // Oldest-first scan order means an expired pinned/verified orphan (exempt from pruning)
+    // must not be able to consume the --limit budget ahead of an active orphan.
+    storeFactWithProvenance(factsDb, {
+      sourceEventIds: ["evt-1"],
+      createdAt: nowSec - 100_000,
+      expiresAt: nowSec - 1,
+    });
+    const active = storeFactWithProvenance(factsDb, { sourceEventIds: ["evt-1"], createdAt: nowSec });
+
+    const result = enrichOrphanFactLinksBySharedSourceEvent(factsDb, { dryRun: false, limit: 1 });
+
+    expect(result.factsScanned).toBe(1);
+    expect(result.linksCreated).toBe(0);
+    expect(factsDb.getEdgesForFactIds([active], 10)).toHaveLength(0);
   });
 });

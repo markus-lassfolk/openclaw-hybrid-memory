@@ -34,7 +34,17 @@ echo "Stopping OpenClaw gateway before reinstalling deps ..."
 openclaw gateway stop 2>/dev/null || true
 
 echo "Reinstalling deps in $PLUGIN_DIR ..."
-(cd "$PLUGIN_DIR" && npm install)
+if ! (cd "$PLUGIN_DIR" && npm install); then
+  # A failed install here must not leave the gateway stopped indefinitely with no automatic
+  # restart — that trades the original transient ERR_MODULE_NOT_FOUND race for a harder, silent
+  # outage (#2134 QA follow-up). This script mutates node_modules in place (unlike
+  # upgrade-plugin-manual.sh's staged swap), so there is no clean rollback available; restarting
+  # against whatever partially-installed state npm left behind is still strictly better than a
+  # gateway left down with no restart attempt at all.
+  echo "ERROR: npm install failed; restarting OpenClaw gateway before exiting ..." >&2
+  openclaw gateway start || true
+  exit 1
+fi
 
 echo "Starting OpenClaw gateway ..."
 openclaw gateway start

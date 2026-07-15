@@ -63,7 +63,17 @@ export function registerValidateCronExit(hybrid: Chainable, context?: ValidateCr
             : validateMaintenanceExecution(opts.exitPath, opts.logPath, opts.requiredSteps, !!opts.allowSkip);
 
           if (opts.outputJson?.trim()) {
-            writeFileSync(opts.outputJson.trim(), generateCronStatusReport(result), "utf8");
+            // A write failure here (e.g. ENOSPC, permissions) must not skip the console output,
+            // telemetry reporting, and exit-code resolution below — the validation result was
+            // already computed and is still worth surfacing even if this artifact can't be written
+            // (#2134 QA follow-up).
+            try {
+              writeFileSync(opts.outputJson.trim(), generateCronStatusReport(result), "utf8");
+            } catch (err) {
+              console.error(
+                `Failed to write --output-json to ${opts.outputJson.trim()}: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
           }
 
           if (opts.json) {

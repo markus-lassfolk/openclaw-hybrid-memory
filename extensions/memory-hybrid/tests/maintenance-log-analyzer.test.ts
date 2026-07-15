@@ -547,6 +547,11 @@ describe("maintenance log analyzer", () => {
     const finding = findings.find((f) => f.step === "orchestration-bootstrap-only-exit");
     expect(finding).toBeDefined();
     expect(finding?.classification).toBe("orchestration-bug");
+    // #2134 QA follow-up: the human-readable suggestedAction must name the bootstrap-specific root
+    // cause, not fall through to the generic "empty or unparsable" message every other unmatched
+    // orchestration-* step gets.
+    expect(finding?.suggestedAction).toContain("bootstrap marker");
+    expect(finding?.suggestedAction).not.toContain("empty or unparsable");
   });
 
   it("does not flag a fresh bootstrap-only ledger as a failure — the run may still be in progress (#2131)", () => {

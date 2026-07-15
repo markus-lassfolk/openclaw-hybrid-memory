@@ -776,6 +776,21 @@ function classifyOrchestrationAnomaly(
 
   const staleHint = /stale=yes|appears stale|still running after/i.test(`${line ?? ""}\n${logContent ?? ""}`);
 
+  if (stepName === "orchestration-bootstrap-only-exit") {
+    return {
+      id: "orchestration-bootstrap-only-exit",
+      pattern: "",
+      classification: "orchestration-bug",
+      defaultAction: "glitchtip+digest",
+      severity: "high",
+      suggestedAction:
+        "The cron harness wrote only its durable bootstrap marker (#2131) before the run went stale — " +
+        "no further step or validate-cron-exit row was ever recorded. Treat as a wrapper/agent crash " +
+        "between artifact creation and the first real step; check for OOM/signal kills or a broken " +
+        "cron invocation, and rerun once the underlying cause is fixed.",
+    };
+  }
+
   if (stepName === "orchestration-missing-exit-ledger" || stepName === "orchestration-stale-missing-exit-ledger") {
     return {
       id: "orchestration-missing-exit-ledger",

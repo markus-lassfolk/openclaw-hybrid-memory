@@ -19,6 +19,10 @@ This release closes out nine open issues surfaced by live production hosts (Maev
 - **Duplicate-install cleanup missed stale root/nested copies** (#2125) — extends the #2117 reconcile logic, which only ever compared `extensions/` against the managed `npm/projects/` copy, to also detect and quarantine (move, never delete) a stale root `~/.openclaw/node_modules/<id>` copy and an accidental nested `~/.openclaw/.openclaw/...` state-dir copy. `doctor` and `verify --fix` both pick this up.
 - **Live upgrade could mutate the active package path underneath a running gateway** (#2130) — `scripts/post-upgrade.sh` and `scripts/upgrade-plugin-manual.sh` (this plugin's own shipped upgrade helpers) could mutate/replace the live plugin directory while the gateway was still running, risking a transient `ERR_MODULE_NOT_FOUND` on a lazy import. Both now build/install the new version before stopping the gateway and swapping it in, and the manual script preserves the previous version as a timestamped backup.
 
+## Hardened — QA follow-up
+
+A full code review of this release's own diff, before merge, found and closed several residual edge cases in the fixes above (all with regression tests): a SQL-limit-before-filter gap in the #2126 edge query that could still starve genuinely in-scope edges out at scale; dangling edges and a missing `expires_at` filter in the same graph payload; a hardcoded, unconfigurable hub-degree-cap default that was 10x stricter than the rest of the codebase; a missing `expires_at` filter in the #2127 orphan-link scan; an asymmetric corrupt-timestamp diagnostic in `memory_health` (#2129); unguarded file writes in the #2133 `--output-json` path and its cron-harness consumer; a missing classifier message for the #2131 bootstrap-only finding; an unguarded install-path resolution in `verify` that could abort mid-run; and two robustness gaps in the #2130 upgrade scripts (no rollback on a failed swap, and the gateway left stopped after a failed `npm install`).
+
 ## Notes
 
 - No `schemaVersion` bump — no storage-schema changes.

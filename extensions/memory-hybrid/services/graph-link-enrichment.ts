@@ -38,17 +38,23 @@ export function enrichOrphanFactLinksBySharedSourceEvent(
   // each other — a fact with any existing link (of any type) is excluded up front, so there is
   // no risk of this enrichment adding a redundant edge alongside an existing relationship.
   // Oldest-first so repeated bounded runs make steady forward progress across the whole backlog
-  // instead of re-scanning the same head of the table every time.
+  // instead of re-scanning the same head of the table every time. Excludes expired-but-not-yet-
+  // pruned facts (like every other "active fact" query in this codebase) — pinned/verified facts
+  // are exempt from expiry-pruning forever, so without this filter they can dominate the oldest-
+  // first scan and exhaust a bounded --limit run before reaching the active orphans memory_health's
+  // orphanRate warning is actually about (#2134 QA follow-up).
+  const nowSec = Math.floor(Date.now() / 1000);
   const rows = db
     .prepare(
       `SELECT id, provenance_json FROM facts
        WHERE superseded_at IS NULL
+         AND (expires_at IS NULL OR expires_at > ?)
          AND provenance_json IS NOT NULL
          AND id NOT IN (SELECT source_fact_id FROM memory_links UNION SELECT target_fact_id FROM memory_links)
        ORDER BY created_at ASC
        LIMIT ?`,
     )
-    .all(limit) as Array<{ id: string; provenance_json: string | null }>;
+    .all(nowSec, limit) as Array<{ id: string; provenance_json: string | null }>;
 
   const bySourceEvent = new Map<string, string[]>();
   for (const row of rows) {

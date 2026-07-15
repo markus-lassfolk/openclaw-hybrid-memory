@@ -258,6 +258,38 @@ export type QuarantineExtensionsTreeResult = {
 };
 
 /**
+ * Prepare (and create) the shared `~/.openclaw/.cache` quarantine directory plus a fresh
+ * filesystem-safe timestamp, for callers to build their own destination filename from
+ * (#2134 QA follow-up — factored out of the two "quarantine to .cache" call sites below, which
+ * previously duplicated this verbatim).
+ */
+function prepareQuarantineCacheDir(): { cacheDir: string; stamp: string } {
+  const cacheDir = join(resolveOpenclawHomeDir(), ".cache");
+  mkdirSync(cacheDir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return { cacheDir, stamp };
+}
+
+/**
+ * Move `sourcePath` to `destPath`, falling back to copy-then-remove on a cross-device rename
+ * (EXDEV) so the stale copy is still gone from the discoverable path even when `.cache` lives on a
+ * different filesystem. Shared by every "quarantine to .cache" call site in this file
+ * (#2134 QA follow-up).
+ */
+function moveToQuarantine(sourcePath: string, destPath: string): void {
+  try {
+    renameSync(sourcePath, destPath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === "EXDEV") {
+      cpSync(sourcePath, destPath, { recursive: true });
+      rmSync(sourcePath, { recursive: true, force: true });
+    } else {
+      throw err;
+    }
+  }
+}
+
+/**
  * Quarantine the stale legacy `~/.openclaw/extensions/<plugin>` copy when the
  * managed npm-project install is canonical (#2117).
  *
@@ -334,22 +366,9 @@ export function removeRedundantExtensionsTreeWhenNpmProjectCanonical(opts: {
     };
   }
   try {
-    const cacheDir = join(resolveOpenclawHomeDir(), ".cache");
-    mkdirSync(cacheDir, { recursive: true });
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const { cacheDir, stamp } = prepareQuarantineCacheDir();
     const dest = join(cacheDir, `${basename(opts.extensionsPluginDir)}.removed-duplicate-${stamp}`);
-    try {
-      renameSync(opts.extensionsPluginDir, dest);
-    } catch (err) {
-      // Cross-device rename (EXDEV) or similar — copy then remove so the stale copy
-      // is still gone from the discoverable extensions path.
-      if ((err as NodeJS.ErrnoException)?.code === "EXDEV") {
-        cpSync(opts.extensionsPluginDir, dest, { recursive: true });
-        rmSync(opts.extensionsPluginDir, { recursive: true, force: true });
-      } else {
-        throw err;
-      }
-    }
+    moveToQuarantine(opts.extensionsPluginDir, dest);
     return {
       attempted: true,
       quarantined: true,
@@ -458,20 +477,9 @@ export function quarantineKnownStaleInstallRoots(opts: {
       return { ...detection, attempted: false, quarantined: false };
     }
     try {
-      const cacheDir = join(resolveOpenclawHomeDir(), ".cache");
-      mkdirSync(cacheDir, { recursive: true });
-      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const { cacheDir, stamp } = prepareQuarantineCacheDir();
       const dest = join(cacheDir, `${pluginId}.${detection.id}.removed-duplicate-${stamp}`);
-      try {
-        renameSync(detection.path, dest);
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException)?.code === "EXDEV") {
-          cpSync(detection.path, dest, { recursive: true });
-          rmSync(detection.path, { recursive: true, force: true });
-        } else {
-          throw err;
-        }
-      }
+      moveToQuarantine(detection.path, dest);
       return { ...detection, attempted: true, quarantined: true, destinationPath: dest };
     } catch (err) {
       return {

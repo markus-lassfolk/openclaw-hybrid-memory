@@ -154,69 +154,84 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
   // because shared SQLite state has conflicting plugin install metadata".
   // We compare the legacy `${stateDir}/plugins/installs.json` record against
   // the live plugin path/version we are actually running from.
-  const livePluginPath = resolveCanonicalLivePluginPathForInstallIndex(PLUGIN_ID);
-  const installIndexDetection = detectStaleLegacyInstallIndexEntry({
-    pluginId: PLUGIN_ID,
-    livePath: livePluginPath,
-  });
-  if (
-    installIndexDetection.present &&
-    installIndexDetection.verdict !== "no-conflict" &&
-    installIndexDetection.verdict !== "matches-live"
-  ) {
-    if (installIndexDetection.verdict === "safe-reconcile" && opts.fix) {
-      const result = reconcileLegacyInstallIndex({ detection: installIndexDetection });
-      if (result.ok && result.action !== "noop") {
-        log(
-          `${OK} Install index: dropped stale ${PLUGIN_ID} entry pointing at ${installIndexDetection.staleInstallPath ?? "<unknown>"} (${installIndexDetection.staleVersion ?? "<unknown>"}) — live is ${installIndexDetection.livePath} (${installIndexDetection.liveVersion ?? "<unknown>"}). Backup: ${result.backupPath ?? "<unknown>"}.`,
-        );
+  //
+  // Wrapped in try/catch (matching cmd-doctor.ts's equivalent "Check 4c"): if the dual-install-fix
+  // block above just quarantined/renamed the extensions/<id> tree this running CLI process's own
+  // code loads from, findPluginRoot's fallback walk-up can throw — that must not abort the rest of
+  // `verify` (embeddings, llm-models, config-cron, ui-integrations, reconcile, storage-sync
+  // sections all still need to run) (#2134 QA follow-up).
+  let livePluginPath: string | null = null;
+  try {
+    livePluginPath = resolveCanonicalLivePluginPathForInstallIndex(PLUGIN_ID);
+  } catch (error) {
+    const detail = `Could not resolve canonical live plugin path for install-index checks: ${error instanceof Error ? error.message : String(error)}`;
+    warnings.push(detail);
+    log(`${WARN_LINE} ${detail}`);
+  }
+  if (livePluginPath) {
+    const installIndexDetection = detectStaleLegacyInstallIndexEntry({
+      pluginId: PLUGIN_ID,
+      livePath: livePluginPath,
+    });
+    if (
+      installIndexDetection.present &&
+      installIndexDetection.verdict !== "no-conflict" &&
+      installIndexDetection.verdict !== "matches-live"
+    ) {
+      if (installIndexDetection.verdict === "safe-reconcile" && opts.fix) {
+        const result = reconcileLegacyInstallIndex({ detection: installIndexDetection });
+        if (result.ok && result.action !== "noop") {
+          log(
+            `${OK} Install index: dropped stale ${PLUGIN_ID} entry pointing at ${installIndexDetection.staleInstallPath ?? "<unknown>"} (${installIndexDetection.staleVersion ?? "<unknown>"}) — live is ${installIndexDetection.livePath} (${installIndexDetection.liveVersion ?? "<unknown>"}). Backup: ${result.backupPath ?? "<unknown>"}.`,
+          );
+        } else {
+          const detail = result.error ?? formatStaleInstallIndexWarning(installIndexDetection);
+          warnings.push(detail);
+          log(`${WARN_LINE} Install index: ${detail}`);
+        }
       } else {
-        const detail = result.error ?? formatStaleInstallIndexWarning(installIndexDetection);
+        const detail = formatStaleInstallIndexWarning(installIndexDetection);
         warnings.push(detail);
         log(`${WARN_LINE} Install index: ${detail}`);
+        if (installIndexDetection.verdict === "safe-reconcile") {
+          log("  → Run `openclaw hybrid-mem verify --fix` to drop the stale entry.");
+          fixes.push(
+            `Run \`openclaw hybrid-mem verify --fix\` (or \`openclaw hybrid-mem install-index reconcile\`) to reconcile the stale ${PLUGIN_ID} entry in ${installIndexDetection.legacyPath}.`,
+          );
+        }
+      }
+    }
+
+    // #2125: known stale install roots beyond extensions/npm-project (root state-dir
+    // node_modules, accidental nested ~/.openclaw/.openclaw/... dirs) — the two directional
+    // reconciles above only ever compare extensions vs. npm-project and never see these.
+    if (opts.fix) {
+      const staleRootResults = quarantineKnownStaleInstallRoots({
+        canonicalLivePath: livePluginPath,
+        pluginId: PLUGIN_ID,
+      });
+      for (const result of staleRootResults.filter((r) => r.attempted)) {
+        if (result.quarantined) {
+          const msg = `Quarantined stale install root (${result.id}) at ${result.path} (${result.version ?? "<unknown>"}) -> ${result.destinationPath}`;
+          fixes.push(msg);
+          log(`${OK} ${msg}`);
+        } else {
+          const detail = result.error ?? "unknown error";
+          warnings.push(`Could not quarantine stale install root (${result.id}) at ${result.path}: ${detail}`);
+          log(`${WARN_LINE} Could not quarantine stale install root (${result.id}) at ${result.path}: ${detail}`);
+        }
       }
     } else {
-      const detail = formatStaleInstallIndexWarning(installIndexDetection);
-      warnings.push(detail);
-      log(`${WARN_LINE} Install index: ${detail}`);
-      if (installIndexDetection.verdict === "safe-reconcile") {
-        log("  → Run `openclaw hybrid-mem verify --fix` to drop the stale entry.");
-        fixes.push(
-          `Run \`openclaw hybrid-mem verify --fix\` (or \`openclaw hybrid-mem install-index reconcile\`) to reconcile the stale ${PLUGIN_ID} entry in ${installIndexDetection.legacyPath}.`,
-        );
+      const staleRootDetections = detectKnownStaleInstallRoots({
+        canonicalLivePath: livePluginPath,
+        pluginId: PLUGIN_ID,
+      }).filter((d) => d.present);
+      if (staleRootDetections.length > 0) {
+        const detail = `Found ${staleRootDetections.length} additional discoverable ${PLUGIN_ID} copy(ies) beyond extensions/npm-project: ${staleRootDetections.map((d) => `${d.id}=${d.path} (${d.version ?? "<unknown>"})`).join(", ")}`;
+        warnings.push(detail);
+        log(`${WARN_LINE} ${detail}`);
+        fixes.push("Run `openclaw hybrid-mem verify --fix` to quarantine the stale install root(s).");
       }
-    }
-  }
-
-  // #2125: known stale install roots beyond extensions/npm-project (root state-dir
-  // node_modules, accidental nested ~/.openclaw/.openclaw/... dirs) — the two directional
-  // reconciles above only ever compare extensions vs. npm-project and never see these.
-  if (opts.fix) {
-    const staleRootResults = quarantineKnownStaleInstallRoots({
-      canonicalLivePath: livePluginPath,
-      pluginId: PLUGIN_ID,
-    });
-    for (const result of staleRootResults.filter((r) => r.attempted)) {
-      if (result.quarantined) {
-        const msg = `Quarantined stale install root (${result.id}) at ${result.path} (${result.version ?? "<unknown>"}) -> ${result.destinationPath}`;
-        fixes.push(msg);
-        log(`${OK} ${msg}`);
-      } else {
-        const detail = result.error ?? "unknown error";
-        warnings.push(`Could not quarantine stale install root (${result.id}) at ${result.path}: ${detail}`);
-        log(`${WARN_LINE} Could not quarantine stale install root (${result.id}) at ${result.path}: ${detail}`);
-      }
-    }
-  } else {
-    const staleRootDetections = detectKnownStaleInstallRoots({
-      canonicalLivePath: livePluginPath,
-      pluginId: PLUGIN_ID,
-    }).filter((d) => d.present);
-    if (staleRootDetections.length > 0) {
-      const detail = `Found ${staleRootDetections.length} additional discoverable ${PLUGIN_ID} copy(ies) beyond extensions/npm-project: ${staleRootDetections.map((d) => `${d.id}=${d.path} (${d.version ?? "<unknown>"})`).join(", ")}`;
-      warnings.push(detail);
-      log(`${WARN_LINE} ${detail}`);
-      fixes.push("Run `openclaw hybrid-mem verify --fix` to quarantine the stale install root(s).");
     }
   }
 

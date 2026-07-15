@@ -210,7 +210,9 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         // mode=connected (default, #2126): recent facts plus their direct link neighbors, so the
         // default view reliably shows edges. mode=recent: the original recency-only sample.
         const mode = searchParams.get("mode") === "recent" ? "recent" : "connected";
-        const body = JSON.stringify(collectGraphPayload(ctx.factsDb, days, maxNodes, { mode }));
+        const body = JSON.stringify(
+          collectGraphPayload(ctx.factsDb, days, maxNodes, { mode, hubDegreeCap: ctx.graphHubDegreeCap }),
+        );
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(body);
       } catch (err: unknown) {

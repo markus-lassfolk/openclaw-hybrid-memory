@@ -1069,4 +1069,54 @@ exit 2
     expect(() => JSON.parse(validationRaw)).not.toThrow();
     expect(JSON.parse(validationRaw)).toMatchObject({ maintenanceStatus: "success" });
   });
+
+  // #2134 QA follow-up: if validate-cron-exit exits/crashes before ever reaching its --output-json
+  // write (or the write itself fails), $validate_output stays a genuinely empty file — the harness
+  // must not blindly copy that empty file into HM_VALIDATION_JSON, which would make it unparseable.
+  it("writes a valid JSON fallback to HM_VALIDATION_JSON when validate-cron-exit never produces --output-json output", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
+    const bin = join(tmp, "bin");
+    const home = join(tmp, "oc-home");
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(home, { recursive: true });
+    const fakeOpenclaw = join(bin, "openclaw");
+    writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "prune" ]; then echo "pruned"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
+  # Simulate a crash before the command ever reaches its --output-json write — the file mktemp
+  # created for validate_output stays empty (0 bytes).
+  echo "fatal: simulated crash before --output-json write" >&2
+  exit 1
+fi
+echo "unexpected openclaw args: $*" >&2
+exit 2
+`,
+    );
+    chmodSync(fakeOpenclaw, 0o755);
+
+    const bash = buildHybridMemCronBashBody("nightly-memory-sweep", [
+      { name: "prune", cmd: "openclaw hybrid-mem prune --verbose" },
+    ]);
+    const result = spawnSync("bash", ["-c", bash], {
+      encoding: "utf-8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, OPENCLAW_HOME: home },
+    });
+
+    expect(result.error).toBeUndefined();
+    const dayDir = readdirSync(join(home, "logs", "cron-hybrid-mem")).find((f) => /^\d{8}$/.test(f));
+    expect(dayDir).toBeDefined();
+    const dayDirPath = join(home, "logs", "cron-hybrid-mem", dayDir!);
+    const validationPath = readdirSync(dayDirPath)
+      .filter((f) => f.endsWith(".validation.json"))
+      .map((f) => join(dayDirPath, f))[0];
+    expect(validationPath).toBeDefined();
+    const validationRaw = readFileSync(validationPath!, "utf-8");
+    expect(validationRaw.length).toBeGreaterThan(0);
+    expect(() => JSON.parse(validationRaw)).not.toThrow();
+    expect(JSON.parse(validationRaw)).toMatchObject({ maintenanceStatus: "unknown" });
+  });
 });

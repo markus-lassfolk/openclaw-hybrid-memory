@@ -75,6 +75,13 @@ export function getEdgesForFactIds(
   const idSet = new Set(ids);
   const uniqueIds = [...idSet];
   const CHUNK_SIZE = 500;
+  // Defensive cap on rows read per chunk, deliberately decoupled from `limit`/`out.length`: the
+  // idSet both-endpoints filter below runs client-side, so a SQL-level LIMIT tied to the remaining
+  // output budget can be fully consumed by a hub fact's links to ids OUTSIDE the full `ids` set
+  // before a single genuinely in-scope edge is read, reproducing #2126's "zero edges" symptom at
+  // chunk scale (#2134 QA follow-up). This cap only guards against a pathological single-node
+  // fan-out; it is not the intended result size.
+  const SQL_ROW_SAFETY_CAP = 50_000;
   const seenEdges = new Set<string>();
   const out: Array<{ source: string; target: string; linkType: string; strength: number }> = [];
 
@@ -87,7 +94,7 @@ export function getEdgesForFactIds(
          WHERE source_fact_id IN (${placeholders}) OR target_fact_id IN (${placeholders})
          LIMIT ?`,
       )
-      .all(...chunk, ...chunk, Math.max(0, limit - out.length)) as Array<{
+      .all(...chunk, ...chunk, SQL_ROW_SAFETY_CAP) as Array<{
       source_fact_id: string;
       target_fact_id: string;
       link_type: string;

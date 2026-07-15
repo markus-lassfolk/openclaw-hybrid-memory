@@ -119,6 +119,57 @@ describe("validate-cron-exit CLI (#1225)", () => {
     expect(payload.maintenanceStatus).toBe("success");
   });
 
+  // #2134 QA follow-up: a writeFileSync failure for --output-json (e.g. ENOSPC, bad path) must not
+  // swallow the already-computed validation result — --json/console output and the exit code must
+  // still happen.
+  it("--output-json write failure does not suppress --json console output or the exit code", async () => {
+    stubOpenclawArgv();
+    const dir = mkdtempSync(join(tmpdir(), "hm-val-cron-"));
+    const exitPath = join(dir, "success.exit");
+    const logPath = join(dir, "success.log");
+    // A path under a nonexistent parent directory always fails writeFileSync (ENOENT).
+    const outputJsonPath = join(dir, "nonexistent-subdir", "out.json");
+    writeFileSync(
+      exitPath,
+      `2026-05-08T21:10:00Z prune exit=0
+2026-05-08T21:10:01Z distill exit=0
+2026-05-08T21:10:02Z extract-daily exit=0
+`,
+    );
+    writeFileSync(logPath, "all good\n");
+
+    const mem = new Command("hybrid-mem");
+    registerValidateCronExit(mem);
+
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await mem.parseAsync(
+      [
+        "validate-cron-exit",
+        "--exit-path",
+        exitPath,
+        "--log-path",
+        logPath,
+        "--required-steps",
+        "prune",
+        "distill",
+        "extract-daily",
+        "--allow-skip",
+        "--json",
+        "--output-json",
+        outputJsonPath,
+      ],
+      { from: "user" },
+    );
+
+    await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(0));
+    expect(errorSpy).toHaveBeenCalled();
+    const payload = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as { maintenanceStatus: string };
+    expect(payload.maintenanceStatus).toBe("success");
+  });
+
   it("exits non-zero after JSON when a required step is missing (partial)", async () => {
     stubOpenclawArgv();
     const dir = mkdtempSync(join(tmpdir(), "hm-val-cron-"));

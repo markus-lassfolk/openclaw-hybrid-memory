@@ -2,6 +2,7 @@
  * Memory graph API + explorer page (Issue #788).
  */
 
+import type { DatabaseSync } from "node:sqlite";
 import type { GraphConnectedStats } from "../backends/facts-db/links.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import { expandGraph, type GraphExpansionStats, resolveGraphHubDegreeCap } from "../services/graph-retrieval.js";
@@ -108,6 +109,19 @@ function countOrphansInView(nodes: MemoryGraphNode[], edges: MemoryGraphEdge[]):
   return nodes.filter((n) => !connected.has(n.id)).length;
 }
 
+/** Shared "active fact"/"explicit link" totals for the coverage block (dedupes the identical COUNT
+ * queries previously repeated in collectGraphPayload and collectGraphRecallPayload). */
+function countGraphCoverageTotals(
+  db: DatabaseSync,
+  nowSec: number,
+): { totalActiveFacts: number; totalExplicitLinks: number } {
+  const totalActiveRow = db
+    .prepare("SELECT COUNT(*) AS cnt FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)")
+    .get(nowSec) as { cnt: number };
+  const totalLinksRow = db.prepare("SELECT COUNT(*) AS cnt FROM memory_links").get() as { cnt: number };
+  return { totalActiveFacts: totalActiveRow.cnt, totalExplicitLinks: totalLinksRow.cnt };
+}
+
 /**
  * mode="connected" (default): recent facts plus their direct explicit-link neighbors, so a
  * link-rich corpus reliably shows edges instead of a near-always-empty recency-only sample
@@ -158,7 +172,11 @@ export function collectGraphPayload(
   let hubsSkipped = 0;
 
   if (mode === "connected" && finalIds.length > 0) {
-    const hubDegreeCap = opts?.hubDegreeCap === undefined ? 50 : opts.hubDegreeCap;
+    // Default matches the codebase-wide hub-degree-cap default (services/graph-retrieval.ts
+    // DEFAULT_GRAPH_HUB_DEGREE_CAP, config/utils.ts, collectDashboardConnectedIds below) instead
+    // of an unrelated, unconfigurable 500-vs-50 divergence from the sibling /api/graph/recall view
+    // (#2134 QA follow-up).
+    const hubDegreeCap = opts?.hubDegreeCap === undefined ? 500 : opts.hubDegreeCap;
     const stats: GraphConnectedStats = { nodesConsidered: 0, nodesSkipped: 0, hubsSkipped: 0 };
     const connected = factsDb.getConnectedFactIds(finalIds, 1, { hubDegreeCap, stats });
     hubsSkipped = stats.hubsSkipped;
@@ -168,9 +186,18 @@ export function collectGraphPayload(
     const chosenNeighbors = neighborIds.slice(0, budget);
     if (chosenNeighbors.length > 0) {
       const neighborEntries = factsDb.getByIds(chosenNeighbors);
+      // Only ids that actually resolve to a live, non-expired fact are added to `finalIds` — the
+      // edge query below is scoped to `finalIds`, so leaving a skipped/expired id in it would
+      // produce edges referencing a node id absent from `nodes` (#2134 QA follow-up). Neighbors
+      // come from getConnectedFactIds, which filters superseded_at but not expires_at (unlike the
+      // seed query above), so an expiry check is also needed here to match the "active fact"
+      // definition used everywhere else in this payload.
+      const resolvedNeighborIds: string[] = [];
       for (const id of chosenNeighbors) {
         const entry = neighborEntries.get(id);
         if (!entry) continue;
+        if (entry.expiresAt != null && entry.expiresAt <= nowSec) continue;
+        resolvedNeighborIds.push(id);
         nodes.push(
           toGraphNode({
             id: entry.id,
@@ -182,25 +209,22 @@ export function collectGraphPayload(
           }),
         );
       }
-      finalIds = [...finalIds, ...chosenNeighbors];
+      finalIds = [...finalIds, ...resolvedNeighborIds];
     }
   }
 
   const rawEdges = factsDb.getEdgesForFactIds(finalIds, 2000);
   const edges = toGraphEdges(rawEdges);
 
-  const totalActiveRow = db
-    .prepare("SELECT COUNT(*) AS cnt FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)")
-    .get(nowSec) as { cnt: number };
-  const totalLinksRow = db.prepare("SELECT COUNT(*) AS cnt FROM memory_links").get() as { cnt: number };
+  const { totalActiveFacts, totalExplicitLinks } = countGraphCoverageTotals(db, nowSec);
 
   return {
     generatedAt: nowIso(),
     nodes,
     edges,
     coverage: {
-      totalActiveFacts: totalActiveRow.cnt,
-      totalExplicitLinks: totalLinksRow.cnt,
+      totalActiveFacts,
+      totalExplicitLinks,
       selectedNodes: nodes.length,
       selectedEdges: edges.length,
       orphanNodesInView: countOrphansInView(nodes, edges),
@@ -259,26 +283,29 @@ export function collectGraphRecallPayload(
   });
   const entryMap = factsDb.getByIds(ids);
   const nodes: MemoryGraphNode[] = [];
+  // Only ids that actually resolve to a fact are kept for the edge query below — otherwise a
+  // skipped id (no entryMap entry) can still produce an edge referencing a node absent from
+  // `nodes` (#2134 QA follow-up, same class of bug as collectGraphPayload above).
+  const resolvedIds: string[] = [];
   for (const id of ids) {
     const f = entryMap.get(id);
     if (!f) continue;
     nodes.push(toGraphNode(f));
+    resolvedIds.push(id);
   }
-  const rawEdges = factsDb.getEdgesForFactIds(ids, 2000);
+  const rawEdges = factsDb.getEdgesForFactIds(resolvedIds, 2000);
   const edges = toGraphEdges(rawEdges);
   const db = factsDb.getRawDb();
-  const totalActiveRow = db
-    .prepare("SELECT COUNT(*) AS cnt FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)")
-    .get(Math.floor(Date.now() / 1000)) as { cnt: number };
-  const totalLinksRow = db.prepare("SELECT COUNT(*) AS cnt FROM memory_links").get() as { cnt: number };
+  const nowSec = Math.floor(Date.now() / 1000);
+  const { totalActiveFacts, totalExplicitLinks } = countGraphCoverageTotals(db, nowSec);
   return {
     generatedAt: nowIso(),
     nodes,
     edges,
     activated: seeds,
     coverage: {
-      totalActiveFacts: totalActiveRow.cnt,
-      totalExplicitLinks: totalLinksRow.cnt,
+      totalActiveFacts,
+      totalExplicitLinks,
       selectedNodes: nodes.length,
       selectedEdges: edges.length,
       orphanNodesInView: countOrphansInView(nodes, edges),

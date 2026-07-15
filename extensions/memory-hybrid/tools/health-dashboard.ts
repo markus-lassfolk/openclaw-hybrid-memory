@@ -58,6 +58,8 @@ interface HealthReport {
   topClusters: Array<{ id: string; label: string; factCount: number }>;
   unresolvedContradictions: number;
   lastReflectionAt: string | null;
+  /** Raw stored value for lastReflectionAt when it failed the future-skew sanity check (#2129). */
+  lastReflectionInvalidRaw: number | null;
   lastPruneAt: string | null;
   /** Raw stored value for lastPruneAt when it failed the future-skew sanity check (#2129). */
   lastPruneInvalidRaw: number | null;
@@ -298,7 +300,9 @@ export async function buildHealthReport(
   const reflRow = db.prepare(`SELECT MAX(created_at) AS last_at FROM facts WHERE source = 'reflection'`).get() as {
     last_at: number | null;
   };
-  const lastReflectionAt = formatMaintenanceTimestampOrNull(reflRow.last_at, nowSec).display;
+  const lastReflectionResult = formatMaintenanceTimestampOrNull(reflRow.last_at, nowSec);
+  const lastReflectionAt = lastReflectionResult.display;
+  const lastReflectionInvalidRaw = lastReflectionResult.invalidRaw;
 
   // Last prune: derived from MAX(superseded_at) of superseded facts (best approximation)
   const pruneRow = db
@@ -336,6 +340,7 @@ export async function buildHealthReport(
     topClusters,
     unresolvedContradictions,
     lastReflectionAt,
+    lastReflectionInvalidRaw,
     lastPruneAt,
     lastPruneInvalidRaw,
     storageSizeBytes: {
@@ -406,7 +411,12 @@ export function registerHealthTools(ctx: HealthPluginContext, api: ClawdbotPlugi
                 : "none"
             }`,
             "",
-            `Last reflection: ${report.lastReflectionAt ?? "never"}`,
+            `Last reflection: ${
+              report.lastReflectionAt ??
+              (report.lastReflectionInvalidRaw != null
+                ? `invalid (corrupt stored value: ${report.lastReflectionInvalidRaw})`
+                : "never")
+            }`,
             `Last prune: ${
               report.lastPruneAt ??
               (report.lastPruneInvalidRaw != null

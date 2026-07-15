@@ -58,6 +58,7 @@ function storeMinimalFact(
     validUntil?: number | null;
     expiresAt?: number | null;
     supersededAt?: number | null;
+    createdAt?: number;
   } = {},
 ) {
   const raw = db.getRawDb();
@@ -73,13 +74,14 @@ function storeMinimalFact(
     validUntil = null,
     expiresAt = null,
     supersededAt = null,
+    createdAt = nowSec,
   } = overrides;
   raw
     .prepare(
       `INSERT INTO facts (id, text, category, importance, source, created_at, decay_class, confidence, tier, valid_until, expires_at, superseded_at)
      VALUES (?, ?, ?, 0.7, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(id, text, category, source, nowSec, decayClass, confidence, tier, validUntil, expiresAt, supersededAt);
+    .run(id, text, category, source, createdAt, decayClass, confidence, tier, validUntil, expiresAt, supersededAt);
   return id;
 }
 
@@ -285,6 +287,7 @@ describe("buildHealthReport", () => {
     storeMinimalFact(factsDb, { source: "conversation" });
     const report = await buildHealthReport(factsDb, join(tmpDir, "facts.db"), join(tmpDir, "lance"));
     expect(report.lastReflectionAt).toBeNull();
+    expect(report.lastReflectionInvalidRaw).toBeNull();
   });
 
   it("lastReflectionAt returns ISO string of most recent reflection fact", async () => {
@@ -292,6 +295,17 @@ describe("buildHealthReport", () => {
     const report = await buildHealthReport(factsDb, join(tmpDir, "facts.db"), join(tmpDir, "lance"));
     expect(report.lastReflectionAt).not.toBeNull();
     expect(() => new Date(report.lastReflectionAt!)).not.toThrow();
+    expect(report.lastReflectionInvalidRaw).toBeNull();
+  });
+
+  // #2134 QA follow-up: lastReflectionAt previously discarded the corrupt-value diagnostic that
+  // lastPruneAt already had, so a corrupt (not merely absent) reflection timestamp was
+  // indistinguishable from "no reflection has ever run".
+  it("reports lastReflectionInvalidRaw (not silently 'never') when the stored created_at is still nonsensical", async () => {
+    storeMinimalFact(factsDb, { source: "reflection", createdAt: 5_000_000_000_000 });
+    const report = await buildHealthReport(factsDb, join(tmpDir, "facts.db"), join(tmpDir, "lance"));
+    expect(report.lastReflectionAt).toBeNull();
+    expect(report.lastReflectionInvalidRaw).toBe(5_000_000_000_000);
   });
 
   it("lastPruneAt is null when no superseded facts exist", async () => {

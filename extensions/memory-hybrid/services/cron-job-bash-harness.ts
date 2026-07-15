@@ -127,7 +127,14 @@ export function buildHybridMemCronBashBody(
     "  # Parse maintenanceStatus without jq to keep cron harness dependencies minimal/portable.",
     '  maintenance_status="$(grep -Eo \'"maintenanceStatus"[[:space:]]*:[[:space:]]*"(success|skipped|partial|failed)"\' "$validate_output" | tail -n1 | sed -E \'s/.*"(success|skipped|partial|failed)"/\\1/\' || true)"',
     '  if [ -n "${HM_VALIDATION_JSON:-}" ]; then',
-    '    cp "$validate_output" "$HM_VALIDATION_JSON" 2>/dev/null || cat "$validate_output" >"$HM_VALIDATION_JSON"',
+    '    if [ -s "$validate_output" ]; then',
+    '      cp "$validate_output" "$HM_VALIDATION_JSON" 2>/dev/null || cat "$validate_output" >"$HM_VALIDATION_JSON"',
+    "    else",
+    // validate-cron-exit can exit/crash before ever reaching its --output-json write (or the write
+    // itself can fail), leaving $validate_output genuinely empty — HM_VALIDATION_JSON must still be
+    // valid, parseable JSON in that case, not a truly empty file (#2134 QA follow-up).
+    '      printf \'{"maintenanceStatus":"unknown","error":"validate-cron-exit did not produce --output-json output (validation_exit=%s)"}\' "$validation_ec" >"$HM_VALIDATION_JSON"',
+    "    fi",
     "  fi",
     '  rm -f "$validate_output"',
     '  local final_ec="$validation_ec"',
