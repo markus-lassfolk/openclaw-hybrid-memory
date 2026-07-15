@@ -2,7 +2,7 @@
  * Tests for the serendipity_* agent tools (Issue #2119).
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -165,6 +165,13 @@ describe("serendipity_digest", () => {
     const dg = await api.call("serendipity_digest", { since: "7d" });
     expect(dg.content[0].text).toContain("Serendipity digest");
     expect(dg.details.report.backlog.actionable).toBe(1);
+  });
+
+  it("rejects filesystem output paths from agent tool calls", async () => {
+    const outPath = join(tmpDir, "agent-digest.md");
+    const dg = await api.call("serendipity_digest", { since: "7d", out: outPath });
+    expect(dg.details.error).toBe("agent_digest_output_path_not_supported");
+    expect(existsSync(outPath)).toBe(false);
   });
 });
 
