@@ -26,11 +26,27 @@ else
   exit 1
 fi
 
-echo "Reinstalling deps in $PLUGIN_DIR ..."
-(cd "$PLUGIN_DIR" && npm install)
-
-echo "Restarting OpenClaw gateway ..."
+# Stop the gateway BEFORE mutating node_modules in place (#2130). A live gateway process can
+# lazily `import()` plugin modules (e.g. on first use of a given code path) at any time; if
+# `npm install` is still rewriting dist/node_modules underneath it, that import can transiently
+# fail with ERR_MODULE_NOT_FOUND even though the final on-disk state is healthy.
+echo "Stopping OpenClaw gateway before reinstalling deps ..."
 openclaw gateway stop 2>/dev/null || true
+
+echo "Reinstalling deps in $PLUGIN_DIR ..."
+if ! (cd "$PLUGIN_DIR" && npm install); then
+  # A failed install here must not leave the gateway stopped indefinitely with no automatic
+  # restart — that trades the original transient ERR_MODULE_NOT_FOUND race for a harder, silent
+  # outage (#2134 QA follow-up). This script mutates node_modules in place (unlike
+  # upgrade-plugin-manual.sh's staged swap), so there is no clean rollback available; restarting
+  # against whatever partially-installed state npm left behind is still strictly better than a
+  # gateway left down with no restart attempt at all.
+  echo "ERROR: npm install failed; restarting OpenClaw gateway before exiting ..." >&2
+  openclaw gateway start || true
+  exit 1
+fi
+
+echo "Starting OpenClaw gateway ..."
 openclaw gateway start
 
 echo "Post-upgrade done. Check logs for your memory plugin (e.g. 'memory-hybrid: initialized' or 'memory-lancedb: initialized')."

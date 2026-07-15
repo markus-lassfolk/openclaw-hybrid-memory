@@ -272,6 +272,9 @@ function isCurrentInFlightArtifact(path: string, opts: CollectMaintenanceStepsOp
   return pathContainsRunId(path, runId);
 }
 
+/** Step name written by the cron harness's durable bootstrap marker; see cron-job-bash-harness.ts (#2131). */
+const HARNESS_BOOTSTRAP_STEP = "harness-bootstrap";
+
 /**
  * Subdirectory names that hold auxiliary/helper logs and should not be scanned for
  * missing-exit-ledger anomalies (issue #1685).
@@ -373,7 +376,7 @@ function buildOrchestrationSyntheticStep(params: {
   nowMs: number;
   staleThresholdMs: number;
   latestActivityMs: number;
-  kind: "empty-exit" | "missing-exit-ledger";
+  kind: "empty-exit" | "missing-exit-ledger" | "bootstrap-only";
 }): MaintenanceLogStep {
   const { job, exitPath, logPath, logContent, nowMs, staleThresholdMs, latestActivityMs, kind } = params;
   const staleMs = Math.max(0, nowMs - latestActivityMs);
@@ -385,7 +388,21 @@ function buildOrchestrationSyntheticStep(params: {
 
   let step = "orchestration-empty-exit";
   let line = "orchestration anomaly: exit ledger exists but has no parseable step rows";
-  if (kind === "missing-exit-ledger") {
+  if (kind === "bootstrap-only") {
+    // The harness's durable bootstrap marker (#2131) wrote a "harness-bootstrap" row, but nothing
+    // else has appeared yet. Gated on staleness like "missing-exit-ledger" below — a run that just
+    // started is normal and must not be flagged before it has had a chance to complete.
+    if (stale) {
+      step = "orchestration-bootstrap-only-exit";
+      line =
+        "orchestration anomaly: harness wrote its bootstrap marker but no further step or validate-cron-exit " +
+        `row was ever recorded (no progress for ${staleSec}s) — the wrapper/agent likely aborted between ` +
+        "artifact creation and the first real step";
+    } else {
+      step = "maintenance-run-in-progress";
+      line = "harness wrote its bootstrap marker and no further step yet — run appears to still be in progress";
+    }
+  } else if (kind === "missing-exit-ledger") {
     // Gated on staleness, matching the "empty-exit" kind below — a .log with no sibling .exit.txt
     // yet is completely normal for a job that's still running (the ledger is written at
     // completion). Unconditionally flagging this as orchestration-bug (a STRICT class) made
@@ -599,6 +616,7 @@ export function collectMaintenanceSteps(
     const exitLines = safeRead(exitPath).split("\n");
     let parsedRows = 0;
     let sawParseableRow = false;
+    let sawNonBootstrapRow = false;
 
     for (const line of exitLines) {
       const m = line.match(/^(\S+)\s+(\S+)\s+exit=(-?\d+)\b/);
@@ -612,6 +630,7 @@ export function collectMaintenanceSteps(
       // do not get re-reported as current failures in later digests.
       if (occurredAt * 1000 < cutoff) continue;
       parsedRows++;
+      if (step !== HARNESS_BOOTSTRAP_STEP) sawNonBootstrapRow = true;
       steps.push({
         occurredAt,
         iso,
@@ -636,6 +655,22 @@ export function collectMaintenanceSteps(
           staleThresholdMs,
           latestActivityMs: latestActivityMs || nowMs,
           kind: "empty-exit",
+        }),
+      );
+    } else if (parsedRows > 0 && !sawNonBootstrapRow) {
+      // Only the harness's durable bootstrap marker ever got written (#2131) — the run aborted
+      // before any real step or validate-cron-exit row. Same diagnostic intent as the fully-empty
+      // case above, with a more specific synthetic class.
+      steps.push(
+        buildOrchestrationSyntheticStep({
+          job,
+          exitPath,
+          logPath,
+          logContent,
+          nowMs,
+          staleThresholdMs,
+          latestActivityMs: latestActivityMs || nowMs,
+          kind: "bootstrap-only",
         }),
       );
     }
@@ -740,6 +775,21 @@ function classifyOrchestrationAnomaly(
   if (!/^orchestration-/.test(stepName)) return null;
 
   const staleHint = /stale=yes|appears stale|still running after/i.test(`${line ?? ""}\n${logContent ?? ""}`);
+
+  if (stepName === "orchestration-bootstrap-only-exit") {
+    return {
+      id: "orchestration-bootstrap-only-exit",
+      pattern: "",
+      classification: "orchestration-bug",
+      defaultAction: "glitchtip+digest",
+      severity: "high",
+      suggestedAction:
+        "The cron harness wrote only its durable bootstrap marker (#2131) before the run went stale — " +
+        "no further step or validate-cron-exit row was ever recorded. Treat as a wrapper/agent crash " +
+        "between artifact creation and the first real step; check for OOM/signal kills or a broken " +
+        "cron invocation, and rerun once the underlying cause is fixed.",
+    };
+  }
 
   if (stepName === "orchestration-missing-exit-ledger" || stepName === "orchestration-stale-missing-exit-ledger") {
     return {
@@ -927,6 +977,28 @@ export function findingFromStep(step: MaintenanceLogStep, rule = classifyMainten
   };
 }
 
+/** The maintenance-log-analyzer cron job's own slug; see cli/install/cron-jobs.ts (#2132). */
+const ANALYZER_JOB_NAME = "maintenance-log-analyzer";
+/**
+ * Step names within the analyzer job's own exit ledger that only ever record "the analyzer ran
+ * and (possibly) strict-failed while reporting a root-cause finding" — not a distinct new
+ * incident. `validate-cron-exit` is the harness's universal terminal row (every job gets one), so
+ * this is scoped to ANALYZER_JOB_NAME specifically; other jobs' validate-cron-exit failures are
+ * unrelated and must still be reported normally.
+ */
+const ANALYZER_SELF_REFERENTIAL_STEPS = new Set(["analyze-maintenance-logs", "validate-cron-exit"]);
+
+/**
+ * True when a step is the maintenance-log-analyzer job's own step/validation exit row from a
+ * PRIOR completed run, resurfaced by a later scan. Rescanning these as fresh findings created a
+ * self-amplifying failure loop: run B fails while reporting root cause A, then run C rescans B's
+ * own `analyze-maintenance-logs exit=2` / `validate-cron-exit exit=1` rows as new "unclassified"
+ * noise and fails again, compounding daily for as long as the artifacts remain on disk (#2132).
+ */
+function isDerivedAnalyzerSelfFailureStep(step: MaintenanceLogStep): boolean {
+  return step.job === ANALYZER_JOB_NAME && ANALYZER_SELF_REFERENTIAL_STEPS.has(step.step);
+}
+
 export function analyzeMaintenanceSteps(
   steps: MaintenanceLogStep[],
   opts?: { resolvedFingerprints?: Record<string, MaintenanceResolvedEntry> },
@@ -936,7 +1008,12 @@ export function analyzeMaintenanceSteps(
   for (const step of steps) {
     if (step.exitCode !== 0) {
       if (isBenignNoiseOnlyMaintenanceStep(step)) continue;
-      findings.push(findingFromStep(step));
+      const rule = classifyMaintenanceFailure(step);
+      // Only downgrade the generic catch-all: a genuine crash/plugin-bug/orchestration-bug in the
+      // analyzer job itself (anything that classified as something other than "unclassified") is
+      // still reported normally — this exclusively targets the self-referential recursion.
+      if (rule.classification === "unclassified" && isDerivedAnalyzerSelfFailureStep(step)) continue;
+      findings.push(findingFromStep(step, rule));
       continue;
     }
     const zeroText = `${step.line}

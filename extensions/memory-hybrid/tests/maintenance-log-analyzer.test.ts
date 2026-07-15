@@ -521,6 +521,62 @@ describe("maintenance log analyzer", () => {
     expect(report.summary.jobsWithFindings).toBe(1);
   });
 
+  it("classifies a stale ledger containing only the harness-bootstrap marker as a specific bootstrap-only orchestration bug, not the generic empty-exit class (#2131)", () => {
+    const root = tmpRoot();
+    const exitPath = join(root, "nightly-memory-sweep-20260511T024522Z-17502.exit.txt");
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(
+      exitPath,
+      "2026-05-11T02:45:22Z harness-bootstrap exit=0 status=started reason=harness_bootstrap_started\n",
+    );
+    writeFileSync(logPath, "harness-bootstrap: HM_JOB=nightly-memory-sweep RUN_ID=20260511T024522Z-17502\n");
+
+    const staleAt = new Date("2026-05-11T02:45:22Z");
+    utimesSync(exitPath, staleAt, staleAt);
+    utimesSync(logPath, staleAt, staleAt);
+
+    // No further progress for well over staleThresholdMs — the wrapper/agent aborted after the
+    // bootstrap marker was written and never reached any real step.
+    const nowMs = Date.UTC(2026, 4, 11, 4, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
+    const findings = analyzeMaintenanceSteps(steps);
+
+    const synthetic = steps.find((s) => s.step === "orchestration-bootstrap-only-exit");
+    expect(synthetic).toBeDefined();
+    expect(synthetic?.exitCode).not.toBe(0);
+    const finding = findings.find((f) => f.step === "orchestration-bootstrap-only-exit");
+    expect(finding).toBeDefined();
+    expect(finding?.classification).toBe("orchestration-bug");
+    // #2134 QA follow-up: the human-readable suggestedAction must name the bootstrap-specific root
+    // cause, not fall through to the generic "empty or unparsable" message every other unmatched
+    // orchestration-* step gets.
+    expect(finding?.suggestedAction).toContain("bootstrap marker");
+    expect(finding?.suggestedAction).not.toContain("empty or unparsable");
+  });
+
+  it("does not flag a fresh bootstrap-only ledger as a failure — the run may still be in progress (#2131)", () => {
+    const root = tmpRoot();
+    const exitPath = join(root, "nightly-memory-sweep-20260511T024522Z-17502.exit.txt");
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(
+      exitPath,
+      "2026-05-11T02:45:22Z harness-bootstrap exit=0 status=started reason=harness_bootstrap_started\n",
+    );
+    writeFileSync(logPath, "harness-bootstrap: HM_JOB=nightly-memory-sweep RUN_ID=20260511T024522Z-17502\n");
+
+    const freshAt = new Date("2026-05-11T02:45:22Z");
+    utimesSync(exitPath, freshAt, freshAt);
+    utimesSync(logPath, freshAt, freshAt);
+
+    // Only a few seconds after bootstrap — well within staleThresholdMs.
+    const nowMs = Date.UTC(2026, 4, 11, 2, 45, 30);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
+    const findings = analyzeMaintenanceSteps(steps);
+
+    expect(steps.every((s) => s.exitCode === 0)).toBe(true);
+    expect(findings).toHaveLength(0);
+  });
+
   it("flags stale still-running dream-cycle logs as high orchestration failures", () => {
     const root = tmpRoot();
     const exitPath = join(root, "nightly-dream-cycle-20260511T024522Z-17502.exit.txt");
@@ -983,6 +1039,73 @@ describe("maintenance log analyzer", () => {
     expect(findings.filter((f) => f.glitchtipEventId === "event-1")).toHaveLength(2);
     expect(shouldMaintenanceStrictFail(findings)).toBe(true);
     expect(shouldMaintenanceStrictFail([findings[3]])).toBe(false);
+  });
+
+  // #2132: a prior maintenance-log-analyzer run's own `analyze-maintenance-logs`/`validate-cron-exit`
+  // exit-ledger rows (recorded because that run correctly strict-failed while reporting some other
+  // root-cause finding) must not be re-surfaced as fresh "unclassified" findings on a later scan —
+  // that recursion is exactly what caused the self-amplifying failure loop.
+  it("does not report the analyzer job's own analyze-maintenance-logs/validate-cron-exit exit rows as new findings", () => {
+    const makeStep = (overrides: Partial<Parameters<typeof findingFromStep>[0]>) => ({
+      occurredAt: Math.floor(Date.now() / 1000),
+      iso: new Date().toISOString(),
+      job: "maintenance-log-analyzer",
+      step: "analyze-maintenance-logs",
+      exitCode: 2,
+      exitPath: "x.exit.txt",
+      logPath: "x.log",
+      logContent: "",
+      line: "2026-07-15T03:34:46Z analyze-maintenance-logs exit=2 status=failed reason=nonzero_exit",
+      ...overrides,
+    });
+
+    const steps = [
+      makeStep({ step: "analyze-maintenance-logs", exitCode: 2 }),
+      makeStep({
+        step: "validate-cron-exit",
+        exitCode: 1,
+        line: "2026-07-15T03:34:52Z validate-cron-exit exit=1 status=failed reason=maintenance_failed",
+      }),
+    ];
+
+    const findings = analyzeMaintenanceSteps(steps);
+    expect(findings).toHaveLength(0);
+  });
+
+  it("still reports a genuine crash in the analyzer job itself (not just the recursive self-reference)", () => {
+    const step = {
+      occurredAt: Math.floor(Date.now() / 1000),
+      iso: new Date().toISOString(),
+      job: "maintenance-log-analyzer",
+      step: "analyze-maintenance-logs",
+      exitCode: 1,
+      exitPath: "x.exit.txt",
+      logPath: "x.log",
+      logContent: "TypeError: Cannot read properties of undefined (reading 'foo')\n    at analyzeLogs (index.js:1:1)",
+      line: "2026-07-15T03:34:46Z analyze-maintenance-logs exit=1",
+    };
+
+    const findings = analyzeMaintenanceSteps([step]);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.classification).toBe("plugin-bug");
+  });
+
+  it("still reports validate-cron-exit failures from OTHER jobs normally (self-suppression is scoped to the analyzer job only)", () => {
+    const step = {
+      occurredAt: Math.floor(Date.now() / 1000),
+      iso: new Date().toISOString(),
+      job: "nightly-memory-sweep",
+      step: "validate-cron-exit",
+      exitCode: 1,
+      exitPath: "x.exit.txt",
+      logPath: "x.log",
+      logContent: "",
+      line: "2026-07-15T03:34:52Z validate-cron-exit exit=1 status=failed reason=maintenance_partial",
+    };
+
+    const findings = analyzeMaintenanceSteps([step]);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.job).toBe("nightly-memory-sweep");
   });
 
   it("summarizeMaintenanceLogAnalysis marks strict=fail when findings include strict classes", () => {

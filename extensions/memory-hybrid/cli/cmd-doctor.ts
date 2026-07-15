@@ -36,8 +36,11 @@ import { withTimeout } from "../utils/timeout.js";
 import { workspaceRootForCli } from "./config-feature-summaries.js";
 import {
   comparePluginVersions,
+  detectKnownStaleInstallRoots,
+  quarantineKnownStaleInstallRoots,
   removeRedundantExtensionsTreeWhenNpmProjectCanonical,
   removeRedundantNpmProjectTreeWhenExtensionsCanonical,
+  resolveCanonicalLivePluginPathForInstallIndex,
 } from "./install/install-index-reconcile.js";
 import { readPluginPackageVersion, resolveKnownNpmProjectPluginDir } from "./install/workspace.js";
 import { type Chainable, withExit } from "./shared.js";
@@ -318,6 +321,63 @@ export function registerDoctorCommand(
               name: "Plugin install (duplicate id)",
               status: "warn",
               message: `Could not check for duplicate plugin installs: ${error instanceof Error ? error.message : String(error)}`,
+            });
+          }
+
+          // Check 4c: Stale install roots beyond extensions/npm-project (#2125)
+          // A live host can retain a root `~/.openclaw/node_modules/<id>` copy or an accidental
+          // nested `~/.openclaw/.openclaw/...` state dir. The gateway's own plugin loader never
+          // reads these, but plain Node `require.resolve('<id>/package.json')` from
+          // $OPENCLAW_STATE_DIR/workspace-adjacent code can still pick up a stale version. Check
+          // 4b above only ever compares extensions vs. npm-project, so it never sees these.
+          try {
+            const canonicalLivePath = resolveCanonicalLivePluginPathForInstallIndex(PLUGIN_ID);
+            if (!opts?.fix) {
+              const detections = detectKnownStaleInstallRoots({ canonicalLivePath, pluginId: PLUGIN_ID });
+              const present = detections.filter((d) => d.present);
+              if (present.length > 0) {
+                checks.push({
+                  name: "Plugin install (stale roots)",
+                  status: "warn",
+                  message:
+                    `Found ${present.length} additional discoverable ${PLUGIN_ID} copy(ies) beyond extensions/npm-project:\n` +
+                    present.map((d) => `    ${d.id}: ${d.path} (${d.version ?? "<unknown>"})`).join("\n"),
+                  fix: "Run: openclaw hybrid-mem doctor --fix (quarantines the stale copies).",
+                });
+              }
+            } else {
+              const results = quarantineKnownStaleInstallRoots({ canonicalLivePath, pluginId: PLUGIN_ID });
+              const acted = results.filter((r) => r.attempted);
+              if (acted.length > 0) {
+                const quarantined = acted.filter((r) => r.quarantined);
+                const failed = acted.filter((r) => !r.quarantined);
+                if (quarantined.length > 0) {
+                  checks.push({
+                    name: "Plugin install (stale roots)",
+                    status: failed.length > 0 ? "warn" : "pass",
+                    message:
+                      `Quarantined ${quarantined.length} stale install root(s):\n` +
+                      quarantined
+                        .map((r) => `    ${r.id}: ${r.path} (${r.version ?? "<unknown>"}) → ${r.destinationPath}`)
+                        .join("\n") +
+                      (failed.length > 0
+                        ? `\n    Could not quarantine: ${failed.map((r) => `${r.id} (${r.error ?? "unknown error"})`).join(", ")}`
+                        : ""),
+                  });
+                } else if (failed.length > 0) {
+                  checks.push({
+                    name: "Plugin install (stale roots)",
+                    status: "warn",
+                    message: `Could not quarantine stale install root(s): ${failed.map((r) => `${r.id} (${r.error ?? "unknown error"})`).join(", ")}`,
+                  });
+                }
+              }
+            }
+          } catch (error) {
+            checks.push({
+              name: "Plugin install (stale roots)",
+              status: "warn",
+              message: `Could not check for stale install roots: ${error instanceof Error ? error.message : String(error)}`,
             });
           }
 

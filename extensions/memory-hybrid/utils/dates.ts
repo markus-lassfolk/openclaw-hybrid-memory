@@ -59,20 +59,29 @@ export function nowIso(): string {
   return new Date().toISOString();
 }
 
-/** Format epoch seconds as ISO 8601 UTC. */
+/**
+ * Format epoch seconds as ISO 8601 UTC.
+ *
+ * Self-corrects a value that is actually epoch milliseconds (>= EPOCH_MS_THRESHOLD), mirroring
+ * the same guard already used by parseTimestamp/parseTimestampMs. Without this, a caller that
+ * accidentally stores milliseconds in a "seconds" column (e.g. facts.superseded_at) silently
+ * produces a garbage far-future date instead of an error (#2129).
+ */
 export function formatTimestampUtc(sec: number): string {
   if (!Number.isFinite(sec)) {
     throw new Error(`Invalid epoch seconds: ${sec}`);
   }
-  return new Date(sec * 1000).toISOString();
+  const ms = sec >= EPOCH_MS_THRESHOLD ? sec : sec * 1000;
+  return new Date(ms).toISOString();
 }
 
-/** Format epoch seconds as UTC calendar date YYYY-MM-DD. */
+/** Format epoch seconds as UTC calendar date YYYY-MM-DD. Self-corrects ms-vs-seconds; see formatTimestampUtc. */
 export function formatDateUtc(sec: number): string {
   if (!Number.isFinite(sec)) {
     throw new Error(`Invalid epoch seconds: ${sec}`);
   }
-  return new Date(sec * 1000).toISOString().slice(0, 10);
+  const ms = sec >= EPOCH_MS_THRESHOLD ? sec : sec * 1000;
+  return new Date(ms).toISOString().slice(0, 10);
 }
 
 /** Format epoch milliseconds as ISO 8601 UTC (preserves sub-second precision). */
