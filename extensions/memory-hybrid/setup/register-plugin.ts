@@ -50,6 +50,7 @@ import {
 } from "../utils/language-keywords.js";
 import { applyHybridMemQuietFlagFromArgv, initPluginLogger, pluginLogger } from "../utils/logger.js";
 import { buildToolScopeFilter } from "../utils/scope-filter.js";
+import { findPluginRoot } from "../utils/plugin-root.js";
 import { versionInfo } from "../versionInfo.js";
 import {
   getHybridMemoryRegistrationState,
@@ -67,13 +68,21 @@ import {
   TEARDOWN_SOFT_WAIT_MS,
   TEARDOWN_WAIT_MS,
 } from "./hybrid-memory-reload-coordinator.js";
+import {
+  _resetLastSuccessfulExtensionPathForTests,
+  buildExtensionLoadContext,
+  getLastSuccessfulExtensionPath,
+  PluginLoadPreflightError,
+  preflightExtensionIntegrity,
+  recordSuccessfulExtensionLoad,
+} from "./plugin-load-preflight.js";
 import { createPluginService } from "./plugin-service.js";
 import { registerContextEngineBestEffort } from "./register-context-engine.js";
 import { registerLifecycleHooks } from "./register-hooks.js";
 import { registerTools } from "./register-tools.js";
 import {
-  canReuseDatabasesOnReregister,
   databaseContextFromRuntime,
+  evaluateReregisterReuse,
   recordReregisterDatabaseReuse,
   recordReregisterFullTeardown,
   recordReregisterRegistration,
@@ -374,10 +383,13 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
   const donorGeneration = old?.bootRegistrationGeneration ?? -1;
 
   const reusePolicy = resolveReregisterPolicy();
-  const reuseDatabases = canReuseDatabasesOnReregister(old, cfg, logApi);
+  const reuseDecision = evaluateReregisterReuse(old, cfg, logApi);
+  const reuseDatabases = reuseDecision.reuse;
   if (old && reusePolicy === "reuse-databases" && !reuseDatabases) {
-    logApi.logger.debug?.(
-      "memory-hybrid: re-register falling back to full teardown (reuse policy requested but donor bootstrap not reusable)",
+    // Surface the exact named reason (#2136) so a full teardown under reuse-databases is never
+    // unexplained — this is what the `full_teardown_despite_reuse_policy` leak hint points at.
+    logApi.logger.warn?.(
+      `memory-hybrid: re-register falling back to full teardown despite reuse-databases policy (reason=${reuseDecision.reason})`,
     );
   }
   let donorRuntime = reuseDatabases && old ? old : null;
@@ -422,7 +434,7 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
         `memory-hybrid: re-register reusing database handles (policy=${resolveReregisterPolicy()})`,
       );
     } else {
-      recordReregisterFullTeardown();
+      recordReregisterFullTeardown(reuseDecision.reason);
       const oldRuntime = old;
       old.pythonBridge?.shutdown().catch((err) => {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -489,7 +501,7 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
           `memory-hybrid: reload teardown soft-timeout exceeded (>=${TEARDOWN_SOFT_WAIT_MS}ms) for donor generation ${donorGeneration}; falling back to fresh open to avoid inheriting closed DB handles`,
         );
         donorRuntime = null;
-        recordReregisterFullTeardown();
+        recordReregisterFullTeardown("teardown_soft_timeout");
       } else if (decision === "fresh-hard-timeout") {
         // Full-teardown path (#2111): the donor's DB handles are being permanently closed on a
         // separate teardown chain. The new registration opens its own fresh handles, so it is
@@ -501,6 +513,46 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
         );
         recordReregisterTeardownTimeoutRecovery();
       }
+    }
+  }
+
+  // Resolve where this plugin generation was loaded from (staging path awareness, #2135). Diagnostic
+  // context assembled BEFORE any native store init so a subsequent crash is attributable.
+  let extensionPath = "unknown";
+  try {
+    extensionPath = findPluginRoot(import.meta.url);
+  } catch {
+    // Leave "unknown"; the preflight below turns this into a recoverable, named error.
+  }
+  const loadContext = buildExtensionLoadContext(extensionPath);
+  const loadDiagnosticsContext: Record<string, Record<string, unknown>> = {
+    plugin_load: {
+      packageVersion: loadContext.packageVersion,
+      extensionPath: loadContext.extensionPath,
+      isStaging: loadContext.isStaging,
+      lastSuccessfulExtensionPath: getLastSuccessfulExtensionPath(),
+      reusingDonorHandles: Boolean(donorRuntime),
+      donorGenerationTeardownDrained: old ? isTeardownDrainedForGeneration(donorGeneration) : null,
+      registrationGeneration,
+    },
+  };
+
+  // Only preflight a FRESH open — the reuse path inherits already-open donor handles and performs no
+  // native connect, so it cannot SIGBUS on a partial staging copy. A structurally incomplete staging
+  // directory (missing/zero-byte/corrupt manifest) is rejected here, before the native LanceDB path,
+  // converting a would-be native abort into a recoverable plugin-load error (#2135).
+  if (!donorRuntime) {
+    const preflight = preflightExtensionIntegrity(extensionPath);
+    if (!preflight.ok) {
+      const preflightError = new PluginLoadPreflightError(preflight, loadContext);
+      capturePluginError(preflightError, {
+        subsystem: "registration",
+        operation: "plugin-register:load-preflight",
+        tags: { preflight_reason: preflight.reason, staging: loadContext.isStaging },
+        contexts: loadDiagnosticsContext,
+      });
+      logApi.logger.error?.(preflightError.message);
+      throw preflightError;
     }
   }
 
@@ -528,9 +580,14 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
       dbContext = initializeDatabases(cfg, logApi, { bootRegistrationGeneration: registrationGeneration });
     }
   } catch (err) {
+    // Attach the load context (#2135) so an init failure during a staging/hot-upgrade load reports
+    // the package version, staging path, last-successful path, and reload/teardown state — instead
+    // of failing (or crashing) with no attribution.
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",
       operation: "plugin-register:init-databases",
+      tags: { staging: loadContext.isStaging, package_version: loadContext.packageVersion },
+      contexts: loadDiagnosticsContext,
     });
     throw err;
   }
@@ -1029,6 +1086,10 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
       })();
     });
   }
+
+  // Synchronous registration completed without throwing — record this generation's load path as the
+  // last-known-good extension path so a future crashing staging load can report what last worked (#2135).
+  recordSuccessfulExtensionLoad(extensionPath);
 }
 
 export { detectCategory, performHybridMemCliTeardown, runtimeRef, shouldCapture };
@@ -1053,4 +1114,5 @@ export function resetPluginRegistrationStateForTests(): void {
   resetReloadTeardownChainForTests();
   resetReregisterPolicyForTests();
   resetHybridMemoryRegistrationStateForTests();
+  _resetLastSuccessfulExtensionPathForTests();
 }

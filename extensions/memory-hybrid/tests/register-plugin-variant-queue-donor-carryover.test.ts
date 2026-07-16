@@ -27,7 +27,13 @@ import {
 
 vi.mock("../setup/reregister-policy.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../setup/reregister-policy.js")>();
-  return { ...actual, canReuseDatabasesOnReregister: () => true };
+  // register-plugin.ts consumes evaluateReregisterReuse (the structured-reason variant, #2136);
+  // canReuseDatabasesOnReregister is the thin boolean wrapper. Mock both so reuse is always approved.
+  return {
+    ...actual,
+    canReuseDatabasesOnReregister: () => true,
+    evaluateReregisterReuse: () => ({ reuse: true, reason: "reusable" }),
+  };
 });
 
 let tmpDir: string;

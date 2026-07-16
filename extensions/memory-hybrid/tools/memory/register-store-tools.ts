@@ -39,6 +39,7 @@ import {
   prepareMemoryTextForStorage,
 } from "../../services/recalled-context-assembler.js";
 import { storeAliases } from "../../services/retrieval-aliases.js";
+import { normalizeSupersedesInput } from "../../services/supersedes-input.js";
 import { mirrorMemoryStoreToActiveTaskLedger } from "../../services/task-ledger-facts.js";
 import { guardAgainstWrapperArgsDropped } from "../../services/tool-args-guard.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../../services/vector-maintenance.js";
@@ -208,9 +209,9 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
           }),
         ),
         supersedes: Type.Optional(
-          Type.String({
+          Type.Union([Type.String(), Type.Array(Type.String())], {
             description:
-              "Fact id this one supersedes (replaces). Marks the old fact as superseded and links the new one.",
+              "Fact id — or an array of fact ids — this one supersedes (replaces). Marks the old fact(s) as superseded and links the new one.",
           }),
         ),
         scope: Type.Optional(stringEnum(MEMORY_SCOPES as unknown as readonly string[])),
@@ -264,7 +265,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             value?: string;
             decayClass?: DecayClass;
             tags?: string[];
-            supersedes?: string;
+            supersedes?: string | string[];
             scope?: "global" | "user" | "agent" | "session";
             scopeTarget?: string;
             verification_tier?: string;
@@ -330,6 +331,20 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               details: { error: "invalid_decay_freeze_until" },
             };
           }
+
+          // `supersedes` may arrive as a string or an array of fact ids (the runtime does not
+          // enforce the TypeBox schema); normalize once here so no downstream code calls `.trim`
+          // on a non-string (#2139). A malformed shape yields a structured validation error rather
+          // than a raw `supersedes?.trim is not a function` exception.
+          const supersedesNorm = normalizeSupersedesInput(supersedes);
+          if (!supersedesNorm.ok) {
+            return {
+              content: [{ type: "text", text: `memory_store: ${supersedesNorm.error}.` }],
+              details: { error: "invalid_supersedes" },
+            };
+          }
+          const supersedesIds = supersedesNorm.ids;
+          const hasSupersedes = supersedesIds.length > 0;
           // --- End early validation ---
 
           const provenanceSessionId = api.context?.sessionId ?? null;
@@ -1079,6 +1094,28 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
 
           const nowSec = Math.floor(Date.now() / 1000);
           const storeSessionId = api.context?.sessionId ?? null;
+
+          // Resolve which requested `supersedes` targets are actually in-scope BEFORE the write, so
+          // (a) the persisted `supersedes_id` lineage points only at a real in-scope target rather
+          // than a phantom cross-scope/unknown id, and (b) callers get told which ids were blocked
+          // instead of silently losing them (#2139 QA). Cross-scope / unknown ids are surfaced in
+          // the response, never applied. Mirrors the classify-before-write UPDATE path, which also
+          // validates scope before setting supersedesId.
+          const supersedesScopeValid: string[] = [];
+          const supersedesBlocked: string[] = [];
+          for (const supersededId of supersedesIds) {
+            const target = storeFactsDb.getById(supersededId);
+            if (target && matchesExactScope(target, scope, scopeTarget)) {
+              supersedesScopeValid.push(supersededId);
+            } else {
+              supersedesBlocked.push(supersededId);
+              api.logger.warn?.(
+                `memory-hybrid: blocked cross-scope or unknown memory_store supersedes target ${supersededId}`,
+              );
+            }
+          }
+          const primarySupersedesId = supersedesScopeValid[0] ?? null;
+
           // Plumb vector neighbour candidates into write-time dedupe so the configured vectorThreshold
           // actually runs on the live store path instead of silently degrading to lexical-only (#2027).
           // Reuses the already-computed embedding; candidates are source/scope filtered.
@@ -1089,7 +1126,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
           // silently losing the update. An explicit supersede must always store, so we do not widen
           // write-time fuzzy dedupe on that path (matches pre-#2027 behaviour for supersede writes).
           let storeVectorCandidates: ReadonlyArray<{ id: string; score: number }> | undefined;
-          if (cfg.store.fuzzyDedupe && vector && !supersedes?.trim()) {
+          if (cfg.store.fuzzyDedupe && vector && !hasSupersedes) {
             const resolvedCandidates = await resolveWriteVectorCandidates({
               fuzzyDedupe: true,
               vector,
@@ -1122,7 +1159,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               extractionMethod: "active",
               extractionConfidence: importance,
               decayFreezeUntil: decayFreezeUntil ?? undefined,
-              ...(supersedes?.trim() ? { validFrom: nowSec, supersedesId: supersedes.trim() } : {}),
+              ...(primarySupersedesId ? { validFrom: nowSec, supersedesId: primarySupersedesId } : {}),
             },
             { vectorCandidates: storeVectorCandidates, warnContext: "memory-store" },
           );
@@ -1175,22 +1212,17 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 entry.scopeTarget,
               );
             }
-            // Only set once the write actually superseded the requested fact. When the write
-            // dedupe-merged into a different existing fact (newlyStored === false), the caller's
-            // `supersedes` request was never applied — the message/details below must reflect
-            // that instead of unconditionally claiming success from `supersedes?.trim()` alone.
-            let supersededAppliedId: string | null = null;
-            if (supersedes?.trim() && storeResult.newlyStored) {
-              const supersededId = supersedes.trim();
-              // The `supersedes` id is caller-supplied and unrelated to the classifier's own
-              // candidate set, so unlike the auto-classification DELETE/UPDATE paths above it
-              // can't reuse validateScopedClassificationTarget's candidate check — but it must
-              // still be blocked from touching a fact outside the current write's scope.
-              const supersedeTarget = storeFactsDb.getById(supersededId);
-              if (supersedeTarget && matchesExactScope(supersedeTarget, scope, scopeTarget)) {
-                supersededAppliedId = supersededId;
+            // Apply the supersession to each pre-validated in-scope target (scope was checked before
+            // the write). `supersede()`'s `superseded_at IS NULL` guard keeps `applied` honest — a
+            // target already superseded by an earlier write is not double-counted. Only runs when a
+            // genuinely new fact was created; a dedupe-merge (newlyStored === false) never applies
+            // the request. Out-of-scope/unknown ids were already collected in supersedesBlocked.
+            const supersededAppliedIds: string[] = [];
+            if (storeResult.newlyStored) {
+              for (const supersededId of supersedesScopeValid) {
                 const applied = storeFactsDb.supersede(supersededId, entry.id);
                 if (applied) {
+                  supersededAppliedIds.push(supersededId);
                   aliasDb?.deleteByFactId(supersededId);
                   await deleteVectorForFactId({
                     vectorDb: storeVectorDb,
@@ -1198,13 +1230,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     logger: api.logger,
                     context: "store-manual-supersede",
                   });
-                } else {
-                  supersededAppliedId = null;
                 }
-              } else {
-                api.logger.warn?.(
-                  `memory-hybrid: blocked cross-scope or unknown memory_store supersedes target ${supersededId}`,
-                );
               }
             }
 
@@ -1474,6 +1500,21 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             }
 
             const totalLinked = autoLinked + entityAutoLinked;
+            // Classify how the supersede request resolved so the message and details never claim
+            // a "dedupe-merge" when the real cause was a blocked/unknown target (#2139 QA):
+            //  - merged: a genuine dedupe-merge into an existing fact (newlyStored === false)
+            //  - blockedOnly: a new fact was created but no requested target could be superseded
+            //    (all cross-scope/unknown, or already superseded)
+            const supersedeMerged = hasSupersedes && supersededAppliedIds.length === 0 && !storeResult.newlyStored;
+            const supersedeBlockedOnly = hasSupersedes && supersededAppliedIds.length === 0 && storeResult.newlyStored;
+            const supersedeMsgNote =
+              supersededAppliedIds.length > 0
+                ? ` (supersedes ${supersededAppliedIds.length} previous fact${supersededAppliedIds.length === 1 ? "" : "s"}${supersedesBlocked.length > 0 ? `; ${supersedesBlocked.length} blocked/not found` : ""})`
+                : supersedeMerged
+                  ? " (dedupe-merged — requested supersede was NOT applied)"
+                  : supersedeBlockedOnly
+                    ? ` (requested supersede NOT applied${supersedesBlocked.length > 0 ? ` — ${supersedesBlocked.length} target${supersedesBlocked.length === 1 ? "" : "s"} blocked/not found` : ""})`
+                    : "";
             const verbosity = cfg.verbosity ?? "normal";
             let storedMsg: string;
             if (isCompactVerbosity(verbosity)) {
@@ -1485,7 +1526,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               }`;
             } else {
               // normal / verbose: full details (verbose adds scope/category info)
-              storedMsg = `Stored: "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${entry.decayClass}]${supersededAppliedId ? " (supersedes previous fact)" : supersedes?.trim() ? " (dedupe-merged — requested supersede was NOT applied)" : ""}${totalLinked > 0 ? ` (linked to ${totalLinked} related fact${totalLinked === 1 ? "" : "s"})` : ""}${
+              storedMsg = `Stored: "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${entry.decayClass}]${supersedeMsgNote}${totalLinked > 0 ? ` (linked to ${totalLinked} related fact${totalLinked === 1 ? "" : "s"})` : ""}${
                 autoSupersededIds.length > 0
                   ? ` (auto-superseded ${autoSupersededIds.length} fact${autoSupersededIds.length === 1 ? "" : "s"})`
                   : ""
@@ -1522,16 +1563,25 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 },
               ],
               details: {
-                action: supersededAppliedId ? "updated" : "created",
+                action: supersededAppliedIds.length > 0 ? "updated" : "created",
                 id: entry.id,
                 why: whyStored ?? undefined,
                 backend: "both",
                 decayClass: entry.decayClass,
-                ...(supersededAppliedId
-                  ? { superseded: supersededAppliedId }
-                  : supersedes?.trim()
-                    ? { supersedeRequested: supersedes.trim(), supersedeApplied: false, reason: "dedupe-merge" }
+                ...(supersededAppliedIds.length > 0
+                  ? { superseded: supersededAppliedIds[0], supersededIds: supersededAppliedIds }
+                  : hasSupersedes
+                    ? {
+                        supersedeRequested: supersedesIds.length === 1 ? supersedesIds[0] : supersedesIds,
+                        supersedeApplied: false,
+                        // Distinguish a genuine dedupe-merge from blocked/unknown targets so the
+                        // caller fixes the right thing (bad target id vs near-duplicate text) (#2139 QA).
+                        reason: supersedeMerged ? "dedupe-merge" : "targets_blocked_or_not_found",
+                      }
                     : {}),
+                // Always surface targets that were requested but not applied (cross-scope/unknown),
+                // even on a partially-successful multi-id supersede, so nothing is silently dropped.
+                ...(supersedesBlocked.length > 0 ? { supersedeBlocked: supersedesBlocked } : {}),
                 ...(totalLinked > 0 ? { autoLinked: totalLinked } : {}),
                 ...(autoSupersededIds.length > 0 ? { autoSuperseded: autoSupersededIds } : {}),
                 ...(contradictions.length > 0

@@ -27,6 +27,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.220] - 2026-07-16
+
+Closes all five open production issues filed from live Maeve/Doris hosts (#2135–#2139), each fixed at the root cause with regression tests.
+
+### Fixed — Memory graph & supersession tooling (#2139)
+
+- **`memory_store` rejected `supersedes` as an array; `memory_link` threw a raw SQLite bind error ([#2139](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2139))** — the plugin runtime does not enforce TypeBox parameter schemas, so a caller passing `supersedes: [id1, id2]` reached `supersedes.trim()` and threw `supersedes?.trim is not a function`, and a `memory_link` caller using `from`/`to`/`type` (instead of `sourceFact`/`targetFact`/`linkType`) reached `factsDb.getById(undefined)` and threw `Provided value cannot be bound to SQLite parameter 1.` `memory_store.supersedes` now accepts a single id **or an array of ids** (superseding each in-scope target independently) via `normalizeSupersedesInput`, and returns a structured `invalid_supersedes` error for any other shape. `memory_link` now resolves the common aliases (`from`/`to`/`type`, `source`/`target`), upper-cases the link type, validates every field before touching the DB, and returns a structured, parameter-named `invalid_input` error instead of an opaque SQLite exception.
+
+### Fixed — Credential vault false-positives (#2138)
+
+- **`memory_store` diverted ordinary infrastructure facts into bogus credential vault entries ([#2138](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2138))** — the bare SSH connection-string pattern (`ssh <host> <user>`) matched ordinary prose like "connect via ssh …"; because `extractCredentialMatch` returned the matched span as a "secret" with `hasPatternMatch=true`, `validateCredentialValue` skipped its natural-language/path guards and accepted it, so an infra note (host/IP/gateway/MAC + stored service names) was written to the credential vault as a fake `ssh` credential. A bare SSH connection string carries no secret, so the pattern is now `detectionOnly`: it may still surface a user prompt via `detectCredentialPatterns`, but it never feeds `extractCredentialMatch` or `isStructuredCredentialCandidate`, so the fact is stored as a fact. Real SSH secrets (private-key blocks, `sshpass -p <pw>` passwords, connection strings with an embedded password) are unaffected.
+
+### Fixed — Nightly maintenance analyzer recursion (#2137)
+
+- **`maintenance-log-analyzer` still failed nightly on its own artifacts after #2131/#2132 ([#2137](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2137))** — two self-reference escape routes remained. (A) Synthetic `orchestration-*` steps derived from the analyzer's own empty/stale/missing exit ledger were classified as the strict `orchestration-bug` class and were never in the self-referential step set, forcing exit=2 → `validate-cron-exit` exit=1 → `maintenance_failed` → new stale artifacts → loop. (B) The analyzer's own `analyze-maintenance-logs exit=2` (strict-fail) and `validate-cron-exit` rows re-classified as a strict class because their shared `logContent` is the analyzer's own re-read digest, full of *other* jobs' failure phrases. The self-suppression now recognizes the analyzer job's own `orchestration-*` synthetic steps and its strict-fail `exit=2` / validation rows regardless of the (contaminated) classification, while still reporting a genuine analyzer crash (`analyze exit=1` with a real classified stack) and every other job's failures.
+
+### Fixed — Reuse-databases teardown observability (#2136)
+
+- **`reuse-databases` full teardowns were unexplained ([#2136](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2136))** — the reuse eligibility gate collapsed ~20 distinct decline reasons into a bare boolean and only logged a generic `debug` line, so an operator seeing `fullTeardowns > 0` under `reuse-databases` had no way to tell an intentional teardown (config changed) from a policy violation. `evaluateReregisterReuse` now returns a stable reason code (`bootstrap_not_settled`, `donor_handle_closed`, `sqlite_path_changed`, `config_drift:<field>`, `teardown_soft_timeout`, …); `recordReregisterFullTeardown(reason)` tallies a new `fullTeardownReasons` breakdown on `reregisterMetrics`; the fallback is now a `warn` naming the reason; and the `plugin_reregister_full_teardown_despite_reuse_policy` leak hint reports the per-reason counts instead of the old "check bootstrapSettledRef or config drift" nudge. Adds a regression test that repeated re-registers under `reuse-databases` keep `fullTeardowns`/`teardownTimeoutRecoveries` at 0.
+
+### Fixed — Staging plugin-load hardening (#2135)
+
+- **Gateway SIGBUS'd while loading the plugin from a hot-upgrade staging path ([#2135](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2135))** — a native abort inside the LanceDB binding or an mmapped data file cannot be caught by a JS `try/catch` once execution enters native code. The register flow now runs a filesystem-only preflight (`preflightExtensionIntegrity`) before the first native store init: a structurally incomplete staging copy (missing / zero-byte / corrupt `openclaw.plugin.json` / `package.json`, or a missing / zero-byte compiled `dist/index.js` entry when a build is present) is rejected as a recoverable `PluginLoadPreflightError` instead of proceeding into the native path. Plugin-load and DB-init errors now carry a load-diagnostics context (package version, resolved extension path, staging flag, last-successful extension path, reload/teardown-drain state), and the last-known-good extension path is recorded after each successful registration. Scoped to the fresh-open path; the reuse path inherits already-open handles and performs no native connect. This is a necessary-but-not-sufficient guard — it cannot detect a present-but-internally-corrupt native binding, which would require child-process isolation.
+
+### Hardened — QA follow-up on this release's own fixes
+
+A full adversarial code review of this release's diff, before merge, closed several residual edge cases (all with regression tests):
+
+- **Multi-id supersede reporting (#2139)** — a partial multi-id supersede (`supersedes:[A,B]` where B is out-of-scope) silently dropped B. The response now surfaces `supersedeBlocked` for every requested-but-not-applied id, on partial and total failures alike.
+- **Misleading `dedupe-merge` reason (#2139)** — when a new fact was created but its supersede target was blocked/unknown, the message and `details.reason` wrongly said `dedupe-merge` (no merge happened). Blocked targets now report `reason: "targets_blocked_or_not_found"` with an accurate message; a genuine dedupe-merge is still labeled as such.
+- **Phantom `supersedes_id` lineage (#2139)** — the new fact's `supersedes_id` column was written before the scope check, so a blocked cross-scope target left a forward pointer to a fact whose `superseded_by` was never set. Supersede targets are now scope-validated *before* the write, so the persisted lineage only ever points at an in-scope target (or is null).
+- **`memory_link` alias shadowing (#2139)** — a blank canonical key (`sourceFact: ""`) no longer shadows a populated alias (`from: "<id>"`).
+- **Analyzer self-suppression trade-off (#2137)** — clarified in-code that suppressing the analyzer's own `orchestration-*` synthetics necessarily forgoes self-reporting of its own incomplete/hung prior runs (detected out-of-band instead), and that this matches the issue's request.
+- **Diagnostics snapshot aliasing (#2136)** — `buildGatewayMemoryDiagnostics` deep-copies `fullTeardownReasons` so a returned snapshot is a true point-in-time value rather than an alias of the live, still-mutating counter map.
+
+### Notes
+
+- No `schemaVersion` bump — no storage-schema changes.
+- No agent-tool contract changes; `memory_store` / `memory_link` accept a superset of their prior inputs.
+
 ## [2026.7.219] - 2026-07-15
 
 ### Fixed — Cron harness & maintenance observability (#2133, #2131, #2132)

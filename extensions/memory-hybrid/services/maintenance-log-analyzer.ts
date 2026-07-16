@@ -979,24 +979,57 @@ export function findingFromStep(step: MaintenanceLogStep, rule = classifyMainten
 
 /** The maintenance-log-analyzer cron job's own slug; see cli/install/cron-jobs.ts (#2132). */
 const ANALYZER_JOB_NAME = "maintenance-log-analyzer";
-/**
- * Step names within the analyzer job's own exit ledger that only ever record "the analyzer ran
- * and (possibly) strict-failed while reporting a root-cause finding" — not a distinct new
- * incident. `validate-cron-exit` is the harness's universal terminal row (every job gets one), so
- * this is scoped to ANALYZER_JOB_NAME specifically; other jobs' validate-cron-exit failures are
- * unrelated and must still be reported normally.
- */
-const ANALYZER_SELF_REFERENTIAL_STEPS = new Set(["analyze-maintenance-logs", "validate-cron-exit"]);
 
 /**
- * True when a step is the maintenance-log-analyzer job's own step/validation exit row from a
- * PRIOR completed run, resurfaced by a later scan. Rescanning these as fresh findings created a
- * self-amplifying failure loop: run B fails while reporting root cause A, then run C rescans B's
- * own `analyze-maintenance-logs exit=2` / `validate-cron-exit exit=1` rows as new "unclassified"
- * noise and fails again, compounding daily for as long as the artifacts remain on disk (#2132).
+ * The exit code `analyze-maintenance-logs` uses when it strict-fails while reporting a root-cause
+ * finding (register-analyze-maintenance-logs.ts sets `process.exitCode = 2`). This is the ONLY path
+ * that exits 2, so a `maintenance-log-analyzer / analyze-maintenance-logs exit=2` row is always the
+ * analyzer's own strict-fail self-reference — never a distinct new incident. A genuine crash of the
+ * analyze command exits 1 (or dies on a signal), so real crashes are still classified and reported.
  */
-function isDerivedAnalyzerSelfFailureStep(step: MaintenanceLogStep): boolean {
-  return step.job === ANALYZER_JOB_NAME && ANALYZER_SELF_REFERENTIAL_STEPS.has(step.step);
+const ANALYZER_STRICT_FAIL_EXIT_CODE = 2;
+
+/**
+ * True when a step is the maintenance-log-analyzer job's own step/validation/orchestration exit row
+ * from a PRIOR run, resurfaced by a later scan. Rescanning these as fresh findings created a
+ * self-amplifying failure loop: run B strict-fails while reporting root cause A, then run C rescans
+ * B's own artifacts as new failures and strict-fails again, compounding nightly for as long as the
+ * artifacts remain on disk (#2132, #2137). This is scoped to ANALYZER_JOB_NAME so other jobs'
+ * validate-cron-exit / orchestration failures are unaffected and still reported normally.
+ *
+ * Two recursion substrates are suppressed here (#2137):
+ *  - Hole A: synthetic `orchestration-*` steps that buildOrchestrationSyntheticStep derives from the
+ *    analyzer's OWN empty/stale/missing exit ledger. Any such synthetic necessarily describes a
+ *    PRIOR analyzer run (the run doing the scanning has not written its own ledger yet), so it is
+ *    always a rescan of a lingering historical artifact — and it classifies as the strict
+ *    `orchestration-bug` class, forcing exit=2 and re-arming the loop every night. Trade-off: the
+ *    analyzer therefore cannot flag its OWN incomplete/hung prior run; that non-completion is instead
+ *    caught out-of-band (a missing fresh digest / external cron liveness), not by the analyzer
+ *    reporting on itself and recursing. This matches the issue's request to stop treating its own
+ *    prior artifacts as fresh failures.
+ *  - Hole B: the analyzer's own `analyze-maintenance-logs exit=2` (strict-fail) and `validate-cron-exit`
+ *    rows re-classifying as a strict class because their shared `logContent` is the analyzer's own
+ *    re-read digest (full of OTHER jobs' failure phrases). These must be suppressed regardless of the
+ *    contaminated classification — hence this predicate no longer depends on `classification` for them.
+ *
+ * `classification` is still consulted for the analyzer's non-strict `analyze-maintenance-logs` rows so
+ * that a genuine, classifiable crash of the analyze command (exit 1 with e.g. a plugin-bug stack) is
+ * still surfaced rather than silenced.
+ */
+function isDerivedAnalyzerSelfFailureStep(step: MaintenanceLogStep, classification: string): boolean {
+  if (step.job !== ANALYZER_JOB_NAME) return false;
+  // Hole A: analyzer-own synthetic orchestration anomaly — always a rescan of its own prior ledger.
+  if (step.step.startsWith("orchestration-")) return true;
+  // The analyzer's terminal validation row fails purely because its analyze step strict-failed.
+  if (step.step === "validate-cron-exit") return true;
+  if (step.step === "analyze-maintenance-logs") {
+    // Hole B: strict-fail self-reference — suppress even if the re-read digest reclassified it.
+    if (step.exitCode === ANALYZER_STRICT_FAIL_EXIT_CODE) return true;
+    // Non-strict analyze rows: keep the prior #2132 behavior — only the unclassified generic
+    // catch-all is self-referential noise; a real classified crash (exit 1) still reports.
+    if (classification === "unclassified") return true;
+  }
+  return false;
 }
 
 export function analyzeMaintenanceSteps(
@@ -1009,10 +1042,10 @@ export function analyzeMaintenanceSteps(
     if (step.exitCode !== 0) {
       if (isBenignNoiseOnlyMaintenanceStep(step)) continue;
       const rule = classifyMaintenanceFailure(step);
-      // Only downgrade the generic catch-all: a genuine crash/plugin-bug/orchestration-bug in the
-      // analyzer job itself (anything that classified as something other than "unclassified") is
-      // still reported normally — this exclusively targets the self-referential recursion.
-      if (rule.classification === "unclassified" && isDerivedAnalyzerSelfFailureStep(step)) continue;
+      // Suppress the analyzer's own strict-fail / validation / orchestration self-references so it
+      // never treats its own prior artifacts as fresh failures (#2132, #2137). A genuine, classified
+      // crash of the analyze command (exit 1) is NOT matched here and is still reported normally.
+      if (isDerivedAnalyzerSelfFailureStep(step, rule.classification)) continue;
       findings.push(findingFromStep(step, rule));
       continue;
     }

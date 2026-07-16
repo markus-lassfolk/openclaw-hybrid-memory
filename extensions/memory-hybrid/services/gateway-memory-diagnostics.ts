@@ -151,7 +151,20 @@ function buildLeakHints(opts: {
     hints.push("plugin_reregister_full_teardown: set OPENCLAW_HYBRID_MEM_REREGISTER_POLICY=reuse-databases");
   }
   if (opts.reregisterMetrics.fullTeardowns > 0 && opts.policy === "reuse-databases") {
-    hints.push("plugin_reregister_full_teardown_despite_reuse_policy: check bootstrapSettledRef or config drift");
+    // Attribute the teardowns to their named reasons (#2136) instead of the old generic
+    // "check bootstrapSettledRef or config drift" nudge, so an operator can immediately tell an
+    // intentional teardown (config_drift:<field>) from a policy violation (bootstrap_not_settled,
+    // donor_handle_closed, teardown_soft_timeout, …).
+    const reasons = opts.reregisterMetrics.fullTeardownReasons ?? {};
+    const breakdown = Object.entries(reasons)
+      .sort((a, b) => b[1] - a[1])
+      .map(([reason, count]) => `${reason}=${count}`)
+      .join(", ");
+    hints.push(
+      `plugin_reregister_full_teardown_despite_reuse_policy: ${
+        breakdown || "reason unrecorded"
+      } (config_drift:* is expected on config change; bootstrap_not_settled / donor_handle_closed / teardown_*_timeout indicate a reload-timing issue)`,
+    );
   }
   if (nativeMb > 2048 && opts.reregisterMetrics.databaseReuses > 0) {
     hints.push(
@@ -260,7 +273,9 @@ export async function buildGatewayMemoryDiagnostics(
       recallInFlight: ctx.recallInFlightRef?.value ?? 0,
       variantQueuePending: ctx.variantQueuePending ?? null,
       reregisterPolicy: policy,
-      reregisterMetrics: { ...reregisterMetrics },
+      // Deep-copy the nested reason map so the snapshot is a true point-in-time value and does
+      // not alias the live, still-mutating reregisterMetrics.fullTeardownReasons (#2136 QA).
+      reregisterMetrics: { ...reregisterMetrics, fullTeardownReasons: { ...reregisterMetrics.fullTeardownReasons } },
       vectorObservability: vectorObs,
     },
     eventLoop: {

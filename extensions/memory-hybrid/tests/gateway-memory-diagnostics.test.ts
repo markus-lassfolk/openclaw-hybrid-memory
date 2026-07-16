@@ -8,7 +8,7 @@ import {
   buildProcessMemorySnapshot,
   sanitizePublicMemoryDiagnostics,
 } from "../services/gateway-memory-diagnostics.js";
-import { resetReregisterPolicyForTests } from "../setup/reregister-policy.js";
+import { recordReregisterFullTeardown, resetReregisterPolicyForTests } from "../setup/reregister-policy.js";
 import { setEnv } from "../utils/env-manager.js";
 import { resetEventLoopLagMonitorForTests, startEventLoopLagMonitor } from "../utils/event-loop-health.js";
 
@@ -57,6 +57,25 @@ describe("gateway-memory-diagnostics", () => {
     expect(diag.eventLoop.health).toBe("healthy");
     expect(diag.eventLoop.lagMaxMs).not.toBeNull();
     expect(diag.eventLoop.degradedThresholdMs).toBe(200);
+  });
+
+  it("attributes a reuse-policy full teardown to its named reason in leak hints (#2136)", async () => {
+    setEnv("OPENCLAW_HYBRID_MEM_REREGISTER_POLICY", "reuse-databases");
+    // Simulate a teardown that happened despite the reuse policy, with a specific cause.
+    recordReregisterFullTeardown("config_drift:embedding.model");
+    const vectorDb = { getPath: () => join(tmp, "lancedb"), count: async () => 0, isInitialized: () => false };
+    const diag = await buildGatewayMemoryDiagnostics({
+      factsDb,
+      vectorDb: vectorDb as never,
+      resolvedSqlitePath: join(tmp, "facts.db"),
+      resolvedLancePath: join(tmp, "lancedb"),
+      recallInFlightRef: { value: 0 },
+    });
+    const hint = diag.leakHints.find((h) => h.startsWith("plugin_reregister_full_teardown_despite_reuse_policy"));
+    expect(hint).toBeDefined();
+    // The generic "check bootstrapSettledRef or config drift" nudge is replaced by the real reason.
+    expect(hint).toContain("config_drift:embedding.model=1");
+    expect(diag.hybridMemory.reregisterMetrics.fullTeardownReasons).toEqual({ "config_drift:embedding.model": 1 });
   });
 
   it("buildProcessMemorySnapshot includes event loop lag fields", () => {
