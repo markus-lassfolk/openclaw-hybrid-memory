@@ -32,8 +32,18 @@ export const SENSITIVE_PATTERNS = [
 /** Patterns for capture filtering - uses broader /token/i instead of /token\s+is/i for security */
 export const CAPTURE_FILTER_PATTERNS = [...SENSITIVE_PATTERNS.slice(0, 3), /token/i, ...SENSITIVE_PATTERNS.slice(4)];
 
-/** Patterns that suggest a credential value - for auto-detect prompt to store */
-const CREDENTIAL_PATTERNS: Array<{ regex: RegExp; type: string; hint: string }> = [
+/**
+ * Patterns that suggest a credential value - for auto-detect prompt to store.
+ *
+ * `detectionOnly` patterns are used ONLY to nudge the user ("this looks credential-related,
+ * store it?"); they must NEVER route content into the credential vault. A bare SSH connection
+ * string (`ssh user@host …`) carries no secret material — the host and username are not secrets —
+ * so treating the matched span as an extractable `secretValue` produced bogus vault entries from
+ * ordinary infrastructure notes (#2138). Real SSH secrets are captured elsewhere: private-key
+ * blocks match the `-----BEGIN … PRIVATE KEY-----` pattern below, and `sshpass -p <pw>` command
+ * passwords are handled by services/credential-scanner.ts.
+ */
+const CREDENTIAL_PATTERNS: Array<{ regex: RegExp; type: string; hint: string; detectionOnly?: boolean }> = [
   { regex: /Bearer\s+eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/i, type: "bearer", hint: "Bearer/JWT token" },
   // Bare JWT (no "Bearer " prefix) — same shape, distinct entry since extractCredentialMatch
   // strips a leading "Bearer " but a bare JWT has none to strip. Negative lookbehind avoids
@@ -54,7 +64,8 @@ const CREDENTIAL_PATTERNS: Array<{ regex: RegExp; type: string; hint: string }> 
     type: "password",
     hint: "Connection string with embedded password",
   },
-  { regex: /ssh\s+[\w@.-]+\s+[\w@.-]+/i, type: "ssh", hint: "SSH connection string" },
+  // detectionOnly: a bare SSH connection string is not a secret (see block comment above).
+  { regex: /ssh\s+[\w@.-]+\s+[\w@.-]+/i, type: "ssh", hint: "SSH connection string", detectionOnly: true },
   {
     regex: /[\w.-]+@[\w.-]+\.\w+.*(?:password|passwd|token|key)\s*[:=]\s*(\S+)/i,
     type: "password",
@@ -79,7 +90,10 @@ const MAX_SECRET_VALUE_LENGTH = 8192;
 
 /** First credential-like match in text; used to extract secret for vault. */
 export function extractCredentialMatch(text: string): { type: string; secretValue: string } | null {
-  for (const { regex, type } of CREDENTIAL_PATTERNS) {
+  for (const { regex, type, detectionOnly } of CREDENTIAL_PATTERNS) {
+    // detectionOnly patterns (e.g. a bare SSH connection string) never yield a vault secret —
+    // the matched span is connection metadata, not credential material (#2138).
+    if (detectionOnly) continue;
     const match = regex.exec(text);
     if (match) {
       // Prefer a capture group when the pattern has one (the connection-string and
@@ -111,7 +125,10 @@ export function isStructuredCredentialCandidate(
   const e = (entity ?? "").toLowerCase();
   if (["api_key", "password", "token", "secret", "bearer"].some((x) => k.includes(x) || e.includes(x))) return true;
   if (value && value.length >= 8 && /^(eyJ|sk-|ghp_|gho_|xox[baprs]-)/i.test(value)) return true;
-  return CREDENTIAL_PATTERNS.some((p) => p.regex.test(text));
+  // Vault routing must ignore detectionOnly patterns: a bare SSH connection string is not a
+  // credential candidate, so infrastructure notes mentioning `ssh <host> <user>` stay ordinary
+  // facts instead of being diverted into a bogus vault entry (#2138).
+  return CREDENTIAL_PATTERNS.some((p) => !p.detectionOnly && p.regex.test(text));
 }
 
 /** True if content looks credential-related (broad or narrow). Used by auto-capture filters, not vault gating. */

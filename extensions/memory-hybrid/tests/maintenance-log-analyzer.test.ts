@@ -1108,6 +1108,77 @@ describe("maintenance log analyzer", () => {
     expect(findings[0]?.job).toBe("nightly-memory-sweep");
   });
 
+  // #2137: the analyzer kept strict-failing nightly on its OWN artifacts after #2131/#2132.
+  // Two escape routes remained: (A) synthetic `orchestration-*` steps derived from the analyzer's
+  // own empty/stale exit ledger were classified as the strict `orchestration-bug` class (never in
+  // the self-referential step set), and (B) the analyzer's own strict-fail rows re-classified as a
+  // strict class because their shared logContent is the analyzer's re-read digest.
+  const analyzerOrchestrationStep = {
+    occurredAt: Math.floor(Date.now() / 1000),
+    iso: new Date().toISOString(),
+    job: "maintenance-log-analyzer",
+    step: "orchestration-stale-empty-exit",
+    exitCode: 1,
+    exitPath: "x.exit.txt",
+    logPath: "x.log",
+    logContent: "",
+    line: "orchestration anomaly: empty exit ledger appears stale (no mtime/progress updates for 7200s); stale=yes",
+  };
+
+  it("Hole A: suppresses the analyzer's OWN synthetic orchestration-* self-reference (no strict fail)", () => {
+    // Sanity: this step really does classify as the strict orchestration-bug class.
+    expect(classifyMaintenanceFailure(analyzerOrchestrationStep).classification).toBe("orchestration-bug");
+    const findings = analyzeMaintenanceSteps([analyzerOrchestrationStep]);
+    expect(findings).toHaveLength(0);
+    expect(shouldMaintenanceStrictFail(findings)).toBe(false);
+  });
+
+  it("still reports the SAME orchestration anomaly for a DIFFERENT (external) job", () => {
+    const externalStep = { ...analyzerOrchestrationStep, job: "nightly-memory-sweep" };
+    const findings = analyzeMaintenanceSteps([externalStep]);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.job).toBe("nightly-memory-sweep");
+    expect(findings[0]?.classification).toBe("orchestration-bug");
+  });
+
+  it("Hole B: suppresses the analyzer's own analyze exit=2 even when the re-read digest contaminates classification", () => {
+    // exit=2 is the analyzer's strict-fail sentinel; the logContent is its own digest quoting
+    // another job's TypeError, which WOULD otherwise reclassify this row as a strict plugin-bug.
+    const contaminatedSelfRow = {
+      occurredAt: Math.floor(Date.now() / 1000),
+      iso: new Date().toISOString(),
+      job: "maintenance-log-analyzer",
+      step: "analyze-maintenance-logs",
+      exitCode: 2,
+      exitPath: "x.exit.txt",
+      logPath: "x.log",
+      logContent:
+        "Maintenance digest\n- nightly-memory-sweep/distill: TypeError: Cannot read properties of undefined (reading 'x')",
+      line: "2026-07-16T03:33:02Z analyze-maintenance-logs exit=2 status=failed reason=nonzero_exit",
+    };
+    // Confirm the contamination WOULD have classified it as a strict class without the guard.
+    expect(classifyMaintenanceFailure(contaminatedSelfRow).classification).toBe("plugin-bug");
+    const findings = analyzeMaintenanceSteps([contaminatedSelfRow]);
+    expect(findings).toHaveLength(0);
+  });
+
+  it("still reports a genuine analyzer crash (analyze exit=1 with a real classified stack)", () => {
+    const crash = {
+      occurredAt: Math.floor(Date.now() / 1000),
+      iso: new Date().toISOString(),
+      job: "maintenance-log-analyzer",
+      step: "analyze-maintenance-logs",
+      exitCode: 1,
+      exitPath: "x.exit.txt",
+      logPath: "x.log",
+      logContent: "TypeError: Cannot read properties of undefined (reading 'foo')\n    at analyzeLogs (index.js:1:1)",
+      line: "2026-07-16T03:33:02Z analyze-maintenance-logs exit=1",
+    };
+    const findings = analyzeMaintenanceSteps([crash]);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.classification).toBe("plugin-bug");
+  });
+
   it("summarizeMaintenanceLogAnalysis marks strict=fail when findings include strict classes", () => {
     const root = tmpRoot();
     const exitPath = join(root, "nightly-memory-sweep-20260511T030000Z-555.exit.txt");

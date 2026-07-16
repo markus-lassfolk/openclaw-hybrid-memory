@@ -10,9 +10,10 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { stringEnum } from "../utils/typebox.js";
 
 import type { BuildToolScopeFilterFn } from "../api/memory-plugin-api.js";
-import type { FactsDB, MemoryLinkType } from "../backends/facts-db.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import { MEMORY_LINK_TYPES } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
+import { resolveMemoryLinkInput } from "../services/memory-link-input.js";
 import { findShortestPath, formatPath, resolveInput, type ShortestPathLookup } from "../services/shortest-path.js";
 
 export interface PluginContext {
@@ -85,17 +86,18 @@ export function registerGraphTools(ctx: PluginContext, api: ClawdbotPluginApi): 
           strength: Type.Optional(Type.Number({ description: "Link strength 0.0-1.0 (default 1.0)" })),
         }),
         async execute(_toolCallId: string, params: Record<string, unknown>) {
-          const {
-            sourceFact,
-            targetFact,
-            linkType,
-            strength = 1.0,
-          } = params as {
-            sourceFact: string;
-            targetFact: string;
-            linkType: MemoryLinkType;
-            strength?: number;
-          };
+          // Resolve/validate input before touching the DB. The runtime does not enforce the
+          // TypeBox schema, so callers using `from`/`to`/`type` (or omitting a field) previously
+          // reached factsDb.getById(undefined) and hit an opaque "cannot be bound to SQLite
+          // parameter 1" error. Fail with a structured, parameter-named message instead (#2139).
+          const resolved = resolveMemoryLinkInput(params);
+          if (!resolved.ok) {
+            return {
+              content: [{ type: "text", text: `memory_link: ${resolved.error}.` }],
+              details: { error: "invalid_input" },
+            };
+          }
+          const { sourceFact, targetFact, linkType, strength } = resolved;
           // SECURITY: both endpoints must be in-scope before linking — otherwise a caller could
           // tie an out-of-scope (another tenant's) fact into their own graph, or discover its id
           // exists, just by guessing/enumerating ids (mirrors the GraphQL createLink guard).

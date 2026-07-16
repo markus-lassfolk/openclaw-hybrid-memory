@@ -3,6 +3,7 @@ import type { PluginRuntime } from "../api/plugin-runtime.js";
 import type { HybridMemoryConfig } from "../config.js";
 import {
   canReuseDatabasesOnReregister,
+  evaluateReregisterReuse,
   recordReregisterDatabaseReuse,
   recordReregisterFullTeardown,
   resetReregisterPolicyForTests,
@@ -302,6 +303,71 @@ describe("reregister-policy", () => {
     recordReregisterDatabaseReuse();
     expect(reregisterMetrics.fullTeardowns).toBe(1);
     expect(reregisterMetrics.databaseReuses).toBe(1);
+  });
+
+  // #2136: a full teardown under reuse-databases must always name WHY. evaluateReregisterReuse
+  // returns a stable reason code alongside the boolean so diagnostics can attribute each teardown.
+  describe("evaluateReregisterReuse names the reason (#2136)", () => {
+    const api = { resolvePath: (p: string) => `/home/markus/.openclaw/${p}` };
+    const settledDonor = (cfg: HybridMemoryConfig) =>
+      mockOldRuntime({ sqlite: api.resolvePath(cfg.sqlitePath), lance: api.resolvePath(cfg.lanceDbPath) }, cfg);
+
+    beforeEach(() => vi.stubEnv("OPENCLAW_HYBRID_MEM_REREGISTER_POLICY", "reuse-databases"));
+
+    it("returns reuse:true with reason 'reusable' when nothing drifted", () => {
+      const cfg = minimalCfg();
+      expect(evaluateReregisterReuse(settledDonor(cfg), cfg, api)).toEqual({ reuse: true, reason: "reusable" });
+    });
+
+    it("names no_donor when there is no prior runtime", () => {
+      expect(evaluateReregisterReuse(null, minimalCfg(), api)).toEqual({ reuse: false, reason: "no_donor" });
+    });
+
+    it("names bootstrap_not_settled when the donor bootstrap is still in flight", () => {
+      const cfg = minimalCfg();
+      const donor = settledDonor(cfg);
+      (donor as { bootstrapSettledRef?: { value: boolean } }).bootstrapSettledRef = { value: false };
+      expect(evaluateReregisterReuse(donor, cfg, api)).toEqual({ reuse: false, reason: "bootstrap_not_settled" });
+    });
+
+    it("names the drifted sqlite path", () => {
+      const donor = settledDonor(minimalCfg());
+      const decision = evaluateReregisterReuse(donor, minimalCfg("memory/other.db"), api);
+      expect(decision).toEqual({ reuse: false, reason: "sqlite_path_changed" });
+    });
+
+    it("names the specific drifted config field", () => {
+      const oldCfg = minimalCfg();
+      const donor = settledDonor(oldCfg);
+      const newCfg = minimalCfg();
+      newCfg.embedding.model = "text-embedding-3-large";
+      expect(evaluateReregisterReuse(donor, newCfg, api)).toEqual({
+        reuse: false,
+        reason: "config_drift:embedding.model",
+      });
+    });
+
+    it("stays reusable across repeated re-registers with unchanged config (no phantom teardowns)", () => {
+      const cfg = minimalCfg();
+      const donor = settledDonor(cfg);
+      for (let i = 0; i < 5; i++) {
+        expect(evaluateReregisterReuse(donor, minimalCfg(), api).reuse).toBe(true);
+      }
+    });
+  });
+
+  it("recordReregisterFullTeardown tallies per-reason counters (#2136)", () => {
+    vi.stubEnv("OPENCLAW_HYBRID_MEM_REREGISTER_POLICY", "reuse-databases");
+    recordReregisterFullTeardown("config_drift:embedding.model");
+    recordReregisterFullTeardown("config_drift:embedding.model");
+    recordReregisterFullTeardown("bootstrap_not_settled");
+    recordReregisterFullTeardown(); // unspecified
+    expect(reregisterMetrics.fullTeardowns).toBe(4);
+    expect(reregisterMetrics.fullTeardownReasons).toEqual({
+      "config_drift:embedding.model": 2,
+      bootstrap_not_settled: 1,
+      unspecified: 1,
+    });
   });
 });
 
