@@ -38,8 +38,18 @@ function setup(facts: FakeFact[]) {
   return { link: tools.get("memory_link"), factsDb, createLink };
 }
 
-const SRC: FakeFact = { id: "b9cc40ed-1675-47af-93eb-97e9e33b847d", text: "current correction", scope: "global", scopeTarget: null };
-const TGT: FakeFact = { id: "047efc02-b019-4236-8843-5cf4724e3db0", text: "stale gateway fact", scope: "global", scopeTarget: null };
+const SRC: FakeFact = {
+  id: "b9cc40ed-1675-47af-93eb-97e9e33b847d",
+  text: "current correction",
+  scope: "global",
+  scopeTarget: null,
+};
+const TGT: FakeFact = {
+  id: "047efc02-b019-4236-8843-5cf4724e3db0",
+  text: "stale gateway fact",
+  scope: "global",
+  scopeTarget: null,
+};
 
 describe("memory_link SUPERSEDES input handling (#2139)", () => {
   it("creates a SUPERSEDES link between two valid fact UUIDs", async () => {

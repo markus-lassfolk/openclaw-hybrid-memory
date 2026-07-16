@@ -195,7 +195,13 @@ describe("memory_store supersedes (#2139)", () => {
       text: "Doris correction whose only supersede target is out of scope",
       supersedes: foreign.id,
     })) as {
-      details?: { action?: string; reason?: string; supersedeApplied?: boolean; supersedeBlocked?: string[]; id?: string };
+      details?: {
+        action?: string;
+        reason?: string;
+        supersedeApplied?: boolean;
+        supersedeBlocked?: string[];
+        id?: string;
+      };
     };
     // A new fact was created; the supersede was blocked — reason must reflect that, not dedupe-merge.
     expect(result.details?.action).toBe("created");

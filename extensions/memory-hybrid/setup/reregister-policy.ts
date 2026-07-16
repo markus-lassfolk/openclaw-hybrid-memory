@@ -215,7 +215,8 @@ export function evaluateReregisterReuse(
   // some unrelated field forces a full teardown.
   if (oldCfg.wal?.enabled !== cfg.wal?.enabled) return drift("wal.enabled");
   if (oldCfg.personaProposals?.enabled !== cfg.personaProposals?.enabled) return drift("personaProposals.enabled");
-  if (oldCfg.identityReflection?.enabled !== cfg.identityReflection?.enabled) return drift("identityReflection.enabled");
+  if (oldCfg.identityReflection?.enabled !== cfg.identityReflection?.enabled)
+    return drift("identityReflection.enabled");
   if (oldCfg.identityPromotion?.enabled !== cfg.identityPromotion?.enabled) return drift("identityPromotion.enabled");
   if (oldCfg.nightlyCycle?.enabled !== cfg.nightlyCycle?.enabled) return drift("nightlyCycle.enabled");
   if (oldCfg.graph?.autoSupersede !== cfg.graph?.autoSupersede) return drift("graph.autoSupersede");

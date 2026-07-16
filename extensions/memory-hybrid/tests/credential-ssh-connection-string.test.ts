@@ -34,9 +34,7 @@ describe("SSH connection strings are not vault-routable credentials (#2138)", ()
   it("tryParseCredentialForVault returns null for infra text mentioning ssh + service names", () => {
     expect(tryParseCredentialForVault(infraText, "DorisVM", "runtime_host_and_network", null)).toBeNull();
     // Even with requirePatternMatch off, a value that is just narrative infra text is not a secret.
-    expect(
-      tryParseCredentialForVault(infraText, "DorisVM", "runtime_host_and_network", infraText),
-    ).toBeNull();
+    expect(tryParseCredentialForVault(infraText, "DorisVM", "runtime_host_and_network", infraText)).toBeNull();
   });
 
   it("still routes a REAL secret to the vault (JWT / sk- / connection-string password)", () => {

@@ -49,8 +49,7 @@ export function resolveMemoryLinkInput(params: Record<string, unknown>): Resolve
   if (!targetFact) {
     return {
       ok: false,
-      error:
-        "targetFact is required and must be a non-empty fact id string (accepted aliases: targetFact, target, to)",
+      error: "targetFact is required and must be a non-empty fact id string (accepted aliases: targetFact, target, to)",
     };
   }
 

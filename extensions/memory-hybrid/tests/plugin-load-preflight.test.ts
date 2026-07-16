@@ -38,9 +38,9 @@ function writeHealthyPlugin(dir: string, version = "2026.7.220"): void {
 
 describe("isStagingExtensionPath (#2135)", () => {
   it("recognizes an OpenClaw staging directory", () => {
-    expect(
-      isStagingExtensionPath("/mnt/openclaw/.openclaw/extensions/.openclaw-hybrid-memory-staging-856831"),
-    ).toBe(true);
+    expect(isStagingExtensionPath("/mnt/openclaw/.openclaw/extensions/.openclaw-hybrid-memory-staging-856831")).toBe(
+      true,
+    );
     expect(
       isStagingExtensionPath("/mnt/openclaw/.openclaw/extensions/.openclaw-hybrid-memory-staging-856831/dist"),
     ).toBe(true);
