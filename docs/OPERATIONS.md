@@ -360,6 +360,46 @@ For **what to back up** and how to restore, see [BACKUP.md](BACKUP.md).
 
 ---
 
+## Version source of truth: cron vs gateway can load different copies
+
+The plugin can end up installed in more than one place on the same host, and **cron** and the **gateway** can each resolve a different copy — so `openclaw hybrid-mem <cmd>` run from a cron job can silently run an older or newer version than the one the live gateway has loaded, with no error ([#2143](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2143)).
+
+### The two canonical trees inside `~/.openclaw`
+
+- `~/.openclaw/extensions/openclaw-hybrid-memory` — the "extensions" tree.
+- `~/.openclaw/npm/projects/openclaw-hybrid-memory/node_modules/openclaw-hybrid-memory` — OpenClaw's managed npm-project install.
+
+Only **one** of these is canonical/loaded by the gateway on a given host. See [UPGRADE-PLUGIN.md § Extensions-canonical hosts](UPGRADE-PLUGIN.md#extensions-canonical-hosts-maevedoris-layout) for how to tell which, and how `openclaw hybrid-mem doctor --fix` / `verify --fix` reconciles a stale copy of the other (quarantined to `~/.openclaw/.cache/`, never deleted outright).
+
+`doctor`/`verify --fix` also detect three other known-accidental locations beyond those two — `~/.openclaw/node_modules/openclaw-hybrid-memory`, and a nested `~/.openclaw/.openclaw/npm/projects/…` / `~/.openclaw/.openclaw/node_modules/…` pair left by a historical path-join bug. Node's plain module resolution can still pick these up even though the gateway's own plugin loader never reads them.
+
+### A path `doctor` does not check: a separate global npm install
+
+If `openclaw-hybrid-memory` was ever installed with a bare `npm install -g openclaw-hybrid-memory` (optionally under a custom `NPM_CONFIG_PREFIX`, e.g. for a dedicated cron user), that copy lives **outside `~/.openclaw` entirely** and is invisible to every check above — `doctor`/`verify --fix` only ever look inside `~/.openclaw`. A cron job's `openclaw` resolves from whatever is first on **that cron user's `PATH`** at execution time; if a separate global install resolves first there, cron and the gateway (which keeps whichever version it loaded at its own start) can drift apart indefinitely with nothing flagging it.
+
+**Recommended:** don't maintain a separate global `openclaw-hybrid-memory` install at all. Once the plugin is installed via `openclaw hybrid-mem upgrade` / `openclaw plugins install` into either canonical tree above, the global `openclaw` CLI already exposes `hybrid-mem` subcommands for cron to call — a second `npm install -g openclaw-hybrid-memory` is never required, and it's the thing that drifts.
+
+### Checking and aligning versions
+
+```bash
+# Version this shell/cron context resolves right now (read-only):
+openclaw hybrid-mem --version
+
+# What the live gateway process actually loaded, plus any duplicate/stale copies inside ~/.openclaw:
+openclaw hybrid-mem doctor
+```
+
+If the two disagree and `doctor` doesn't explain why, the culprit is usually the separate global install above (out of `doctor`'s scope). Align it by hand to the gateway's canonical version:
+
+```bash
+# Adjust NPM_CONFIG_PREFIX to whatever global prefix the cron user's `openclaw` resolves against:
+NPM_CONFIG_PREFIX=/path/to/npm-global npm install -g openclaw-hybrid-memory@<gateway-version>
+```
+
+Re-run `openclaw hybrid-mem --version` from the same cron context afterward to confirm it matches.
+
+---
+
 ## Gateway health polling (`openclaw gateway status`)
 
 When you **poll** `/ monitor` the gateway with `openclaw gateway status`, the CLI uses a **default `--timeout` of 10000 ms** (10s) for the WebSocket RPC probe. During **warm-up** (plugins loading, hybrid-memory databases opening), a single sample can exceed that window and report a probe failure even though the process is healthy.
@@ -371,6 +411,27 @@ openclaw gateway status --timeout 45000
 ```
 
 **Retry** before treating a failure as real (e.g. 3 attempts with ~8s between samples). Full context and the misleading **"Port 18789 is already in use"** line when the probe path is unhappy: [TROUBLESHOOTING.md § RPC health probe timeout](TROUBLESHOOTING.md#rpc-health-probe-timeout-openclaw-gateway-status) ([#938](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/938)).
+
+### Writing a health-check cron job: probe the gateway, don't ask systemd
+
+A custom health/monitoring cron job (distinct from the plugin's own maintenance cron jobs — see [Optional scheduled jobs](#optional-scheduled-jobs-cron--openclaw-jobs) above) should treat `openclaw gateway probe` — or `openclaw gateway status --json --timeout 45000` per above — as the **only** liveness signal, never `systemctl --user is-active openclaw-gateway.service`. The two can disagree:
+
+- On **WSL2/containers**, `systemctl --user` is often unavailable entirely (see [TROUBLESHOOTING.md § No systemd user session](TROUBLESHOOTING.md)) — the gateway is commonly run in the foreground or supervised by a cron watchdog instead of a systemd unit, so `is-active` reports `inactive`/`unknown` even on a perfectly healthy host.
+- Even where a systemd user service is in play, `is-active` reflects the **unit's** tracked state, not the process's actual RPC-reachable health — a unit can show `active` seconds into a hung startup, or `inactive` right after a healthy process was started outside systemd's tracking (e.g. by a watchdog script).
+
+```bash
+# Anti-pattern — do not use this as the health verdict:
+gateway_active="$(systemctl --user is-active openclaw-gateway.service 2>/dev/null || echo inactive)"
+
+# Correct — probe the gateway directly:
+if OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-18789}" openclaw gateway probe &>/dev/null; then
+  gateway_active=active
+else
+  gateway_active=inactive
+fi
+```
+
+`scripts/gateway-watchdog-cron.sh` in this repo already follows this pattern (see its `gateway_healthy()` function) — copy it rather than re-deriving liveness from `systemctl`. If you still want the service manager's view for diagnostics, log it as separate metadata (e.g. `service_manager_state=...`) alongside the probe result — never let it override the probe as the health verdict ([#2142](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2142)).
 
 ---
 

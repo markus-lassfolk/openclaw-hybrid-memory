@@ -8,6 +8,7 @@ import {
   hasStepRetryOncePending,
   markStepRetryOnce,
   readStepGuardTimestampMs,
+  releaseStepLock,
   writeStepGuardTimestampMs,
 } from "../services/cron-guard.js";
 import {
@@ -210,6 +211,53 @@ describe("maintenance-orchestrator", () => {
     expect(result.steps.find((s) => s.name === "resolve-contradictions")?.status).toBe("failed");
     expect(reflectCalls).toBe(1);
     expect(result.steps.find((s) => s.name === "reflect")?.status).toBe("ok");
+  });
+
+  it("aborts a hung step past the watchdog timeout instead of hanging the run forever, and releases its lock (#2141)", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    let pruneStarted = false;
+    let laterStepRan = false;
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "prune",
+        () => {
+          pruneStarted = true;
+          // Never settles — simulates a step stuck on a hung network/LLM call with no internal
+          // timeout of its own (the reported enrich-entities stall).
+          return new Promise<string>(() => {});
+        },
+      ],
+      [
+        "self-correction-run",
+        async () => {
+          laterStepRan = true;
+          return "ok";
+        },
+      ],
+    ]);
+    // stepTimeoutMinutes is read directly off the (test-constructed) config object, bypassing the
+    // integer-minutes parser, so a sub-second value keeps this test fast and non-flaky.
+    const cfg = {
+      maintenance: { orchestrator: { stepTimeoutMinutes: 0.001, llmCooldownBetweenStepsMs: 0 } },
+    } as HybridMemoryConfig;
+
+    const result = await runMaintenanceOrchestrator(
+      { cfg, runners, openclawDir },
+      { tiers: ["cycle", "nightly"], force: true, verbose: false, include: ["prune", "self-correction-run"] },
+    );
+
+    expect(pruneStarted).toBe(true);
+    const prune = result.steps.find((s) => s.name === "prune");
+    expect(prune?.status).toBe("failed");
+    expect(prune?.summary).toMatch(/exceeded max runtime/);
+    expect(prune?.summary).toMatch(/watchdog/);
+    // The orchestrator must move on to the next step rather than hanging on the abandoned call.
+    expect(laterStepRan).toBe(true);
+    expect(result.steps.find((s) => s.name === "self-correction-run")?.status).toBe("ok");
+    expect(result.exitCode).toBe(1);
+    // The step lock must be released on timeout so a subsequent run can retry the step.
+    expect(acquireStepLock("prune", openclawDir)).toBe(true);
+    releaseStepLock("prune", openclawDir);
   });
 
   it("respects dependency gates", async () => {

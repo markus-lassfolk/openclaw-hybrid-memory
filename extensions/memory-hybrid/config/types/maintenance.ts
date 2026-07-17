@@ -155,6 +155,12 @@ export type MaintenanceOrchestratorConfig = {
   rateLimitMaxRetries?: number;
   /** Optional time budget per orchestrator run in minutes (default: unlimited). */
   maxRuntimeMinutes?: number;
+  /**
+   * Hard per-step watchdog: a step exceeding this many minutes is aborted and recorded as a
+   * failed step (instead of hanging the orchestrator — and the whole cron run — indefinitely
+   * with no terminal exit ledger, #2141). Default: 30 minutes.
+   */
+  stepTimeoutMinutes?: number;
   /** Use consolidated single-job cron layout (default: true for new installs). */
   consolidatedCronJobs?: boolean;
   /** DB-backed worker leases for background maintenance (Issue #1904). */

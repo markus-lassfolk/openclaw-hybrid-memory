@@ -247,6 +247,10 @@ function parseMaintenanceOrchestratorConfig(cfg: Record<string, unknown>) {
       typeof orchestratorRaw.maxRuntimeMinutes === "number" && orchestratorRaw.maxRuntimeMinutes > 0
         ? Math.floor(orchestratorRaw.maxRuntimeMinutes)
         : undefined,
+    stepTimeoutMinutes:
+      typeof orchestratorRaw.stepTimeoutMinutes === "number" && orchestratorRaw.stepTimeoutMinutes > 0
+        ? Math.floor(orchestratorRaw.stepTimeoutMinutes)
+        : undefined,
     consolidatedCronJobs:
       typeof orchestratorRaw.consolidatedCronJobs === "boolean" ? orchestratorRaw.consolidatedCronJobs : undefined,
     ...(workerLeases ? { workerLeases } : {}),
