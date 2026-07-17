@@ -536,7 +536,27 @@ function stepSemanticBlocksGuard(semantic?: string): boolean {
 const ORCHESTRATOR_STEP_HEARTBEAT_MS = 60_000;
 
 /**
- * Run a maintenance step while emitting per-step start/heartbeat/finish lines (#2026).
+ * Hard per-step watchdog ceiling (#2141): a step that hangs past this duration is aborted and
+ * recorded as a failed step, instead of blocking the orchestrator — and the whole cron run —
+ * indefinitely with no terminal exit ledger. Kept below the 45-minute stale-run threshold that
+ * maintenance-log-analyzer.ts uses to flag a run as an orchestration anomaly, so the orchestrator
+ * self-terminates a hung step and produces a deterministic result before that external staleness
+ * detector would otherwise fire on an empty ledger. Overridable via
+ * maintenance.orchestrator.stepTimeoutMinutes.
+ */
+const DEFAULT_STEP_TIMEOUT_MS = 30 * 60_000;
+
+/** Thrown by the per-step watchdog; distinguishes a forced abort from a genuine runner failure. */
+class MaintenanceStepTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`step exceeded max runtime of ${Math.floor(timeoutMs / 1000)}s (aborted by watchdog)`);
+    this.name = "MaintenanceStepTimeoutError";
+  }
+}
+
+/**
+ * Run a maintenance step while emitting per-step start/heartbeat/finish lines (#2026) and
+ * enforcing a hard watchdog timeout (#2141).
  *
  * Long CPU- or LLM-bound steps (e.g. distill, dream-cycle, self-correction) previously ran
  * log-silent for minutes, making a live run indistinguishable from a hung one to operators and
@@ -547,42 +567,69 @@ const ORCHESTRATOR_STEP_HEARTBEAT_MS = 60_000;
  *
  * The lines advance the wrapper-log mtime (resetting the analyzer's staleness signal) and match the
  * analyzer's progress/still-running regexes, so a live step is classified as running rather than stale.
+ *
+ * If `fn` has not settled after `timeoutMs`, the wrapper abandons it and rejects with
+ * {@link MaintenanceStepTimeoutError} so the caller can record a terminal `failed` result and move
+ * on to the next step (or finish the run) rather than hanging forever. Node has no true cancellation
+ * for an arbitrary in-flight promise, so the abandoned call is left to settle on its own; its eventual
+ * resolution/rejection is swallowed so it can never surface as an unhandled rejection and crash the
+ * process (CLAUDE.md: background timers must never crash the gateway process).
  */
 async function runStepWithHeartbeat<T>(
   stepName: string,
   emit: boolean,
   logger: MaintenanceOrchestratorContext["logger"],
   fn: () => Promise<T>,
+  timeoutMs: number,
 ): Promise<T> {
-  if (!emit || !logger?.info) return fn();
+  const canLog = emit && !!logger?.info;
   const started = Date.now();
-  logger.info(`maintenance-orchestrator: ${stepName} — start`);
-  const heartbeat = setInterval(() => {
-    // Background timers must never crash the gateway process (CLAUDE.md) — this runs on the
-    // gateway-native cycle tier, so an uncaught exception here (e.g. a broken logger transport)
-    // would otherwise be fatal to the same process serving the gateway.
-    try {
-      const elapsedSec = Math.floor((Date.now() - started) / 1000);
-      logger.info?.(`maintenance-orchestrator: ${stepName} — still running after ${elapsedSec}s`);
-    } catch (err) {
-      // The fallback itself must not be able to throw uncaught — if the logger transport is
-      // broken badly enough that both .info and .warn fail, this must still not escape the
-      // setInterval callback and crash the gateway process (QA follow-up).
+  if (canLog) logger?.info?.(`maintenance-orchestrator: ${stepName} — start`);
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  if (canLog) {
+    heartbeat = setInterval(() => {
+      // Background timers must never crash the gateway process (CLAUDE.md) — this runs on the
+      // gateway-native cycle tier, so an uncaught exception here (e.g. a broken logger transport)
+      // would otherwise be fatal to the same process serving the gateway.
       try {
-        logger.warn?.(`maintenance-orchestrator: ${stepName} — heartbeat failed (non-fatal): ${err}`);
-      } catch {
-        /* swallow — logging itself is broken, nothing more we can safely do here */
+        const elapsedSec = Math.floor((Date.now() - started) / 1000);
+        logger?.info?.(`maintenance-orchestrator: ${stepName} — still running after ${elapsedSec}s`);
+      } catch (err) {
+        // The fallback itself must not be able to throw uncaught — if the logger transport is
+        // broken badly enough that both .info and .warn fail, this must still not escape the
+        // setInterval callback and crash the gateway process (QA follow-up).
+        try {
+          logger?.warn?.(`maintenance-orchestrator: ${stepName} — heartbeat failed (non-fatal): ${err}`);
+        } catch {
+          /* swallow — logging itself is broken, nothing more we can safely do here */
+        }
       }
-    }
-  }, ORCHESTRATOR_STEP_HEARTBEAT_MS);
-  heartbeat.unref?.();
+    }, ORCHESTRATOR_STEP_HEARTBEAT_MS);
+    heartbeat.unref?.();
+  }
+
+  const runPromise = fn();
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => reject(new MaintenanceStepTimeoutError(timeoutMs)), timeoutMs);
+    timeoutHandle.unref?.();
+  });
+
   try {
-    const result = await fn();
+    const result = await Promise.race([runPromise, timeoutPromise]);
     const elapsedSec = Math.floor((Date.now() - started) / 1000);
-    logger.info?.(`maintenance-orchestrator: ${stepName} — complete in ${elapsedSec}s`);
+    if (canLog) logger?.info?.(`maintenance-orchestrator: ${stepName} — complete in ${elapsedSec}s`);
     return result;
+  } catch (err) {
+    if (err instanceof MaintenanceStepTimeoutError) {
+      logger?.warn?.(`maintenance-orchestrator: ${stepName} — ${err.message}; abandoning the hung call`);
+      // Swallow whatever the abandoned call eventually does — see the doc comment above.
+      runPromise.catch(() => {});
+    }
+    throw err;
   } finally {
-    clearInterval(heartbeat);
+    if (heartbeat) clearInterval(heartbeat);
+    if (timeoutHandle) clearTimeout(timeoutHandle);
   }
 }
 
@@ -595,6 +642,10 @@ export async function runMaintenanceOrchestrator(
   const orchestratorCfg = cfg.maintenance?.orchestrator;
   const llmCooldownMs = orchestratorCfg?.llmCooldownBetweenStepsMs ?? 30_000;
   const rateLimitMaxRetries = orchestratorCfg?.rateLimitMaxRetries ?? 2;
+  const stepTimeoutMs =
+    orchestratorCfg?.stepTimeoutMinutes && orchestratorCfg.stepTimeoutMinutes > 0
+      ? orchestratorCfg.stepTimeoutMinutes * 60_000
+      : DEFAULT_STEP_TIMEOUT_MS;
   const startedAtMs = Date.now();
   const startedAtIso = nowIso();
   const runId =
@@ -800,7 +851,13 @@ export async function runMaintenanceOrchestrator(
 
       const stepStarted = Date.now();
       try {
-        const summary = await runStepWithHeartbeat(step.name, options.verbose !== false, logger, () => runner());
+        const summary = await runStepWithHeartbeat(
+          step.name,
+          options.verbose !== false,
+          logger,
+          () => runner(),
+          stepTimeoutMs,
+        );
         const meta = parseStepRunnerMetadata(summary);
         if (step.name === "reflect-rules" && reflectRulesStepSummaryIndicatesFailure(summary)) {
           logger?.warn?.(`maintenance-orchestrator: ${step.name} semantic failure (summary diagnostics): ${summary}`);

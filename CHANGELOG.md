@@ -27,6 +27,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.221] - 2026-07-17
+
+Closes three open issues filed from live Maeve host telemetry (#2141, #2142, #2143).
+
+### Fixed — Maintenance orchestrator hangs with no terminal exit ledger (#2141)
+
+- **`maintenance-nightly` could stall forever inside a single hung step (e.g. `enrich-entities`), past its 420s heartbeat, with no terminal exit ledger or summary** (#2141) — `runMaintenanceOrchestrator` awaited each step's runner with no timeout; the orchestrator's own `maxRuntimeMs` budget check only ran *between* steps, so a step that never settled (a stuck network/LLM call with no internal timeout of its own) blocked the loop indefinitely. Because the consolidated `maintenance-nightly` cron job wraps the whole orchestrator run in a single `hm_step`, a hung step meant the wrapper process itself never exited, so `HM_EXIT`/`validate-cron-exit` never ran and the run was left stale with no diagnosable terminal state. `runStepWithHeartbeat` now races each step against a hard watchdog timeout (default 30 minutes — below the 45-minute threshold `maintenance-log-analyzer` uses to flag a run as stale) via `maintenance.orchestrator.stepTimeoutMinutes`; on timeout the step is recorded as a `failed` result with a clear "exceeded max runtime … aborted by watchdog" summary, its lock is released, and the orchestrator moves on to the remaining steps and returns a real non-zero exit code — so the cron harness always reaches its terminal ledger/validation state instead of hanging.
+
+### Documentation — Ops guidance for cron/gateway version drift and health-check scripts (#2142, #2143)
+
+- **Health-check cron scripts must probe the gateway, not `systemctl`** (#2142) — a custom `hybrid-memory-health.cron`-style monitoring script that derives liveness from `systemctl --user is-active openclaw-gateway.service` can report `gateway_active=inactive` even while the gateway is healthy (WSL2/containers commonly run without a systemd user session at all, and even where one exists the unit's tracked state can diverge from actual RPC-reachable health). `docs/OPERATIONS.md` gains a "Writing a health-check cron job" section documenting the correct pattern — treat `openclaw gateway probe` (or `openclaw gateway status --json --timeout 45000`) as the sole liveness signal, exactly as `scripts/gateway-watchdog-cron.sh` already does, with `systemctl` state (if wanted at all) logged only as separate diagnostic metadata.
+- **Version source of truth: cron vs. gateway can load different plugin copies** (#2143) — `docs/OPERATIONS.md` gains a "Version source of truth" section documenting the two canonical install trees inside `~/.openclaw` (`extensions/` vs. the managed `npm/projects/` copy — see `UPGRADE-PLUGIN.md`), the three additional accidental-location paths `openclaw hybrid-mem doctor`/`verify --fix` already detect and quarantine, and a fourth path those tools do **not** cover: a separately `npm install -g openclaw-hybrid-memory`'d copy outside `~/.openclaw` entirely, which a cron job's `PATH` can resolve ahead of whatever the gateway loaded. Documents the read-only version-check commands (`openclaw hybrid-mem --version` vs. `openclaw hybrid-mem doctor`) and the alignment command for the uncovered case.
+- Also de-duplicates `docs/UPGRADE-PLUGIN.md`, which had its entire body accidentally repeated twice.
+
+### Notes
+
+- No `schemaVersion` bump — no storage-schema changes.
+- No agent-tool contract changes.
+- #2142/#2143 are ops-documentation fixes: the scripts they describe (`hybrid-memory-health.cron`, `gateway-ensure`) are host-side operator tooling, not part of this package: the change gives them the correct pattern to adopt and documents the version-drift failure mode precisely, using only mechanisms this repo already ships (`gateway probe`, `hybrid-mem doctor`).
+
 ## [2026.7.220] - 2026-07-16
 
 Closes all five open production issues filed from live Maeve/Doris hosts (#2135–#2139), each fixed at the root cause with regression tests.
