@@ -17,6 +17,7 @@ import { renderEvidenceCapsuleMarkdown } from "../../../services/evidence-capsul
 import { redactEvidenceCapsuleInput } from "../../../services/evidence-redaction.js";
 import { resolveGoalsDir } from "../../../services/goal-stewardship.js";
 import { buildLoomBrief, renderLoomBriefMarkdown } from "../../../services/loom-brief.js";
+import { runLoomMaintenance } from "../../../services/loom-maintenance.js";
 import { buildLoomReport, renderLoomReportHtml, renderLoomReportMarkdown } from "../../../services/loom-report.js";
 import {
   applyLifecycleAction,
@@ -273,6 +274,19 @@ export function registerManageLoom(mem: Chainable, b: ManageBindings): void {
         if (!claim) throw new Error(`Claim not found: ${claimId}`);
         const updated = store.requireLiveCheck(claim.id, { reason: opts?.reason ?? "" });
         console.log(`${updated.id} now requires a live check.`);
+      }),
+    );
+  belief
+    .command("sweep-stale")
+    .description("Degrade verified/believed claims older than the staleness window to `stale` (also runs nightly).")
+    .option("--days <n>", "Override loom.beliefs.staleAfterDays", String(lc.beliefs.staleAfterDays))
+    .option("--json", "Output as JSON")
+    .action(
+      withExit(async (opts?: { days?: string; json?: boolean }) => {
+        const store = requireStore(b.loomStore);
+        const days = Number.parseInt(opts?.days ?? String(lc.beliefs.staleAfterDays), 10);
+        const degraded = store.sweepStaleClaims(Number.isFinite(days) && days > 0 ? days : lc.beliefs.staleAfterDays);
+        console.log(opts?.json ? JSON.stringify({ degraded }, null, 2) : `Degraded ${degraded} claim(s) to stale.`);
       }),
     );
 
@@ -622,6 +636,31 @@ export function registerManageLoom(mem: Chainable, b: ManageBindings): void {
           { scope: opts?.scope ?? "", task: opts?.task, maxChars: lc.brief.maxChars },
         );
         console.log(opts?.format === "md" ? renderLoomBriefMarkdown(brief) : JSON.stringify(brief, null, 2));
+      }),
+    );
+  loom
+    .command("maintenance")
+    .description("Run Loom nightly upkeep now: belief stale-claim sweep + drift scan (also runs nightly).")
+    .option("--apply-safe-drift", "Mechanically apply auto_safe drift fixes (default: report-only)")
+    .option("--json", "Output as JSON")
+    .action(
+      withExit(async (opts?: { applySafeDrift?: boolean; json?: boolean }) => {
+        const store = requireStore(b.loomStore);
+        const result = runLoomMaintenance(
+          { factsDb: b.factsDb, loomStore: store },
+          {
+            staleAfterDays: lc.beliefs.staleAfterDays,
+            deprecatedCommands: lc.drift.deprecatedCommands,
+            applySafeDrift: opts?.applySafeDrift ?? lc.maintenance.applySafeDrift,
+          },
+        );
+        if (opts?.json) {
+          console.log(JSON.stringify(result, null, 2));
+          return;
+        }
+        console.log(
+          `Degraded ${result.staleDegraded} stale claim(s); drift: ${result.driftNew} new, ${result.driftExisting} existing, ${result.driftApplied} auto-fixed.`,
+        );
       }),
     );
   loom

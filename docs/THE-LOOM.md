@@ -6,7 +6,7 @@ An agent-native continuity, belief, evidence, and open-loop operating layer on t
 
 Tracking epic: [#2150](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2150).
 
-The Loom is disabled by default. Set `loom.enabled: true` in plugin config to turn on the `LoomStore` and every tool/CLI surface below; individual sections can be disabled independently (`loom.<section>.enabled: false`) without turning off the whole subsystem.
+The Loom is **enabled by default**. It instantiates the `LoomStore` and registers every tool/CLI surface below, and runs a nightly maintenance step (stale-claim sweep + drift scan) as part of the normal maintenance cycle. Set `loom.enabled: false` in plugin config to turn the whole subsystem off, or disable individual sections independently (`loom.<section>.enabled: false`) without turning off everything else.
 
 ## Non-goals
 
@@ -96,6 +96,7 @@ All under `openclaw hybrid-mem`:
 openclaw hybrid-mem evidence create "Doris M365 auth restored" --claim "..." --evidence "m365-agent-cli whoami"
 openclaw hybrid-mem belief assert --entity Doris --key m365_identity --value doris@lassfolk.net --why "..." --live-check --live-check-reason "mutable auth state"
 openclaw hybrid-mem belief explain <claimId>
+openclaw hybrid-mem belief sweep-stale --json                 # degrade beliefs past the staleness window (also runs nightly)
 openclaw hybrid-mem live-checks list
 openclaw hybrid-mem live-checks satisfy <claimId> --evidence <capsuleId>
 openclaw hybrid-mem loops create "Verify Doris M365 auth" --type needs_verification --closure "whoami succeeds"
@@ -107,8 +108,13 @@ openclaw hybrid-mem attention rank --scope workspace --json
 openclaw hybrid-mem runway --json
 openclaw hybrid-mem loom brief --scope "Doris M365 auth" --format md
 openclaw hybrid-mem loom report --format html --output ./loom-report.html
+openclaw hybrid-mem loom maintenance --json                   # run the nightly upkeep (stale-claim sweep + drift scan) on demand
 openclaw hybrid-mem procedures triage --batch 20 --json   # (#2147, extends the existing procedure CLI)
 ```
+
+### Nightly maintenance
+
+The Loom registers a `loom-maintenance` step in the standard maintenance orchestrator (nightly tier). Each night it runs the belief **stale-claim sweep** (degrading `verified`/`believed` claims past `loom.beliefs.staleAfterDays` to `stale`) and a **drift scan** over facts (deprecated commands + unresolved contradictions), recording findings for later review. It is **report-only** by default — it never rewrites fact text unless `loom.maintenance.applySafeDrift` is set. Gated on `loom.maintenance.enabled` (which follows `loom.enabled`). Run it on demand with `hybrid-mem loom maintenance`, or run just the sweep with `hybrid-mem belief sweep-stale`.
 
 `memory-lifecycle` (not `lifecycle`) is used for the CLI group because `lifecycle` is already the GitHub-sync-adapters command group (#1196).
 
@@ -128,12 +134,13 @@ openclaw hybrid-mem procedures triage --batch 20 --json   # (#2147, extends the 
     "runway": { "maxItemsPerSection": 8 },
     "brief": { "maxChars": 4000 },
     "report": { "maxItemsPerSection": 10 },
-    "procedureTriage": { "defaultBatchSize": 20 }
+    "procedureTriage": { "defaultBatchSize": 20 },
+    "maintenance": { "applySafeDrift": false }
   }
 }
 ```
 
-Every section's `enabled` key defaults to the top-level `loom.enabled` value, so `{ "loom": { "enabled": true } }` alone turns on everything; set an individual section's `enabled: false` to opt one slice back out.
+Every section's `enabled` key defaults to the top-level `loom.enabled` value (which itself defaults to `true`), so an empty `{}` (or no `loom` key at all) turns on everything; set the top-level `loom.enabled: false` to disable the whole subsystem, or an individual section's `enabled: false` to opt one slice back out.
 
 ## End-to-end flow
 

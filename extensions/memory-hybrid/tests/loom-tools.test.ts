@@ -28,7 +28,7 @@ function makeMockApi() {
 
 const EMBEDDING = { provider: "ollama", model: "nomic-embed-text" };
 const enabledCfg = parseConfig({ embedding: EMBEDDING, loom: { enabled: true } }) as any;
-const disabledCfg = parseConfig({ embedding: EMBEDDING }) as any;
+const disabledCfg = parseConfig({ embedding: EMBEDDING, loom: { enabled: false } }) as any;
 
 const ALL_LOOM_TOOL_NAMES = [
   "memory_evidence_capsule_create",

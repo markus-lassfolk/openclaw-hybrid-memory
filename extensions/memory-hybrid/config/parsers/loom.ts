@@ -10,9 +10,12 @@ function parseDeprecatedCommands(raw: unknown): Record<string, string> {
 }
 
 /**
- * Parse the `loom` config section (Epic #2150). Every sub-section defaults to
- * following the master `enabled` flag when it has no explicit `enabled` key of
- * its own, so `{ loom: { enabled: true } }` turns on every Loom feature at once.
+ * Parse the `loom` config section (Epic #2150). The Loom is ON by default —
+ * only an explicit `loom.enabled: false` disables the whole subsystem. Every
+ * sub-section defaults to following the master `enabled` flag when it has no
+ * explicit `enabled` key of its own, so a bare `{}` (or no `loom` key at all)
+ * turns on every Loom feature, and `{ loom: { drift: { enabled: false } } }`
+ * turns off just that one section while leaving the rest on.
  */
 export function parseLoomConfig(cfg: Record<string, unknown>): LoomConfig {
   const raw = cfg.loom as Record<string, unknown> | undefined;
@@ -22,10 +25,10 @@ export function parseLoomConfig(cfg: Record<string, unknown>): LoomConfig {
     Math.floor(num(v, fallback, min, max));
   const sub = (key: string): Record<string, unknown> | undefined => raw?.[key] as Record<string, unknown> | undefined;
 
-  const enabled = raw?.enabled === true;
+  const enabled = raw?.enabled !== false;
   const subEnabled = (key: string): boolean => {
     const s = sub(key);
-    return s?.enabled === undefined ? enabled : s.enabled === true;
+    return s?.enabled === undefined ? enabled : s.enabled !== false;
   };
 
   const evidenceRaw = sub("evidence");
@@ -87,6 +90,10 @@ export function parseLoomConfig(cfg: Record<string, unknown>): LoomConfig {
     procedureTriage: {
       enabled: subEnabled("procedureTriage"),
       defaultBatchSize: int(procedureTriageRaw?.defaultBatchSize, 20, 1, 500),
+    },
+    maintenance: {
+      enabled: subEnabled("maintenance"),
+      applySafeDrift: sub("maintenance")?.applySafeDrift === true,
     },
   };
 }

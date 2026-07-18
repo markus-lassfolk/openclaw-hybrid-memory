@@ -2,7 +2,7 @@
 
 Implements **The Loom** (Epic #2150): an agent-native continuity, belief, evidence, and open-loop operating layer on top of hybrid-memory. The Loom helps an agent answer: *what do I believe, why do I believe it, how current is it, what evidence supports it, what remains open, and what must I verify before acting?*
 
-Disabled by default (`loom.enabled: false`). See `docs/THE-LOOM.md` for the full data model, agent tools, CLI surface, and config reference.
+Enabled by default (`loom.enabled: true`) — set `loom.enabled: false` to turn the whole subsystem off, or disable individual sections with `loom.<section>.enabled: false`. A nightly maintenance step (belief stale-claim sweep + drift scan) runs as part of the normal maintenance cycle. See `docs/THE-LOOM.md` for the full data model, agent tools, CLI surface, and config reference.
 
 ## Added
 
@@ -27,6 +27,8 @@ One new SQLite store, `LoomStore` (`loom.db`), decomposed into `backends/loom/*`
 
 ## Notes
 
+- **Enabled by default.** `loom.enabled` defaults to `true` (opt-out, not opt-in); set `loom.enabled: false` to disable the whole subsystem, or `loom.<section>.enabled: false` for a single slice.
+- **Nightly maintenance.** A `loom-maintenance` step is registered in the standard maintenance orchestrator (nightly tier, gated on `loom.maintenance.enabled`): it runs the belief stale-claim sweep + a report-only drift scan each night. Runnable on demand via `hybrid-mem loom maintenance` (whole step) or `hybrid-mem belief sweep-stale` (just the sweep). It never rewrites fact text unless `loom.maintenance.applySafeDrift` is set.
 - No `schemaVersion` bump — `LoomStore` is a new, separate database file; the `serendipity_findings` migration is additive-only and backward compatible.
 - The lifecycle CLI group for this feature is named `memory-lifecycle`, not `lifecycle` — that name is already used by the GitHub-sync-adapters command group (#1196).
 - Every new service and store ships with unit tests (`tests/loom-*.test.ts`, `tests/drift-scout.test.ts`, `tests/memory-lifecycle.test.ts`, `tests/attention-steward.test.ts`, `tests/agent-runway.test.ts`, `tests/procedure-triage.test.ts`, `tests/serendipity-loom-alignment.test.ts`), including an end-to-end flow test exercising evidence capsule → claim → live check → open loop → brief.

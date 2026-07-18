@@ -2822,7 +2822,7 @@
         "properties": {
           "enabled": {
             "type": "boolean",
-            "description": "Master switch: instantiate the LoomStore and register all loom_*/memory_belief_*/memory_loop_*/memory_evidence_*/memory_drift_*/memory_attention_*/memory_runway/memory_loom_brief/memory_lifecycle_* tools + CLI (default: false)."
+            "description": "Master switch: instantiate the LoomStore and register all loom_*/memory_belief_*/memory_loop_*/memory_evidence_*/memory_drift_*/memory_attention_*/memory_runway/memory_loom_brief/memory_lifecycle_* tools + CLI (default: true; set false to disable)."
           },
           "evidence": {
             "type": "object",
@@ -2996,9 +2996,24 @@
               }
             },
             "description": "Procedure refinery — ranked triage batches over the procedure backlog (#2147)."
+          },
+          "maintenance": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Run the nightly Loom maintenance step — belief stale-claim sweep + drift scan (default: follows loom.enabled)."
+              },
+              "applySafeDrift": {
+                "type": "boolean",
+                "description": "Mechanically apply auto_safe drift fixes during the nightly scan (default: false — nightly stays report-only)."
+              }
+            },
+            "description": "Nightly Loom maintenance — belief stale-claim sweep + drift scan (Epic #2150)."
           }
         },
-        "description": "The Loom (Epic #2150): agent-native belief graph, evidence capsules, open-loop obligations ledger, live-check contracts, drift scout, attention steward, agent runway, and loom brief/report. All disabled by default (enabled: false); see docs/THE-LOOM.md."
+        "description": "The Loom (Epic #2150): agent-native belief graph, evidence capsules, open-loop obligations ledger, live-check contracts, drift scout, attention steward, agent runway, and loom brief/report. Enabled by default (enabled: true; set false to disable, or disable individual sections with <section>.enabled: false). A nightly maintenance step runs the belief stale-claim sweep + drift scan. See docs/THE-LOOM.md."
       },
       "wikiIntegration": {
         "type": "object",

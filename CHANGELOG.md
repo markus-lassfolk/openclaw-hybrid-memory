@@ -29,7 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [2026.7.222] - 2026-07-18
 
-Implements The Loom (Epic #2150): an agent-native continuity, belief, evidence, and open-loop operating layer on top of hybrid-memory. Disabled by default (`loom.enabled: false`). See `docs/THE-LOOM.md`.
+Implements The Loom (Epic #2150): an agent-native continuity, belief, evidence, and open-loop operating layer on top of hybrid-memory. Enabled by default (`loom.enabled: true`; set `false` to disable, or disable individual sections with `loom.<section>.enabled: false`). A nightly maintenance step runs the belief stale-claim sweep and a drift scan as part of the normal maintenance cycle; both are also runnable on demand (`hybrid-mem belief sweep-stale`, `hybrid-mem loom maintenance`, `hybrid-mem drift scout`). See `docs/THE-LOOM.md`.
 
 ### Added
 

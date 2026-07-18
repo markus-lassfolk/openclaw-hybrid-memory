@@ -552,7 +552,7 @@ export type SerendipityProtocolConfig = {
  * default — this is an opt-in layer on top of the existing memory/fact store.
  */
 export type LoomConfig = {
-  /** Master switch: instantiate the LoomStore and register all Loom tools + CLI (default: false). */
+  /** Master switch: instantiate the LoomStore and register all Loom tools + CLI (default: true; set false to disable). */
   enabled: boolean;
   /** Evidence capsules — durable proof objects (#2148). */
   evidence: {
@@ -623,6 +623,12 @@ export type LoomConfig = {
     enabled: boolean;
     /** Default triage batch size (default: 20). */
     defaultBatchSize: number;
+  };
+  /** Nightly Loom maintenance — belief stale-claim sweep + drift scan (Epic #2150). Runs in the normal maintenance cycle. */
+  maintenance: {
+    enabled: boolean;
+    /** Mechanically apply auto_safe drift fixes during the nightly scan (default: false — nightly stays report-only). */
+    applySafeDrift: boolean;
   };
 };
 

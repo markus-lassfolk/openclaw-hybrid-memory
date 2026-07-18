@@ -29,6 +29,7 @@ import {
   semanticOutcomeIsPartialFailure,
 } from "../../../services/maintenance-job-run/index.js";
 import type { MaintenanceStepRunner } from "../../../services/maintenance-orchestrator.js";
+import { runLoomMaintenance } from "../../../services/loom-maintenance.js";
 import { runPassiveObserver } from "../../../services/passive-observer.js";
 import { runPendingDigestAutopilotCron } from "../../../services/pending-digest-autopilot-cron.js";
 import { resolveSweepPromotionDeps, runSerendipitySweep } from "../../../services/serendipity-sweep-cron.js";
@@ -873,6 +874,20 @@ export function buildCliMaintenanceRunners(
     const reason = summary.skipReason ? ` reason=${summary.skipReason}` : "";
     const promoted = summary.dispatched.filter((d) => d.ok).length;
     return `status=${summary.status}${reason} level=${summary.level} actionable=${summary.actionable} pruned=${summary.prunedExpired} promoted=${promoted} semantic=success`;
+  });
+
+  set("loom-maintenance", async () => {
+    const loom = b.cfg.loom;
+    if (!b.loomStore || !loom) return "status=skipped reason=loom_disabled semantic=success";
+    const result = runLoomMaintenance(
+      { factsDb: b.factsDb, loomStore: b.loomStore },
+      {
+        staleAfterDays: loom.beliefs.staleAfterDays,
+        deprecatedCommands: loom.drift.deprecatedCommands,
+        applySafeDrift: loom.maintenance.applySafeDrift,
+      },
+    );
+    return `status=ok stale_degraded=${result.staleDegraded} drift_new=${result.driftNew} drift_existing=${result.driftExisting} drift_applied=${result.driftApplied} semantic=success`;
   });
 
   set("consolidate", async () => {
