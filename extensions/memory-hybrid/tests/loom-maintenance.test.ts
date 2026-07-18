@@ -100,7 +100,10 @@ describe("loom-maintenance orchestrator step (#2150)", () => {
 
   it("runs by default (Loom enabled by default) and is gated off when loom.enabled is false", () => {
     const onByDefault = parseConfig({ embedding: { provider: "ollama", model: "nomic-embed-text" } });
-    const disabled = parseConfig({ embedding: { provider: "ollama", model: "nomic-embed-text" }, loom: { enabled: false } });
+    const disabled = parseConfig({
+      embedding: { provider: "ollama", model: "nomic-embed-text" },
+      loom: { enabled: false },
+    });
     expect(step?.featureGate?.(onByDefault as never)).toBe(true);
     expect(step?.featureGate?.(disabled as never)).toBe(false);
   });
