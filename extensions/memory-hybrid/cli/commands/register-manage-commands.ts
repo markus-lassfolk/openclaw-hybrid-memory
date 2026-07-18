@@ -16,6 +16,7 @@ import { registerManageErrorReports } from "./manage/register-error-reports.js";
 import { registerManageIssueTools } from "./manage/register-issue-tools.js";
 import { registerExpireBySourceCommands, registerLifecycleSyncCommands } from "./manage/register-lifecycle.js";
 import { registerManageLinkTools } from "./manage/register-link-tools.js";
+import { registerManageLoom } from "./manage/register-loom.js";
 import { registerManageProcedureAndLifecycle } from "./manage/register-procedure-lifecycle.js";
 import { registerManageProvenanceTools } from "./manage/register-provenance-tools.js";
 import { registerManageSerendipity } from "./manage/register-serendipity.js";
@@ -40,6 +41,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
   registerManageIssueTools(mem, b);
   registerManageProvenanceTools(mem, b);
   registerManageSerendipity(mem, b);
+  registerManageLoom(mem, b);
   registerManageSmoke(mem, b);
   // Workflow trace QA tools stay flat (not under grouped maintenance backfill).
   registerBackfillMaintenanceCommands(mem, b, { onlyWorkflowQa: true });

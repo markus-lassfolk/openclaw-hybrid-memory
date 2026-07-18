@@ -1,7 +1,7 @@
 {
   "id": "openclaw-hybrid-memory",
   "kind": "memory",
-  "version": "2026.7.221",
+  "version": "2026.7.222",
   "contracts": {
     "tools": [
       "active_task_checkpoint",
@@ -96,7 +96,31 @@
       "serendipity_promote",
       "serendipity_record",
       "serendipity_resolve",
-      "serendipity_set_level"
+      "serendipity_set_level",
+      "memory_attention_rank",
+      "memory_attention_update",
+      "memory_belief_assert",
+      "memory_belief_contradict",
+      "memory_belief_explain",
+      "memory_belief_get",
+      "memory_belief_supersede",
+      "memory_belief_verify",
+      "memory_drift_scout",
+      "memory_evidence_capsule_attach",
+      "memory_evidence_capsule_create",
+      "memory_evidence_capsule_list",
+      "memory_evidence_capsule_show",
+      "memory_lifecycle_candidates",
+      "memory_lifecycle_update",
+      "memory_live_check_list",
+      "memory_live_check_require",
+      "memory_live_check_satisfy",
+      "memory_loom_brief",
+      "memory_loop_close",
+      "memory_loop_create",
+      "memory_loop_list",
+      "memory_loop_update",
+      "memory_runway"
     ]
   },
   "uiHints": {
@@ -2791,6 +2815,190 @@
           }
         },
         "description": "Serendipity Protocol: bounded proactive findings, deferred backlog, and scoped engagement levels (Issue #2119; see docs/SERENDIPITY-PROTOCOL.md)"
+      },
+      "loom": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Master switch: instantiate the LoomStore and register all loom_*/memory_belief_*/memory_loop_*/memory_evidence_*/memory_drift_*/memory_attention_*/memory_runway/memory_loom_brief/memory_lifecycle_* tools + CLI (default: false)."
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Enable evidence capsule tools/CLI (default: follows loom.enabled)."
+              },
+              "redactSecrets": {
+                "type": "boolean",
+                "description": "Redact secret-like values from capsule content before persisting (default: true)."
+              },
+              "rejectUnredactable": {
+                "type": "boolean",
+                "description": "Reject capsule creation if content still trips the secret scanner after redaction, instead of storing a redacted-but-flagged capsule (default: true)."
+              }
+            },
+            "description": "Evidence capsules — durable proof objects (#2148)."
+          },
+          "beliefs": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Enable belief/claim tools/CLI (default: follows loom.enabled)."
+              },
+              "staleAfterDays": {
+                "type": "number",
+                "description": "Days since lastVerifiedAt after which a verified claim degrades to stale (default: 30)."
+              }
+            },
+            "description": "Belief graph / claim ledger (#2151)."
+          },
+          "liveChecks": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Enable live-check tools/CLI (default: follows loom.enabled)."
+              },
+              "defaultTtlHours": {
+                "type": "number",
+                "description": "Default hours a satisfied live check stays valid before it must be re-satisfied (default: 24)."
+              }
+            },
+            "description": "Live-check contracts on claims (#2156)."
+          },
+          "openLoops": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Enable open-loop tools/CLI (default: follows loom.enabled)."
+              },
+              "defaultResurfaceDays": {
+                "type": "number",
+                "description": "Default days until a loop without an explicit resurfaceAt is offered for resurfacing (default: 7)."
+              }
+            },
+            "description": "Open-loop obligations ledger (#2152)."
+          },
+          "drift": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Enable the drift scout tool/CLI (default: follows loom.enabled)."
+              },
+              "deprecatedCommands": {
+                "type": "object",
+                "description": "Map of deprecated command text -> replacement command text to scan facts/cron/wiki/skills for (default: {})."
+              }
+            },
+            "description": "Drift scout — stale instructions, deprecated commands, contradictions (#2146)."
+          },
+          "lifecycle": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Enable lifecycle tools/CLI (default: follows loom.enabled)."
+              },
+              "staleAfterDays": {
+                "type": "number",
+                "description": "Facts unaccessed for this many days become demotion candidates (default: 45)."
+              },
+              "requireStrongConfirmForVerified": {
+                "type": "boolean",
+                "description": "Verified/critical facts require a stronger confirmation token to delete (default: true)."
+              }
+            },
+            "description": "Memory lifecycle workflows — demote/archive/delete (#2155). Report-only unless the caller explicitly confirms a mutating action."
+          },
+          "attention": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Enable attention steward tools/CLI (default: follows loom.enabled)."
+              },
+              "defaultLimit": {
+                "type": "number",
+                "description": "Max items returned by a rank call unless the caller raises the limit (default: 20)."
+              }
+            },
+            "description": "Attention steward — ranking/demotion/snooze across Loom objects (#2153)."
+          },
+          "runway": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Enable the runway tool/CLI (default: follows loom.enabled)."
+              },
+              "maxItemsPerSection": {
+                "type": "number",
+                "description": "Max items per runway section (default: 8)."
+              }
+            },
+            "description": "Agent Runway API — bounded preflight bundle (#2145)."
+          },
+          "brief": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Enable the loom brief tool/CLI (default: follows loom.enabled)."
+              },
+              "maxChars": {
+                "type": "number",
+                "description": "Character budget for the rendered brief (default: 4000)."
+              }
+            },
+            "description": "Loom brief — pre-action synthesis (#2154)."
+          },
+          "report": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Enable `loom report` CLI (default: follows loom.enabled)."
+              },
+              "maxItemsPerSection": {
+                "type": "number",
+                "description": "Max example items rendered per report section (default: 10)."
+              }
+            },
+            "description": "Loom dashboard/report for human review (#2157)."
+          },
+          "procedureTriage": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Enable ranked procedure triage CLI (default: follows loom.enabled)."
+              },
+              "defaultBatchSize": {
+                "type": "number",
+                "description": "Default triage batch size (default: 20)."
+              }
+            },
+            "description": "Procedure refinery — ranked triage batches over the procedure backlog (#2147)."
+          }
+        },
+        "description": "The Loom (Epic #2150): agent-native belief graph, evidence capsules, open-loop obligations ledger, live-check contracts, drift scout, attention steward, agent runway, and loom brief/report. All disabled by default (enabled: false); see docs/THE-LOOM.md."
       },
       "wikiIntegration": {
         "type": "object",

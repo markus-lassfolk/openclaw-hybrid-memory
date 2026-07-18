@@ -543,6 +543,89 @@ export type SerendipityProtocolConfig = {
   };
 };
 
+/**
+ * The Loom — agent-native continuity/belief/evidence/open-loop operating layer
+ * (Epic #2150). A single `loom.enabled` gate covers the LoomStore (evidence
+ * capsules, claims/belief graph, live checks, open loops, drift findings,
+ * attention overrides); per-section flags let an operator disable one slice
+ * (e.g. drift scouting) without turning off the whole subsystem. Disabled by
+ * default — this is an opt-in layer on top of the existing memory/fact store.
+ */
+export type LoomConfig = {
+  /** Master switch: instantiate the LoomStore and register all Loom tools + CLI (default: false). */
+  enabled: boolean;
+  /** Evidence capsules — durable proof objects (#2148). */
+  evidence: {
+    enabled: boolean;
+    /** Run redactAutopilotValue/redactAutopilotText over capsule content before persisting (default: true). */
+    redactSecrets: boolean;
+    /** Reject (rather than redact-and-store) a capsule whose content still trips the secret scanner after redaction (default: true). */
+    rejectUnredactable: boolean;
+  };
+  /** Belief graph / claim ledger (#2151). */
+  beliefs: {
+    enabled: boolean;
+    /** Days since lastVerifiedAt after which a `verified` claim degrades to `stale` (default: 30). */
+    staleAfterDays: number;
+  };
+  /** Live-check contracts on claims (#2156). */
+  liveChecks: {
+    enabled: boolean;
+    /** Default hours a satisfied live check stays valid before it needs re-satisfying (default: 24). */
+    defaultTtlHours: number;
+  };
+  /** Open-loop obligations ledger (#2152). */
+  openLoops: {
+    enabled: boolean;
+    /** Default days until an open loop without an explicit resurfaceAt is offered for resurfacing (default: 7). */
+    defaultResurfaceDays: number;
+  };
+  /** Drift scout — stale instructions/deprecated commands/contradictions (#2146). */
+  drift: {
+    enabled: boolean;
+    /** Deprecated → replacement command text pairs to scan facts/cron/wiki/skills for (default: {}). */
+    deprecatedCommands: Record<string, string>;
+  };
+  /** Memory lifecycle workflows — demote/archive/delete (#2155). Report-only unless CLI/tool caller explicitly confirms. */
+  lifecycle: {
+    enabled: boolean;
+    /** Facts unaccessed for this many days become demotion candidates (default: 45). */
+    staleAfterDays: number;
+    /** Verified/critical facts require the caller to pass a stronger confirmation token to delete (default: true). */
+    requireStrongConfirmForVerified: boolean;
+  };
+  /** Attention steward — ranking/demotion/snooze across Loom objects (#2153). */
+  attention: {
+    enabled: boolean;
+    /** Max items returned by a single rank call unless the caller raises --limit (default: 20). */
+    defaultLimit: number;
+  };
+  /** Agent Runway API — bounded preflight bundle (#2145). */
+  runway: {
+    enabled: boolean;
+    /** Max items per runway section (activeTasks, goals, incidents, ...) (default: 8). */
+    maxItemsPerSection: number;
+  };
+  /** Loom brief — pre-action synthesis (#2154). */
+  brief: {
+    enabled: boolean;
+    /** Character budget for the rendered brief (default: 4000). */
+    maxChars: number;
+  };
+  /** Loom dashboard/report for human review (#2157). */
+  report: {
+    enabled: boolean;
+    /** Max example items rendered per report section (default: 10). */
+    maxItemsPerSection: number;
+  };
+  /** Procedure refinery — ranked triage batches over the existing procedure backlog (#2147). */
+  procedureTriage: {
+    enabled: boolean;
+    /** Default triage batch size (default: 20). */
+    defaultBatchSize: number;
+  };
+};
+
 /** Self-correction pipeline: semantic dedup, TOOLS.md sectioning, auto-rewrite vs approve */
 export type SelfCorrectionConfig = {
   /** Enable self-correction pipeline (default: true). */
@@ -812,6 +895,8 @@ export type HybridMemoryConfig = {
   goalStewardship: GoalStewardshipConfig;
   /** Serendipity Protocol — bounded proactive findings + backlog (default: disabled). */
   serendipityProtocol: SerendipityProtocolConfig;
+  /** The Loom — belief graph, evidence capsules, open loops, drift, attention, runway (default: disabled). */
+  loom: LoomConfig;
   /** Vector store configuration (LanceDB schema validation and auto-repair, issue #128). */
   vector: VectorConfig;
   /** Enhanced ambient retrieval with multi-query generation (Issue #156, default: disabled). */

@@ -26,6 +26,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { IdentityReflectionStore } from "../backends/identity-reflection-store.js";
 import type { IssueStore } from "../backends/issue-store.js";
 import type { SerendipityStore } from "../backends/serendipity-store.js";
+import type { LoomStore } from "../backends/loom-store.js";
 import type { LearningsDB } from "../backends/learnings-db.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
 import type { PersonaStateStore } from "../backends/persona-state-store.js";
@@ -78,6 +79,7 @@ export interface PluginRuntime {
   costTracker: CostTracker | null;
   issueStore: IssueStore | null;
   serendipityStore: SerendipityStore | null;
+  loomStore: LoomStore | null;
   workflowStore: WorkflowStore | null;
   crystallizationStore: CrystallizationStore | null;
   toolProposalStore: ToolProposalStore | null;

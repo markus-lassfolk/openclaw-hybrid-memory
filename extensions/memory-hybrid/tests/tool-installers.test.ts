@@ -20,6 +20,7 @@ describe("tool installers", () => {
       "optional:verification",
       "optional:issues",
       "optional:serendipity",
+      "optional:loom",
       "optional:workflow",
       "optional:crystallization",
       "optional:selfExtension",

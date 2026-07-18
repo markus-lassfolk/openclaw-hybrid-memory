@@ -16,6 +16,7 @@ import { registerHealthTools } from "../tools/health-dashboard.js";
 import { type PluginContext as GraphToolsContext, registerGraphTools } from "../tools/graph-tools.js";
 import { registerIssueTools } from "../tools/issue-tools.js";
 import { registerSerendipityTools } from "../tools/serendipity-tools.js";
+import { registerLoomTools } from "../tools/loom-tools.js";
 import { type MemoryToolsContext, registerMemoryTools } from "../tools/memory-tools.js";
 import { type PluginContext as PersonaToolsContext, registerPersonaTools } from "../tools/persona-tools.js";
 import { registerProvenanceTools } from "../tools/provenance-tools.js";
@@ -81,6 +82,10 @@ type SerendipityInstallerContext = Pick<
   | "embeddings"
   | "eventLog"
 > & { goalsDir?: string; workspaceRoot?: string };
+type LoomInstallerContext = Pick<
+  ToolsContext,
+  "loomStore" | "factsDb" | "serendipityStore" | "cfg" | "currentAgentIdRef" | "buildToolScopeFilter"
+> & { workspaceRoot?: string };
 type WorkflowInstallerContext = Pick<ToolsContext, "workflowStore" | "cfg">;
 type CrystallizationInstallerContext = Pick<
   ToolsContext,
@@ -435,6 +440,36 @@ function installSerendipityTools(ctx: SerendipityInstallerContext, api: Clawdbot
   }
 }
 
+function selectLoomToolsContext(ctx: ToolsContext): LoomInstallerContext {
+  const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? pathJoin(homedir(), ".openclaw", "workspace");
+  return {
+    loomStore: ctx.loomStore,
+    factsDb: ctx.factsDb,
+    serendipityStore: ctx.serendipityStore,
+    cfg: ctx.cfg,
+    currentAgentIdRef: ctx.currentAgentIdRef,
+    buildToolScopeFilter: ctx.buildToolScopeFilter,
+    workspaceRoot,
+  };
+}
+
+function installLoomTools(ctx: LoomInstallerContext, api: ClawdbotPluginApi): void {
+  if (ctx.cfg.loom.enabled && ctx.loomStore) {
+    registerLoomTools(
+      {
+        loomStore: ctx.loomStore,
+        factsDb: ctx.factsDb,
+        serendipityStore: ctx.serendipityStore,
+        cfg: ctx.cfg,
+        currentAgentIdRef: ctx.currentAgentIdRef,
+        buildToolScopeFilter: ctx.buildToolScopeFilter,
+        workspaceRoot: ctx.workspaceRoot,
+      },
+      api,
+    );
+  }
+}
+
 function selectWorkflowToolsContext({ workflowStore, cfg }: ToolsContext): WorkflowInstallerContext {
   return { workflowStore, cfg };
 }
@@ -742,6 +777,12 @@ export const toolInstallers = orderByBootstrapPhase<ToolInstaller>([
     bootstrapPhase: "optional",
     selectContext: (ctx) => selectSerendipityToolsContext(ctx),
     install: installSerendipityTools,
+  }),
+  defineToolInstaller({
+    id: "loom",
+    bootstrapPhase: "optional",
+    selectContext: (ctx) => selectLoomToolsContext(ctx),
+    install: installLoomTools,
   }),
   defineToolInstaller({
     id: "workflow",

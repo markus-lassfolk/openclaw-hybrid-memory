@@ -27,6 +27,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.222] - 2026-07-18
+
+Implements The Loom (Epic #2150): an agent-native continuity, belief, evidence, and open-loop operating layer on top of hybrid-memory. Disabled by default (`loom.enabled: false`). See `docs/THE-LOOM.md`.
+
+### Added
+
+- **Evidence capsules (#2148)** — durable, redacted proof objects (`memory_evidence_capsule_create`/`_show`/`_attach`/`_list`, `hybrid-mem evidence …`). Secret-like values are redacted before storage (`services/evidence-redaction.ts`); capsule creation is refused instead of silently storing an unstrippable secret when `loom.evidence.rejectUnredactable` is true.
+- **Belief graph / claim ledger (#2151)** — claims (`memory_belief_assert`/`_get`/`_verify`/`_contradict`/`_supersede`/`_explain`, `hybrid-mem belief …`) distinct from raw recalled facts: status (`believed | verified | stale | contradicted | superseded | unverified | must_live_check`), confidence, evidence citations, contradiction/supersession tracking, and automatic stale-degradation after `loom.beliefs.staleAfterDays`.
+- **Live-check contracts (#2156)** — claims can require live verification before use (`memory_live_check_list`/`_satisfy`/`_require`, `hybrid-mem live-checks …`); satisfaction expires after `loom.liveChecks.defaultTtlHours`.
+- **Open-loop obligations ledger (#2152)** — unfinished promises/blocked work/incidents tracked independently of active tasks (`memory_loop_create`/`_list`/`_update`/`_close`, `hybrid-mem loops …`); closing an `evidenceRequired` loop without evidence is rejected; due loops resurface via `listLoopsDueForResurface`.
+- **Drift scout (#2146)** — detects deprecated command references (config-driven `loom.drift.deprecatedCommands` map) and unresolved fact contradictions (`memory_drift_scout`, `hybrid-mem drift scout`); `--apply-safe` mechanically rewrites `auto_safe` deprecated-command findings only.
+- **Memory lifecycle workflows (#2155)** — report-only candidate detection (contradicted/superseded/duplicate/stale-low-access/prompt-injection-like) plus demote/archive/quarantine/delete actions with an audit trail (`memory_lifecycle_candidates`/`_update`, `hybrid-mem memory-lifecycle …`); deleting a verified fact requires a strong-confirm token.
+- **Attention steward (#2153)** — ranks claims/open loops/drift findings/serendipity findings into `urgent | important_not_urgent | blocked | needs_verification | stale_or_noisy | candidate_for_deletion | candidate_for_skill_or_wrapper | interesting_not_actionable` with reasons (`memory_attention_rank`/`_update`, `hybrid-mem attention …`); snooze/demote overrides never delete provenance.
+- **Loom brief (#2154)** — bounded, prompt-safe pre-action synthesis composing beliefs/open loops/evidence/drift/attention for a free-text scope, labeling every item `memory | evidence | live_check_requirement | recommendation` (`memory_loom_brief`, `hybrid-mem loom brief`).
+- **Agent Runway API (#2145)** — compact preflight bundle: active tasks (read live from the facts ledger), goals, fragile procedure surfaces, stale/contradicted high-importance-fact warnings, and a Loom summary (`memory_runway`, `hybrid-mem runway`).
+- **Loom dashboard/report (#2157)** — Markdown/HTML report for human review across all of the above plus procedure and serendipity highlights (`hybrid-mem loom report --format html|md`).
+- **Procedure refinery triage (#2147)** — ranked, clustered, deduplicated triage batches over the procedure backlog with existing-wrapper detection and persisted no-action decisions (extends `hybrid-mem procedures …`).
+- **Serendipity inbox Loom alignment (#2149)** — additive `serendipity_findings` columns: links to claims/open loops/drift findings, `leverage`/`riskReduction`/`timeSaved`/`cognitiveLoadReduction` scores, and an explicit `notAnActiveTask` flag that flips to `false` once a finding is promoted (fixed/filed/proposed), keeping the attention steward and runway focused on still-open noticing.
+- New `LoomStore` (`loom.db`, one table per concept) and 24 new agent tools (see `contracts/agent-tool-names.ts`).
+
+### Notes
+
+- No `schemaVersion` bump — `LoomStore` is a new, separate database; the `serendipity_findings` migration is additive-only (`ALTER TABLE … ADD COLUMN`).
+- The `memory-lifecycle` CLI group (not `lifecycle`) is used because `lifecycle` is already the GitHub-sync-adapters command group (#1196).
+
 ## [2026.7.221] - 2026-07-17
 
 Closes three open issues filed from live Maeve host telemetry (#2141, #2142, #2143).
