@@ -221,13 +221,18 @@ export function closeOpenLoop(db: DatabaseSync, id: string, input: CloseOpenLoop
   return getOpenLoop(db, id) as OpenLoop;
 }
 
-/** Loops due for resurfacing (resurfaceAt <= now, still open-ish), ranked by urgency+importance. */
+/**
+ * Loops due for resurfacing (resurfaceAt <= now, still open-ish), ranked by urgency+importance.
+ * Excludes loops already resurfaced for the current due-cycle (last_resurfaced_at >= resurface_at)
+ * so `markResurfaced` actually suppresses re-notifying until the loop is re-armed (resurfaceAt bumped).
+ */
 export function listDueForResurface(db: DatabaseSync, now: string = nowIso(), limit = 50): OpenLoop[] {
   const rows = db
     .prepare(
       `SELECT * FROM loom_open_loops
        WHERE status IN ('open', 'waiting', 'blocked', 'ready')
          AND resurface_at IS NOT NULL AND resurface_at <= ?
+         AND (last_resurfaced_at IS NULL OR last_resurfaced_at < resurface_at)
        ORDER BY (urgency + importance) DESC, resurface_at ASC
        LIMIT ?`,
     )

@@ -19,6 +19,10 @@ import {
 } from "../../../services/procedure-promotion-policy.js";
 import { generateAutoSkillForProcedure } from "../../../services/procedure-skill-generator.js";
 import { rankProcedureCandidates } from "../../../services/procedure-triage.js";
+import {
+  PROCEDURE_TRIAGE_RECOMMENDED_ACTIONS,
+  type ProcedureTriageRecommendedAction,
+} from "../../../types/procedure-triage-types.js";
 import { formatTimestampUtc, nowIso } from "../../../utils/dates.js";
 import { resolveWorkspacePath } from "../../../utils/path.js";
 import { runHybridMemVersion } from "../../cmd-version.js";
@@ -259,18 +263,20 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
     .action(
       withExit(async (clusterId: string, opts?: { decision?: string; rationale?: string; dryRun?: boolean }) => {
         const store = requireLoomStore(b.loomStore);
+        const decision = (opts?.decision ?? "no_action") as ProcedureTriageRecommendedAction;
+        if (!PROCEDURE_TRIAGE_RECOMMENDED_ACTIONS.includes(decision)) {
+          throw new Error(
+            `Invalid --decision "${opts?.decision}". Expected one of: ${PROCEDURE_TRIAGE_RECOMMENDED_ACTIONS.join(", ")}.`,
+          );
+        }
         if (opts?.dryRun) {
           console.log(
-            `Dry run: would record ${clusterId} -> ${opts?.decision}${opts?.rationale ? ` (${opts.rationale})` : ""}`,
+            `Dry run: would record ${clusterId} -> ${decision}${opts?.rationale ? ` (${opts.rationale})` : ""}`,
           );
           return;
         }
-        const decision = store.recordProcedureTriageDecision({
-          clusterId,
-          decision: (opts?.decision ?? "no_action") as never,
-          rationale: opts?.rationale,
-        });
-        console.log(`Recorded ${decision.clusterId} -> ${decision.decision}`);
+        const recorded = store.recordProcedureTriageDecision({ clusterId, decision, rationale: opts?.rationale });
+        console.log(`Recorded ${recorded.clusterId} -> ${recorded.decision}`);
       }),
     );
 

@@ -196,6 +196,13 @@ describe("LoomStore — open-loop obligations ledger (#2152)", () => {
     expect(due.map((l) => l.id)).toContain(loop.id);
     store.markLoopResurfaced(loop.id, "2020-06-01T00:00:00.000Z");
     expect(store.getOpenLoop(loop.id)?.lastResurfacedAt).toBe("2020-06-01T00:00:00.000Z");
+    // Once resurfaced for this due-cycle, it must not resurface again until re-armed (resurfaceAt bumped).
+    const dueAgain = store.listLoopsDueForResurface("2020-07-01T00:00:00.000Z");
+    expect(dueAgain.map((l) => l.id)).not.toContain(loop.id);
+    // Re-arming by pushing resurfaceAt forward past the last resurface makes it due again.
+    store.updateOpenLoop(loop.id, { resurfaceAt: "2020-08-01T00:00:00.000Z" });
+    const dueAfterRearm = store.listLoopsDueForResurface("2020-09-01T00:00:00.000Z");
+    expect(dueAfterRearm.map((l) => l.id)).toContain(loop.id);
   });
 
   it("defaults resurfaceAt from config when not provided", () => {

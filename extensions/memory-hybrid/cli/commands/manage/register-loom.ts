@@ -421,12 +421,15 @@ export function registerManageLoom(mem: Chainable, b: ManageBindings): void {
   loops
     .command("resurface")
     .description("List loops due for resurfacing.")
-    .option("--due", "Only loops already due")
+    .option("--ack", "Acknowledge: mark the surfaced loops as resurfaced so they don't re-notify until re-armed")
     .option("--json", "Output as JSON")
     .action(
-      withExit(async (opts?: { json?: boolean }) => {
+      withExit(async (opts?: { ack?: boolean; json?: boolean }) => {
         const store = requireStore(b.loomStore);
         const due = store.listLoopsDueForResurface();
+        if (opts?.ack) {
+          for (const l of due) store.markLoopResurfaced(l.id);
+        }
         if (opts?.json) {
           console.log(JSON.stringify(due, null, 2));
           return;
@@ -436,6 +439,7 @@ export function registerManageLoom(mem: Chainable, b: ManageBindings): void {
           return;
         }
         for (const l of due) console.log(`${l.id.slice(0, 8)}  ${l.title}`);
+        if (opts?.ack) console.log(`Acknowledged ${due.length} loop(s) as resurfaced.`);
       }),
     );
 
