@@ -114,6 +114,17 @@ export interface SerendipityFinding {
   relatedIssues: string[];
   relatedProcedures: string[];
   relatedSkills: string[];
+  /** The Loom alignment (#2149): links into the belief graph / open-loop ledger / drift scout. */
+  relatedClaims: string[];
+  relatedLoops: string[];
+  relatedDriftFindings: string[];
+  /** Loom scoring (#2149): 0-1 leverage/risk-reduction/time-saved/cognitive-load-reduction estimates. */
+  leverage: number;
+  riskReduction: number;
+  timeSaved: number;
+  cognitiveLoadReduction: number;
+  /** True until the finding is promoted (status fixed/filed/proposed) — it is noticing, not a task. */
+  notAnActiveTask: boolean;
   /** Guardrail signals — any of these forces `ask_user` regardless of level. */
   external: boolean;
   destructive: boolean;
@@ -147,6 +158,13 @@ export interface CreateSerendipityFindingInput {
   relatedIssues?: string[];
   relatedProcedures?: string[];
   relatedSkills?: string[];
+  relatedClaims?: string[];
+  relatedLoops?: string[];
+  relatedDriftFindings?: string[];
+  leverage?: number;
+  riskReduction?: number;
+  timeSaved?: number;
+  cognitiveLoadReduction?: number;
   external?: boolean;
   destructive?: boolean;
   privacySensitive?: boolean;
@@ -156,7 +174,7 @@ export interface CreateSerendipityFindingInput {
 }
 
 /** Kinds of related record a finding can link to (mirrors IssueStore.linkFact). */
-export type SerendipityLinkKind = "fact" | "issue" | "procedure" | "skill";
+export type SerendipityLinkKind = "fact" | "issue" | "procedure" | "skill" | "claim" | "loop" | "drift_finding";
 
 /**
  * Valid state transitions for the finding lifecycle. `observed` and `deferred`

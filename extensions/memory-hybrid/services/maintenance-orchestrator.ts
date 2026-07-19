@@ -398,6 +398,15 @@ export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
     dependsOn: ["pending-digest"],
     featureGate: (cfg) => cfg.digest?.autopilot?.enabled === true,
   },
+  {
+    // The Loom's nightly upkeep (Epic #2150): degrade beliefs past their staleness window and
+    // re-scan facts for drift (deprecated commands + unresolved contradictions). Report-only.
+    name: "loom-maintenance",
+    tier: "nightly",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20,
+    llmTier: "none",
+    featureGate: (cfg) => cfg.loom?.maintenance?.enabled === true,
+  },
 
   // --- Nightly tier — monthly cadence (25d guards) (4) ---
   {

@@ -30,8 +30,8 @@ describe("maintenance-orchestrator", () => {
     if (openclawDir) rmSync(openclawDir, { recursive: true, force: true });
   });
 
-  it("registers 56 maintenance steps", () => {
-    expect(MAINTENANCE_STEPS.length).toBe(56);
+  it("registers 57 maintenance steps", () => {
+    expect(MAINTENANCE_STEPS.length).toBe(57);
   });
 
   it("skips steps when guard has not expired", async () => {

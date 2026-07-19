@@ -10,6 +10,7 @@ import { IssueStore } from "../backends/issue-store.js";
 import { PersonaStateStore } from "../backends/persona-state-store.js";
 import { ProposalsDB } from "../backends/proposals-db.js";
 import { SerendipityStore } from "../backends/serendipity-store.js";
+import { LoomStore } from "../backends/loom-store.js";
 import { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import { WriteAheadLog } from "../backends/wal.js";
 import { WorkflowStore } from "../backends/workflow-store.js";
@@ -42,6 +43,7 @@ export interface OptionalBootstrapServices {
   provenanceService: ProvenanceService | null;
   apitapStore: ApitapStore;
   serendipityStore: SerendipityStore | null;
+  loomStore: LoomStore | null;
 }
 
 type OptionalBootstrapInstaller = BootstrapPhaseConfig & {
@@ -164,6 +166,13 @@ export const optionalBootstrapInstaller: OptionalBootstrapInstaller = {
       api.logger.info(`memory-hybrid: serendipity store initialized (${serendipityStorePath})`);
     }
 
+    let loomStore: LoomStore | null = null;
+    if (cfg.loom.enabled) {
+      const loomStorePath = join(baseDir, "loom.db");
+      loomStore = new LoomStore(loomStorePath);
+      api.logger.info(`memory-hybrid: loom store initialized (${loomStorePath})`);
+    }
+
     return {
       credentialsDb,
       wal,
@@ -180,6 +189,7 @@ export const optionalBootstrapInstaller: OptionalBootstrapInstaller = {
       provenanceService,
       apitapStore,
       serendipityStore,
+      loomStore,
     };
   },
 };

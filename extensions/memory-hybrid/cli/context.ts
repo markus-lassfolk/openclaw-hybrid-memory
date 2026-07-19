@@ -35,6 +35,8 @@ export type ManageContext = {
   issueStore?: import("../backends/issue-store.js").IssueStore | null;
   /** Serendipity findings store backing serendipity_* tools and the `serendipity` CLI (#2119). */
   serendipityStore?: import("../backends/serendipity-store.js").SerendipityStore | null;
+  /** The Loom store backing evidence/belief/loop/drift/attention/lifecycle CLI (Epic #2150). */
+  loomStore?: import("../backends/loom-store.js").LoomStore | null;
   /** Provenance chain store backing memory_provenance and the `provenance` CLI (#2090). */
   provenanceService?: import("../services/provenance.js").ProvenanceService | null;
   versionInfo: { pluginVersion: string; memoryManagerVersion: string; schemaVersion: number };

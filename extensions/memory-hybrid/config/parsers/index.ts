@@ -35,6 +35,7 @@ import {
   resolveEnvVars,
   resolveSecretRef,
 } from "./core.js";
+import { parseLoomConfig } from "./loom.js";
 import {
   parseAliasesConfig,
   parseAmbientConfig,
@@ -819,6 +820,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     activeTask: parseActiveTaskConfig(cfg),
     goalStewardship: parseGoalStewardshipConfig(cfg),
     serendipityProtocol: parseSerendipityProtocolConfig(cfg),
+    loom: parseLoomConfig(cfg),
     vector: parseVectorConfig(cfg),
     ambient: parseAmbientConfig(cfg),
     graphRetrieval: parseGraphRetrievalConfig(cfg),

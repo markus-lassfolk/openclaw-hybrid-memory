@@ -8,17 +8,23 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { LoomStore } from "../../../backends/loom-store.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import {
-  PROCEDURE_PROMOTION_POLICY_VERSION,
-  type ProcedurePromotionDuplicateCandidate,
   createProcedurePromotionItem,
   evaluateProcedureForPromotion,
+  PROCEDURE_PROMOTION_POLICY_VERSION,
+  type ProcedurePromotionDuplicateCandidate,
   parseProcedurePromotionPolicy,
 } from "../../../services/procedure-promotion-policy.js";
 import { generateAutoSkillForProcedure } from "../../../services/procedure-skill-generator.js";
-import { resolveWorkspacePath } from "../../../utils/path.js";
+import { rankProcedureCandidates } from "../../../services/procedure-triage.js";
+import {
+  PROCEDURE_TRIAGE_RECOMMENDED_ACTIONS,
+  type ProcedureTriageRecommendedAction,
+} from "../../../types/procedure-triage-types.js";
 import { formatTimestampUtc, nowIso } from "../../../utils/dates.js";
+import { resolveWorkspacePath } from "../../../utils/path.js";
 import { runHybridMemVersion } from "../../cmd-version.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
@@ -27,6 +33,14 @@ import type { ManageBindings } from "./bindings.js";
 function shellQuotePathForCron(path: string): string {
   if (/^[\w@%+./:-]+$/.test(path)) return path;
   return `'${path.replace(/'/g, `'\\''`)}'`;
+}
+
+/** Ranked procedure triage (#2147) persists decisions in the Loom store. */
+function requireLoomStore(store: LoomStore | null | undefined): LoomStore {
+  if (!store) {
+    throw new Error("Ranked procedure triage requires The Loom. Set loom.enabled: true in plugin config.");
+  }
+  return store;
 }
 
 export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBindings): void {
@@ -131,10 +145,42 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
     .option("--not-promoted", "Only include procedures not promoted to skills")
     .option("--limit <n>", "Maximum number to show", "50")
     .option("--policy <policy>", "Procedure promotion policy: draft-only, manual, auto-safe", "draft-only")
+    .option(
+      "--ranked",
+      "Ranked/clustered triage batch (#2147) instead of the recency-ordered legacy view: bounded, deduplicated, with existing-wrapper detection",
+    )
+    .option("--batch <n>", "Ranked mode: batch size (default 20)")
+    .option("--cluster", "Ranked mode: cluster near-duplicate procedures (default true)")
     .option("--json", "Emit JSON")
     .action(
       withExit(
-        async (opts?: { status?: string; notPromoted?: boolean; limit?: string; policy?: string; json?: boolean }) => {
+        async (opts?: {
+          status?: string;
+          notPromoted?: boolean;
+          limit?: string;
+          policy?: string;
+          ranked?: boolean;
+          batch?: string;
+          cluster?: boolean;
+          json?: boolean;
+        }) => {
+          if (opts?.ranked || opts?.batch !== undefined) {
+            const report = rankProcedureCandidates(
+              { db: factsDb.getRawDb(), loomStore: requireLoomStore(b.loomStore) },
+              { batchSize: opts?.batch ? Number.parseInt(opts.batch, 10) : 20, cluster: opts?.cluster !== false },
+            );
+            if (opts?.json) {
+              console.log(JSON.stringify(report, null, 2));
+              return;
+            }
+            console.log(`Procedure backlog: ${report.backlog}. Recommended batch (${report.recommendedBatch.length}):`);
+            for (const item of report.recommendedBatch) {
+              console.log(
+                `[${item.recommendedAction}] ${item.taskPattern.slice(0, 80)} (cluster ${item.clusterId}, risk ${item.risk}, count ${item.count}) — ${item.why}`,
+              );
+            }
+            return;
+          }
           const status = opts?.status === "all" ? "all" : "validated";
           const limit = Number.parseInt(opts?.limit ?? "50", 10);
           if (!Number.isFinite(limit) || limit < 1) {
@@ -204,6 +250,34 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
           }
         },
       ),
+    );
+
+  procedureCmd
+    .command("promote-candidate <clusterId>")
+    .description(
+      "Record a triage decision for a ranked cluster (#2147): promote_to_skill | promote_to_wrapper | file_issue | no_action",
+    )
+    .requiredOption("--decision <decision>", "promote_to_skill|promote_to_wrapper|file_issue|no_action")
+    .option("--rationale <text>", "Why")
+    .option("--dry-run", "Preview only — do not record the decision")
+    .action(
+      withExit(async (clusterId: string, opts?: { decision?: string; rationale?: string; dryRun?: boolean }) => {
+        const store = requireLoomStore(b.loomStore);
+        const decision = (opts?.decision ?? "no_action") as ProcedureTriageRecommendedAction;
+        if (!PROCEDURE_TRIAGE_RECOMMENDED_ACTIONS.includes(decision)) {
+          throw new Error(
+            `Invalid --decision "${opts?.decision}". Expected one of: ${PROCEDURE_TRIAGE_RECOMMENDED_ACTIONS.join(", ")}.`,
+          );
+        }
+        if (opts?.dryRun) {
+          console.log(
+            `Dry run: would record ${clusterId} -> ${decision}${opts?.rationale ? ` (${opts.rationale})` : ""}`,
+          );
+          return;
+        }
+        const recorded = store.recordProcedureTriageDecision({ clusterId, decision, rationale: opts?.rationale });
+        console.log(`Recorded ${recorded.clusterId} -> ${recorded.decision}`);
+      }),
     );
 
   procedureCmd
