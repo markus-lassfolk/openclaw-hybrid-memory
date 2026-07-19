@@ -7,7 +7,6 @@
 import { writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join as pathJoin } from "node:path";
-import type { Command } from "commander";
 import type { LoomStore } from "../../../backends/loom-store.js";
 import { parseLoomConfig } from "../../../config/parsers/loom.js";
 import { buildRunway } from "../../../services/agent-runway.js";
@@ -42,8 +41,7 @@ function requireStore(store: LoomStore | null | undefined): LoomStore {
   return store;
 }
 
-
-type LoomCommandOptions = { verbose?: boolean; debug?: boolean };
+type LoomCommandOptions = { verbose?: boolean; debug?: boolean } & Record<string, unknown>;
 
 type LoomCommand = CommanderOptsParent & { optsWithGlobals?: () => { verbose?: boolean; debug?: boolean } };
 
@@ -71,7 +69,7 @@ function loomLog(opts: { verbose?: boolean; debug?: boolean }, message: string):
   if (opts.verbose) console.error(`[loom] ${message}`);
 }
 
-function addLoomDiagnostics<T extends Command>(command: T): T {
+function addLoomDiagnostics<T extends Chainable>(command: T): T {
   return command
     .option("-v, --verbose", "Emit Loom decision/guard diagnostics to stderr")
     .option("--debug", "Emit extra Loom diagnostics to stderr (no secret values)") as T;
@@ -151,22 +149,34 @@ export function registerManageLoom(mem: Chainable, b: ManageBindings): void {
     .option("--claim <id>", "Claim id")
     .option("--json", "Output as JSON")
     .action(
-      withExit(async (capsuleId: string, opts?: { task?: string; goal?: string; claim?: string; json?: boolean }, cmd?: LoomCommand) => {
-        const diag = commandDiagnostics(opts, cmd);
-        const store = requireStore(b.loomStore);
-        const capsule = store.resolveEvidenceCapsule(capsuleId);
-        if (!capsule) throw new Error(`Evidence capsule not found: ${capsuleId}`);
-        let updated = capsule;
-        if (opts?.task !== undefined || opts?.goal !== undefined) {
-          loomLog(diag, `evidence attach mutating capsule=${capsule.id} task=${opts?.task ?? "-"} goal=${opts?.goal ?? "-"}`);
-          updated = store.attachEvidenceCapsule(capsule.id, { linkedTaskLabel: opts?.task, linkedGoalId: opts?.goal });
-        }
-        if (opts?.claim) {
-          loomLog(diag, `evidence attach mutating capsule=${capsule.id} claim=${opts.claim}`);
-          updated = store.linkEvidenceCapsuleToClaim(capsule.id, opts.claim);
-        }
-        console.log(opts?.json ? JSON.stringify(updated, null, 2) : `Attached ${updated.id}`);
-      }),
+      withExit(
+        async (
+          capsuleId: string,
+          opts?: { task?: string; goal?: string; claim?: string; json?: boolean },
+          cmd?: LoomCommand,
+        ) => {
+          const diag = commandDiagnostics(opts, cmd);
+          const store = requireStore(b.loomStore);
+          const capsule = store.resolveEvidenceCapsule(capsuleId);
+          if (!capsule) throw new Error(`Evidence capsule not found: ${capsuleId}`);
+          let updated = capsule;
+          if (opts?.task !== undefined || opts?.goal !== undefined) {
+            loomLog(
+              diag,
+              `evidence attach mutating capsule=${capsule.id} task=${opts?.task ?? "-"} goal=${opts?.goal ?? "-"}`,
+            );
+            updated = store.attachEvidenceCapsule(capsule.id, {
+              linkedTaskLabel: opts?.task,
+              linkedGoalId: opts?.goal,
+            });
+          }
+          if (opts?.claim) {
+            loomLog(diag, `evidence attach mutating capsule=${capsule.id} claim=${opts.claim}`);
+            updated = store.linkEvidenceCapsuleToClaim(capsule.id, opts.claim);
+          }
+          console.log(opts?.json ? JSON.stringify(updated, null, 2) : `Attached ${updated.id}`);
+        },
+      ),
     );
   evidence
     .command("show <capsuleId>")
@@ -357,7 +367,9 @@ export function registerManageLoom(mem: Chainable, b: ManageBindings): void {
     );
 
   // --- live-checks ----------------------------------------------------------
-  const liveChecks = addLoomDiagnostics(mem.command("live-checks").description("Live-check contracts on claims (#2156)."));
+  const liveChecks = addLoomDiagnostics(
+    mem.command("live-checks").description("Live-check contracts on claims (#2156)."),
+  );
   liveChecks
     .command("list")
     .description("List claims requiring a live check.")
@@ -387,18 +399,20 @@ export function registerManageLoom(mem: Chainable, b: ManageBindings): void {
     .option("--check <text...>", "Suggested live-check text entries")
     .option("--json", "Output as JSON")
     .action(
-      withExit(async (claimId: string, opts?: { reason?: string; check?: string[]; json?: boolean }, cmd?: LoomCommand) => {
-        const diag = commandDiagnostics(opts, cmd);
-        const store = requireStore(b.loomStore);
-        const claim = store.resolveClaim(claimId);
-        if (!claim) throw new Error(`Claim not found: ${claimId}`);
-        loomLog(diag, `live-check require mutating claim=${claim.id} suggestedChecks=${opts?.check?.length ?? 0}`);
-        const updated = store.requireLiveCheck(claim.id, {
-          reason: opts?.reason ?? "",
-          suggestedChecks: (opts?.check ?? []).map((text) => ({ kind: "manual" as const, text })),
-        });
-        console.log(opts?.json ? JSON.stringify(updated, null, 2) : `${updated.id} now requires a live check.`);
-      }),
+      withExit(
+        async (claimId: string, opts?: { reason?: string; check?: string[]; json?: boolean }, cmd?: LoomCommand) => {
+          const diag = commandDiagnostics(opts, cmd);
+          const store = requireStore(b.loomStore);
+          const claim = store.resolveClaim(claimId);
+          if (!claim) throw new Error(`Claim not found: ${claimId}`);
+          loomLog(diag, `live-check require mutating claim=${claim.id} suggestedChecks=${opts?.check?.length ?? 0}`);
+          const updated = store.requireLiveCheck(claim.id, {
+            reason: opts?.reason ?? "",
+            suggestedChecks: (opts?.check ?? []).map((text) => ({ kind: "manual" as const, text })),
+          });
+          console.log(opts?.json ? JSON.stringify(updated, null, 2) : `${updated.id} now requires a live check.`);
+        },
+      ),
     );
   liveChecks
     .command("satisfy <claimId>")
@@ -536,7 +550,8 @@ export function registerManageLoom(mem: Chainable, b: ManageBindings): void {
           const parseScore = (name: string, value?: string): number | undefined => {
             if (value === undefined) return undefined;
             const parsed = Number.parseFloat(value);
-            if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) throw new Error(`${name} must be a number from 0 to 1.`);
+            if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1)
+              throw new Error(`${name} must be a number from 0 to 1.`);
             return parsed;
           };
           loomLog(diag, `loops update mutating loop=${loop.id} status=${opts?.status ?? "-"}`);
@@ -599,7 +614,9 @@ export function registerManageLoom(mem: Chainable, b: ManageBindings): void {
     );
 
   // --- drift --------------------------------------------------------------
-  const drift = addLoomDiagnostics(mem.command("drift").description("Drift scout — stale instructions/deprecated commands (#2146)."));
+  const drift = addLoomDiagnostics(
+    mem.command("drift").description("Drift scout — stale instructions/deprecated commands (#2146)."),
+  );
   drift
     .command("scout")
     .description("Scan for drift (report-only unless --apply-safe is set).")
@@ -609,27 +626,37 @@ export function registerManageLoom(mem: Chainable, b: ManageBindings): void {
     .option("--apply-safe", "Apply mechanical auto_safe fixes")
     .option("--json", "Output as JSON")
     .action(
-      withExit(async (opts?: { include?: string[]; dryRun?: boolean; applySafe?: boolean; json?: boolean }, cmd?: LoomCommand) => {
-        if (opts?.dryRun && opts.applySafe) throw new Error("Choose either --dry-run or --apply-safe, not both.");
-        const diag = commandDiagnostics(opts, cmd);
-        const store = requireStore(b.loomStore);
-        loomLog(diag, `drift scout mode=${opts?.applySafe ? "apply-safe" : "report-only"} include=${(opts?.include ?? ["facts", "cron", "skills", "wiki"]).join(",")}`);
-        const report = runDriftScout(
-          { factsDb: b.factsDb, loomStore: store },
-          {
-            include: opts?.include as never,
-            applySafe: opts?.applySafe === true,
-            deprecatedCommands: lc.drift.deprecatedCommands,
-          },
-        );
-        if (opts?.json) {
-          console.log(JSON.stringify(report, null, 2));
-          return;
-        }
-        console.log(`${report.newCount} new, ${report.existingCount} existing, ${report.appliedSafeCount} auto-fixed.`);
-        for (const f of report.findings.slice(0, 20))
-          console.log(`- [${f.severity}] ${f.driftType}: ${f.oldText.slice(0, 80)}`);
-      }),
+      withExit(
+        async (
+          opts?: { include?: string[]; dryRun?: boolean; applySafe?: boolean; json?: boolean },
+          cmd?: LoomCommand,
+        ) => {
+          if (opts?.dryRun && opts.applySafe) throw new Error("Choose either --dry-run or --apply-safe, not both.");
+          const diag = commandDiagnostics(opts, cmd);
+          const store = requireStore(b.loomStore);
+          loomLog(
+            diag,
+            `drift scout mode=${opts?.applySafe ? "apply-safe" : "report-only"} include=${(opts?.include ?? ["facts", "cron", "skills", "wiki"]).join(",")}`,
+          );
+          const report = runDriftScout(
+            { factsDb: b.factsDb, loomStore: store },
+            {
+              include: opts?.include as never,
+              applySafe: opts?.applySafe === true,
+              deprecatedCommands: lc.drift.deprecatedCommands,
+            },
+          );
+          if (opts?.json) {
+            console.log(JSON.stringify(report, null, 2));
+            return;
+          }
+          console.log(
+            `${report.newCount} new, ${report.existingCount} existing, ${report.appliedSafeCount} auto-fixed.`,
+          );
+          for (const f of report.findings.slice(0, 20))
+            console.log(`- [${f.severity}] ${f.driftType}: ${f.oldText.slice(0, 80)}`);
+        },
+      ),
     );
   drift
     .command("list")
@@ -640,24 +667,27 @@ export function registerManageLoom(mem: Chainable, b: ManageBindings): void {
     .option("--limit <n>", "Max rows", "50")
     .option("--json", "Output as JSON")
     .action(
-      withExit(async (opts?: { status?: string[]; type?: string[]; severity?: string[]; limit?: string; json?: boolean }) => {
-        const store = requireStore(b.loomStore);
-        const findings = store.listDriftFindings({
-          status: opts?.status as never,
-          driftType: opts?.type as never,
-          severity: opts?.severity as never,
-          limit: Number.parseInt(opts?.limit ?? "50", 10),
-        });
-        if (opts?.json) {
-          console.log(JSON.stringify(findings, null, 2));
-          return;
-        }
-        if (findings.length === 0) {
-          console.log("No drift findings.");
-          return;
-        }
-        for (const f of findings) console.log(`${f.id.slice(0, 8)}  [${f.status}/${f.severity}] ${f.driftType}: ${f.oldText.slice(0, 80)}`);
-      }),
+      withExit(
+        async (opts?: { status?: string[]; type?: string[]; severity?: string[]; limit?: string; json?: boolean }) => {
+          const store = requireStore(b.loomStore);
+          const findings = store.listDriftFindings({
+            status: opts?.status as never,
+            driftType: opts?.type as never,
+            severity: opts?.severity as never,
+            limit: Number.parseInt(opts?.limit ?? "50", 10),
+          });
+          if (opts?.json) {
+            console.log(JSON.stringify(findings, null, 2));
+            return;
+          }
+          if (findings.length === 0) {
+            console.log("No drift findings.");
+            return;
+          }
+          for (const f of findings)
+            console.log(`${f.id.slice(0, 8)}  [${f.status}/${f.severity}] ${f.driftType}: ${f.oldText.slice(0, 80)}`);
+        },
+      ),
     );
   drift
     .command("update <findingId>")
@@ -667,18 +697,24 @@ export function registerManageLoom(mem: Chainable, b: ManageBindings): void {
     .option("--promoted-to <id>", "Target id when status is promoted")
     .option("--json", "Output as JSON")
     .action(
-      withExit(async (findingId: string, opts?: { status?: string; snoozeUntil?: string; promotedTo?: string; json?: boolean }, cmd?: LoomCommand) => {
-        const diag = commandDiagnostics(opts, cmd);
-        const store = requireStore(b.loomStore);
-        const finding = store.resolveDriftFinding(findingId);
-        if (!finding) throw new Error(`Drift finding not found: ${findingId}`);
-        loomLog(diag, `drift update mutating finding=${finding.id} status=${opts?.status ?? "-"}`);
-        const updated = store.updateDriftStatus(finding.id, opts?.status as DriftStatus, {
-          snoozedUntil: opts?.snoozeUntil,
-          promotedTo: opts?.promotedTo,
-        });
-        console.log(opts?.json ? JSON.stringify(updated, null, 2) : `${updated.id} -> ${updated.status}`);
-      }),
+      withExit(
+        async (
+          findingId: string,
+          opts?: { status?: string; snoozeUntil?: string; promotedTo?: string; json?: boolean },
+          cmd?: LoomCommand,
+        ) => {
+          const diag = commandDiagnostics(opts, cmd);
+          const store = requireStore(b.loomStore);
+          const finding = store.resolveDriftFinding(findingId);
+          if (!finding) throw new Error(`Drift finding not found: ${findingId}`);
+          loomLog(diag, `drift update mutating finding=${finding.id} status=${opts?.status ?? "-"}`);
+          const updated = store.updateDriftStatus(finding.id, opts?.status as DriftStatus, {
+            snoozedUntil: opts?.snoozeUntil,
+            promotedTo: opts?.promotedTo,
+          });
+          console.log(opts?.json ? JSON.stringify(updated, null, 2) : `${updated.id} -> ${updated.status}`);
+        },
+      ),
     );
 
   // --- lifecycle ------------------------------------------------------------
@@ -715,33 +751,42 @@ export function registerManageLoom(mem: Chainable, b: ManageBindings): void {
       .option("--confirm", "Confirm (required for quarantine/delete)")
       .option("--strong-confirm <token>", "Strong confirm token (required to delete a verified fact)")
       .action(
-        withExit(async (targetId: string, opts?: { reason?: string; confirm?: boolean; strongConfirm?: string }, cmd?: LoomCommand) => {
-          const diag = commandDiagnostics(opts, cmd);
-          const store = requireStore(b.loomStore);
-          try {
-            loomLog(diag, `memory-lifecycle ${action} mutating target=fact:${targetId} confirm=${opts?.confirm === true}`);
-            const result = applyLifecycleAction(
-              { factsDb: b.factsDb, loomStore: store },
-              {
-                targetKind: "fact" as LifecycleTargetKind,
-                targetId,
-                action: action as LifecycleAction,
-                reason: opts?.reason ?? "",
-                confirm: opts?.confirm,
-                strongConfirm: opts?.strongConfirm,
-              },
-              { requireStrongConfirmForVerified: lc.lifecycle.requireStrongConfirmForVerified },
-            );
-            console.log(result.message);
-          } catch (err) {
-            if (err instanceof LifecycleConfirmRequiredError || err instanceof LifecycleStrongConfirmRequiredError) {
-              console.error(err.message);
-              process.exitCode = 1;
-              return;
+        withExit(
+          async (
+            targetId: string,
+            opts?: { reason?: string; confirm?: boolean; strongConfirm?: string },
+            cmd?: LoomCommand,
+          ) => {
+            const diag = commandDiagnostics(opts, cmd);
+            const store = requireStore(b.loomStore);
+            try {
+              loomLog(
+                diag,
+                `memory-lifecycle ${action} mutating target=fact:${targetId} confirm=${opts?.confirm === true}`,
+              );
+              const result = applyLifecycleAction(
+                { factsDb: b.factsDb, loomStore: store },
+                {
+                  targetKind: "fact" as LifecycleTargetKind,
+                  targetId,
+                  action: action as LifecycleAction,
+                  reason: opts?.reason ?? "",
+                  confirm: opts?.confirm,
+                  strongConfirm: opts?.strongConfirm,
+                },
+                { requireStrongConfirmForVerified: lc.lifecycle.requireStrongConfirmForVerified },
+              );
+              console.log(result.message);
+            } catch (err) {
+              if (err instanceof LifecycleConfirmRequiredError || err instanceof LifecycleStrongConfirmRequiredError) {
+                console.error(err.message);
+                process.exitCode = 1;
+                return;
+              }
+              throw err;
             }
-            throw err;
-          }
-        }),
+          },
+        ),
       );
   }
 
@@ -877,17 +922,24 @@ export function registerManageLoom(mem: Chainable, b: ManageBindings): void {
     );
   loom
     .command("maintenance")
-    .description("Run Loom upkeep now: belief stale-claim sweep + drift scan (drift is report-only unless --apply-safe-drift).")
+    .description(
+      "Run Loom upkeep now: belief stale-claim sweep + drift scan (drift is report-only unless --apply-safe-drift).",
+    )
     .option("--dry-run", "Report-only drift mode (default; conflicts with --apply-safe-drift)")
     .option("--apply-safe-drift", "Mechanically apply auto_safe drift fixes")
     .option("--json", "Output as JSON")
     .action(
       withExit(async (opts?: { dryRun?: boolean; applySafeDrift?: boolean; json?: boolean }, cmd?: LoomCommand) => {
-        if (opts?.dryRun && opts.applySafeDrift) throw new Error("Choose either --dry-run or --apply-safe-drift, not both.");
+        if (opts?.dryRun && opts.applySafeDrift)
+          throw new Error("Choose either --dry-run or --apply-safe-drift, not both.");
         const diag = commandDiagnostics(opts, cmd);
         const store = requireStore(b.loomStore);
-        const applySafeDrift = opts?.applySafeDrift === true ? true : opts?.dryRun ? false : lc.maintenance.applySafeDrift;
-        loomLog(diag, `loom maintenance staleAfterDays=${lc.beliefs.staleAfterDays} driftMode=${applySafeDrift ? "apply-safe" : "report-only"}`);
+        const applySafeDrift =
+          opts?.applySafeDrift === true ? true : opts?.dryRun ? false : lc.maintenance.applySafeDrift;
+        loomLog(
+          diag,
+          `loom maintenance staleAfterDays=${lc.beliefs.staleAfterDays} driftMode=${applySafeDrift ? "apply-safe" : "report-only"}`,
+        );
         const result = runLoomMaintenance(
           { factsDb: b.factsDb, loomStore: store },
           {
