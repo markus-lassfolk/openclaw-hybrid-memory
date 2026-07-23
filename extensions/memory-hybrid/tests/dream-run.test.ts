@@ -84,13 +84,16 @@ describe("runDream (#2171)", () => {
     expect(result.dreamRunId).toMatch(/^dream-/);
     expect(result.candidates.length).toBe(1);
     expect(result.candidates[0]?.payload.text).toBe("real distill insight");
-    expect(result.promoteResult).toBeUndefined();
+    // promote:false still gates (shadow) so the run leaves `running`.
+    expect(result.promoteResult?.status).toBe("gated");
+    expect(result.promoteResult?.applied).toBe(false);
     expect(result.costFeature).toBe(CostFeature.dream);
     expect(distill).toHaveBeenCalledOnce();
     expect(reflect).toHaveBeenCalledOnce();
 
     const run = store.getDreamRun(result.dreamRunId);
     expect(run).toBeTruthy();
+    expect(run!.status).toBe("gated");
     expect(run!.sessionIds).toEqual(["s1", "s2", "s3"]);
     expect(store.listCandidateEntries(result.dreamRunId).length).toBe(1);
     expect(factsDb.count()).toBe(before);
@@ -107,7 +110,10 @@ describe("runDream (#2171)", () => {
       promote: false,
     });
     expect(result.candidates.length).toBe(0);
+    expect(result.promoteResult?.status).toBe("gated");
+    expect(result.promoteResult?.gateReport.reason).toBe("no_candidates");
     const run = store.getDreamRun(result.dreamRunId)!;
+    expect(run.status).toBe("gated");
     const metrics = JSON.parse(run.metricsSummaryJson ?? "{}") as { curriculumSummary?: { note?: string } };
     expect(metrics.curriculumSummary?.note).toContain("no_stage_candidates");
   });

@@ -217,6 +217,7 @@ openclaw hybrid-mem dream validate-shadow --json
 ```
 
 3. Accumulate nightly `dream-run` (or CLI `dream run --dry-shadow`) for ≥ `shadowValidation.minShadowRuns` days.
+   Nightly `dream-run` **always gates** after compose (shadow when `autoPromote` is off) so runs leave `running` and `validate-shadow` can score `wouldPromote`. With `skipNightlyOverlap: true`, owned live steps are skipped only after that gated dream-run succeeds — do not leave `promoteAfterRun`/`candidateStore` misconfigured expecting live distill to keep running.
 4. `openclaw hybrid-mem dream validate-shadow --json` — exit 0 required.
 5. Only then: `candidateStore.shadow: false` and `autoPromote.enabled: true`.
 

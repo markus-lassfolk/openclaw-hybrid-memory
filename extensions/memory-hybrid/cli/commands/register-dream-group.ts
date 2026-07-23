@@ -98,6 +98,7 @@ export function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
         },
         sink,
       );
+      const boundary = ctx.dreaming?.permissionBoundary ?? DEFAULT_DREAMING_CONFIG.permissionBoundary;
       const candidates = distillProposalsToCandidates({
         proposals: (result.extracted ?? []).map((f) => ({
           ...f,
@@ -105,6 +106,7 @@ export function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
         })),
         sessionIds,
         dreamRunId,
+        permissionBoundary: boundary,
       });
       return {
         detail: `steering=${steering.profile} dryRun=${dryRun} attached=${sessionIds.length} scanned=${result.sessionsScanned} ${steeringPrompt.split("\n")[0]} stored=${result.stored} proposed=${candidates.length}`,
@@ -127,10 +129,12 @@ export function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
         sessionIds,
         days: 7,
       });
+      const boundary = ctx.dreaming?.permissionBoundary ?? DEFAULT_DREAMING_CONFIG.permissionBoundary;
       const candidates = selfCorrectionProposalsToCandidates({
         proposals: result.extracted ?? [],
         sessionIds,
         dreamRunId,
+        permissionBoundary: boundary,
       });
       return {
         detail: `steering=${steering.profile} dryRun=${dryRun} attached=${sessionIds.length} proposed=${candidates.length} analysed=${result.analysed} ${formatSteeringPromptBlock(steering).split("\n")[0]}`,
@@ -160,6 +164,7 @@ export function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
           dreamRunId,
           targetScope: boundary.targetScope,
           personalMode: boundary.personalMode === true,
+          permissionBoundary: boundary,
         });
         parts.push(
           `autoResolvable=${dry.autoResolvable.length} ambiguous=${dry.ambiguous.length} proposed=${candidates.length}`,
@@ -207,6 +212,7 @@ export function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
                 ? sessionIds[0]!
                 : "dream-multi"
               : null,
+        permissionBoundary: boundary,
       });
       return {
         detail: `${steeringPrompt.split("\n")[0]} attached=${sessionIds.length} patterns=${result.patternsStored} proposed=${candidates.length} ${JSON.stringify({ ...result, patterns: undefined })}`,
@@ -265,6 +271,7 @@ export function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
         sessionIds,
         dreamRunId,
         sourceProvenanceByFactId,
+        permissionBoundary: ctx.dreaming?.permissionBoundary ?? DEFAULT_DREAMING_CONFIG.permissionBoundary,
       });
       return {
         detail: `steering=${steering.profile} ${formatSteeringPromptBlock(steering).split("\n")[0]} merged=${result.merged} proposed=${candidates.length}`,

@@ -7,7 +7,12 @@
 
 import type { MemoryCategory } from "../types/memory.js";
 import type { CandidateEntryInput } from "./dream-candidate-ops.js";
-import { aclFitsTarget, type DreamWriteScope } from "./dream-permission.js";
+import {
+  aclFitsTarget,
+  writeScopeWithinBoundary,
+  type DreamWriteScope,
+} from "./dream-permission.js";
+import type { DreamPermissionBoundary } from "../config/types/dreaming.js";
 
 /** Max candidates emitted per compose stage (keeps promote/gate bounded). */
 export const DREAM_COMPOSE_CANDIDATE_CAP = 40;
@@ -61,25 +66,44 @@ function evidenceForSessions(
 function resolveAttributedWriteScope(input: {
   sessionIds: string[];
   sourceSessionId?: string | null;
+  permissionBoundary?: DreamPermissionBoundary;
 }): { scope: "session" | "agent"; scopeTarget: string; evidenceSessions: string[] } | null {
   const attached = [...new Set(input.sessionIds.map((s) => s.trim()).filter(Boolean))];
   const source = input.sourceSessionId?.trim() || "";
+  let resolved: { scope: "session" | "agent"; scopeTarget: string; evidenceSessions: string[] } | null =
+    null;
   if (source) {
     if (attached.length > 0 && !attached.includes(source)) return null;
-    return { scope: "session", scopeTarget: source, evidenceSessions: [source] };
+    resolved = { scope: "session", scopeTarget: source, evidenceSessions: [source] };
+  } else if (attached.length === 1) {
+    resolved = { scope: "session", scopeTarget: attached[0]!, evidenceSessions: attached };
+  } else if (attached.length === 0) {
+    return null;
+  } else {
+    // Multi-session without per-fact attribution: never collapse into sessionIds[0].
+    resolved = { scope: "agent", scopeTarget: "dream-multi", evidenceSessions: attached };
   }
-  if (attached.length === 1) {
-    return { scope: "session", scopeTarget: attached[0]!, evidenceSessions: attached };
+  if (!resolved) return null;
+  const boundary = input.permissionBoundary;
+  if (boundary && !writeScopeWithinBoundary(resolved.scope, boundary)) {
+    // Under a session boundary, only single-session attributed writes are admissible.
+    if (boundary.targetScope === "session" && resolved.evidenceSessions.length === 1) {
+      return {
+        scope: "session",
+        scopeTarget: resolved.evidenceSessions[0]!,
+        evidenceSessions: resolved.evidenceSessions,
+      };
+    }
+    return null;
   }
-  if (attached.length === 0) return null;
-  // Multi-session without per-fact attribution: never collapse into sessionIds[0].
-  return { scope: "agent", scopeTarget: "dream-multi", evidenceSessions: attached };
+  return resolved;
 }
 
 export function distillProposalsToCandidates(input: {
   proposals: DistillProposedFact[];
   sessionIds: string[];
   dreamRunId: string;
+  permissionBoundary?: DreamPermissionBoundary;
 }): CandidateEntryInput[] {
   const out: CandidateEntryInput[] = [];
   let sortOrder = 0;
@@ -89,6 +113,7 @@ export function distillProposalsToCandidates(input: {
     const write = resolveAttributedWriteScope({
       sessionIds: input.sessionIds,
       sourceSessionId: fact.sourceSessionId,
+      permissionBoundary: input.permissionBoundary,
     });
     if (!write) continue;
     out.push({
@@ -123,6 +148,7 @@ export function reflectProposalsToCandidates(input: {
   /** Write scope clamped to dream permission boundary (#2174). Default: session when attached. */
   writeScope?: "session" | "agent" | "user" | "global";
   writeScopeTarget?: string | null;
+  permissionBoundary?: DreamPermissionBoundary;
 }): CandidateEntryInput[] {
   const out: CandidateEntryInput[] = [];
   let sortOrder = 0;
@@ -142,6 +168,16 @@ export function reflectProposalsToCandidates(input: {
   if (scope === "session" && input.sessionIds.length !== 1) {
     scope = "agent";
     scopeTarget = "dream-multi";
+  }
+  const boundary = input.permissionBoundary;
+  if (boundary && !writeScopeWithinBoundary(scope, boundary)) {
+    if (boundary.targetScope === "session" && input.sessionIds.length === 1) {
+      scope = "session";
+      scopeTarget = input.sessionIds[0]!;
+    } else {
+      // Multi-session under session boundary cannot emit an agent write — skip.
+      return out;
+    }
   }
   for (const pattern of input.proposals.slice(0, DREAM_COMPOSE_CANDIDATE_CAP)) {
     const text = pattern.text?.trim();
@@ -186,6 +222,7 @@ export function selfCorrectionProposalsToCandidates(input: {
   proposals: SelfCorrectionProposedFact[];
   sessionIds: string[];
   dreamRunId: string;
+  permissionBoundary?: DreamPermissionBoundary;
 }): CandidateEntryInput[] {
   const out: CandidateEntryInput[] = [];
   let sortOrder = 0;
@@ -195,6 +232,7 @@ export function selfCorrectionProposalsToCandidates(input: {
     const write = resolveAttributedWriteScope({
       sessionIds: input.sessionIds,
       sourceSessionId: fact.sourceSessionId,
+      permissionBoundary: input.permissionBoundary,
     });
     if (!write) continue;
     out.push({
@@ -234,6 +272,7 @@ export function consolidateProposalsToCandidates(input: {
    * Missing map → no candidates (fail closed).
    */
   sourceProvenanceByFactId: Record<string, string[]>;
+  permissionBoundary?: DreamPermissionBoundary;
 }): CandidateEntryInput[] {
   const out: CandidateEntryInput[] = [];
   let sortOrder = 0;
@@ -262,8 +301,16 @@ export function consolidateProposalsToCandidates(input: {
 
     const evidenceSessions = [...new Set(perSource.flat())];
     // Clamp write scope to session when a single evidence session; otherwise agent (never invent global).
-    const writeScope = evidenceSessions.length === 1 ? ("session" as const) : ("agent" as const);
-    const writeTarget = evidenceSessions.length === 1 ? evidenceSessions[0]! : "dream-multi";
+    let writeScope = evidenceSessions.length === 1 ? ("session" as const) : ("agent" as const);
+    let writeTarget = evidenceSessions.length === 1 ? evidenceSessions[0]! : "dream-multi";
+    if (input.permissionBoundary && !writeScopeWithinBoundary(writeScope, input.permissionBoundary)) {
+      if (input.permissionBoundary.targetScope === "session" && evidenceSessions.length === 1) {
+        writeScope = "session";
+        writeTarget = evidenceSessions[0]!;
+      } else {
+        continue;
+      }
+    }
 
     out.push({
       op: "merge",
@@ -388,12 +435,20 @@ export function contradictionProposalsToCandidates(input: {
   /** Dream permission target — used when agent/user/global facts lack provenance sessions. */
   targetScope?: DreamWriteScope;
   personalMode?: boolean;
+  permissionBoundary?: DreamPermissionBoundary;
 }): CandidateEntryInput[] {
   const out: CandidateEntryInput[] = [];
   let sortOrder = 0;
   const allow = new Set(input.sessionIds.map((s) => s.trim()).filter(Boolean));
   if (allow.size === 0) return out;
-  const targetScope = input.targetScope ?? "session";
+  const boundary =
+    input.permissionBoundary ??
+    ({
+      targetScope: input.targetScope ?? "session",
+      enforce: true,
+      personalMode: input.personalMode === true,
+    } satisfies DreamPermissionBoundary);
+  const targetScope = boundary.targetScope;
 
   for (const pair of input.proposals.slice(0, DREAM_COMPOSE_CANDIDATE_CAP)) {
     if (!pair.preHash || !pair.factIdOld) continue;
@@ -404,6 +459,9 @@ export function contradictionProposalsToCandidates(input: {
         : "agent";
     const sessionTarget = typeof pair.scopeTarget === "string" ? pair.scopeTarget.trim() : "";
 
+    // Compose must not emit deletes promote will always reject under the permission boundary.
+    if (!writeScopeWithinBoundary(factScope, boundary)) continue;
+
     let evidenceSessions: string[] = [];
     if (provenance.some((p) => allow.has(p))) {
       evidenceSessions = provenance.filter((p) => allow.has(p));
@@ -411,7 +469,7 @@ export function contradictionProposalsToCandidates(input: {
       evidenceSessions = [sessionTarget];
     } else if (
       factScope !== "session" &&
-      aclFitsTarget(factScope, targetScope, input.personalMode === true)
+      aclFitsTarget(factScope, targetScope, boundary.personalMode === true)
     ) {
       // Shared/public facts may feed a more-private dream; evidence is the attachment, not invented provenance.
       evidenceSessions = [...allow];

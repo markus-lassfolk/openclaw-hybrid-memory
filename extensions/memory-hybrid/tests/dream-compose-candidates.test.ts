@@ -119,11 +119,12 @@ describe("dream-compose-candidates (#2170/#2175)", () => {
     expect(candidates[0]?.preHash).toBe("occ-old");
   });
 
-  it("admits agent-scoped contradiction resolves without provenance when they fit the dream target", () => {
+  it("admits agent-scoped contradiction resolves when dream boundary allows agent writes", () => {
     const candidates = contradictionProposalsToCandidates({
       dreamRunId: "dream-1",
       sessionIds: ["s1", "s2"],
-      targetScope: "session",
+      targetScope: "agent",
+      permissionBoundary: { targetScope: "agent", enforce: true, personalMode: false },
       proposals: [
         {
           contradictionId: "c-agent",
@@ -138,6 +139,37 @@ describe("dream-compose-candidates (#2170/#2175)", () => {
     });
     expect(candidates).toHaveLength(1);
     expect(candidates[0]?.evidence?.sessionIds?.sort()).toEqual(["s1", "s2"]);
+  });
+
+  it("rejects agent-scoped contradiction resolves under a session permission boundary", () => {
+    const candidates = contradictionProposalsToCandidates({
+      dreamRunId: "dream-1",
+      sessionIds: ["s1", "s2"],
+      targetScope: "session",
+      permissionBoundary: { targetScope: "session", enforce: true, personalMode: false },
+      proposals: [
+        {
+          contradictionId: "c-agent",
+          factIdNew: "n1",
+          factIdOld: "o1",
+          preHash: "occ-old",
+          provenanceSessionIds: [],
+          scope: "agent",
+          scopeTarget: null,
+        },
+      ],
+    });
+    expect(candidates).toHaveLength(0);
+  });
+
+  it("skips multi-session distill writes under a session permission boundary", () => {
+    const candidates = distillProposalsToCandidates({
+      dreamRunId: "dream-1",
+      sessionIds: ["s1", "s2"],
+      permissionBoundary: { targetScope: "session", enforce: true, personalMode: false },
+      proposals: [{ text: "Unattributed multi-session preference that must not launder", category: "preference" }],
+    });
+    expect(candidates).toHaveLength(0);
   });
 
   it("rejects session-scoped contradiction resolves that lack allowlisted provenance/target", () => {

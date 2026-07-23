@@ -125,4 +125,38 @@ describe("dream-run scheduling vs skipNightlyOverlap", () => {
     expect(result.steps.find((r) => r.name === "dream-run")?.status).toBe("failed");
     expect(result.steps.find((r) => r.name === "distill")?.summary).toContain("distill-fallback");
   });
+
+  it("runs owned step when dream-run soft-fails with timedOut semantic (fail closed)", async () => {
+    const distill = async () => "distill-fallback-timeout";
+    const dreamRun = async () => {
+      throw new Error("dream-run timed out dreamRunId=dream-x semantic=partial");
+    };
+    const runners = new Map<string, () => Promise<string>>([
+      ["dream-run", dreamRun],
+      ["distill", distill],
+    ]);
+    const cfg = {
+      dreaming: {
+        ...structuredClone(DEFAULT_DREAMING_CONFIG),
+        enabled: true,
+        skipNightlyOverlap: true,
+        compose: ["distill"] as ["distill"],
+      },
+      maintenance: { orchestrator: { stepTimeoutMinutes: 1, llmCooldownBetweenStepsMs: 0 } },
+    };
+    const ctx: MaintenanceOrchestratorContext = {
+      cfg: cfg as never,
+      runners: runners as never,
+      logger: { info: () => {}, warn: () => {} },
+      openclawDir: "/tmp",
+    };
+    const result = await runMaintenanceOrchestrator(ctx, {
+      tiers: ["nightly"],
+      force: true,
+      openclawDir: "/tmp",
+      include: ["dream-run", "distill"],
+    });
+    expect(result.steps.find((r) => r.name === "dream-run")?.status).toBe("failed");
+    expect(result.steps.find((r) => r.name === "distill")?.summary).toContain("distill-fallback-timeout");
+  });
 });

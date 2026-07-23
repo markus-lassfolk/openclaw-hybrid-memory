@@ -47,6 +47,7 @@ export function evaluateDreamGates(
   const decisions: GateReport["decisions"] = [];
 
   if (entries.length === 0) {
+    // Not promotable — leave wouldPromote false; promoteDreamRun must not apply or inflate ROI.
     return { ok: true, decisions: [], wouldPromote: false, reason: "no_candidates" };
   }
 
@@ -165,7 +166,7 @@ export function evaluateDreamGates(
     store.updateCandidateEntry(entry.id, { status: "gated_ok" });
   }
 
-  const ok = decisions.length > 0 && decisions.every((d) => d.pass);
+  const ok = decisions.some((d) => d.pass);
   const wouldPromote = ok;
   return { ok, decisions, wouldPromote };
 }
@@ -307,6 +308,17 @@ export function promoteDreamRun(
     gateReportJson: JSON.stringify(gateReport),
   });
 
+  // Empty compose: terminal gated with wouldPromote=false — never apply or treat as reject-quarantine.
+  if (gateReport.reason === "no_candidates") {
+    return {
+      applied: false,
+      shadow: run.shadow || !dreaming.autoPromote.enabled,
+      status: "gated",
+      gateReport: { ...gateReport, wouldPromote: false },
+      appliedFactIds: [],
+    };
+  }
+
   if (!gateReport.ok) {
     store.updateDreamRunStatus(dreamRunId, "quarantined", {
       failureReason: "gate_reject",
@@ -330,7 +342,7 @@ export function promoteDreamRun(
       applied: false,
       shadow: true,
       status: "gated",
-      gateReport: { ...gateReport, wouldPromote: true },
+      gateReport,
       appliedFactIds: [],
     };
   }
@@ -432,6 +444,27 @@ export function promoteDreamRun(
     : null;
 
   const promotedAt = Math.floor(Date.now() / 1000);
+
+  // Fail closed: do not mark promoted when nothing was applied (dedup skips / empty gated_ok).
+  if (appliedFactIds.length === 0) {
+    store.updateDreamRunStatus(dreamRunId, "gated", {
+      failureReason: "promoted_zero_applied",
+      gateReportJson: JSON.stringify({
+        ...gateReport,
+        wouldPromote: false,
+        reason: "promoted_zero_applied",
+      }),
+    });
+    return {
+      applied: false,
+      shadow: false,
+      status: "gated",
+      gateReport: { ...gateReport, wouldPromote: false, reason: "promoted_zero_applied" },
+      appliedFactIds: [],
+      error: "no facts applied after promote",
+    };
+  }
+
   const baselineJson = capturePromoteBaseline(factsDb, run.sessionIds, promotedAt);
   const metricsSummary = buildRunMetricsSummary(factsDb, {
     sessionIds: run.sessionIds,

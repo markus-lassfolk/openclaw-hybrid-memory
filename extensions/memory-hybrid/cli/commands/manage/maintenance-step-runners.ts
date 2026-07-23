@@ -623,9 +623,27 @@ export function buildCliMaintenanceRunners(
         dreaming,
         manage: b,
       }),
-      promote: dreaming.autoPromote?.enabled === true || dreaming.promoteAfterRun === true,
+      // Always gate after compose (shadow when autoPromote off). Never leave nightly dreams in `running`.
+      promote: true,
     });
-    return `dreamRunId=${result.dreamRunId} sessions=${attachment.included.length} excluded=${attachment.excluded.length} candidates=${result.candidates.length} steps=${result.stepSummaries.length} timedOut=${result.timedOut} promote=${result.promoteResult?.status ?? "none"} semantic=success`;
+    if (result.timedOut) {
+      throw new Error(
+        `dream-run timed out dreamRunId=${result.dreamRunId} candidates=${result.candidates.length} promote=${result.promoteResult?.status ?? "none"} semantic=partial`,
+      );
+    }
+    const boundSteps = result.stepSummaries.filter((s) => s.skipped !== true);
+    const failedBound = boundSteps.filter((s) => s.ok === false);
+    if (boundSteps.length > 0 && failedBound.length === boundSteps.length) {
+      throw new Error(
+        `dream-run all compose steps failed dreamRunId=${result.dreamRunId} steps=${failedBound.length} semantic=failed`,
+      );
+    }
+    if (!result.promoteResult) {
+      throw new Error(
+        `dream-run missing gate/promote result dreamRunId=${result.dreamRunId} semantic=failed`,
+      );
+    }
+    return `dreamRunId=${result.dreamRunId} sessions=${attachment.included.length} excluded=${attachment.excluded.length} candidates=${result.candidates.length} steps=${result.stepSummaries.length} timedOut=${result.timedOut} promote=${result.promoteResult.status} semantic=success`;
   });
   set("cross-agent-learning", async () => runCrossAgentLearningStep(followUpDeps, verbose));
   set("tool-effectiveness", async () => runToolEffectivenessStep(followUpDeps, verbose));

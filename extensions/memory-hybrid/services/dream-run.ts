@@ -304,13 +304,25 @@ export async function runDream(options: RunDreamOptions): Promise<RunDreamResult
       const shouldPromote =
         options.promote === true ||
         options.forcePromote === true ||
-        (options.promote !== false && (cfg.promoteAfterRun || cfg.autoPromote.enabled));
+        (options.promote !== false &&
+          (cfg.promoteAfterRun || cfg.autoPromote.enabled || cfg.candidateStore.enabled));
 
       let promoteResult: PromoteResult | undefined;
       if (shouldPromote) {
         promoteResult = promoteDreamRun(factsDb, store, run.id, {
           force: options.forcePromote === true,
           cfg,
+        });
+      } else {
+        // Always gate after compose so runs leave `running` and shadow validation can score
+        // wouldPromote — apply stays off unless autoPromote/force (#2170/#2179).
+        promoteResult = promoteDreamRun(factsDb, store, run.id, {
+          force: false,
+          cfg: {
+            ...cfg,
+            autoPromote: { ...cfg.autoPromote, enabled: false },
+            candidateStore: { ...cfg.candidateStore, shadow: true },
+          },
         });
       }
 

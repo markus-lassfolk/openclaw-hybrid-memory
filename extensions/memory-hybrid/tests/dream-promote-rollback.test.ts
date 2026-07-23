@@ -41,6 +41,85 @@ describe("dream promote/rollback (#2170)", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  it("applies only gated_ok entries when a mixed batch partially passes", () => {
+    const before = factsDb.count();
+    const run = store.createDreamRun({
+      inputStoreRevision: factsDb.computeStoreRevision(),
+      sessionIds: ["s1"],
+      shadow: false,
+    });
+    store.appendCandidateEntries(run.id, [
+      {
+        op: "add",
+        payload: {
+          text: "good session insight with enough text for store",
+          category: "preference",
+          importance: 0.7,
+          source: "dream",
+          entity: null,
+          key: null,
+          value: null,
+          scope: "session",
+          scopeTarget: "s1",
+        },
+        evidence: {
+          sessionIds: ["s1"],
+          prevalence: { sessions: 1, agents: 1 },
+          rationale: "ok",
+        },
+        reverse: { op: "delete_fact", payload: {} },
+      },
+      {
+        op: "add",
+        payload: {
+          text: "agent write that exceeds session boundary",
+          category: "preference",
+          importance: 0.7,
+          source: "dream",
+          entity: null,
+          key: null,
+          value: null,
+          scope: "agent",
+          scopeTarget: "dream-multi",
+        },
+        evidence: {
+          sessionIds: ["s1", "s2"],
+          prevalence: { sessions: 2, agents: 1 },
+          rationale: "multi",
+        },
+        reverse: { op: "delete_fact", payload: {} },
+      },
+    ]);
+
+    const dreaming = cfg({ enabled: true, shadow: false });
+    dreaming.permissionBoundary = { targetScope: "session", enforce: true, personalMode: false };
+    dreaming.autoPromote.shadowValidation.enabled = false;
+
+    const result = promoteDreamRun(factsDb, store, run.id, { cfg: dreaming, force: true });
+    expect(result.gateReport.ok).toBe(true);
+    expect(result.gateReport.decisions.filter((d) => d.pass)).toHaveLength(1);
+    expect(result.gateReport.decisions.filter((d) => !d.pass)).toHaveLength(1);
+    expect(result.applied).toBe(true);
+    expect(result.appliedFactIds).toHaveLength(1);
+    expect(factsDb.count()).toBe(before + 1);
+  });
+
+  it("empty candidates gate with wouldPromote false and never promote", () => {
+    const run = store.createDreamRun({
+      inputStoreRevision: factsDb.computeStoreRevision(),
+      sessionIds: ["s1"],
+      shadow: false,
+    });
+    const dreaming = cfg({ enabled: true, shadow: false });
+    dreaming.autoPromote.shadowValidation.enabled = false;
+    const result = promoteDreamRun(factsDb, store, run.id, { cfg: dreaming, force: true });
+    expect(result.status).toBe("gated");
+    expect(result.applied).toBe(false);
+    expect(result.gateReport.wouldPromote).toBe(false);
+    expect(result.gateReport.reason).toBe("no_candidates");
+    expect(store.getDreamRun(run.id)?.status).toBe("gated");
+  });
+
   it("shadow mode gates without mutating live facts", () => {
     const before = factsDb.count();
     const run = store.createDreamRun({
