@@ -1,6 +1,8 @@
 /**
- * Event Bus — append-only SQLite table that all sensor sweeps write to and the
- * Rumination Engine reads from.
+ * Event Bus — append-only SQLite table that sensor sweeps write to.
+ * Downstream consumers (maintenance steps, Dream Cycle / Autonomous Dreaming)
+ * read events and advance status. There is no separate “Rumination Engine”
+ * process (#2178) — the lifecycle API is shared; consumers are distributed.
  *
  * Status lifecycle: raw → processed → surfaced → pushed → archived
  */

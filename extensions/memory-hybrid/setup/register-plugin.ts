@@ -57,17 +57,24 @@ import {
   resetHybridMemoryRegistrationStateForTests,
 } from "./hybrid-memory-generation-state.js";
 import {
-  blockReloadTeardownBeforeOpen,
+  awaitDonorTeardown,
   clearTeardownTrackingForGeneration,
-  decideReloadTeardownGate,
   drainOldBootstrap,
   drainOldRecall,
+  getReloadTeardownQueueDepth,
   isTeardownDrainedForGeneration,
   resetReloadTeardownChainForTests,
   schedulePluginTeardown,
-  TEARDOWN_SOFT_WAIT_MS,
   TEARDOWN_WAIT_MS,
 } from "./hybrid-memory-reload-coordinator.js";
+import {
+  awaitActivationReady,
+  beginActivation,
+  isActivationAborted,
+  markActivationFailed,
+  markActivationReady,
+  resetActivationStateForTests,
+} from "./hybrid-memory-activation.js";
 import {
   _resetLastSuccessfulExtensionPathForTests,
   buildExtensionLoadContext,
@@ -79,14 +86,18 @@ import {
 import { createPluginService } from "./plugin-service.js";
 import { registerContextEngineBestEffort } from "./register-context-engine.js";
 import { registerLifecycleHooks } from "./register-hooks.js";
-import { registerTools } from "./register-tools.js";
+import {
+  bindActivatedToolExecutors,
+  registerActivationToolStubs,
+  registerTools,
+  type ToolRegistrationHandle,
+} from "./register-tools.js";
 import {
   databaseContextFromRuntime,
   evaluateReregisterReuse,
   recordReregisterDatabaseReuse,
   recordReregisterFullTeardown,
   recordReregisterRegistration,
-  recordReregisterTeardownTimeoutRecovery,
   resetReregisterPolicyForTests,
   resolveReregisterPolicy,
 } from "./reregister-policy.js";
@@ -392,7 +403,7 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
       `memory-hybrid: re-register falling back to full teardown despite reuse-databases policy (reason=${reuseDecision.reason})`,
     );
   }
-  let donorRuntime = reuseDatabases && old ? old : null;
+  const donorRuntime = reuseDatabases && old ? old : null;
 
   if (old) {
     // Clear old timer handles to prevent leaks.
@@ -478,44 +489,6 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     runtimeRef.value = null;
   }
 
-  if (old) {
-    // Wait for the donor runtime's teardown to complete before opening or handing out new DB
-    // handles (#802, #2058 / #2059). When `reuseDatabases` is true we still need to wait
-    // because the vault-registry teardown is scheduled against the SAME donor runtime we are
-    // about to inherit; if we don't wait, vault closeAll() races the new registration's first
-    // DB access (closed DB / not open). When the soft drain window expires before the donor
-    // teardown settles, fall back to a fresh open instead of inheriting indeterminate handles.
-    const drained = blockReloadTeardownBeforeOpen(TEARDOWN_WAIT_MS);
-    if (!drained) {
-      const donorDrained = isTeardownDrainedForGeneration(donorGeneration);
-      const decision = decideReloadTeardownGate({
-        hasDonor: Boolean(donorRuntime),
-        drained,
-        donorDrained,
-      });
-      if (decision === "reuse") {
-        // Donor generation's teardown is done even though newer teardowns may still be queued
-        // (overlap-queued re-register). Donor handles are safe to hand to the new runtime.
-      } else if (decision === "fresh-soft-timeout") {
-        logApi.logger.warn?.(
-          `memory-hybrid: reload teardown soft-timeout exceeded (>=${TEARDOWN_SOFT_WAIT_MS}ms) for donor generation ${donorGeneration}; falling back to fresh open to avoid inheriting closed DB handles`,
-        );
-        donorRuntime = null;
-        recordReregisterFullTeardown("teardown_soft_timeout");
-      } else if (decision === "fresh-hard-timeout") {
-        // Full-teardown path (#2111): the donor's DB handles are being permanently closed on a
-        // separate teardown chain. The new registration opens its own fresh handles, so it is
-        // safe to proceed even though the prior teardown has not finished draining. Previously
-        // this threw and failed plugin initialization on every reload attempt; recover to a
-        // fresh open instead and record the timeout for observability.
-        logApi.logger.warn?.(
-          `memory-hybrid: reload teardown did not drain within ${TEARDOWN_WAIT_MS}ms for donor generation ${donorGeneration}; opening fresh databases anyway (prior teardown continues on its own chain)`,
-        );
-        recordReregisterTeardownTimeoutRecovery();
-      }
-    }
-  }
-
   // Resolve where this plugin generation was loaded from (staging path awareness, #2135). Diagnostic
   // context assembled BEFORE any native store init so a subsequent crash is attributable.
   let extensionPath = "unknown";
@@ -525,6 +498,12 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     // Leave "unknown"; the preflight below turns this into a recoverable, named error.
   }
   const loadContext = buildExtensionLoadContext(extensionPath);
+  const wasReregister = old != null;
+  // Full-teardown re-register must not open DBs until donor teardown drains — but that drain is
+  // Promise-based and cannot be awaited synchronously (#2181 / Atomics.wait starvation). Defer
+  // DB open + live tool bind to Phase B. Reuse keeps donor handles and stays fully synchronous.
+  const needsDeferredActivation = wasReregister && !donorRuntime;
+
   const loadDiagnosticsContext: Record<string, Record<string, unknown>> = {
     plugin_load: {
       packageVersion: loadContext.packageVersion,
@@ -534,8 +513,128 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
       reusingDonorHandles: Boolean(donorRuntime),
       donorGenerationTeardownDrained: old ? isTeardownDrainedForGeneration(donorGeneration) : null,
       registrationGeneration,
+      deferredActivation: needsDeferredActivation,
+      teardownQueueDepth: getReloadTeardownQueueDepth(),
     },
   };
+
+  if (needsDeferredActivation) {
+    const preflight = preflightExtensionIntegrity(extensionPath);
+    if (!preflight.ok) {
+      const preflightError = new PluginLoadPreflightError(preflight, loadContext);
+      capturePluginError(preflightError, {
+        subsystem: "registration",
+        operation: "plugin-register:load-preflight",
+        tags: { preflight_reason: preflight.reason, staging: loadContext.isStaging },
+        contexts: loadDiagnosticsContext,
+      });
+      logApi.logger.error?.(preflightError.message);
+      throw preflightError;
+    }
+
+    beginActivation({ generation: registrationGeneration, donorGeneration });
+    const stubHandle = registerActivationToolStubs(
+      {
+        registrationGeneration,
+        currentRegistrationGenerationRef: registrationGenerationRef,
+      },
+      logApi,
+    );
+
+    // Host calls start() once after sync register(). Wait for Phase B, then start the real service.
+    let activatedService: ReturnType<typeof createPluginService> | null = null;
+    try {
+      api.registerService({
+        id: PLUGIN_ID,
+        start: async () => {
+          const ready = await awaitActivationReady(registrationGeneration, TEARDOWN_WAIT_MS + 15_000);
+          if (!ready || isActivationAborted(registrationGeneration)) {
+            logApi.logger.warn?.(
+              `memory-hybrid: plugin-service start skipped — activation not ready for generation ${registrationGeneration}`,
+            );
+            return;
+          }
+          const rt = runtimeRef.value;
+          if (!rt || rt.bootRegistrationGeneration !== registrationGeneration) return;
+          activatedService = createPluginService({
+            PLUGIN_ID,
+            bootRegistrationGeneration: registrationGeneration,
+            factsDb: rt.factsDb,
+            edictStore: rt.edictStore,
+            vectorDb: rt.vectorDb,
+            embeddings: rt.embeddings,
+            embeddingRegistry: rt.embeddingRegistry,
+            credentialsDb: rt.credentialsDb,
+            proposalsDb: rt.proposalsDb,
+            wal: rt.wal,
+            eventLog: rt.eventLog,
+            cfg: rt.cfg,
+            openai: rt.openai,
+            resolvedLancePath: rt.resolvedLancePath,
+            resolvedSqlitePath: rt.resolvedSqlitePath,
+            api: logApi,
+            timers: rt.timers,
+            pythonBridge: rt.pythonBridge,
+            provenanceService: rt.provenanceService,
+            costTracker: rt.costTracker,
+            auditStore: rt.auditStore ?? null,
+            agentHealthStore: rt.agentHealthStore ?? null,
+            verificationStore: rt.verificationStore ?? null,
+            issueStore: rt.issueStore ?? null,
+            serendipityStore: rt.serendipityStore ?? null,
+            loomStore: rt.loomStore ?? null,
+            workflowStore: rt.workflowStore ?? null,
+            narrativesDb: rt.narrativesDb ?? null,
+            crystallizationStore: rt.crystallizationStore ?? null,
+            toolProposalStore: rt.toolProposalStore ?? null,
+            changeFeed: rt.changeFeed,
+            eventBus: rt.eventBus,
+            identityReflectionStore: rt.identityReflectionStore,
+            personaStateStore: rt.personaStateStore,
+            learningsDb: rt.learningsDb,
+            apitapStore: rt.apitapStore,
+            aliasDb: rt.aliasDb,
+            vaultRegistry: rt.vaultRegistry,
+          });
+          await activatedService.start();
+        },
+        stop: async () => {
+          const stopFn = activatedService && "stop" in activatedService ? activatedService.stop : null;
+          if (typeof stopFn === "function") await stopFn.call(activatedService);
+        },
+      });
+    } catch (err) {
+      stubHandle.dispose();
+      markActivationFailed(registrationGeneration, err);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "registration",
+        operation: "plugin-register:service-deferred",
+      });
+      throw err;
+    }
+
+    logApi.logger.info?.(
+      `memory-hybrid: re-register generation ${registrationGeneration} entering deferred activation ` +
+        `(donorGeneration=${donorGeneration}, teardownQueueDepth=${getReloadTeardownQueueDepth()}, ` +
+        `reason=${reuseDecision.reason}) — tools return initializing until Phase B completes`,
+    );
+
+    setImmediate(() => {
+      void runDeferredFullTeardownActivation({
+        api: logApi,
+        cfg,
+        parsedCfgSnapshot,
+        registrationGeneration,
+        donorGeneration,
+        extensionPath,
+        loadContext,
+        loadDiagnosticsContext,
+        stubHandle,
+        wasReregister,
+      });
+    });
+    return;
+  }
 
   // Only preflight a FRESH open — the reuse path inherits already-open donor handles and performs no
   // native connect, so it cannot SIGBUS on a partial staging copy. A structurally incomplete staging
@@ -591,6 +690,171 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     });
     throw err;
   }
+
+  finishHybridMemoryRegistration({
+    api: logApi,
+    cfg,
+    parsedCfgSnapshot,
+    registrationGeneration,
+    donorGeneration,
+    donorRuntime,
+    dbContext,
+    extensionPath,
+    wasReregister,
+    toolMode: "sync",
+  });
+}
+
+type FinishRegistrationParams = {
+  api: ClawdbotPluginApi;
+  cfg: HybridMemoryConfig;
+  parsedCfgSnapshot: HybridMemoryConfig;
+  registrationGeneration: number;
+  donorGeneration: number;
+  donorRuntime: PluginRuntime | null;
+  dbContext: ReturnType<typeof initializeDatabases>;
+  extensionPath: string;
+  wasReregister: boolean;
+  toolMode: "sync" | "bind-live";
+  stubHandle?: ToolRegistrationHandle;
+};
+
+async function runDeferredFullTeardownActivation(params: {
+  api: ClawdbotPluginApi;
+  cfg: HybridMemoryConfig;
+  parsedCfgSnapshot: HybridMemoryConfig;
+  registrationGeneration: number;
+  donorGeneration: number;
+  extensionPath: string;
+  loadContext: ReturnType<typeof buildExtensionLoadContext>;
+  loadDiagnosticsContext: Record<string, Record<string, unknown>>;
+  stubHandle: ToolRegistrationHandle;
+  wasReregister: boolean;
+}): Promise<void> {
+  const {
+    api: logApi,
+    cfg,
+    parsedCfgSnapshot,
+    registrationGeneration,
+    donorGeneration,
+    extensionPath,
+    loadContext,
+    loadDiagnosticsContext,
+    stubHandle,
+    wasReregister,
+  } = params;
+
+  const startedAt = Date.now();
+  try {
+    if (isActivationAborted(registrationGeneration)) {
+      stubHandle.dispose();
+      return;
+    }
+
+    const drained = await awaitDonorTeardown(donorGeneration, TEARDOWN_WAIT_MS);
+    if (isActivationAborted(registrationGeneration)) {
+      stubHandle.dispose();
+      return;
+    }
+
+    if (!drained) {
+      logApi.logger.warn?.(
+        `memory-hybrid: donor generation ${donorGeneration} teardown still pending after ${TEARDOWN_WAIT_MS}ms; ` +
+          `opening fresh databases anyway (prior teardown continues on its own chain) [generation=${registrationGeneration}]`,
+      );
+    }
+
+    logApi.logger.info?.(
+      `memory-hybrid: deferred activation Phase B opening databases (generation=${registrationGeneration}, donorGeneration=${donorGeneration}, drained=${drained}, waitedMs=${Date.now() - startedAt}, teardownQueueDepth=${getReloadTeardownQueueDepth()})`,
+    );
+
+    let dbContext: ReturnType<typeof initializeDatabases>;
+    try {
+      dbContext = initializeDatabases(cfg, logApi, { bootRegistrationGeneration: registrationGeneration });
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "registration",
+        operation: "plugin-register:init-databases-deferred",
+        tags: { staging: loadContext.isStaging, package_version: loadContext.packageVersion },
+        contexts: loadDiagnosticsContext,
+      });
+      stubHandle.dispose();
+      markActivationFailed(registrationGeneration, err);
+      throw err;
+    }
+
+    if (isActivationAborted(registrationGeneration)) {
+      closeOldDatabases({
+        factsDb: dbContext.factsDb,
+        edictStore: dbContext.edictStore,
+        vectorDb: dbContext.vectorDb,
+        credentialsDb: dbContext.credentialsDb,
+        proposalsDb: dbContext.proposalsDb,
+        identityReflectionStore: dbContext.identityReflectionStore,
+        personaStateStore: dbContext.personaStateStore,
+        eventLog: dbContext.eventLog,
+        narrativesDb: dbContext.narrativesDb,
+        aliasDb: dbContext.aliasDb,
+        issueStore: dbContext.issueStore,
+        workflowStore: dbContext.workflowStore,
+        crystallizationStore: dbContext.crystallizationStore,
+        toolProposalStore: dbContext.toolProposalStore,
+        verificationStore: dbContext.verificationStore,
+        provenanceService: dbContext.provenanceService,
+        apitapStore: dbContext.apitapStore,
+      });
+      stubHandle.dispose();
+      return;
+    }
+
+    finishHybridMemoryRegistration({
+      api: logApi,
+      cfg,
+      parsedCfgSnapshot,
+      registrationGeneration,
+      donorGeneration,
+      donorRuntime: null,
+      dbContext,
+      extensionPath,
+      wasReregister,
+      toolMode: "bind-live",
+      stubHandle,
+    });
+    markActivationReady(registrationGeneration);
+    logApi.logger.info?.(
+      `memory-hybrid: deferred activation ready (generation=${registrationGeneration}, totalMs=${Date.now() - startedAt})`,
+    );
+  } catch (err) {
+    if (!isActivationAborted(registrationGeneration)) {
+      markActivationFailed(registrationGeneration, err);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "registration",
+        operation: "plugin-register:deferred-activation",
+        severity: "error",
+      });
+      logApi.logger.error?.(
+        `memory-hybrid: deferred activation failed for generation ${registrationGeneration}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+}
+
+function finishHybridMemoryRegistration(params: FinishRegistrationParams): void {
+  const {
+    api: logApi,
+    cfg,
+    parsedCfgSnapshot,
+    registrationGeneration,
+    donorGeneration,
+    donorRuntime,
+    dbContext,
+    extensionPath,
+    wasReregister,
+    toolMode,
+    stubHandle,
+  } = params;
 
   const { resolvedSqlitePath, resolvedLancePath } = dbContext;
 
@@ -834,7 +1098,9 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     logger: logApi.logger,
     pluginVersion: versionInfo.pluginVersion,
     registerContextEngine:
-      typeof api.registerContextEngine === "function" ? api.registerContextEngine.bind(api) : undefined,
+      typeof logApi.registerContextEngine === "function"
+        ? logApi.registerContextEngine.bind(logApi)
+        : undefined,
   });
 
   // Phase 2.6 / Phase 3: Single plugin context satisfying MemoryPluginAPI (stable internal API).
@@ -900,7 +1166,17 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
   // Tools
 
   try {
-    runtime.toolRegistrationHandle = registerTools(pluginContext, logApi);
+    if (toolMode === "bind-live") {
+      bindActivatedToolExecutors(pluginContext, logApi);
+      // Keep Phase A stub handle so dispose() still unregisters host stubs on the next reload.
+      runtime.toolRegistrationHandle = stubHandle ?? {
+        dispose: () => {
+          /* no-op */
+        },
+      };
+    } else {
+      runtime.toolRegistrationHandle = registerTools(pluginContext, logApi);
+    }
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",
@@ -908,6 +1184,7 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     });
     closeFailedRegistrationRuntime(runtime);
     if (runtimeRef.value === runtime) runtimeRef.value = null;
+    stubHandle?.dispose();
     throw err;
   }
 
@@ -971,59 +1248,59 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     throw err;
   }
 
-  // Service
-
-  const wasReregister = old != null;
-
-  try {
-    api.registerService(
-      createPluginService({
-        PLUGIN_ID,
-        bootRegistrationGeneration: registrationGeneration,
-        factsDb: runtime.factsDb,
-        edictStore: runtime.edictStore,
-        vectorDb: runtime.vectorDb,
-        embeddings: runtime.embeddings,
-        embeddingRegistry: runtime.embeddingRegistry,
-        credentialsDb: runtime.credentialsDb,
-        proposalsDb: runtime.proposalsDb,
-        wal: runtime.wal,
-        eventLog: runtime.eventLog,
-        cfg: runtime.cfg,
-        openai: runtime.openai,
-        resolvedLancePath: runtime.resolvedLancePath,
-        resolvedSqlitePath: runtime.resolvedSqlitePath,
-        api: logApi,
-        timers: runtime.timers,
-        pythonBridge: runtime.pythonBridge,
-        provenanceService: runtime.provenanceService,
-        costTracker: runtime.costTracker,
-        auditStore: runtime.auditStore ?? null,
-        agentHealthStore: runtime.agentHealthStore ?? null,
-        verificationStore: runtime.verificationStore ?? null,
-        issueStore: runtime.issueStore ?? null,
-        serendipityStore: runtime.serendipityStore ?? null,
-        loomStore: runtime.loomStore ?? null,
-        workflowStore: runtime.workflowStore ?? null,
-        narrativesDb: runtime.narrativesDb ?? null,
-        crystallizationStore: runtime.crystallizationStore ?? null,
-        toolProposalStore: runtime.toolProposalStore ?? null,
-        changeFeed: runtime.changeFeed,
-        eventBus: runtime.eventBus,
-        identityReflectionStore: runtime.identityReflectionStore,
-        personaStateStore: runtime.personaStateStore,
-        learningsDb: runtime.learningsDb,
-        apitapStore: runtime.apitapStore,
-        aliasDb: runtime.aliasDb,
-        vaultRegistry: runtime.vaultRegistry,
-      }),
-    );
-  } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      subsystem: "registration",
-      operation: "plugin-register:service",
-    });
-    throw err;
+  // Service — deferred activation already registered a waiter service in Phase A that starts
+  // the real service after markActivationReady. Sync/reuse path registers here.
+  if (toolMode === "sync") {
+    try {
+      logApi.registerService(
+        createPluginService({
+          PLUGIN_ID,
+          bootRegistrationGeneration: registrationGeneration,
+          factsDb: runtime.factsDb,
+          edictStore: runtime.edictStore,
+          vectorDb: runtime.vectorDb,
+          embeddings: runtime.embeddings,
+          embeddingRegistry: runtime.embeddingRegistry,
+          credentialsDb: runtime.credentialsDb,
+          proposalsDb: runtime.proposalsDb,
+          wal: runtime.wal,
+          eventLog: runtime.eventLog,
+          cfg: runtime.cfg,
+          openai: runtime.openai,
+          resolvedLancePath: runtime.resolvedLancePath,
+          resolvedSqlitePath: runtime.resolvedSqlitePath,
+          api: logApi,
+          timers: runtime.timers,
+          pythonBridge: runtime.pythonBridge,
+          provenanceService: runtime.provenanceService,
+          costTracker: runtime.costTracker,
+          auditStore: runtime.auditStore ?? null,
+          agentHealthStore: runtime.agentHealthStore ?? null,
+          verificationStore: runtime.verificationStore ?? null,
+          issueStore: runtime.issueStore ?? null,
+          serendipityStore: runtime.serendipityStore ?? null,
+          loomStore: runtime.loomStore ?? null,
+          workflowStore: runtime.workflowStore ?? null,
+          narrativesDb: runtime.narrativesDb ?? null,
+          crystallizationStore: runtime.crystallizationStore ?? null,
+          toolProposalStore: runtime.toolProposalStore ?? null,
+          changeFeed: runtime.changeFeed,
+          eventBus: runtime.eventBus,
+          identityReflectionStore: runtime.identityReflectionStore,
+          personaStateStore: runtime.personaStateStore,
+          learningsDb: runtime.learningsDb,
+          apitapStore: runtime.apitapStore,
+          aliasDb: runtime.aliasDb,
+          vaultRegistry: runtime.vaultRegistry,
+        }),
+      );
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "registration",
+        operation: "plugin-register:service",
+      });
+      throw err;
+    }
   }
 
   // Issue #1893: OpenClaw does not re-run plugin-service.start() on hot reload; re-arm Workboard sync.
@@ -1097,6 +1374,7 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
 }
 
 export { detectCategory, performHybridMemCliTeardown, runtimeRef, shouldCapture };
+export { awaitActivationReady, getActivationState } from "./hybrid-memory-activation.js";
 
 /** Reset plugin singleton state between vitest cases (runtime, reload chain, generation). */
 export function resetPluginRegistrationStateForTests(): void {
@@ -1115,6 +1393,7 @@ export function resetPluginRegistrationStateForTests(): void {
     }
     runtimeRef.value = null;
   }
+  resetActivationStateForTests();
   resetReloadTeardownChainForTests();
   resetReregisterPolicyForTests();
   resetHybridMemoryRegistrationStateForTests();

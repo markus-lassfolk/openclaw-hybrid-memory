@@ -203,6 +203,46 @@ describe("tool registration generation guard", () => {
     expect(disposeRoute).toHaveBeenCalledTimes(1);
   });
 
+  it("returns initializing safe result while activation is in progress for the current generation", async () => {
+    const { beginActivation, markActivationReady, resetActivationStateForTests } = await import(
+      "../setup/hybrid-memory-activation.js"
+    );
+    const { setLiveToolExecutor, clearLiveToolExecutorsForGeneration } = await import("../setup/register-tools.js");
+    resetActivationStateForTests();
+
+    const state = getHybridMemoryRegistrationState();
+    const { api, tools } = makeRegisterToolApi();
+    state.registrationGenerationRef.value = 10;
+    beginActivation({ generation: 10, donorGeneration: 9 });
+
+    const registration = createGenerationGuardedToolsApi(
+      {
+        registrationGeneration: 10,
+        currentRegistrationGenerationRef: state.registrationGenerationRef,
+      },
+      api as never,
+    );
+    const liveExecute = vi.fn(async () => ({ content: [{ type: "text", text: "live" }], details: { ok: true } }));
+    registration.api.registerTool({
+      name: "memory_recall",
+      execute: async () => ({ content: [{ type: "text", text: "stub" }], details: { ok: false } }),
+    } as never);
+
+    const result = (await tools[0]!.execute()) as { details?: { initializing?: boolean } };
+    expect(result.details?.initializing).toBe(true);
+    expect(liveExecute).not.toHaveBeenCalled();
+
+    setLiveToolExecutor(10, "memory_recall", liveExecute);
+    markActivationReady(10);
+    const live = (await tools[0]!.execute()) as { details?: { ok?: boolean; initializing?: boolean } };
+    expect(live.details?.initializing).not.toBe(true);
+    expect(liveExecute).toHaveBeenCalledTimes(1);
+
+    clearLiveToolExecutorsForGeneration(10);
+    registration.handle.dispose();
+    resetActivationStateForTests();
+  });
+
   it("keeps generation state on globalThis across module reload", async () => {
     vi.resetModules();
     const moduleA = await import("../setup/hybrid-memory-generation-state.js");

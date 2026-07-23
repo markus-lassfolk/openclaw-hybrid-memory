@@ -10,17 +10,46 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import { AGENT_TOOL_CONTRACT_NAMES } from "../contracts/agent-tool-names.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import {
   clearToolExecutorsForGeneration,
   resolveCurrentToolExecutor,
   setCurrentToolExecutor,
 } from "./hybrid-memory-generation-state.js";
+import { shouldReturnInitializingToolResult } from "./hybrid-memory-activation.js";
 import { patchMemoryToolRegistrationApi } from "../utils/tool-search-wrapper-args.js";
 import { type ToolsContext, toolInstallers } from "./tool-installers.js";
 
 export interface ToolRegistrationHandle {
   dispose: () => void;
+}
+
+/** Live (post-activation) tool bodies for a registration generation (#2181 two-phase). */
+const liveToolExecutorsByGeneration = new Map<number, Map<string, (...args: unknown[]) => unknown>>();
+
+export function setLiveToolExecutor(
+  generation: number,
+  toolName: string,
+  execute: (...args: unknown[]) => unknown,
+): void {
+  let byName = liveToolExecutorsByGeneration.get(generation);
+  if (!byName) {
+    byName = new Map();
+    liveToolExecutorsByGeneration.set(generation, byName);
+  }
+  byName.set(toolName, execute);
+}
+
+export function clearLiveToolExecutorsForGeneration(generation: number): void {
+  liveToolExecutorsByGeneration.delete(generation);
+}
+
+function resolveLiveToolExecutor(
+  toolName: string,
+  generation: number,
+): ((...args: unknown[]) => unknown) | null {
+  return liveToolExecutorsByGeneration.get(generation)?.get(toolName) ?? null;
 }
 
 function normalizeToolName(definition: unknown): string | null {
@@ -75,6 +104,35 @@ function buildStaleToolSafeResult(
   };
 }
 
+/** Deterministic safe result while Phase B activation is still opening/attaching DBs (#2181). */
+export function buildInitializingToolSafeResult(
+  toolName: string,
+  ownerGeneration: number,
+): {
+  content: Array<{ type: "text"; text: string }>;
+  details: Record<string, unknown>;
+} {
+  return {
+    content: [
+      {
+        type: "text",
+        text:
+          `memory-hybrid: reloading — tool "${toolName}" is temporarily unavailable ` +
+          `(generation ${ownerGeneration} still activating; retry shortly)`,
+      },
+    ],
+    details: {
+      ok: false,
+      initializing: true,
+      reloading: true,
+      skipped: true,
+      tool: toolName,
+      registrationGeneration: ownerGeneration,
+      activationPhase: "activating",
+    },
+  };
+}
+
 export function createGenerationGuardedToolsApi(
   ctx: Pick<ToolsContext, "registrationGeneration" | "currentRegistrationGenerationRef">,
   api: ClawdbotPluginApi,
@@ -102,7 +160,15 @@ export function createGenerationGuardedToolsApi(
     const guardedExecute = (...executeArgs: unknown[]): unknown => {
       const currentGeneration = generationRef.value;
       if (currentGeneration === ownerGeneration) {
-        return originalExecute(...executeArgs);
+        // Two-phase activation (#2181): current-generation stubs wait for Phase B before
+        // invoking the live body (or the original execute when registration was fully sync).
+        if (shouldReturnInitializingToolResult(ownerGeneration)) {
+          const live = resolveLiveToolExecutor(toolName, ownerGeneration);
+          if (!live) return buildInitializingToolSafeResult(toolName, ownerGeneration);
+          return live(...executeArgs);
+        }
+        const live = resolveLiveToolExecutor(toolName, ownerGeneration);
+        return (live ?? originalExecute)(...executeArgs);
       }
 
       const delegatedExecute = resolveCurrentToolExecutor(toolName, currentGeneration);
@@ -161,9 +227,60 @@ export function createGenerationGuardedToolsApi(
           }
         }
         clearToolExecutorsForGeneration(ownerGeneration);
+        clearLiveToolExecutorsForGeneration(ownerGeneration);
       },
     },
   };
+}
+
+/**
+ * Phase A (#2181): publish host-visible tool stubs for every contract name so sync `register()`
+ * satisfies the gateway contract while Phase B opens databases. Stub execute bodies return the
+ * initializing safe result until {@link bindActivatedToolExecutors} installs live handlers.
+ */
+export function registerActivationToolStubs(
+  ctx: Pick<ToolsContext, "registrationGeneration" | "currentRegistrationGenerationRef">,
+  api: ClawdbotPluginApi,
+): ToolRegistrationHandle {
+  const { api: guardedApi, handle } = createGenerationGuardedToolsApi(ctx, api);
+  const toolsApi = patchMemoryToolRegistrationApi(guardedApi);
+  const ownerGeneration = ctx.registrationGeneration ?? ctx.currentRegistrationGenerationRef?.value ?? -1;
+
+  for (const toolName of AGENT_TOOL_CONTRACT_NAMES) {
+    toolsApi.registerTool({
+      name: toolName,
+      description: `memory-hybrid: ${toolName} (activating)`,
+      parameters: { type: "object", properties: {} },
+      execute: async () => buildInitializingToolSafeResult(toolName, ownerGeneration),
+    } as never);
+  }
+  return handle;
+}
+
+/**
+ * Phase B (#2181): install real tool bodies into the live-executor map without re-calling the
+ * host's `registerTool` (stubs already occupy those names from Phase A).
+ */
+export function bindActivatedToolExecutors(ctx: ToolsContext, api: ClawdbotPluginApi): void {
+  const ownerGeneration = ctx.registrationGeneration ?? ctx.currentRegistrationGenerationRef?.value ?? -1;
+  const captureRegisterTool = (...args: unknown[]): unknown => {
+    const [definition] = args as [{ name?: unknown; execute?: unknown } | undefined];
+    const toolName = normalizeToolName(definition);
+    if (!definition || typeof definition.execute !== "function" || !toolName) return undefined;
+    setLiveToolExecutor(ownerGeneration, toolName, definition.execute as (...a: unknown[]) => unknown);
+    // Keep generation-guard delegation pointing at the stub's guarded execute (already set in
+    // Phase A). Live bodies are resolved via liveToolExecutorsByGeneration.
+    return undefined;
+  };
+
+  const captureApi = {
+    ...api,
+    registerTool: captureRegisterTool as ClawdbotPluginApi["registerTool"],
+  } as ClawdbotPluginApi;
+  const toolsApi = patchMemoryToolRegistrationApi(captureApi);
+  for (const installer of toolInstallers) {
+    installer.install(installer.selectContext(ctx, toolsApi), toolsApi);
+  }
 }
 
 /** Tool registration receives the stable plugin API (Phase 3). */

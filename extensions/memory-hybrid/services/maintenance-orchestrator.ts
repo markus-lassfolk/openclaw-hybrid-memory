@@ -31,6 +31,7 @@ import {
   reflectRulesStepSummaryIndicatesFailure,
   semanticOutcomeBlocksOrchestratorGuard,
 } from "./maintenance-job-run/semantic-outcome.js";
+import { nightlyStepsOwnedByDream } from "./dream-run.js";
 
 export type StepTier = "cycle" | "nightly";
 export type StepLlmTier = "none" | "nano" | "maintenance" | "default" | "heavy" | "embed" | "local";
@@ -710,6 +711,15 @@ export async function runMaintenanceOrchestrator(
         continue;
       }
 
+      if (nightlyStepsOwnedByDream(cfg.dreaming).has(step.name)) {
+        pushStepResult({
+          name: step.name,
+          status: "skipped_gate",
+          summary: "owned by unified Dream (dreaming.skipNightlyOverlap)",
+          durationMs: 0,
+        });
+        continue;
+      }
       if (step.featureGate && !step.featureGate(cfg)) {
         pushStepResult({
           name: step.name,

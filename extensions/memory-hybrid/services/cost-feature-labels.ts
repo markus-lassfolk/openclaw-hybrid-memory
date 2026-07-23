@@ -42,6 +42,8 @@ export const CostFeature = {
   evolutionPass: "evolution-pass",
   contaminationGuard: "contamination-guard",
   mineSynthesize: "mine-synthesize",
+  /** Unified Dream product operation (#2171). */
+  dream: "dream",
 } as const;
 
 export type CostFeatureId = (typeof CostFeature)[keyof typeof CostFeature];

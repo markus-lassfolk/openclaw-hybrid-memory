@@ -172,11 +172,39 @@ const syncWaitBuffer = new SharedArrayBuffer(4);
 const syncWaitArray = new Int32Array(syncWaitBuffer);
 
 /**
- * Synchronous variant of `awaitReloadTeardownBeforeOpen` for OpenClaw's sync `register()` contract.
- * Polls teardown queue depth while pumping the event loop via Atomics.wait (50ms ticks).
+ * Wait for scheduled teardowns belonging to `donorGeneration` (async — pumps the event loop).
+ * Prefer this over {@link blockReloadTeardownBeforeOpen}, which cannot drain Promise-based
+ * teardown because `Atomics.wait` blocks the event loop (#2181).
+ */
+export async function awaitDonorTeardown(
+  donorGeneration: number,
+  timeoutMs = TEARDOWN_WAIT_MS,
+): Promise<boolean> {
+  if (donorGeneration < 0) {
+    return awaitReloadTeardownBeforeOpen(timeoutMs);
+  }
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  while (Date.now() <= deadline) {
+    const pending = listTeardownPromisesForGeneration(donorGeneration);
+    if (pending.length === 0) return true;
+    const remainingMs = Math.max(0, deadline - Date.now());
+    await Promise.race([
+      Promise.all(pending.map((p) => p.catch(() => undefined))),
+      new Promise<void>((resolve) => setTimeout(resolve, remainingMs)),
+    ]);
+    if (isTeardownDrainedForGeneration(donorGeneration)) return true;
+    if (Date.now() >= deadline) break;
+  }
+  return isTeardownDrainedForGeneration(donorGeneration);
+}
+
+/**
+ * Synchronous variant of `awaitReloadTeardownBeforeOpen` for legacy callers.
  *
- * Prefer a bounded `timeoutMs` (default {@link TEARDOWN_WAIT_MS}). Avoid `timeoutMs === 0`
- * in tests: vitest cannot interrupt synchronous Atomics.wait loops, so unbounded waits hang CI.
+ * WARNING (#2181): `Atomics.wait` does **not** pump Node's event loop. Promise-chain teardown
+ * scheduled via {@link schedulePluginTeardown} will not run while this function blocks. Prefer
+ * {@link awaitDonorTeardown} / {@link awaitReloadTeardownBeforeOpen} from an async activation
+ * path. Kept only for tests and non-Promise wait scenarios.
  */
 export function blockReloadTeardownBeforeOpen(timeoutMs = TEARDOWN_WAIT_MS): boolean {
   if (timeoutMs < 0) return false;
@@ -232,6 +260,11 @@ export function decideReloadTeardownGate(params: {
   // separate chain; opening fresh handles is safe. Never throw here (#2111) — a hard failure
   // repeats on every reload attempt and leaves the plugin unregistered.
   return "fresh-hard-timeout";
+}
+
+/** Current depth of the serialized reload teardown queue (diagnostics / #2181 logs). */
+export function getReloadTeardownQueueDepth(): number {
+  return reloadTeardownQueueDepth;
 }
 
 /** Reset chain for unit tests only. */

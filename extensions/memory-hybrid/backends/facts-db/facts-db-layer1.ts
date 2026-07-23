@@ -10,6 +10,12 @@ import type { StoreConfig } from "../../config.js";
 import { emitMemoryEvent } from "../../services/memory-events.js";
 import type { MemoryEntry, MemoryScope, MemoryTier, ScopeFilter, SearchResult } from "../../types/memory.js";
 import { tryRestrictSqliteDbFileMode } from "../../utils/sqlite-file-perms.js";
+import {
+  buildMemoryConflictDetails,
+  computeInputStoreRevision,
+  MemoryConflictError,
+  occTokenForFact,
+} from "../../utils/fact-occ.js";
 import { normalizedHash } from "../../utils/tags.js";
 import { BaseSqliteStore } from "../base-sqlite-store.js";
 import { runFactsMigrations } from "../migrations/facts-migrations.js";
@@ -552,8 +558,29 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     );
   }
 
-  /** Mark a fact as superseded by a new fact. Sets superseded_at, superseded_by, and valid_until (bi-temporal). */
-  supersede(oldId: string, newId: string | null): boolean {
+  /** Mark a fact as superseded by a new fact. Sets superseded_at, superseded_by, and valid_until (bi-temporal).
+   * When `expectedHash` is set (#2175 OCC), refuse if the live OCC token no longer matches.
+   */
+  supersede(
+    oldId: string,
+    newId: string | null,
+    options?: { expectedHash?: string },
+  ): boolean {
+    if (options?.expectedHash) {
+      const current = this.getById(oldId);
+      if (!current) return false;
+      const currentHash = occTokenForFact(current);
+      if (currentHash !== options.expectedHash) {
+        throw new MemoryConflictError(
+          buildMemoryConflictDetails({
+            expectedHash: options.expectedHash,
+            currentHash,
+            currentRevision: current.revisionCount ?? 0,
+            factId: oldId,
+          }),
+        );
+      }
+    }
     const nowSec = Math.floor(Date.now() / 1000);
     const result = this.liveDb
       .prepare(
@@ -568,6 +595,33 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       if (updated) emitMemoryEvent("factUpdated", { entry: updated });
     }
     return result.changes > 0;
+  }
+
+  /** OCC token for a fact id (#2175). Returns null if missing/superseded. */
+  getOccToken(factId: string): string | null {
+    const fact = this.getById(factId);
+    if (!fact) return null;
+    return occTokenForFact(fact);
+  }
+
+  /** Whole-store revision fingerprint for dream promote (#2170/#2175). */
+  computeStoreRevision(limit = 10_000): string {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT id, text, revision_count, created_at FROM facts
+         WHERE superseded_at IS NULL
+         ORDER BY created_at DESC
+         LIMIT ?`,
+      )
+      .all(limit) as Array<{ id: string; text: string; revision_count: number; created_at: number }>;
+    return computeInputStoreRevision(
+      rows.map((r) => ({
+        id: r.id,
+        text: r.text,
+        revisionCount: r.revision_count ?? 0,
+        createdAt: r.created_at,
+      })),
+    );
   }
 
   /**

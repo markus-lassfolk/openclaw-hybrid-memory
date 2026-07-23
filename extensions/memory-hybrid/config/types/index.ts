@@ -2,6 +2,7 @@ export * from "./agents.js";
 export * from "./bootstrap.js";
 export * from "./capture.js";
 export * from "./core.js";
+export * from "./dreaming.js";
 export * from "./features.js";
 export * from "./maintenance.js";
 export * from "./research.js";
@@ -24,6 +25,7 @@ import type {
   ReflectionConfig,
 } from "./capture.js";
 import type { DiagnosticsConfig, EventLogConfig, PathConfig, StoreConfig, WALConfig } from "./core.js";
+import type { DreamingConfig } from "./dreaming.js";
 
 import type {
   AliasesConfig,
@@ -917,6 +919,11 @@ export type HybridMemoryConfig = {
   research: ResearchConfig;
   /** Nightly dream cycle: automated prune → consolidate → reflect (Issue #143, default: disabled). */
   nightlyCycle: NightlyCycleConfig;
+  /**
+   * Autonomous dreaming: candidate/shadow store + machine promote/rollback (#2170).
+   * Defaults off / shadow-on — not a human review inbox.
+   */
+  dreaming: DreamingConfig;
   /** Confidence reinforcement on repeated mentions (Issue #147, default: enabled). */
   reinforcement: ReinforcementConfig;
   /** Topic cluster detection: BFS connected-component analysis on memory_links (Issue #146). */

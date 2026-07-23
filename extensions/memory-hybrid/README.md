@@ -60,7 +60,7 @@ All tools use **underscore** names (`memory_store`, `memory_recall`, …). Dotte
 | `config.ts` | Decay classes, TTL defaults, config parsing (incl. autoRecall, store, etc.) |
 | `index.ts` | Plugin implementation (SQLite+FTS5, LanceDB, tools, CLI, lifecycle) |
 | `versionInfo.ts` | Plugin and memory-manager version metadata |
-| `backends/event-bus.ts` | Event Bus — append-only `memory_events` SQLite table for sensor → Rumination Engine pipeline |
+| `backends/event-bus.ts` | Event Bus — append-only `memory_events` SQLite table for sensor → maintenance/Dream pipeline |
 | `tools/dashboard-routes.ts` | Dashboard HTTP route registration — registers all `/plugins/memory-dashboard/*` routes with consistent auth (Issue #279) |
 | `tools/public-api-routes.ts` | Public API surface routes (`/plugins/memory-public/*`) for health/search/timeline/stats/export/fact (Issue #1027) |
 | `services/public-export-bundle.ts` | Stable export bundle builder used by `GET /plugins/memory-public/export` (Issue #1027) |
@@ -83,7 +83,7 @@ When **`graph.enabled`** is true, new facts are enriched asynchronously with typ
 
 ## Event Bus
 
-`backends/event-bus.ts` adds an **Event Bus**: an append-only `memory_events` SQLite table that decouples sensor sweeps (producers) from the Rumination Engine (consumer).
+`backends/event-bus.ts` adds an **Event Bus**: an append-only `memory_events` SQLite table that decouples sensor sweeps (producers) from maintenance and Dream consumers (see `docs/event-bus.md`; no separate Rumination Engine module).
 
 Key API:
 
