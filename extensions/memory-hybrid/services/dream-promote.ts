@@ -54,8 +54,7 @@ export function evaluateDreamGates(
   for (const entry of entries) {
     if (dreaming.autoPromote.requireProvenance) {
       const hasSessions = entry.sessionIds.length > 0;
-      const hasRationale = typeof entry.rationale === "string" && entry.rationale.trim().length > 0;
-      if (!hasSessions && !hasRationale) {
+      if (!hasSessions) {
         decisions.push({
           entryId: entry.id,
           pass: false,
@@ -135,7 +134,13 @@ export function evaluateDreamGates(
       scope === "session" || scope === "agent" || scope === "user" || scope === "global" ? scope : "global";
     let tier = dreaming.prevalence[tierKey];
     if (tierKey === "global" && dreaming.prevalence.personalSingleTenant) {
-      tier = { ...dreaming.prevalence.user, minAgents: 1 };
+      // Personal vault: reuse user session bar + 1 agent, but do not inherit user minConfidence
+      // (compose rarely emits confidence; that bar is for explicit user-tier curriculum).
+      tier = {
+        minSessions: dreaming.prevalence.user.minSessions,
+        minAgents: 1,
+        minConfidence: dreaming.prevalence.global.minConfidence,
+      };
     }
     const sessions = Math.max(entry.prevalence?.sessions ?? 0, entry.sessionIds.length);
     const agents = entry.prevalence?.agents ?? (entry.sessionIds.length > 0 ? 1 : 0);
@@ -152,14 +157,17 @@ export function evaluateDreamGates(
       typeof (entry.payload as { confidence?: unknown }).confidence === "number"
         ? (entry.payload as { confidence: number }).confidence
         : undefined;
-    if (tier.minConfidence != null && confidence != null && confidence < tier.minConfidence) {
-      decisions.push({
-        entryId: entry.id,
-        pass: false,
-        reason: `confidence_below_${tier.minConfidence}`,
-      });
-      store.updateCandidateEntry(entry.id, { status: "gated_block" });
-      continue;
+    if (tier.minConfidence != null) {
+      // Fail closed: missing confidence does not bypass a configured threshold.
+      if (confidence == null || confidence < tier.minConfidence) {
+        decisions.push({
+          entryId: entry.id,
+          pass: false,
+          reason: confidence == null ? `confidence_missing_required_${tier.minConfidence}` : `confidence_below_${tier.minConfidence}`,
+        });
+        store.updateCandidateEntry(entry.id, { status: "gated_block" });
+        continue;
+      }
     }
 
     decisions.push({ entryId: entry.id, pass: true, reason: "ok" });
@@ -216,7 +224,13 @@ function applyEntry(
         supersedesId: entry.targetFactId,
         tags: [...(storeInput.tags ?? []), ...dreamTags],
       });
-      if (result.skipped) return { appliedFactId: null, postHash: null };
+      // Fail closed: never mark supersede applied without retiring the target.
+      if (result.skipped) {
+        throw new Error("supersede replacement rejected by store guard");
+      }
+      if (!result.entry?.id) {
+        throw new Error("supersede replacement missing fact id");
+      }
       // Per-fact OCC (#2175): require propose-time preHash — never fail open.
       if (!entry.preHash) throw new Error("supersede requires preHash OCC token");
       factsDb.supersede(entry.targetFactId, result.entry.id, { expectedHash: entry.preHash });

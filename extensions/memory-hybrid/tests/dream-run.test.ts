@@ -133,6 +133,25 @@ describe("runDream (#2171)", () => {
     expect(result.stepSummaries.some((s) => s.step === "dream-cycle-core")).toBe(true);
   });
 
+  it("restores an outer maintenance deadline after dream completes", async () => {
+    const { setMaintenanceRunDeadlineMs, getMaintenanceRunDeadlineMs, clearMaintenanceRunDeadline } =
+      await import("../utils/maintenance-run-deadline.js");
+    clearMaintenanceRunDeadline();
+    const outer = Date.now() + 60_000;
+    setMaintenanceRunDeadlineMs(outer);
+    const distill = vi.fn(async () => ({ detail: "ok" }));
+    await runDream({
+      factsDb,
+      store,
+      cfg: dreamCfg({ compose: ["distill"], maxRuntimeMinutes: 1 }),
+      sessionIds: ["s1"],
+      steps: { distill },
+      promote: false,
+    });
+    expect(getMaintenanceRunDeadlineMs()).toBe(outer);
+    clearMaintenanceRunDeadline();
+  });
+
   it("nightlyStepsOwnedByDream respects skipNightlyOverlap", () => {
     const owned = nightlyStepsOwnedByDream(
       dreamCfg({
@@ -145,8 +164,15 @@ describe("runDream (#2171)", () => {
     expect(owned.has("resolve-contradictions")).toBe(true);
     expect(owned.has("reflect")).toBe(true);
     expect(owned.has("consolidate")).toBe(true);
+    // Dream reflect does not own weekly rules/meta/identity extractors.
+    expect(owned.has("reflect-rules")).toBe(false);
+    expect(owned.has("reflect-meta")).toBe(false);
+    expect(owned.has("reflect-identity")).toBe(false);
 
     const none = nightlyStepsOwnedByDream(dreamCfg({ enabled: false }));
     expect(none.size).toBe(0);
+
+    const defaultOverlap = nightlyStepsOwnedByDream(dreamCfg({ enabled: true }));
+    expect(defaultOverlap.size).toBe(0); // skipNightlyOverlap defaults false
   });
 });

@@ -66,14 +66,18 @@ export function categoryMatchesSteeringList(category: string, list: string[]): b
 export function shouldSteeringIgnore(
   category: string,
   key: string | null,
-  text: string,
+  _text: string,
   steering: DreamSteeringConfig,
 ): boolean {
   const resolved = resolveSteering(steering);
-  const hay = `${category} ${key ?? ""} ${text}`.toLowerCase();
+  const cat = category.toLowerCase().trim();
+  const keyNorm = (key ?? "").toLowerCase().trim();
   return resolved.ignore.some((token) => {
     const t = token.toLowerCase().trim();
-    return t.length > 0 && hay.includes(t);
+    if (!t) return false;
+    // Exact token match on category/key only — never substring-scan free text (ops profile
+    // would otherwise ignore every `preference` category fact via haystack includes).
+    return cat === t || keyNorm === t;
   });
 }
 

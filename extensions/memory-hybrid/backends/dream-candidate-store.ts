@@ -199,10 +199,23 @@ export class DreamCandidateStore {
     return row ? mapDreamRun(row) : null;
   }
 
-  listDreamRuns(limit = 50): DreamRunRecord[] {
+  listDreamRuns(limit = 50, opts?: { sinceSec?: number; untilSec?: number }): DreamRunRecord[] {
+    const cap = Math.max(1, Math.floor(limit));
+    const sinceSec = opts?.sinceSec;
+    const untilSec = opts?.untilSec;
+    if (sinceSec != null || untilSec != null) {
+      const since = sinceSec ?? 0;
+      const until = untilSec ?? Number.MAX_SAFE_INTEGER;
+      const rows = this.db
+        .prepare(
+          "SELECT * FROM dream_runs WHERE created_at >= ? AND created_at <= ? ORDER BY created_at DESC LIMIT ?",
+        )
+        .all(since, until, cap) as DreamRunRow[];
+      return rows.map(mapDreamRun);
+    }
     const rows = this.db
       .prepare("SELECT * FROM dream_runs ORDER BY created_at DESC LIMIT ?")
-      .all(Math.max(1, Math.floor(limit))) as DreamRunRow[];
+      .all(cap) as DreamRunRow[];
     return rows.map(mapDreamRun);
   }
 

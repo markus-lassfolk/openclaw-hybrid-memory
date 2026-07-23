@@ -117,7 +117,7 @@ export function parseDreamingConfig(cfg: Record<string, unknown>): DreamingConfi
     compose: parseCompose(raw.compose),
     maxSessions,
     maxRuntimeMinutes,
-    skipNightlyOverlap: raw.skipNightlyOverlap !== false,
+    skipNightlyOverlap: raw.skipNightlyOverlap === true,
     promoteAfterRun: raw.promoteAfterRun === true,
     candidateStore: {
       enabled: candidateEnabled,

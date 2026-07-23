@@ -120,6 +120,43 @@ describe("dream promote/rollback (#2170)", () => {
     expect(store.getDreamRun(run.id)?.status).toBe("gated");
   });
 
+  it("confidence gate fails closed when minConfidence is set but payload omits confidence", () => {
+    const run = store.createDreamRun({
+      inputStoreRevision: factsDb.computeStoreRevision(),
+      sessionIds: ["s1"],
+      shadow: false,
+    });
+    store.appendCandidateEntries(run.id, [
+      {
+        op: "add",
+        payload: {
+          text: "user scoped fact without confidence field",
+          category: "preference",
+          importance: 0.7,
+          source: "dream",
+          entity: null,
+          key: null,
+          value: null,
+          scope: "user",
+          scopeTarget: "u1",
+        },
+        evidence: {
+          sessionIds: ["s1", "s2"],
+          prevalence: { sessions: 2, agents: 1 },
+          rationale: "ok",
+        },
+        reverse: { op: "delete_fact", payload: {} },
+      },
+    ]);
+    const dreaming = cfg({ enabled: true, shadow: false });
+    dreaming.permissionBoundary = { targetScope: "user", enforce: true, personalMode: false };
+    dreaming.prevalence.user = { minSessions: 2, minAgents: 1, minConfidence: 0.7 };
+    dreaming.autoPromote.shadowValidation.enabled = false;
+    const result = promoteDreamRun(factsDb, store, run.id, { cfg: dreaming, force: true });
+    expect(result.status).toBe("quarantined");
+    expect(result.gateReport.decisions[0]?.reason).toMatch(/confidence_missing_required/);
+  });
+
   it("shadow mode gates without mutating live facts", () => {
     const before = factsDb.count();
     const run = store.createDreamRun({

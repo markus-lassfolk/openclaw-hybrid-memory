@@ -128,7 +128,8 @@ export type DreamingConfig = {
   maxRuntimeMinutes: number;
   /**
    * When Dream is enabled, skip overlapping nightly maintenance steps so Dream owns them.
-   * Default: true.
+   * Default: false (opt-in) — enabling Dream must not silently drop live nightly curation
+   * while shadow/autoPromote are still off.
    */
   skipNightlyOverlap: boolean;
   /**
@@ -152,7 +153,7 @@ export const DEFAULT_DREAMING_CONFIG: DreamingConfig = {
   compose: [...DEFAULT_DREAM_COMPOSE],
   maxSessions: 20,
   maxRuntimeMinutes: 30,
-  skipNightlyOverlap: true,
+  skipNightlyOverlap: false,
   promoteAfterRun: false,
   candidateStore: {
     enabled: false,

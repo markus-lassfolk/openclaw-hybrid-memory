@@ -2099,7 +2099,7 @@
           },
           "skipNightlyOverlap": {
             "type": "boolean",
-            "description": "When Dream is enabled, skip overlapping nightly maintenance steps (default: true)."
+            "description": "When Dream is enabled, skip overlapping nightly maintenance steps (default: false — opt-in; enable only after autoPromote/shadow campaign is ready)."
           },
           "promoteAfterRun": {
             "type": "boolean",

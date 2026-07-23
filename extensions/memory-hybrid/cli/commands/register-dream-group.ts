@@ -86,6 +86,7 @@ export function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
         return {
           detail: `steering=${steering.profile} skipped_no_attached_sessions`,
           candidates: [],
+          skipped: true,
         };
       }
       const result = await m.runDistill!(
@@ -121,6 +122,7 @@ export function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
         return {
           detail: `steering=${steering.profile} skipped_no_attached_sessions`,
           candidates: [],
+          skipped: true,
         };
       }
       const result = await m.runSelfCorrectionRun!({
@@ -146,7 +148,11 @@ export function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
   if (m.runContradictionCandidates || m.runResolveContradictionsDryRun || m.runResolveContradictionsAuto) {
     runners.contradictions = async ({ dryRun, steering, sessionIds, dreamRunId }) => {
       if (sessionIds.length === 0) {
-        return { detail: `steering=${steering.profile} skipped_no_attached_sessions`, candidates: [] };
+        return {
+          detail: `steering=${steering.profile} skipped_no_attached_sessions`,
+          candidates: [],
+          skipped: true,
+        };
       }
       const parts: string[] = [`steering=${steering.profile}`];
       if (m.runContradictionCandidates) {
@@ -187,6 +193,7 @@ export function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
         return {
           detail: `${steeringPrompt.split("\n")[0]} skipped_no_attached_sessions`,
           candidates: [],
+          skipped: true,
         };
       }
       const result = await m.runReflection({
@@ -227,6 +234,7 @@ export function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
         return {
           detail: `steering=${steering.profile} skipped_no_attached_sessions`,
           candidates: [],
+          skipped: true,
         };
       }
       const result = await m.runConsolidate({
@@ -335,6 +343,22 @@ export function registerDreamGroup(mem: Chainable, ctx: DreamCliContext): void {
               .map((s) => s.trim())
               .filter(Boolean)
           : undefined;
+        if (composeOverride?.length) {
+          const known = new Set([
+            "distill",
+            "self-correction",
+            "contradictions",
+            "reflect",
+            "consolidate",
+            "dream-cycle-core",
+          ]);
+          const invalid = composeOverride.filter((s) => !known.has(s));
+          if (invalid.length > 0) {
+            process.stderr.write(`dream run: invalid --compose step(s): ${invalid.join(", ")}\n`);
+            process.exitCode = 1;
+            return;
+          }
+        }
         const dreamCfg: DreamingConfig = {
           ...base,
           enabled: true,
@@ -388,7 +412,14 @@ export function registerDreamGroup(mem: Chainable, ctx: DreamCliContext): void {
             timedOut: result.timedOut,
             costFeature: result.costFeature,
           });
-          if (result.run.status === "failed") process.exitCode = 1;
+          if (
+            result.run.status === "failed" ||
+            result.run.status === "quarantined" ||
+            result.promoteResult?.status === "failed" ||
+            result.promoteResult?.status === "quarantined"
+          ) {
+            process.exitCode = 1;
+          }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           process.stderr.write(`dream run failed: ${message}\n`);
@@ -433,7 +464,7 @@ export function registerDreamGroup(mem: Chainable, ctx: DreamCliContext): void {
       });
       printJson(result);
       if (result.error || result.status === "failed" || result.status === "quarantined") {
-        process.exitCode = result.applied ? 0 : 1;
+        process.exitCode = 1;
       }
     });
 

@@ -147,7 +147,7 @@ No nightly UI confirmation. Profile id is stored on each `dream_run`.
     compose: ["distill", "contradictions", "reflect", "consolidate"],
     maxSessions: 20,
     maxRuntimeMinutes: 30,
-    skipNightlyOverlap: true,
+    skipNightlyOverlap: false,   // opt-in: do not drop live nightly until Dream owns promote
     promoteAfterRun: false,
     candidateStore: {
       enabled: false,

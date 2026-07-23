@@ -98,10 +98,11 @@ export function buildDreamRoiReport(
 ): DreamRoiReport {
   const untilSec = options.untilSec ?? Math.floor(Date.now() / 1000);
   const sinceSec = options.sinceSec ?? untilSec - 30 * 24 * 3600;
-  const limit = Math.max(1, Math.min(500, options.limit ?? 100));
+  // Prefer a high ceiling so lookbackDays is honored; window is applied in SQL.
+  const limit = Math.max(1, Math.min(10_000, options.limit ?? 5000));
 
-  const all = store.listDreamRuns(limit);
-  const runsInWindow = all.filter((r) => r.createdAt >= sinceSec && r.createdAt <= untilSec);
+  const all = store.listDreamRuns(limit, { sinceSec, untilSec });
+  const runsInWindow = all;
   const costAgg = queryDreamCost(options.db, sinceSec, untilSec);
 
   const rows: DreamRoiRow[] = runsInWindow.map((run) => {

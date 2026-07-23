@@ -610,6 +610,12 @@ export function buildCliMaintenanceRunners(
       },
       dreaming.maxSessions ?? 20,
     );
+    // Fail closed for ownership: empty attachment must not claim skipNightlyOverlap success.
+    if (attachment.included.length === 0 && dreaming.skipNightlyOverlap === true) {
+      throw new Error(
+        `dream-run no attached sessions (discovered=${discovered.length} excluded=${attachment.excluded.length}) — refusing skipNightlyOverlap ownership semantic=partial`,
+      );
+    }
     const result = await runDream({
       factsDb: b.factsDb,
       store,
@@ -631,6 +637,13 @@ export function buildCliMaintenanceRunners(
     }
     const boundSteps = result.stepSummaries.filter((s) => s.skipped !== true);
     const failedBound = boundSteps.filter((s) => s.ok === false);
+    const allSkipped =
+      result.stepSummaries.length > 0 && result.stepSummaries.every((s) => s.skipped === true);
+    if (allSkipped && dreaming.skipNightlyOverlap === true) {
+      throw new Error(
+        `dream-run all compose stages skipped dreamRunId=${result.dreamRunId} — refusing skipNightlyOverlap ownership semantic=partial`,
+      );
+    }
     if (boundSteps.length > 0 && failedBound.length === boundSteps.length) {
       throw new Error(
         `dream-run all compose steps failed dreamRunId=${result.dreamRunId} steps=${failedBound.length} semantic=failed`,

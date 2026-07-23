@@ -15,6 +15,7 @@ import { DEFAULT_DREAMING_CONFIG } from "../config/types/dreaming.js";
 import type { DreamSteeringConfig } from "../config/types/dreaming.js";
 import {
   clearMaintenanceRunDeadline,
+  getMaintenanceRunDeadlineMs,
   maintenanceRunDeadlineReached,
   setMaintenanceRunDeadlineMs,
 } from "../utils/maintenance-run-deadline.js";
@@ -46,7 +47,7 @@ export type DreamStepRunner = (ctx: {
   /** When false, runners must not mutate FactsDB (shadow / candidate-only). */
   dryRun: boolean;
   abortSignal?: AbortSignal;
-}) => Promise<{ detail: string; candidates?: CandidateEntryInput[] }>;
+}) => Promise<{ detail: string; candidates?: CandidateEntryInput[]; skipped?: boolean }>;
 
 export type DreamStepRunners = Partial<Record<DreamComposeStep, DreamStepRunner>>;
 
@@ -192,7 +193,13 @@ export async function runDream(options: RunDreamOptions): Promise<RunDreamResult
     options.liveMutateCompose === true && !shadow && options.dryShadow !== true && cfg.candidateStore.enabled !== true;
 
   const maxMinutes = options.maxRuntimeMinutes ?? cfg.maxRuntimeMinutes;
-  const deadlineMs = Date.now() + Math.max(1, maxMinutes) * 60_000;
+  const dreamDeadlineMs = Date.now() + Math.max(1, maxMinutes) * 60_000;
+  // Never widen or wipe an outer orchestrator deadline — nest under the tighter bound (#1953).
+  const priorDeadlineMs = getMaintenanceRunDeadlineMs();
+  const deadlineMs =
+    priorDeadlineMs != null && Number.isFinite(priorDeadlineMs)
+      ? Math.min(priorDeadlineMs, dreamDeadlineMs)
+      : dreamDeadlineMs;
   setMaintenanceRunDeadlineMs(deadlineMs);
 
   return withCostFeature(CostFeature.dream, async () => {
@@ -236,7 +243,7 @@ export async function runDream(options: RunDreamOptions): Promise<RunDreamResult
         if (!runner) {
           stepSummaries.push({
             step,
-            ok: true,
+            ok: false,
             detail: "no runner bound (record-only)",
             skipped: true,
           });
@@ -251,7 +258,16 @@ export async function runDream(options: RunDreamOptions): Promise<RunDreamResult
             steering,
             dryRun: !liveMutateCompose,
           });
-          stepSummaries.push({ step, ok: true, detail: result.detail });
+          const skipped =
+            result.skipped === true ||
+            /\bskipped_no_attached_sessions\b/i.test(result.detail) ||
+            /\bskipped_no_runner\b/i.test(result.detail);
+          stepSummaries.push({
+            step,
+            ok: !skipped,
+            detail: result.detail,
+            skipped: skipped || undefined,
+          });
           if (result.candidates?.length) {
             collectedCandidates.push(...result.candidates);
           }
@@ -378,7 +394,12 @@ export async function runDream(options: RunDreamOptions): Promise<RunDreamResult
       store.updateDreamRunStatus(run.id, "failed", { failureReason: message });
       throw err;
     } finally {
-      clearMaintenanceRunDeadline();
+      // Restore outer orchestrator deadline (do not leave the rest of the nightly pass unbounded).
+      if (priorDeadlineMs != null && Number.isFinite(priorDeadlineMs)) {
+        setMaintenanceRunDeadlineMs(priorDeadlineMs);
+      } else {
+        clearMaintenanceRunDeadline();
+      }
     }
   });
 }
@@ -400,10 +421,8 @@ export function nightlyStepsOwnedByDream(cfg: DreamingConfig | null | undefined)
         owned.add("resolve-contradictions");
         break;
       case "reflect":
+        // Dream reflect only runs base pattern reflection — do not own weekly rules/meta/identity.
         owned.add("reflect");
-        owned.add("reflect-rules");
-        owned.add("reflect-meta");
-        owned.add("reflect-identity");
         break;
       case "consolidate":
         owned.add("consolidate");

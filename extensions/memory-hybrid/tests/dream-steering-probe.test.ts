@@ -131,7 +131,10 @@ describe("dream steering (#2176)", () => {
       reverse: { op: "delete_fact" as const, payload: {} },
     };
     store.appendCandidateEntries(run.id, [
-      { ...entryBase, payload: { ...entryBase.payload, text: "one_off_debug scratch note" } },
+      {
+        ...entryBase,
+        payload: { ...entryBase.payload, text: "scratch note", key: "one_off_debug" },
+      },
       { ...entryBase, payload: { ...entryBase.payload, text: "durable user preference" } },
     ]);
 

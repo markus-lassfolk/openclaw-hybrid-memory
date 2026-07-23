@@ -46,11 +46,18 @@ export function parseBaseline(json: string | null | undefined): DreamMetricSet |
   try {
     const parsed = JSON.parse(json) as Partial<DreamMetricSet>;
     if (typeof parsed.effectScore !== "number") return null;
+    const signalSource =
+      parsed.signalSource === "blended" ||
+      parsed.signalSource === "tool_effectiveness" ||
+      parsed.signalSource === "feedback_proxy"
+        ? parsed.signalSource
+        : undefined;
     return {
       successRate: typeof parsed.successRate === "number" ? parsed.successRate : 0,
       retryRate: typeof parsed.retryRate === "number" ? parsed.retryRate : 0,
       effectScore: parsed.effectScore,
       sessionsObserved: typeof parsed.sessionsObserved === "number" ? parsed.sessionsObserved : 0,
+      ...(signalSource ? { signalSource } : {}),
     };
   } catch {
     return null;
@@ -122,6 +129,21 @@ export function evaluateDreamOutcome(
       after,
       decision: "insufficient_data",
       reason: "missing_baseline",
+    });
+  }
+
+  if (
+    baseline.signalSource &&
+    after.signalSource &&
+    baseline.signalSource !== after.signalSource
+  ) {
+    return finish({
+      dreamRunId,
+      window: { fromSec, toSec, sessions: after.sessionsObserved },
+      baseline,
+      after,
+      decision: "insufficient_data",
+      reason: `signal_source_mismatch_${baseline.signalSource}_vs_${after.signalSource}`,
     });
   }
 
