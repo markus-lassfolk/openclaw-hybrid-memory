@@ -146,7 +146,7 @@ export function gatherSessionFiles(opts: {
  * Restrict gathered session files to an allowlist of session ids (#2174).
  * When `sessionIds` is defined (including empty), only matching files are kept —
  * empty allowlist → no files (fail closed for Dream attachment).
- * Matching: basename without `.jsonl` equals id, or path contains `/${id}.jsonl` / `/${id}`.
+ * Matching is exact basename stem equality only (no path substring / prefix matches).
  */
 export function filterSessionFilesByAllowlist<T extends { path: string }>(
   files: T[],
@@ -154,12 +154,13 @@ export function filterSessionFilesByAllowlist<T extends { path: string }>(
 ): T[] {
   if (sessionIds === undefined) return files;
   if (sessionIds.length === 0) return [];
-  const ids = [...new Set(sessionIds.map((s) => s.trim()).filter((s) => s.length > 0))];
-  if (ids.length === 0) return [];
+  const ids = new Set(sessionIds.map((s) => s.trim()).filter((s) => s.length > 0));
+  if (ids.size === 0) return [];
   return files.filter((f) => {
     const base = f.path.split(/[/\\]/).pop() ?? "";
-    const stem = base.endsWith(".jsonl") ? base.slice(0, -".jsonl".length) : base;
-    return ids.some((id) => stem === id || stem.startsWith(`${id}.`) || f.path.includes(`/${id}.jsonl`) || f.path.includes(`\\${id}.jsonl`));
+    if (!base.endsWith(".jsonl") || base.startsWith(".deleted")) return false;
+    const stem = base.slice(0, -".jsonl".length);
+    return ids.has(stem);
   });
 }
 
@@ -420,7 +421,7 @@ export async function runDistillForCli(
         : { version: ADAPTIVE_MODEL_LIMITS_VERSION, models: {} }
       : { version: ADAPTIVE_MODEL_LIMITS_VERSION, models: {} };
 
-    type DistillBlock = { text: string; tokens: number };
+    type DistillBlock = { text: string; tokens: number; sessionId?: string };
     const blocks: DistillBlock[] = [];
     const distillPrompt = loadPrompt("distill-sessions");
     const steeringBlock = opts.steeringPrompt?.trim() ? `${opts.steeringPrompt.trim()}\n\n` : "";
@@ -462,6 +463,9 @@ export async function runDistillForCli(
           );
         }
 
+        const base = basename(fp);
+        const sessionId = base.endsWith(".jsonl") ? base.slice(0, -".jsonl".length) : base;
+
         // Safety check: ensure chunks don't exceed model catalog input limit (prompt + block)
         const validChunks = chunks.filter((chunk, idx) => {
           const chunkTokens = estimateTokens(chunk);
@@ -480,7 +484,7 @@ export async function runDistillForCli(
               ? `\n--- SESSION: ${basename(fp)} ---\n\n`
               : `\n--- SESSION: ${basename(fp)} (chunk ${c + 1}/${validChunks.length}) ---\n\n`;
           const block = header + validChunks[c];
-          blocks.push({ text: block, tokens: estimateTokens(block) });
+          blocks.push({ text: block, tokens: estimateTokens(block), sessionId });
         }
       } catch (err) {
         capturePluginError(err as Error, {
@@ -505,6 +509,7 @@ export async function runDistillForCli(
       value?: string;
       source_date?: string;
       tags?: string[];
+      sourceSessionId?: string;
     }> = [];
     const progress = createProgressReporter(sink, Math.max(1, blocks.length), "Distilling session chunks");
     let processedBlocks = 0;
@@ -574,12 +579,19 @@ export async function runDistillForCli(
       }
     };
 
-    const buildBatch = (startIdx: number, batchTokenLimit: number): { text: string; count: number; tokens: number } => {
+    const buildBatch = (
+      startIdx: number,
+      batchTokenLimit: number,
+    ): { text: string; count: number; tokens: number; sessionId: string | null } => {
       let text = "";
       let tokens = promptTokens;
       let count = 0;
+      const firstSessionId = blocks[startIdx]?.sessionId ?? null;
+      // Dream allowlist path: keep batches single-session for attribution (#2174).
+      const isolateSessions = opts.sessionIds !== undefined;
       for (let i = startIdx; i < blocks.length; i++) {
         const b = blocks[i];
+        if (isolateSessions && firstSessionId != null && b.sessionId !== firstSessionId) break;
         const sep = text ? "\n" : "";
         const nextTokens = tokens + b.tokens;
         if (count > 0 && nextTokens > batchTokenLimit) break;
@@ -588,7 +600,13 @@ export async function runDistillForCli(
         tokens = nextTokens;
         count++;
       }
-      return { text, count, tokens };
+      let sessionId: string | null = null;
+      if (count > 0) {
+        const ids = Array.from({ length: count }, (_, i) => blocks[startIdx + i]?.sessionId ?? null);
+        const first = ids[0] ?? null;
+        sessionId = ids.every((id) => id === first) ? first : null;
+      }
+      return { text, count, tokens, sessionId };
     };
 
     let batchFailures = 0;
@@ -783,6 +801,7 @@ export async function runDistillForCli(
               value,
               source_date: source_date ?? undefined,
               tags,
+              sourceSessionId: batch.sessionId ?? undefined,
             });
           } catch (err) {
             capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:parse-json" });

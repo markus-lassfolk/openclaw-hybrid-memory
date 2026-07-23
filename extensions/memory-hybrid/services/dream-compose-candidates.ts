@@ -19,6 +19,8 @@ export type DistillProposedFact = {
   value?: string | null;
   source_date?: string | null;
   tags?: string[];
+  /** Session id that produced this fact (basename stem); required for multi-session Dream writes. */
+  sourceSessionId?: string | null;
 };
 
 export type ReflectProposedPattern = {
@@ -44,14 +46,33 @@ function evidenceForSessions(
   sessionIds: string[],
   rationale: string,
 ): CandidateEntryInput["evidence"] {
+  const unique = [...new Set(sessionIds.map((s) => s.trim()).filter(Boolean))];
   return {
-    sessionIds,
+    sessionIds: unique,
     prevalence: {
-      sessions: Math.max(1, sessionIds.length || 1),
-      agents: 1,
+      sessions: unique.length,
+      agents: unique.length > 0 ? 1 : 0,
     },
     rationale,
   };
+}
+
+function resolveAttributedWriteScope(input: {
+  sessionIds: string[];
+  sourceSessionId?: string | null;
+}): { scope: "session" | "agent"; scopeTarget: string; evidenceSessions: string[] } | null {
+  const attached = [...new Set(input.sessionIds.map((s) => s.trim()).filter(Boolean))];
+  const source = input.sourceSessionId?.trim() || "";
+  if (source) {
+    if (attached.length > 0 && !attached.includes(source)) return null;
+    return { scope: "session", scopeTarget: source, evidenceSessions: [source] };
+  }
+  if (attached.length === 1) {
+    return { scope: "session", scopeTarget: attached[0]!, evidenceSessions: attached };
+  }
+  if (attached.length === 0) return null;
+  // Multi-session without per-fact attribution: never collapse into sessionIds[0].
+  return { scope: "agent", scopeTarget: "dream-multi", evidenceSessions: attached };
 }
 
 export function distillProposalsToCandidates(input: {
@@ -64,6 +85,11 @@ export function distillProposalsToCandidates(input: {
   for (const fact of input.proposals.slice(0, DREAM_COMPOSE_CANDIDATE_CAP)) {
     const text = fact.text?.trim();
     if (!text) continue;
+    const write = resolveAttributedWriteScope({
+      sessionIds: input.sessionIds,
+      sourceSessionId: fact.sourceSessionId,
+    });
+    if (!write) continue;
     out.push({
       op: "add",
       payload: {
@@ -75,11 +101,11 @@ export function distillProposalsToCandidates(input: {
         value: fact.value ?? null,
         source: "dream-distill",
         tags: [...(fact.tags ?? []), "dream", "distill"],
-        scope: input.sessionIds.length > 0 ? "session" : "agent",
-        scopeTarget: input.sessionIds[0] ?? "dream",
+        scope: write.scope,
+        scopeTarget: write.scopeTarget,
       },
       evidence: evidenceForSessions(
-        input.sessionIds,
+        write.evidenceSessions,
         `distill dry-run proposal for dream ${input.dreamRunId}`,
       ),
       reverse: { op: "delete_fact", payload: {} },
@@ -99,11 +125,23 @@ export function reflectProposalsToCandidates(input: {
 }): CandidateEntryInput[] {
   const out: CandidateEntryInput[] = [];
   let sortOrder = 0;
-  const scope: "session" | "agent" | "user" | "global" =
-    input.writeScope ?? (input.sessionIds.length > 0 ? "session" : "agent");
-  const scopeTarget =
+  if (input.sessionIds.length === 0 && input.writeScope !== "global") {
+    return out;
+  }
+  let scope: "session" | "agent" | "user" | "global" =
+    input.writeScope ?? (input.sessionIds.length === 1 ? "session" : "agent");
+  let scopeTarget =
     input.writeScopeTarget ??
-    (scope === "session" || scope === "agent" || scope === "user" ? (input.sessionIds[0] ?? "dream") : null);
+    (scope === "session"
+      ? (input.sessionIds[0] ?? null)
+      : scope === "agent" || scope === "user"
+        ? (input.sessionIds[0] ?? "dream-multi")
+        : null);
+  // Never collapse multi-session Dream patterns into sessionIds[0].
+  if (scope === "session" && input.sessionIds.length !== 1) {
+    scope = "agent";
+    scopeTarget = "dream-multi";
+  }
   for (const pattern of input.proposals.slice(0, DREAM_COMPOSE_CANDIDATE_CAP)) {
     const text = pattern.text?.trim();
     if (!text) continue;
@@ -133,14 +171,6 @@ export function reflectProposalsToCandidates(input: {
   return out;
 }
 
-export type ContradictionProposedResolve = {
-  contradictionId: string;
-  factIdNew: string;
-  factIdOld: string;
-  /** Propose-time OCC token for factIdOld (#2175). */
-  preHash: string;
-};
-
 export type SelfCorrectionProposedFact = {
   text: string;
   category: string;
@@ -148,6 +178,7 @@ export type SelfCorrectionProposedFact = {
   key?: string | null;
   value?: string | null;
   tags?: string[];
+  sourceSessionId?: string | null;
 };
 
 export function selfCorrectionProposalsToCandidates(input: {
@@ -160,6 +191,11 @@ export function selfCorrectionProposalsToCandidates(input: {
   for (const fact of input.proposals.slice(0, DREAM_COMPOSE_CANDIDATE_CAP)) {
     const text = fact.text?.trim();
     if (!text) continue;
+    const write = resolveAttributedWriteScope({
+      sessionIds: input.sessionIds,
+      sourceSessionId: fact.sourceSessionId,
+    });
+    if (!write) continue;
     out.push({
       op: "add",
       payload: {
@@ -171,11 +207,11 @@ export function selfCorrectionProposalsToCandidates(input: {
         value: fact.value ?? text.slice(0, 200),
         source: "dream-self-correction",
         tags: [...(fact.tags ?? []), "dream", "self-correction"],
-        scope: input.sessionIds.length > 0 ? "session" : "agent",
-        scopeTarget: input.sessionIds[0] ?? "dream",
+        scope: write.scope,
+        scopeTarget: write.scopeTarget,
       },
       evidence: evidenceForSessions(
-        input.sessionIds,
+        write.evidenceSessions,
         `self-correction dry-run MEMORY_STORE for dream ${input.dreamRunId}`,
       ),
       reverse: { op: "delete_fact", payload: {} },
@@ -192,12 +228,38 @@ export function consolidateProposalsToCandidates(input: {
   proposals: ConsolidateProposedMerge[];
   sessionIds: string[];
   dreamRunId: string;
+  /** Optional provenance sessions keyed by source fact id (from FactsDB). */
+  sourceProvenanceByFactId?: Record<string, string[]>;
 }): CandidateEntryInput[] {
   const out: CandidateEntryInput[] = [];
   let sortOrder = 0;
+  const allow = new Set(input.sessionIds.map((s) => s.trim()).filter(Boolean));
+  if (allow.size === 0) return out;
+
   for (const merge of input.proposals.slice(0, Math.max(1, Math.floor(DREAM_COMPOSE_CANDIDATE_CAP / 2)))) {
     const text = merge.mergedText?.trim();
     if (!text || merge.sourceFactIds.length < 2) continue;
+
+    const provenance = new Set<string>();
+    for (const id of merge.sourceFactIds) {
+      for (const p of input.sourceProvenanceByFactId?.[id] ?? []) {
+        if (p.trim()) provenance.add(p.trim());
+      }
+    }
+    // Fail closed: every source must be attributable to the allowlist when provenance is known;
+    // if no provenance map provided, require merge.scopeTarget / sessionIds intersection via scope.
+    if (input.sourceProvenanceByFactId) {
+      if (provenance.size === 0 || ![...provenance].some((p) => allow.has(p))) continue;
+      if ([...provenance].some((p) => !allow.has(p))) continue;
+    } else if (merge.scope === "session" && merge.scopeTarget && !allow.has(merge.scopeTarget)) {
+      continue;
+    } else if (merge.scope === "session" && !merge.scopeTarget) {
+      continue;
+    }
+
+    const evidenceSessions = [...provenance].filter((p) => allow.has(p));
+    const evidence =
+      evidenceSessions.length > 0 ? evidenceSessions : merge.scope === "session" && merge.scopeTarget ? [merge.scopeTarget] : [...allow];
 
     out.push({
       op: "merge",
@@ -210,11 +272,11 @@ export function consolidateProposalsToCandidates(input: {
         value: merge.value ?? null,
         source: "dream-consolidate",
         tags: [...(merge.tags ?? []), "dream", "consolidated"],
-        scope: (merge.scope as "global" | "user" | "agent" | "session" | undefined) ?? "global",
+        scope: (merge.scope as "global" | "user" | "agent" | "session" | undefined) ?? "agent",
         scopeTarget: merge.scopeTarget ?? null,
       },
       evidence: evidenceForSessions(
-        input.sessionIds,
+        evidence,
         `consolidate dry-run merge of ${merge.sourceFactIds.length} facts for dream ${input.dreamRunId}`,
       ),
       reverse: { op: "delete_fact", payload: {} },
@@ -234,11 +296,13 @@ export function consolidateProposalsToCandidates(input: {
           key: null,
           value: null,
           source: "dream-consolidate",
+          scope: (merge.scope as "global" | "user" | "agent" | "session" | undefined) ?? "agent",
+          scopeTarget: merge.scopeTarget ?? null,
         },
         targetFactId: sourceId,
         preHash,
         evidence: evidenceForSessions(
-          input.sessionIds,
+          evidence,
           `consolidate delete source ${sourceId} (OCC pinned at propose) for dream ${input.dreamRunId}`,
         ),
         reverse: { op: "noop", payload: { note: "source restore requires backup; consolidate reverse is best-effort" } },
@@ -248,6 +312,18 @@ export function consolidateProposalsToCandidates(input: {
   }
   return out;
 }
+
+export type ContradictionProposedResolve = {
+  contradictionId: string;
+  factIdNew: string;
+  factIdOld: string;
+  /** Propose-time OCC token for factIdOld (#2175). */
+  preHash: string;
+  scope?: string | null;
+  scopeTarget?: string | null;
+  /** Provenance sessions from the facts involved (not Dream attachment stamp). */
+  provenanceSessionIds?: string[];
+};
 
 export type ContradictionResolvePair = {
   contradictionId: string;
@@ -262,7 +338,12 @@ export type ContradictionResolvePair = {
 export function pinContradictionResolves(
   pairs: ContradictionResolvePair[],
   lookup: {
-    getById: (id: string) => { supersededAt?: number | null } | null | undefined;
+    getById: (id: string) => {
+      supersededAt?: number | null;
+      scope?: string | null;
+      scopeTarget?: string | null;
+      provenanceSession?: string | null;
+    } | null | undefined;
     getOccToken: (id: string) => string | null;
   },
 ): ContradictionProposedResolve[] {
@@ -273,7 +354,22 @@ export function pinContradictionResolves(
       if (!oldFact || oldFact.supersededAt != null) continue;
       const preHash = lookup.getOccToken(pair.factIdOld);
       if (!preHash) continue;
-      out.push({ ...pair, preHash });
+      const newFact = lookup.getById(pair.factIdNew);
+      const provenanceSessionIds = [
+        oldFact.provenanceSession,
+        newFact?.provenanceSession,
+        oldFact.scope === "session" ? oldFact.scopeTarget : null,
+        newFact?.scope === "session" ? newFact.scopeTarget : null,
+      ]
+        .map((s) => (typeof s === "string" ? s.trim() : ""))
+        .filter(Boolean);
+      out.push({
+        ...pair,
+        preHash,
+        scope: oldFact.scope ?? null,
+        scopeTarget: oldFact.scopeTarget ?? null,
+        provenanceSessionIds: [...new Set(provenanceSessionIds)],
+      });
     } catch {
       // fail closed per pair
     }
@@ -289,8 +385,16 @@ export function contradictionProposalsToCandidates(input: {
 }): CandidateEntryInput[] {
   const out: CandidateEntryInput[] = [];
   let sortOrder = 0;
+  const allow = new Set(input.sessionIds.map((s) => s.trim()).filter(Boolean));
   for (const pair of input.proposals.slice(0, DREAM_COMPOSE_CANDIDATE_CAP)) {
     if (!pair.preHash || !pair.factIdOld) continue;
+    const provenance = (pair.provenanceSessionIds ?? []).map((s) => s.trim()).filter(Boolean);
+    if (allow.size > 0) {
+      if (provenance.length === 0 || !provenance.some((p) => allow.has(p))) continue;
+    } else {
+      continue;
+    }
+    const evidenceSessions = provenance.filter((p) => allow.has(p));
     out.push({
       op: "delete",
       targetFactId: pair.factIdOld,
@@ -304,9 +408,11 @@ export function contradictionProposalsToCandidates(input: {
         value: null,
         source: "dream-contradictions",
         tags: ["dream", "contradiction-resolve"],
+        scope: (pair.scope as "session" | "agent" | "user" | "global" | undefined) ?? "agent",
+        scopeTarget: pair.scopeTarget ?? null,
       },
       evidence: evidenceForSessions(
-        input.sessionIds,
+        evidenceSessions,
         `contradiction dry-run auto-resolvable ${pair.contradictionId} for dream ${input.dreamRunId}`,
       ),
       reverse: { op: "unsupersede", payload: { oldFactId: pair.factIdOld, newFactId: null } },

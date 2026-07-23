@@ -67,7 +67,17 @@ describe("filterSessionFilesByAllowlist (#2174)", () => {
     expect(filterSessionFilesByAllowlist(files, [])).toEqual([]);
   });
 
-  it("keeps only matching session stems", () => {
+  it("keeps only exact matching session stems (no backup/prefix substring)", () => {
+    const mixed = [
+      { path: "/home/u/.openclaw/agents/main/sessions/sess-a.jsonl" },
+      { path: "/home/u/.openclaw/agents/main/sessions/sess-a.jsonl.backup" },
+      { path: "/home/u/.openclaw/agents/main/sessions/sess-a.part2.jsonl" },
+      { path: "/home/u/.openclaw/agents/main/sessions/other.jsonl" },
+    ];
+    expect(filterSessionFilesByAllowlist(mixed, ["sess-a"]).map((f) => f.path)).toEqual([mixed[0].path]);
+  });
+
+  it("keeps multiple exact stems", () => {
     expect(filterSessionFilesByAllowlist(files, ["sess-a", "sess-b"]).map((f) => f.path)).toEqual([
       files[0].path,
       files[1].path,

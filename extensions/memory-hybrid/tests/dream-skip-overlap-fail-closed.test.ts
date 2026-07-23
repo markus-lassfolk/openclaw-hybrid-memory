@@ -41,7 +41,7 @@ describe("dream-run scheduling vs skipNightlyOverlap", () => {
         skipNightlyOverlap: true,
         compose: ["distill"] as ["distill"],
       },
-      maintenance: { orchestrator: { stepTimeoutMinutes: 1 } },
+      maintenance: { orchestrator: { stepTimeoutMinutes: 1, llmCooldownBetweenStepsMs: 0 } },
     };
     const ctx: MaintenanceOrchestratorContext = {
       cfg: cfg as never,
@@ -58,5 +58,71 @@ describe("dream-run scheduling vs skipNightlyOverlap", () => {
     const distillResult = result.steps.find((r) => r.name === "distill");
     expect(distillResult?.status).not.toBe("skipped_gate");
     expect(distillResult?.summary).toContain("distill-ran");
+  });
+
+  it("skips owned step only after dream-run succeeds in the same pass", async () => {
+    const distill = async () => "distill-should-skip";
+    const dreamRun = async () => "dream-ok";
+    const runners = new Map<string, () => Promise<string>>([
+      ["dream-run", dreamRun],
+      ["distill", distill],
+    ]);
+    const cfg = {
+      dreaming: {
+        ...structuredClone(DEFAULT_DREAMING_CONFIG),
+        enabled: true,
+        skipNightlyOverlap: true,
+        compose: ["distill"] as ["distill"],
+      },
+      maintenance: { orchestrator: { stepTimeoutMinutes: 1, llmCooldownBetweenStepsMs: 0 } },
+    };
+    const ctx: MaintenanceOrchestratorContext = {
+      cfg: cfg as never,
+      runners: runners as never,
+      logger: { info: () => {}, warn: () => {} },
+      openclawDir: "/tmp",
+    };
+    const result = await runMaintenanceOrchestrator(ctx, {
+      tiers: ["nightly"],
+      force: true,
+      openclawDir: "/tmp",
+      include: ["dream-run", "distill"],
+    });
+    expect(result.steps.find((r) => r.name === "dream-run")?.status).toBe("ok");
+    expect(result.steps.find((r) => r.name === "distill")?.status).toBe("skipped_gate");
+  });
+
+  it("runs owned step when dream-run fails (fail closed)", async () => {
+    const distill = async () => "distill-fallback";
+    const dreamRun = async () => {
+      throw new Error("dream boom");
+    };
+    const runners = new Map<string, () => Promise<string>>([
+      ["dream-run", dreamRun],
+      ["distill", distill],
+    ]);
+    const cfg = {
+      dreaming: {
+        ...structuredClone(DEFAULT_DREAMING_CONFIG),
+        enabled: true,
+        skipNightlyOverlap: true,
+        compose: ["distill"] as ["distill"],
+      },
+      maintenance: { orchestrator: { stepTimeoutMinutes: 1, llmCooldownBetweenStepsMs: 0 } },
+    };
+    const ctx: MaintenanceOrchestratorContext = {
+      cfg: cfg as never,
+      runners: runners as never,
+      logger: { info: () => {}, warn: () => {} },
+      openclawDir: "/tmp",
+    };
+    const result = await runMaintenanceOrchestrator(ctx, {
+      tiers: ["nightly"],
+      force: true,
+      openclawDir: "/tmp",
+      include: ["dream-run", "distill"],
+    });
+    expect(result.steps.find((r) => r.name === "dream-run")?.status).toBe("failed");
+    expect(result.steps.find((r) => r.name === "distill")?.summary).toContain("distill-fallback");
   });
 });

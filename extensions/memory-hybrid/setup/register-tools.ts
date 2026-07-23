@@ -206,7 +206,12 @@ export function createGenerationGuardedToolsApi(
             getActivationFailureError(ownerGeneration),
           );
         }
-        return originalExecute(...executeArgs);
+        // Ready generation but no live executor bound — fail closed.
+        return buildActivationFailedToolSafeResult(
+          toolName,
+          ownerGeneration,
+          "tool executor not bound after activation",
+        );
       }
 
       const delegatedExecute = resolveCurrentToolExecutor(toolName, currentGeneration);

@@ -35,7 +35,8 @@ function parseGateWouldPromote(gateReportJson: string | null | undefined): boole
   if (!gateReportJson) return false;
   try {
     const parsed = JSON.parse(gateReportJson) as { wouldPromote?: unknown; ok?: unknown };
-    return parsed.wouldPromote === true || parsed.ok === true;
+    // Require explicit wouldPromote — ok alone can be true for empty/no-op gates.
+    return parsed.wouldPromote === true;
   } catch {
     return false;
   }
@@ -56,14 +57,13 @@ export function evaluateShadowValidation(
   const decided = shadowRuns.filter((r) =>
     ["gated", "quarantined", "failed", "promoted", "rolled_back"].includes(r.status),
   );
-  // Treat outcome.summary "shadow" + status gated as would-promote when gate says so;
-  // also count status===gated as a would-promote signal when gate JSON missing.
   let wouldPromoteRuns = 0;
   let zeroCandidateRuns = 0;
   for (const row of shadowRuns) {
     if (row.candidateCount === 0) zeroCandidateRuns++;
     const gateJson = opts.gateReportsByRunId?.get(row.dreamRunId);
-    if (parseGateWouldPromote(gateJson ?? null) || row.status === "gated") {
+    // Count only explicit wouldPromote with at least one candidate (avoid gated+empty inflation).
+    if (row.candidateCount > 0 && parseGateWouldPromote(gateJson ?? null)) {
       wouldPromoteRuns++;
     }
   }

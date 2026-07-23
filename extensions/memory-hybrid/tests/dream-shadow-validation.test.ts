@@ -59,15 +59,52 @@ describe("dream-shadow-validation", () => {
       cost: { feature: "dream" as const, wallSeconds: null, tokens: null, usdProxy: null, source: "insufficient_data" as const },
       outcome: { baseline: null, summary: "shadow" as const },
     }));
+    const gateReportsByRunId = new Map(
+      runs.map((r) => [r.dreamRunId, JSON.stringify({ wouldPromote: true, ok: true })]),
+    );
     const result = evaluateShadowValidation(emptyReport(runs), {
       thresholds: {
         ...DEFAULT_DREAMING_CONFIG.autoPromote.shadowValidation,
         minShadowRuns: 7,
         minWouldPromoteRuns: 3,
       },
+      gateReportsByRunId,
     });
     expect(result.ok).toBe(true);
     expect(result.metrics.wouldPromoteRuns).toBe(7);
+  });
+
+  it("does not count gated status alone as would-promote", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const runs: DreamRoiReport["runs"] = [
+      {
+        dreamRunId: "dream-empty-gate",
+        status: "gated",
+        shadow: true,
+        createdAt: now,
+        promotedAt: null,
+        rolledBackAt: null,
+        candidateCount: 2,
+        cost: {
+          feature: "dream",
+          wallSeconds: null,
+          tokens: null,
+          usdProxy: null,
+          source: "insufficient_data",
+        },
+        outcome: { baseline: null, summary: "shadow" },
+      },
+    ];
+    const result = evaluateShadowValidation(emptyReport(runs), {
+      thresholds: {
+        ...DEFAULT_DREAMING_CONFIG.autoPromote.shadowValidation,
+        minShadowRuns: 1,
+        minWouldPromoteRuns: 1,
+      },
+      gateReportsByRunId: new Map([["dream-empty-gate", JSON.stringify({ ok: true, wouldPromote: false })]]),
+    });
+    expect(result.metrics.wouldPromoteRuns).toBe(0);
+    expect(result.ok).toBe(false);
   });
 });
 

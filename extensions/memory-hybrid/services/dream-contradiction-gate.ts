@@ -40,10 +40,14 @@ export function evaluateContradictionWorsening(
       if (isFactVerified(db, targetId)) {
         return { worsens: true, reason: "deletes_verified_fact" };
       }
-      if (factsDb.isContradicted(targetId)) {
+      const tags = entry.payload.tags ?? [];
+      const isDreamContradictionResolve =
+        entry.payload.source === "dream-contradictions" || tags.includes("contradiction-resolve");
+      // Auto-resolve deletes intentionally remove the losing side of an unresolved pair.
+      if (factsDb.isContradicted(targetId) && !isDreamContradictionResolve) {
         return { worsens: true, reason: "deletes_unresolved_contradiction_side" };
       }
-      return { worsens: false, reason: "ok" };
+      return { worsens: false, reason: isDreamContradictionResolve ? "contradiction_resolve_ok" : "ok" };
     }
 
     const entity = entry.payload.entity?.trim();

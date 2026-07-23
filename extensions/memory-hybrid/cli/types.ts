@@ -243,6 +243,8 @@ export type DistillExtractedPreview = {
   value?: string | null;
   source_date?: string | null;
   tags?: string[];
+  /** Basename stem of the session JSONL that produced this fact (#2174). */
+  sourceSessionId?: string | null;
 };
 
 export type DistillCliResult = {

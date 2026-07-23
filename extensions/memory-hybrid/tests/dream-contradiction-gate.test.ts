@@ -142,6 +142,64 @@ describe("dream contradiction worsening gate (#2170)", () => {
     expect(report.decisions[0]?.reason).toMatch(/contradiction_worsens|deletes_unresolved/);
   });
 
+  it("allows dream contradiction-resolve deletes of unresolved losing side", () => {
+    const a = factsDb.store({
+      text: "feature enabled true",
+      category: "preference",
+      importance: 0.7,
+      source: "test",
+      entity: "feature",
+      key: "enabled",
+      value: "true",
+      provenanceSession: "s1",
+    });
+    const b = factsDb.store({
+      text: "feature enabled false",
+      category: "preference",
+      importance: 0.7,
+      source: "test",
+      entity: "feature",
+      key: "enabled",
+      value: "false",
+      provenanceSession: "s1",
+    });
+    factsDb.recordContradiction(b.id, a.id);
+
+    const run = store.createDreamRun({
+      id: "dream-cx-resolve",
+      inputStoreRevision: factsDb.computeStoreRevision(),
+      sessionIds: ["s1"],
+      shadow: true,
+    });
+    store.appendCandidateEntries(run.id, [
+      {
+        op: "delete",
+        targetFactId: a.id,
+        preHash: factsDb.getOccToken(a.id)!,
+        payload: {
+          text: "resolve drop a",
+          category: "preference",
+          importance: 0,
+          source: "dream-contradictions",
+          entity: null,
+          key: null,
+          value: null,
+          tags: ["dream", "contradiction-resolve"],
+          scope: "session",
+          scopeTarget: "s1",
+        },
+        evidence: {
+          sessionIds: ["s1"],
+          prevalence: { sessions: 1, agents: 1 },
+          rationale: "auto-resolve",
+        },
+        reverse: { op: "noop", payload: {} },
+      },
+    ]);
+    const entry = store.listCandidateEntries(run.id)[0]!;
+    expect(evaluateContradictionWorsening(factsDb, entry).worsens).toBe(false);
+  });
+
   it("passes unstructured add without entity/key", () => {
     const run = store.createDreamRun({
       id: "dream-cx-ok",

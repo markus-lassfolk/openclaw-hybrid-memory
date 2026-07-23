@@ -46,13 +46,16 @@ describe("dream-compose-candidates (#2170/#2175)", () => {
   it("maps contradiction resolves with preHash", () => {
     const candidates = contradictionProposalsToCandidates({
       dreamRunId: "dream-1",
-      sessionIds: [],
+      sessionIds: ["s1"],
       proposals: [
         {
           contradictionId: "c1",
           factIdNew: "n1",
           factIdOld: "o1",
           preHash: "occ-old",
+          provenanceSessionIds: ["s1"],
+          scope: "session",
+          scopeTarget: "s1",
         },
       ],
     });
@@ -80,7 +83,17 @@ describe("dream-compose-candidates (#2170/#2175)", () => {
         getOccToken: (id) => (id === "live" ? "occ-live" : null),
       },
     );
-    expect(pinned).toEqual([{ contradictionId: "c1", factIdNew: "n1", factIdOld: "live", preHash: "occ-live" }]);
+    expect(pinned).toEqual([
+      {
+        contradictionId: "c1",
+        factIdNew: "n1",
+        factIdOld: "live",
+        preHash: "occ-live",
+        provenanceSessionIds: [],
+        scope: null,
+        scopeTarget: null,
+      },
+    ]);
   });
 
   it("maps reflect patterns to boundary write scope (not hardcoded global)", () => {

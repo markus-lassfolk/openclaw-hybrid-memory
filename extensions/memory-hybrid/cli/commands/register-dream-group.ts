@@ -82,19 +82,27 @@ export function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
   if (m.runDistill) {
     runners.distill = async ({ dryRun, steering, sessionIds, dreamRunId }) => {
       const steeringPrompt = formatSteeringPromptBlock(steering);
-      // Always pass sessionIds (possibly empty) so distill never scoops an unrestricted window (#2174).
+      if (sessionIds.length === 0) {
+        return {
+          detail: `steering=${steering.profile} skipped_no_attached_sessions`,
+          candidates: [],
+        };
+      }
       const result = await m.runDistill!(
         {
           days: 7,
           dryRun,
           steeringPrompt,
           sessionIds,
-          ...(sessionIds.length > 0 ? { maxSessions: sessionIds.length } : {}),
+          maxSessions: sessionIds.length,
         },
         sink,
       );
       const candidates = distillProposalsToCandidates({
-        proposals: result.extracted ?? [],
+        proposals: (result.extracted ?? []).map((f) => ({
+          ...f,
+          sourceSessionId: f.sourceSessionId ?? null,
+        })),
         sessionIds,
         dreamRunId,
       });
@@ -107,6 +115,12 @@ export function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
 
   if (m.runSelfCorrectionRun) {
     runners["self-correction"] = async ({ dryRun, steering, sessionIds, dreamRunId }) => {
+      if (sessionIds.length === 0) {
+        return {
+          detail: `steering=${steering.profile} skipped_no_attached_sessions`,
+          candidates: [],
+        };
+      }
       const result = await m.runSelfCorrectionRun!({
         dryRun: true,
         applyTools: false,
@@ -127,6 +141,9 @@ export function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
 
   if (m.runContradictionCandidates || m.runResolveContradictionsDryRun || m.runResolveContradictionsAuto) {
     runners.contradictions = async ({ dryRun, steering, sessionIds, dreamRunId }) => {
+      if (sessionIds.length === 0) {
+        return { detail: `steering=${steering.profile} skipped_no_attached_sessions`, candidates: [] };
+      }
       const parts: string[] = [`steering=${steering.profile}`];
       if (m.runContradictionCandidates) {
         const c = await m.runContradictionCandidates({ dryRun: true });
@@ -154,6 +171,12 @@ export function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
     runners.reflect = async ({ dryRun, steering, sessionIds, dreamRunId }) => {
       const steeringPrompt = formatSteeringPromptBlock(steering);
       const boundary = ctx.dreaming?.permissionBoundary ?? DEFAULT_DREAMING_CONFIG.permissionBoundary;
+      if (sessionIds.length === 0 && boundary.enforce && !boundary.personalMode) {
+        return {
+          detail: `${steeringPrompt.split("\n")[0]} skipped_no_attached_sessions`,
+          candidates: [],
+        };
+      }
       const result = await m.runReflection({
         window: 7,
         dryRun,
@@ -168,9 +191,11 @@ export function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
         dreamRunId,
         writeScope: boundary.targetScope,
         writeScopeTarget:
-          boundary.targetScope === "session" || boundary.targetScope === "agent" || boundary.targetScope === "user"
-            ? (sessionIds[0] ?? null)
-            : null,
+          boundary.targetScope === "session" && sessionIds.length === 1
+            ? sessionIds[0]!
+            : boundary.targetScope === "agent" || boundary.targetScope === "user"
+              ? (sessionIds[0] ?? "dream-multi")
+              : null,
       });
       return {
         detail: `${steeringPrompt.split("\n")[0]} attached=${sessionIds.length} patterns=${result.patternsStored} proposed=${candidates.length} ${JSON.stringify({ ...result, patterns: undefined })}`,
@@ -181,6 +206,12 @@ export function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
 
   if (m.runConsolidate) {
     runners.consolidate = async ({ dryRun, steering, sessionIds, dreamRunId }) => {
+      if (sessionIds.length === 0) {
+        return {
+          detail: `steering=${steering.profile} skipped_no_attached_sessions`,
+          candidates: [],
+        };
+      }
       const result = await m.runConsolidate({
         threshold: 0.92,
         limit: 10,
@@ -188,12 +219,20 @@ export function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
         includeStructured: true,
         model: "",
       });
+      const sourceProvenanceByFactId: Record<string, string[]> = {};
       const proposals = (result.previews ?? []).map((p) => {
         const sourcePreHashes: Record<string, string> = {};
         for (const id of p.memberIds) {
           try {
             const token = ctx.factsDb.getOccToken(id);
             if (token) sourcePreHashes[id] = token;
+            const fact = ctx.factsDb.getById(id);
+            if (fact) {
+              const prov: string[] = [];
+              if (fact.provenanceSession) prov.push(fact.provenanceSession);
+              if (fact.scope === "session" && fact.scopeTarget) prov.push(fact.scopeTarget);
+              sourceProvenanceByFactId[id] = [...new Set(prov)];
+            }
           } catch {
             // Skip OCC pin if fact vanished between propose-time reads.
           }
@@ -214,6 +253,7 @@ export function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
         proposals,
         sessionIds,
         dreamRunId,
+        sourceProvenanceByFactId,
       });
       return {
         detail: `steering=${steering.profile} ${formatSteeringPromptBlock(steering).split("\n")[0]} merged=${result.merged} proposed=${candidates.length}`,

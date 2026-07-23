@@ -46,6 +46,10 @@ export function evaluateDreamGates(
   const entries = store.listCandidateEntries(dreamRunId);
   const decisions: GateReport["decisions"] = [];
 
+  if (entries.length === 0) {
+    return { ok: true, decisions: [], wouldPromote: false, reason: "no_candidates" };
+  }
+
   for (const entry of entries) {
     if (dreaming.autoPromote.requireProvenance) {
       const hasSessions = entry.sessionIds.length > 0;
@@ -85,8 +89,19 @@ export function evaluateDreamGates(
       }
     }
 
+    // OCC fail-closed: delete/supersede require propose-time preHash (#2175).
+    if ((entry.op === "delete" || entry.op === "supersede") && !entry.preHash) {
+      decisions.push({
+        entryId: entry.id,
+        pass: false,
+        reason: "missing_prehash_occ",
+      });
+      store.updateCandidateEntry(entry.id, { status: "gated_block" });
+      continue;
+    }
+
     // Blast-radius / prevalence (#2172).
-    const scope = (entry.payload.scope ?? "global") as "session" | "agent" | "user" | "global";
+    const scope = (entry.payload.scope ?? "agent") as "session" | "agent" | "user" | "global";
     if (!writeScopeWithinBoundary(scope, dreaming.permissionBoundary)) {
       decisions.push({
         entryId: entry.id,
@@ -201,9 +216,9 @@ function applyEntry(
         tags: [...(storeInput.tags ?? []), ...dreamTags],
       });
       if (result.skipped) return { appliedFactId: null, postHash: null };
-      // Per-fact OCC (#2175): use candidate preHash from propose time, never live token.
-      const expectedHash = entry.preHash ?? undefined;
-      factsDb.supersede(entry.targetFactId, result.entry.id, expectedHash ? { expectedHash } : undefined);
+      // Per-fact OCC (#2175): require propose-time preHash — never fail open.
+      if (!entry.preHash) throw new Error("supersede requires preHash OCC token");
+      factsDb.supersede(entry.targetFactId, result.entry.id, { expectedHash: entry.preHash });
       return {
         appliedFactId: result.entry.id,
         postHash: hashFactContent(result.entry),
@@ -211,8 +226,8 @@ function applyEntry(
     }
     case "delete": {
       if (!entry.targetFactId) throw new Error("delete requires targetFactId");
-      const expectedHash = entry.preHash ?? undefined;
-      factsDb.supersede(entry.targetFactId, null, expectedHash ? { expectedHash } : undefined);
+      if (!entry.preHash) throw new Error("delete requires preHash OCC token");
+      factsDb.supersede(entry.targetFactId, null, { expectedHash: entry.preHash });
       return { appliedFactId: entry.targetFactId, postHash: null };
     }
     default:

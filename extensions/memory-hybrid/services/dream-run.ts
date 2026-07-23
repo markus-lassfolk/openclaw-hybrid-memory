@@ -160,8 +160,8 @@ function curriculumCandidate(input: {
     evidence: {
       sessionIds: input.sessionIds,
       prevalence: {
-        sessions: Math.max(1, input.sessionIds.length),
-        agents: 1,
+        sessions: input.sessionIds.length,
+        agents: input.sessionIds.length > 0 ? 1 : 0,
       },
       rationale: `Unified Dream (#2171) completed compose stages: ${okSteps.join(", ") || "none"}`,
     },
