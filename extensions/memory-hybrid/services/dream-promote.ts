@@ -17,6 +17,8 @@ import {
   type PromoteResult,
   hashFactContent,
 } from "./dream-candidate-ops.js";
+import { writeScopeWithinBoundary } from "./dream-permission.js";
+import { MemoryConflictError } from "../utils/fact-occ.js";
 
 export type PromoteDreamRunOptions = {
   /** Apply even when shadow=true / autoPromote disabled (CLI escape hatch). */
@@ -65,6 +67,30 @@ export function evaluateDreamGates(
 
     // Blast-radius / prevalence (#2172).
     const scope = (entry.payload.scope ?? "global") as "session" | "agent" | "user" | "global";
+    if (!writeScopeWithinBoundary(scope, dreaming.permissionBoundary)) {
+      decisions.push({
+        entryId: entry.id,
+        pass: false,
+        reason: `write_scope_${scope}_exceeds_boundary_${dreaming.permissionBoundary.targetScope}`,
+      });
+      store.updateCandidateEntry(entry.id, { status: "gated_block" });
+      continue;
+    }
+
+    // Steering ignore list (#2176): block categories/keys the policy says to ignore.
+    const ignore = dreaming.steering.ignore.map((s) => s.toLowerCase());
+    const category = String(entry.payload.category ?? "").toLowerCase();
+    const key = String(entry.payload.key ?? "").toLowerCase();
+    if (ignore.some((token) => token && (category.includes(token) || key.includes(token) || entry.payload.text.toLowerCase().includes(token)))) {
+      decisions.push({
+        entryId: entry.id,
+        pass: false,
+        reason: `steering_ignore`,
+      });
+      store.updateCandidateEntry(entry.id, { status: "gated_block" });
+      continue;
+    }
+
     const tierKey =
       scope === "session" || scope === "agent" || scope === "user" || scope === "global" ? scope : "global";
     let tier = dreaming.prevalence[tierKey];
@@ -144,9 +170,13 @@ function applyEntry(factsDb: FactsDB, entry: CandidateEntryRecord): { appliedFac
         supersedesId: entry.targetFactId,
       });
       if (result.skipped) return { appliedFactId: null, postHash: null };
-      // OCC token (#2175) — distinct from content post_hash used for rollback drift.
-      const occToken = factsDb.getOccToken(entry.targetFactId) ?? undefined;
-      factsDb.supersede(entry.targetFactId, result.entry.id, occToken ? { expectedHash: occToken } : undefined);
+      // Per-fact OCC (#2175): use candidate preHash from propose time, never live token.
+      const expectedHash = entry.preHash ?? undefined;
+      factsDb.supersede(
+        entry.targetFactId,
+        result.entry.id,
+        expectedHash ? { expectedHash } : undefined,
+      );
       return {
         appliedFactId: result.entry.id,
         postHash: hashFactContent(result.entry),
@@ -154,9 +184,12 @@ function applyEntry(factsDb: FactsDB, entry: CandidateEntryRecord): { appliedFac
     }
     case "delete": {
       if (!entry.targetFactId) throw new Error("delete requires targetFactId");
-      const occToken = factsDb.getOccToken(entry.targetFactId) ?? undefined;
-      // Soft-delete via supersede with null replacement (marks superseded).
-      factsDb.supersede(entry.targetFactId, null, occToken ? { expectedHash: occToken } : undefined);
+      const expectedHash = entry.preHash ?? undefined;
+      factsDb.supersede(
+        entry.targetFactId,
+        null,
+        expectedHash ? { expectedHash } : undefined,
+      );
       return { appliedFactId: entry.targetFactId, postHash: null };
     }
     default:
@@ -274,30 +307,38 @@ export function promoteDreamRun(
           .filter((e) => e.status === "gated_ok")
           .sort((a, b) => a.sortOrder - b.sortOrder);
         for (const entry of entries) {
-          const { appliedFactId, postHash } = applyEntry(factsDb, entry);
-          store.updateCandidateEntry(entry.id, {
-            status: "applied",
-            appliedFactId,
-            postHash,
-            reverse:
-              entry.op === "add" || entry.op === "merge" || entry.op === "boost"
-                ? { op: "delete_fact", payload: { factId: appliedFactId } }
-                : entry.op === "supersede"
-                  ? {
-                      op: "unsupersede",
-                      payload: {
-                        oldFactId: entry.targetFactId,
-                        newFactId: appliedFactId,
-                      },
-                    }
-                  : entry.op === "delete"
+          try {
+            const { appliedFactId, postHash } = applyEntry(factsDb, entry);
+            store.updateCandidateEntry(entry.id, {
+              status: "applied",
+              appliedFactId,
+              postHash,
+              reverse:
+                entry.op === "add" || entry.op === "merge" || entry.op === "boost"
+                  ? { op: "delete_fact", payload: { factId: appliedFactId } }
+                  : entry.op === "supersede"
                     ? {
                         op: "unsupersede",
-                        payload: { oldFactId: entry.targetFactId, newFactId: null },
+                        payload: {
+                          oldFactId: entry.targetFactId,
+                          newFactId: appliedFactId,
+                        },
                       }
-                    : entry.reverse,
-          });
-          if (appliedFactId) appliedFactIds.push(appliedFactId);
+                    : entry.op === "delete"
+                      ? {
+                          op: "unsupersede",
+                          payload: { oldFactId: entry.targetFactId, newFactId: null },
+                        }
+                      : entry.reverse,
+            });
+            if (appliedFactId) appliedFactIds.push(appliedFactId);
+          } catch (err) {
+            if (err instanceof MemoryConflictError) {
+              store.updateCandidateEntry(entry.id, { status: "gated_block" });
+              throw err;
+            }
+            throw err;
+          }
         }
       },
       "IMMEDIATE",
@@ -305,7 +346,8 @@ export function promoteDreamRun(
     tx();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    store.updateDreamRunStatus(dreamRunId, "failed", { failureReason: message });
+    const status = err instanceof MemoryConflictError ? "failed" : "failed";
+    store.updateDreamRunStatus(dreamRunId, status, { failureReason: message });
     return {
       applied: false,
       shadow: false,
@@ -321,19 +363,15 @@ export function promoteDreamRun(
       ? Math.floor(Date.now() / 1000) + dreaming.autoRollback.observeWindowHours * 3600
       : null;
 
-  // Baseline for #2173 outcome window (effectScore starts neutral; callers can overwrite).
-  const baseline = {
-    successRate: 1,
-    retryRate: 0,
-    effectScore: 1,
-    sessionsObserved: 0,
-    factCount: factsDb.count(),
-  };
-
+  // Do not invent effectScore baseline (#2173) — leave null until a real probe records metrics.
+  // Store only structural snapshot metadata for debugging.
   store.updateDreamRunStatus(dreamRunId, "promoted", {
-    metricsBaselineJson: JSON.stringify(baseline),
+    metricsBaselineJson: null,
     metricsObserveUntil: observeUntil,
-    gateReportJson: JSON.stringify(gateReport),
+    gateReportJson: JSON.stringify({
+      ...gateReport,
+      structuralSnapshot: { factCount: factsDb.count(), at: Math.floor(Date.now() / 1000) },
+    }),
   });
 
   return {

@@ -150,10 +150,10 @@ export function rollbackDreamRun(
 
   const reason = options.reason ?? "manual_rollback";
   const fullyClean = abortedEntries.length === 0;
-  const rolledBack = fullyClean || restoredFactIds.length > 0;
+  // Only mark rolled_back when every applied entry reversed cleanly (#2173 correctness).
+  const markRolledBack = fullyClean && (run.status === "promoted" || options.force === true);
 
-  // Only mark rolled_back when we actually restored something or had a clean reverse.
-  if (rolledBack && (run.status === "promoted" || options.force)) {
+  if (markRolledBack) {
     try {
       store.updateDreamRunStatus(dreamRunId, "rolled_back", { rollbackReason: reason });
     } catch {
@@ -162,8 +162,8 @@ export function rollbackDreamRun(
   }
 
   return {
-    rolledBack,
-    status: rolledBack ? "rolled_back" : run.status,
+    rolledBack: markRolledBack,
+    status: markRolledBack ? "rolled_back" : run.status,
     restoredFactIds,
     abortedEntries,
     error: fullyClean ? undefined : abortedEntries.map((a) => a.reason).join(";"),

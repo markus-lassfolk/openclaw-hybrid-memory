@@ -151,7 +151,8 @@ export const DEFAULT_DREAMING_CONFIG: DreamingConfig = {
     personalSingleTenant: false,
   },
   permissionBoundary: {
-    targetScope: "global",
+    /** Conservative default: session-scoped dreams; raise explicitly for global curriculum (#2174). */
+    targetScope: "session",
     enforce: true,
     personalMode: false,
   },

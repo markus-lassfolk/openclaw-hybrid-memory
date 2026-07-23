@@ -67,29 +67,31 @@ function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
   const runners: DreamStepRunners = {};
 
   if (m.runDistill) {
-    runners.distill = async () => {
-      const result = await m.runDistill!({ days: 7, dryRun: false }, sink);
+    runners.distill = async ({ dryRun }) => {
+      const result = await m.runDistill!({ days: 7, dryRun }, sink);
       return {
-        detail: `stored=${result.stored} extracted=${result.factsExtracted} sessions=${result.sessionsScanned}`,
+        detail: `dryRun=${dryRun} stored=${result.stored} extracted=${result.factsExtracted} sessions=${result.sessionsScanned}`,
       };
     };
   }
 
   if (m.runSelfCorrectionRun) {
-    runners["self-correction"] = async () => {
+    runners["self-correction"] = async ({ dryRun }) => {
       const result = await m.runSelfCorrectionRun!({ dryRun: true, applyTools: false });
-      return { detail: JSON.stringify(result ?? "self-correction done") };
+      return { detail: `dryRun=${dryRun} ${JSON.stringify(result ?? "self-correction done")}` };
     };
   }
 
   if (m.runContradictionCandidates || m.runResolveContradictionsAuto) {
-    runners.contradictions = async () => {
+    runners.contradictions = async ({ dryRun }) => {
       const parts: string[] = [];
       if (m.runContradictionCandidates) {
-        const c = await m.runContradictionCandidates!({ dryRun: false });
+        const c = await m.runContradictionCandidates({ dryRun });
         parts.push(`candidates=${JSON.stringify(c)}`);
       }
-      if (m.runResolveContradictionsAuto) {
+      if (dryRun) {
+        parts.push("resolve=skipped_dry_run");
+      } else if (m.runResolveContradictionsAuto) {
         const r = await m.runResolveContradictionsAuto({});
         parts.push(`resolve=${JSON.stringify(r)}`);
       }
@@ -98,10 +100,10 @@ function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
   }
 
   if (m.runReflection) {
-    runners.reflect = async () => {
+    runners.reflect = async ({ dryRun }) => {
       const result = await m.runReflection({
         window: 7,
-        dryRun: false,
+        dryRun,
         model: "",
         verbose: false,
       });
@@ -110,11 +112,11 @@ function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
   }
 
   if (m.runConsolidate) {
-    runners.consolidate = async () => {
+    runners.consolidate = async ({ dryRun }) => {
       const result = await m.runConsolidate({
         threshold: 0.92,
         limit: 10,
-        dryRun: false,
+        dryRun,
         includeStructured: true,
         model: "",
       });
@@ -123,8 +125,8 @@ function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
   }
 
   if (m.runDreamCycle) {
-    runners["dream-cycle-core"] = async () => {
-      const result = await m.runDreamCycle!({ dryRun: false, verbose: false });
+    runners["dream-cycle-core"] = async ({ dryRun }) => {
+      const result = await m.runDreamCycle!({ dryRun, verbose: false });
       return { detail: JSON.stringify(result) };
     };
   }
@@ -309,6 +311,7 @@ export function registerDreamGroup(mem: Chainable, ctx: DreamCliContext): void {
         sinceSec: untilSec - days * 24 * 3600,
         untilSec,
         limit: Math.max(1, Number.parseInt(opts.limit ?? "100", 10) || 100),
+        db: ctx.factsDb.getRawDb(),
       });
       printJson(report);
     });
@@ -349,7 +352,7 @@ export function registerDreamGroup(mem: Chainable, ctx: DreamCliContext): void {
           {
             cfg,
             applyRollback: opts.apply === true,
-            minSessions: 1,
+            minSessions: 3,
           },
         );
         printJson(report);

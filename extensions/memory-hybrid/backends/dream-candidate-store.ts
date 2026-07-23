@@ -173,6 +173,23 @@ export class DreamCandidateStore {
     return run;
   }
 
+  /** Rebase OCC snapshot after intentional compose (or before promote). */
+  setInputStoreRevision(id: string, inputStoreRevision: string): DreamRunRecord {
+    const current = this.getDreamRun(id);
+    if (!current) throw new Error(`dream-candidate-store: dream run not found: ${id}`);
+    if (current.status !== "pending" && current.status !== "running" && current.status !== "gated") {
+      throw new Error(
+        `dream-candidate-store: cannot rebase revision in status ${current.status} for ${id}`,
+      );
+    }
+    this.db
+      .prepare("UPDATE dream_runs SET input_store_revision = ? WHERE id = ?")
+      .run(inputStoreRevision, id);
+    const updated = this.getDreamRun(id);
+    if (!updated) throw new Error(`dream-candidate-store: dream run missing after rebase: ${id}`);
+    return updated;
+  }
+
   getDreamRun(id: string): DreamRunRecord | null {
     const row = this.db.prepare("SELECT * FROM dream_runs WHERE id = ?").get(id) as DreamRunRow | undefined;
     return row ? mapDreamRun(row) : null;

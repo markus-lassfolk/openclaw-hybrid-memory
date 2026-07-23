@@ -69,29 +69,31 @@ Existing Dream Cycle, distill, reflection, consolidate, Loom, and Event Bus prod
 ```json5
 {
   dreaming: {
-    enabled: false,                 // unified Dream master switch (#2171)
+    enabled: false,
+    mode: "autonomous",          // #2177 — machine gates are happy path
     compose: ["distill", "contradictions", "reflect", "consolidate"],
     maxSessions: 20,
     maxRuntimeMinutes: 30,
     skipNightlyOverlap: true,
     promoteAfterRun: false,
     candidateStore: {
-      enabled: false,               // opt-in
-      shadow: true                  // gate + would-promote log, no apply
-    },
-    autoPromote: {
       enabled: false,
-      requireProvenance: true,
-      blockOnContradictionWorsening: true
+      shadow: true
     },
-    autoRollback: {
-      enabled: false,
-      observeWindowHours: 24,
-      regressionThreshold: 0.15
-    }
+    autoPromote: { enabled: false, requireProvenance: true, blockOnContradictionWorsening: true },
+    autoRollback: { enabled: false, observeWindowHours: 24, regressionThreshold: 0.15 },
+    prevalence: { /* session/agent/user/global bars — #2172 */ },
+    permissionBoundary: {
+      targetScope: "session",    // raise for global curriculum (#2174)
+      enforce: true,
+      personalMode: false
+    },
+    steering: { profile: "personal", promote: [...], ignore: [...] }
   }
 }
 ```
+
+Compose under candidate/shadow mode runs maintenance stages with **`dryRun: true`** so the live store is unchanged until machine promote.
 
 **Shadow matrix**
 

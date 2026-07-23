@@ -1,7 +1,10 @@
 /**
  * Permission-scoped Dream session attachment (#2174).
  *
- * Fail closed: unresolved ACL → exclude. Personal mode may treat all as one boundary.
+ * Fail closed: unresolved ACL → exclude.
+ * Private content must not feed a wider dream target by default:
+ * content is attachable only when it is at least as public as the dream target
+ * (SCOPE_RANK[source] >= SCOPE_RANK[target]), or personalMode is on.
  */
 
 import type { DreamPermissionBoundary } from "../config/types/dreaming.js";
@@ -15,19 +18,41 @@ export type DreamSessionAcl = {
   userId?: string | null;
 };
 
-const SCOPE_RANK: Record<DreamSessionAcl["effectiveScope"], number> = {
+export type DreamWriteScope = DreamSessionAcl["effectiveScope"];
+
+const SCOPE_RANK: Record<DreamWriteScope, number> = {
   session: 0,
   agent: 1,
   user: 2,
   global: 3,
 };
 
-/** True when session ACL is ⊆ target (session ⊆ agent ⊆ user ⊆ global). */
+/**
+ * True when transcript content may be attached to a dream targeting `targetScope`.
+ * More-private sources (lower rank) cannot feed more-public dreams (higher rank).
+ */
 export function aclFitsTarget(
-  sessionScope: DreamSessionAcl["effectiveScope"],
+  sessionScope: DreamWriteScope,
   targetScope: DreamPermissionBoundary["targetScope"],
+  personalMode = false,
 ): boolean {
-  return SCOPE_RANK[sessionScope] <= SCOPE_RANK[targetScope];
+  if (personalMode) return true;
+  return SCOPE_RANK[sessionScope] >= SCOPE_RANK[targetScope];
+}
+
+/** True when a candidate write scope does not exceed the dream permission boundary. */
+export function writeScopeWithinBoundary(
+  writeScope: string | null | undefined,
+  boundary: DreamPermissionBoundary,
+): boolean {
+  if (boundary.personalMode || !boundary.enforce) return true;
+  const scope =
+    writeScope === "session" || writeScope === "agent" || writeScope === "user" || writeScope === "global"
+      ? writeScope
+      : "global";
+  // Writes may only target scopes ≤ dream target (session write into global dream is OK;
+  // global write into session dream is not).
+  return SCOPE_RANK[scope] <= SCOPE_RANK[boundary.targetScope];
 }
 
 export type SelectDreamSessionsResult = {
@@ -47,7 +72,7 @@ export function selectDreamSessions(
   const excluded: Array<{ sessionId: string; reason: string }> = [];
   const cap = Math.max(1, Math.min(100, Math.floor(maxSessions)));
 
-  if (boundary.personalMode || !boundary.enforce) {
+  if (!boundary.enforce) {
     for (const c of candidates) {
       if (included.length >= cap) {
         excluded.push({ sessionId: c.sessionId, reason: "max_sessions" });
@@ -68,10 +93,10 @@ export function selectDreamSessions(
       excluded.push({ sessionId: c.sessionId, reason: "unresolved_acl" });
       continue;
     }
-    if (!aclFitsTarget(scope, boundary.targetScope)) {
+    if (!aclFitsTarget(scope, boundary.targetScope, boundary.personalMode)) {
       excluded.push({
         sessionId: c.sessionId,
-        reason: `acl_${scope}_not_subseteq_${boundary.targetScope}`,
+        reason: `acl_${scope}_too_private_for_${boundary.targetScope}`,
       });
       continue;
     }

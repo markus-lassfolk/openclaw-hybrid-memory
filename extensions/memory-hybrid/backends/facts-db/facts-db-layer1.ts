@@ -606,6 +606,14 @@ export class FactsDBLayer1 extends BaseSqliteStore {
 
   /** Whole-store revision fingerprint for dream promote (#2170/#2175). */
   computeStoreRevision(limit = 10_000): string {
+    const agg = this.liveDb
+      .prepare(
+        `SELECT COUNT(*) AS c,
+                COALESCE(MAX(rowid), 0) AS max_rowid,
+                COALESCE(SUM(revision_count), 0) AS rev_sum
+         FROM facts WHERE superseded_at IS NULL`,
+      )
+      .get() as { c: number; max_rowid: number; rev_sum: number };
     const rows = this.liveDb
       .prepare(
         `SELECT id, text, revision_count, created_at FROM facts
@@ -621,6 +629,11 @@ export class FactsDBLayer1 extends BaseSqliteStore {
         revisionCount: r.revision_count ?? 0,
         createdAt: r.created_at,
       })),
+      {
+        totalActive: Number(agg.c) || 0,
+        maxRowId: Number(agg.max_rowid) || 0,
+        revisionSum: Number(agg.rev_sum) || 0,
+      },
     );
   }
 

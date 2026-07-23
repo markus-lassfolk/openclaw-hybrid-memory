@@ -50,18 +50,28 @@ export function occTokenForFact(fact: {
 
 /**
  * Cheap whole-store revision for dream promote OCC (#2170/#2175).
- * Hash of active fact count + max created_at + sample of id:hash pairs.
+ * Includes aggregate count + max created_at + max revision_count + sampled OCC tokens.
+ * Callers should also mix in store-wide aggregates (total active count, max rowid) via
+ * {@link computeStoreRevisionAggregates} so edits outside the sampled window still shift the fingerprint.
  */
 export function computeInputStoreRevision(
   rows: Array<{ id: string; text: string; revisionCount?: number | null; createdAt?: number }>,
+  aggregates?: { totalActive?: number; maxRowId?: number; revisionSum?: number },
 ): string {
   const h = createHash("sha256");
-  h.update(`count:${rows.length};`);
+  const totalActive = aggregates?.totalActive ?? rows.length;
+  h.update(`count:${totalActive};`);
+  if (aggregates?.maxRowId != null) h.update(`maxRowId:${aggregates.maxRowId};`);
+  if (aggregates?.revisionSum != null) h.update(`revSum:${aggregates.revisionSum};`);
   let maxCreated = 0;
+  let maxRevision = 0;
   for (const row of rows) {
     if (typeof row.createdAt === "number" && row.createdAt > maxCreated) maxCreated = row.createdAt;
+    const rc = row.revisionCount ?? 0;
+    if (rc > maxRevision) maxRevision = rc;
   }
   h.update(`maxCreated:${maxCreated};`);
+  h.update(`maxRevision:${maxRevision};`);
   const sorted = [...rows].sort((a, b) => a.id.localeCompare(b.id));
   const sample = sorted.length <= 64 ? sorted : [...sorted.slice(0, 32), ...sorted.slice(-32)];
   for (const row of sample) {

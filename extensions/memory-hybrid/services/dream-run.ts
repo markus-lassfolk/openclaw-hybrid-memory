@@ -39,6 +39,8 @@ export type DreamStepRunner = (ctx: {
   dreamRunId: string;
   sessionIds: string[];
   steeringPolicyId: string | null;
+  /** When false, runners must not mutate FactsDB (shadow / candidate-only). */
+  dryRun: boolean;
   abortSignal?: AbortSignal;
 }) => Promise<{ detail: string; candidates?: CandidateEntryInput[] }>;
 
@@ -62,6 +64,11 @@ export type RunDreamOptions = {
   /** Wall-clock ceiling override (minutes). */
   maxRuntimeMinutes?: number;
   dryShadow?: boolean;
+  /**
+   * When true, compose runners may mutate the live store (legacy). Default false when
+   * candidateStore/shadow is on — compose must emit candidates without live writes (#2170/#2171).
+   */
+  liveMutateCompose?: boolean;
 };
 
 export type RunDreamResult = {
@@ -176,6 +183,13 @@ export async function runDream(options: RunDreamOptions): Promise<RunDreamResult
       ? true
       : cfg.candidateStore.shadow !== false || !cfg.autoPromote.enabled;
 
+  // Candidate/shadow path must not mutate live store during compose (#2170).
+  const liveMutateCompose =
+    options.liveMutateCompose === true &&
+    !shadow &&
+    options.dryShadow !== true &&
+    cfg.candidateStore.enabled !== true;
+
   const maxMinutes = options.maxRuntimeMinutes ?? cfg.maxRuntimeMinutes;
   const deadlineMs = Date.now() + Math.max(1, maxMinutes) * 60_000;
   setMaintenanceRunDeadlineMs(deadlineMs);
@@ -222,6 +236,7 @@ export async function runDream(options: RunDreamOptions): Promise<RunDreamResult
             dreamRunId: run.id,
             sessionIds,
             steeringPolicyId: options.steeringPolicyId ?? null,
+            dryRun: !liveMutateCompose,
           });
           stepSummaries.push({ step, ok: true, detail: result.detail });
           if (result.candidates?.length) {
@@ -232,6 +247,11 @@ export async function runDream(options: RunDreamOptions): Promise<RunDreamResult
           pluginLogger.warn(`memory-hybrid: dream ${run.id} step ${step} failed: ${message}`);
           stepSummaries.push({ step, ok: false, detail: message });
         }
+      }
+
+      // If compose mutated the live store (legacy escape), rebase OCC snapshot before promote.
+      if (liveMutateCompose) {
+        store.setInputStoreRevision(run.id, factsDb.computeStoreRevision());
       }
 
       if (collectedCandidates.length === 0) {
