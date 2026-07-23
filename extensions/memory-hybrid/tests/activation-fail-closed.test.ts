@@ -9,10 +9,7 @@ import {
   shouldReturnInitializingToolResult,
   isActivationFailed,
 } from "../setup/hybrid-memory-activation.js";
-import {
-  buildActivationFailedToolSafeResult,
-  buildInitializingToolSafeResult,
-} from "../setup/register-tools.js";
+import { buildActivationFailedToolSafeResult, buildInitializingToolSafeResult } from "../setup/register-tools.js";
 
 describe("activation fail-closed (#2181)", () => {
   beforeEach(() => {

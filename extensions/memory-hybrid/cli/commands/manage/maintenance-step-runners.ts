@@ -592,9 +592,7 @@ export function buildCliMaintenanceRunners(
     }
     const { buildStepRunners } = await import("../register-dream-group.js");
     const { runDream } = await import("../../../services/dream-run.js");
-    const { discoverDreamSessionAcls, selectDreamSessions } = await import(
-      "../../../services/dream-permission.js"
-    );
+    const { discoverDreamSessionAcls, selectDreamSessions } = await import("../../../services/dream-permission.js");
     const dreaming = b.cfg.dreaming;
     const store = new DreamCandidateStore(b.factsDb.getRawDb());
     // Nightly dream: discover recent sessions from FactsDB and attach under permissionBoundary (#2174).
@@ -639,9 +637,7 @@ export function buildCliMaintenanceRunners(
       );
     }
     if (!result.promoteResult) {
-      throw new Error(
-        `dream-run missing gate/promote result dreamRunId=${result.dreamRunId} semantic=failed`,
-      );
+      throw new Error(`dream-run missing gate/promote result dreamRunId=${result.dreamRunId} semantic=failed`);
     }
     return `dreamRunId=${result.dreamRunId} sessions=${attachment.included.length} excluded=${attachment.excluded.length} candidates=${result.candidates.length} steps=${result.stepSummaries.length} timedOut=${result.timedOut} promote=${result.promoteResult.status} semantic=success`;
   });

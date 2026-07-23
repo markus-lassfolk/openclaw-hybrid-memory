@@ -304,8 +304,7 @@ export async function runDream(options: RunDreamOptions): Promise<RunDreamResult
       const shouldPromote =
         options.promote === true ||
         options.forcePromote === true ||
-        (options.promote !== false &&
-          (cfg.promoteAfterRun || cfg.autoPromote.enabled || cfg.candidateStore.enabled));
+        (options.promote !== false && (cfg.promoteAfterRun || cfg.autoPromote.enabled || cfg.candidateStore.enabled));
 
       let promoteResult: PromoteResult | undefined;
       if (shouldPromote) {

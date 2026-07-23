@@ -279,9 +279,7 @@ describe("dream permission (#2174)", () => {
         20,
       );
       expect(sessionDream.included.sort()).toEqual(["sess-a", "sess-pub"].sort());
-      expect(sessionDream.excluded.some((e) => e.sessionId === "sess-bad" && e.reason === "unresolved_acl")).toBe(
-        true,
-      );
+      expect(sessionDream.excluded.some((e) => e.sessionId === "sess-bad" && e.reason === "unresolved_acl")).toBe(true);
 
       const globalDream = selectDreamSessions(
         discovered,

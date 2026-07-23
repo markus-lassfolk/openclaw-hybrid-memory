@@ -7,11 +7,7 @@
 
 import type { MemoryCategory } from "../types/memory.js";
 import type { CandidateEntryInput } from "./dream-candidate-ops.js";
-import {
-  aclFitsTarget,
-  writeScopeWithinBoundary,
-  type DreamWriteScope,
-} from "./dream-permission.js";
+import { aclFitsTarget, writeScopeWithinBoundary, type DreamWriteScope } from "./dream-permission.js";
 import type { DreamPermissionBoundary } from "../config/types/dreaming.js";
 
 /** Max candidates emitted per compose stage (keeps promote/gate bounded). */
@@ -48,10 +44,7 @@ export type ConsolidateProposedMerge = {
   sourcePreHashes: Record<string, string>;
 };
 
-function evidenceForSessions(
-  sessionIds: string[],
-  rationale: string,
-): CandidateEntryInput["evidence"] {
+function evidenceForSessions(sessionIds: string[], rationale: string): CandidateEntryInput["evidence"] {
   const unique = [...new Set(sessionIds.map((s) => s.trim()).filter(Boolean))];
   return {
     sessionIds: unique,
@@ -70,8 +63,7 @@ function resolveAttributedWriteScope(input: {
 }): { scope: "session" | "agent"; scopeTarget: string; evidenceSessions: string[] } | null {
   const attached = [...new Set(input.sessionIds.map((s) => s.trim()).filter(Boolean))];
   const source = input.sourceSessionId?.trim() || "";
-  let resolved: { scope: "session" | "agent"; scopeTarget: string; evidenceSessions: string[] } | null =
-    null;
+  let resolved: { scope: "session" | "agent"; scopeTarget: string; evidenceSessions: string[] } | null = null;
   if (source) {
     if (attached.length > 0 && !attached.includes(source)) return null;
     resolved = { scope: "session", scopeTarget: source, evidenceSessions: [source] };
@@ -130,10 +122,7 @@ export function distillProposalsToCandidates(input: {
         scope: write.scope,
         scopeTarget: write.scopeTarget,
       },
-      evidence: evidenceForSessions(
-        write.evidenceSessions,
-        `distill dry-run proposal for dream ${input.dreamRunId}`,
-      ),
+      evidence: evidenceForSessions(write.evidenceSessions, `distill dry-run proposal for dream ${input.dreamRunId}`),
       reverse: { op: "delete_fact", payload: {} },
       sortOrder: sortOrder++,
     });
@@ -197,10 +186,7 @@ export function reflectProposalsToCandidates(input: {
         scope,
         scopeTarget,
       },
-      evidence: evidenceForSessions(
-        input.sessionIds,
-        `reflect dry-run pattern for dream ${input.dreamRunId}`,
-      ),
+      evidence: evidenceForSessions(input.sessionIds, `reflect dry-run pattern for dream ${input.dreamRunId}`),
       reverse: { op: "delete_fact", payload: {} },
       sortOrder: sortOrder++,
     });
@@ -355,7 +341,10 @@ export function consolidateProposalsToCandidates(input: {
           evidenceSessions,
           `consolidate delete source ${sourceId} (OCC pinned at propose) for dream ${input.dreamRunId}`,
         ),
-        reverse: { op: "noop", payload: { note: "source restore requires backup; consolidate reverse is best-effort" } },
+        reverse: {
+          op: "noop",
+          payload: { note: "source restore requires backup; consolidate reverse is best-effort" },
+        },
         sortOrder: sortOrder++,
       });
     }
@@ -388,12 +377,15 @@ export type ContradictionResolvePair = {
 export function pinContradictionResolves(
   pairs: ContradictionResolvePair[],
   lookup: {
-    getById: (id: string) => {
-      supersededAt?: number | null;
-      scope?: string | null;
-      scopeTarget?: string | null;
-      provenanceSession?: string | null;
-    } | null | undefined;
+    getById: (id: string) =>
+      | {
+          supersededAt?: number | null;
+          scope?: string | null;
+          scopeTarget?: string | null;
+          provenanceSession?: string | null;
+        }
+      | null
+      | undefined;
     getOccToken: (id: string) => string | null;
   },
 ): ContradictionProposedResolve[] {
@@ -467,10 +459,7 @@ export function contradictionProposalsToCandidates(input: {
       evidenceSessions = provenance.filter((p) => allow.has(p));
     } else if (factScope === "session" && sessionTarget && allow.has(sessionTarget)) {
       evidenceSessions = [sessionTarget];
-    } else if (
-      factScope !== "session" &&
-      aclFitsTarget(factScope, targetScope, boundary.personalMode === true)
-    ) {
+    } else if (factScope !== "session" && aclFitsTarget(factScope, targetScope, boundary.personalMode === true)) {
       // Shared/public facts may feed a more-private dream; evidence is the attachment, not invented provenance.
       evidenceSessions = [...allow];
     } else {
@@ -503,4 +492,3 @@ export function contradictionProposalsToCandidates(input: {
   }
   return out;
 }
-

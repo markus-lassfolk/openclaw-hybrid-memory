@@ -330,7 +330,8 @@ describe("dream promote/rollback (#2170)", () => {
     const promoted = promoteDreamRun(factsDb, store, run.id, { force: true, cfg: dreaming });
     expect(promoted.applied).toBe(true);
     // Soft-delete keeps the row in `facts`; superseded_at is set.
-    const afterPromoteRow = factsDb.getRawDb()
+    const afterPromoteRow = factsDb
+      .getRawDb()
       .prepare("SELECT id, superseded_at FROM facts WHERE id = ?")
       .get(target.id) as { id: string; superseded_at: number | null } | undefined;
     expect(afterPromoteRow?.id).toBe(target.id);
@@ -344,7 +345,8 @@ describe("dream promote/rollback (#2170)", () => {
     const restored = factsDb.getById(target.id);
     expect(restored).not.toBeNull();
     expect(restored?.text).toBe("fact to be soft-deleted then restored");
-    const afterRollbackRow = factsDb.getRawDb()
+    const afterRollbackRow = factsDb
+      .getRawDb()
       .prepare("SELECT superseded_at FROM facts WHERE id = ?")
       .get(target.id) as { superseded_at: number | null } | undefined;
     expect(afterRollbackRow?.superseded_at).toBeNull();
@@ -418,13 +420,11 @@ describe("dream promote/rollback (#2170)", () => {
     expect(rolled.abortedEntries).toEqual([]);
     // Target restored, replacement hard-deleted.
     expect(factsDb.getById(target.id)?.text).toBe("original preference");
-    const restoredRow = factsDb.getRawDb()
-      .prepare("SELECT superseded_at FROM facts WHERE id = ?")
-      .get(target.id) as { superseded_at: number | null } | undefined;
+    const restoredRow = factsDb.getRawDb().prepare("SELECT superseded_at FROM facts WHERE id = ?").get(target.id) as
+      | { superseded_at: number | null }
+      | undefined;
     expect(restoredRow?.superseded_at).toBeNull();
-    const gone = factsDb.getRawDb()
-      .prepare("SELECT id FROM facts WHERE id = ?")
-      .get(replacementId);
+    const gone = factsDb.getRawDb().prepare("SELECT id FROM facts WHERE id = ?").get(replacementId);
     expect(gone).toBeUndefined();
     expect(factsDb.count()).toBe(beforeCount);
   });

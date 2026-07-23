@@ -312,10 +312,7 @@ export async function runDistillForCli(
     const maxSessions = opts.maxSessions ?? 0;
     let filesToProcess = maxSessions > 0 ? sessionFiles.slice(0, maxSessions) : sessionFiles;
     if (filesToProcess.length === 0) {
-      const allowlistNote =
-        opts.sessionIds !== undefined
-          ? ` (session allowlist size=${opts.sessionIds.length})`
-          : "";
+      const allowlistNote = opts.sessionIds !== undefined ? ` (session allowlist size=${opts.sessionIds.length})` : "";
       sink.log(`No session files found under ~/.openclaw/agents/*/sessions/${allowlistNote}`);
       if (shouldAcquireLock && !opts.dryRun) {
         factsDb.updateScanCursor(SCAN_TYPE, 0, 0);

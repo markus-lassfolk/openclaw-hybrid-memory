@@ -388,16 +388,10 @@ async function applySelfCorrectionRemediations(params: {
       if (opts.dryRun) {
         const src =
           a.sourceIncident ??
-          (typeof a.incidentIndex === "number" && incidents[a.incidentIndex]
-            ? incidents[a.incidentIndex]
-            : undefined);
+          (typeof a.incidentIndex === "number" && incidents[a.incidentIndex] ? incidents[a.incidentIndex] : undefined);
         const sessionFile = src?.sessionFile?.trim() || "";
         const base = sessionFile ? basename(sessionFile) : "";
-        const sourceSessionId = base
-          ? base.endsWith(".jsonl")
-            ? base.slice(0, -".jsonl".length)
-            : base
-          : undefined;
+        const sourceSessionId = base ? (base.endsWith(".jsonl") ? base.slice(0, -".jsonl".length) : base) : undefined;
         extracted.push({
           text,
           category: "technical",

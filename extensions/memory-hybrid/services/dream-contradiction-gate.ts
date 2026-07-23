@@ -5,10 +5,7 @@
  */
 
 import type { FactsDB } from "../backends/facts-db.js";
-import {
-  isFactVerified,
-  scoreFactContradiction,
-} from "../backends/facts-db/contradictions.js";
+import { isFactVerified, scoreFactContradiction } from "../backends/facts-db/contradictions.js";
 import { DREAM_CONTRADICTION_WORSEN_SCORE } from "../config/types/dreaming.js";
 import type { CandidateEntryRecord } from "./dream-candidate-ops.js";
 
@@ -61,25 +58,13 @@ export function evaluateContradictionWorsening(
     const scope = entry.payload.scope ?? null;
     const scopeTarget = entry.payload.scopeTarget ?? null;
     const excludeId = entry.payload.id?.trim() || "";
-    const conflicts = factsDb.findConflictingFacts(
-      entity,
-      key,
-      String(value),
-      excludeId,
-      scope,
-      scopeTarget,
-    );
+    const conflicts = factsDb.findConflictingFacts(entity, key, String(value), excludeId, scope, scopeTarget);
 
     for (const old of conflicts) {
       if (isFactVerified(db, old.id)) {
         return { worsens: true, reason: `conflicts_verified_${old.id.slice(0, 8)}` };
       }
-      const scored = scoreFactContradiction(
-        entry.payload.text ?? "",
-        String(value),
-        old.text ?? "",
-        old.value ?? "",
-      );
+      const scored = scoreFactContradiction(entry.payload.text ?? "", String(value), old.text ?? "", old.value ?? "");
       if (scored.score >= scoreThreshold) {
         return {
           worsens: true,

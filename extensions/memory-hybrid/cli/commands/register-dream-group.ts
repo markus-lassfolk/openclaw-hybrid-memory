@@ -472,9 +472,7 @@ export function registerDreamGroup(mem: Chainable, ctx: DreamCliContext): void {
     });
 
   (group.command("validate-shadow") as ArgumentChainable)
-    .description(
-      "Evaluate shadow ROI criteria required before autoPromote apply (#2179). Exit 0=pass, 1=fail.",
-    )
+    .description("Evaluate shadow ROI criteria required before autoPromote apply (#2179). Exit 0=pass, 1=fail.")
     .option("--since-days <n>", "Lookback days (default: autoPromote.shadowValidation.lookbackDays)")
     .option("--json", "Machine-readable JSON")
     .action((opts: { sinceDays?: string; json?: boolean }) => {

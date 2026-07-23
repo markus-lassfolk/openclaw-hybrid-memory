@@ -17,7 +17,12 @@ import {
   resolveCurrentToolExecutor,
   setCurrentToolExecutor,
 } from "./hybrid-memory-generation-state.js";
-import { shouldReturnInitializingToolResult, isActivationFailed, isActivationReady, getActivationFailureError } from "./hybrid-memory-activation.js";
+import {
+  shouldReturnInitializingToolResult,
+  isActivationFailed,
+  isActivationReady,
+  getActivationFailureError,
+} from "./hybrid-memory-activation.js";
 import { patchMemoryToolRegistrationApi } from "../utils/tool-search-wrapper-args.js";
 import { type ToolsContext, toolInstallers } from "./tool-installers.js";
 

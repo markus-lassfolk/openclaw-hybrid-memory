@@ -56,7 +56,13 @@ describe("dream-shadow-validation", () => {
       promotedAt: null,
       rolledBackAt: null,
       candidateCount: 2,
-      cost: { feature: "dream" as const, wallSeconds: null, tokens: null, usdProxy: null, source: "insufficient_data" as const },
+      cost: {
+        feature: "dream" as const,
+        wallSeconds: null,
+        tokens: null,
+        usdProxy: null,
+        source: "insufficient_data" as const,
+      },
       outcome: { baseline: null, summary: "shadow" as const },
     }));
     const gateReportsByRunId = new Map(
