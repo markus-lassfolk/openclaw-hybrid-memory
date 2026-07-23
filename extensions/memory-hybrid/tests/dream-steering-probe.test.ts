@@ -11,6 +11,7 @@ import { DEFAULT_DREAMING_CONFIG } from "../config/types/dreaming.js";
 import { evaluateDreamGates } from "../services/dream-promote.js";
 import { promoteDreamRun } from "../services/dream-promote.js";
 import { dreamRunTag } from "../services/dream-metrics.js";
+import { collectDreamMetricSet } from "../services/dream-metrics.js";
 import { probeDreamOutcomes } from "../services/dream-outcome-probe.js";
 import {
   formatSteeringPromptBlock,
@@ -62,7 +63,9 @@ describe("dream steering (#2176)", () => {
       inputStoreRevision: factsDb.computeStoreRevision(),
       sessionIds: ["s1"],
       shadow: true,
+      steeringPolicyId: "personal",
     });
+    expect(run.steeringPolicyId).toBe("personal");
     const entryBase = {
       op: "add" as const,
       payload: {
@@ -107,6 +110,38 @@ describe("dream outcome probe (#2173)", () => {
   afterEach(() => {
     factsDb.close();
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("scopes feedback metrics to dream sessions — ignores unrelated global corrections", () => {
+    const now = Math.floor(Date.now() / 1000);
+    factsDb.store({
+      text: "unrelated global correction",
+      category: "preference",
+      importance: 0.5,
+      source: "self-correction",
+      entity: null,
+      key: null,
+      value: null,
+      scope: "global",
+    });
+    factsDb.store({
+      text: "in-session correction",
+      category: "preference",
+      importance: 0.5,
+      source: "self-correction",
+      entity: null,
+      key: null,
+      value: null,
+      scope: "session",
+      scopeTarget: "s1",
+    });
+    const metrics = collectDreamMetricSet(factsDb, {
+      fromSec: now - 60,
+      toSec: now + 60,
+      sessionIds: ["s1"],
+    });
+    expect(metrics.retryRate).toBe(1);
+    expect(metrics.sessionsObserved).toBe(1);
   });
 
   it("tags promoted facts with dream-run id", () => {
@@ -159,9 +194,10 @@ describe("dream outcome probe (#2173)", () => {
     cfg.candidateStore.shadow = false;
     cfg.permissionBoundary.targetScope = "session";
 
+    const sessionIds = ["s1", "s2", "s3"];
     const run = store.createDreamRun({
       inputStoreRevision: factsDb.computeStoreRevision(),
-      sessionIds: ["s1"],
+      sessionIds,
       shadow: false,
     });
     store.appendCandidateEntries(run.id, [
@@ -179,8 +215,8 @@ describe("dream outcome probe (#2173)", () => {
           scopeTarget: "s1",
         },
         evidence: {
-          sessionIds: ["s1"],
-          prevalence: { sessions: 1, agents: 1 },
+          sessionIds,
+          prevalence: { sessions: 3, agents: 1 },
           rationale: "ok",
         },
         reverse: { op: "delete_fact", payload: {} },
@@ -198,17 +234,19 @@ describe("dream outcome probe (#2173)", () => {
       }),
       metricsObserveUntil: promotedAt - 1,
     });
-    factsDb.store({
-      text: "post-promote failure",
-      category: "preference",
-      importance: 0.5,
-      source: "self-correction",
-      entity: null,
-      key: null,
-      value: null,
-      scope: "session",
-      scopeTarget: "s1",
-    });
+    for (const sid of sessionIds) {
+      factsDb.store({
+        text: `post-promote failure ${sid}`,
+        category: "preference",
+        importance: 0.5,
+        source: "self-correction",
+        entity: null,
+        key: null,
+        value: null,
+        scope: "session",
+        scopeTarget: sid,
+      });
+    }
 
     const probe = probeDreamOutcomes(factsDb, store, {
       cfg,

@@ -14,6 +14,7 @@ import { type DreamStepRunners, runDream } from "../../services/dream-run.js";
 import { selectDreamSessions } from "../../services/dream-permission.js";
 import { buildDreamRoiReport } from "../../services/dream-roi.js";
 import { evaluateDreamOutcome } from "../../services/dream-outcome.js";
+import { collectDreamMetricSet } from "../../services/dream-metrics.js";
 import { probeDreamOutcomes } from "../../services/dream-outcome-probe.js";
 import { formatSteeringPromptBlock } from "../../services/dream-steering.js";
 import type { ManageContext } from "../context.js";
@@ -325,43 +326,79 @@ export function registerDreamGroup(mem: Chainable, ctx: DreamCliContext): void {
 
   (group.command("observe") as ArgumentChainable)
     .description("Evaluate post-promote outcomes and optionally auto-rollback (#2173)")
-    .argument("<id>", "Dream run id")
-    .option("--effect-score <n>", "Observed effect score 0..1", "0")
-    .option("--success-rate <n>", "Observed success rate 0..1", "0")
-    .option("--retry-rate <n>", "Observed retry rate", "0")
-    .option("--sessions <n>", "Sessions observed in window", "0")
+    .argument("[id]", "Dream run id (omit with --all to probe elapsed windows)")
+    .option("--all", "Probe all promoted runs whose observe window has elapsed")
+    .option("--effect-score <n>", "Override observed effect score (manual; skips auto-collect)")
+    .option("--success-rate <n>", "Override observed success rate 0..1")
+    .option("--retry-rate <n>", "Override observed retry rate")
+    .option("--sessions <n>", "Override sessions observed in window")
     .option("--apply", "Apply rollback when regression detected and autoRollback.enabled")
+    .option("--force", "Include runs still inside the observe window")
     .option("--json", "Machine-readable JSON")
     .action(
       (
-        id: string,
+        id: string | undefined,
         opts: {
+          all?: boolean;
           effectScore?: string;
           successRate?: string;
           retryRate?: string;
           sessions?: string;
           apply?: boolean;
+          force?: boolean;
           json?: boolean;
         },
       ) => {
         const store = getStore(ctx.factsDb);
         const cfg = ctx.dreaming ?? DEFAULT_DREAMING_CONFIG;
-        const report = evaluateDreamOutcome(
-          ctx.factsDb,
-          store,
-          id,
-          {
-            effectScore: Number.parseFloat(opts.effectScore ?? "0") || 0,
-            successRate: Number.parseFloat(opts.successRate ?? "0") || 0,
-            retryRate: Number.parseFloat(opts.retryRate ?? "0") || 0,
-            sessionsObserved: Number.parseInt(opts.sessions ?? "0", 10) || 0,
-          },
-          {
+
+        if (opts.all || !id) {
+          if (!opts.all && !id) {
+            process.stderr.write("dream observe: pass <id> or --all\n");
+            process.exitCode = 1;
+            return;
+          }
+          const probe = probeDreamOutcomes(ctx.factsDb, store, {
             cfg,
             applyRollback: opts.apply === true,
-            minSessions: 3,
-          },
-        );
+            force: opts.force === true,
+            limit: 50,
+          });
+          printJson(probe);
+          return;
+        }
+
+        const run = store.getDreamRun(id);
+        if (!run) {
+          process.stderr.write(`dream observe: run not found: ${id}\n`);
+          process.exitCode = 1;
+          return;
+        }
+
+        const hasManual =
+          opts.effectScore != null ||
+          opts.successRate != null ||
+          opts.retryRate != null ||
+          opts.sessions != null;
+
+        const after = hasManual
+          ? {
+              effectScore: Number.parseFloat(opts.effectScore ?? "0") || 0,
+              successRate: Number.parseFloat(opts.successRate ?? "0") || 0,
+              retryRate: Number.parseFloat(opts.retryRate ?? "0") || 0,
+              sessionsObserved: Number.parseInt(opts.sessions ?? "0", 10) || 0,
+            }
+          : collectDreamMetricSet(ctx.factsDb, {
+              fromSec: run.promotedAt ?? run.createdAt,
+              toSec: Math.floor(Date.now() / 1000),
+              sessionIds: run.sessionIds,
+            });
+
+        const report = evaluateDreamOutcome(ctx.factsDb, store, id, after, {
+          cfg,
+          applyRollback: opts.apply === true,
+          minSessions: 3,
+        });
         printJson(report);
         if (report.decision === "rollback" && opts.apply && !report.rollback?.rolledBack) {
           process.exitCode = 1;

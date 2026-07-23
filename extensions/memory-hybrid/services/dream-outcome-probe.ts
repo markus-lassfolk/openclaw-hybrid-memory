@@ -68,7 +68,8 @@ export function probeDreamOutcomes(
       cfg,
       nowSec,
       applyRollback,
-      minSessions: Math.max(1, run.sessionIds.length > 0 ? 1 : 3),
+      // Require real observation volume — do not treat "attached session ids" as observed sessions.
+      minSessions: 3,
     });
     reports.push(report);
 

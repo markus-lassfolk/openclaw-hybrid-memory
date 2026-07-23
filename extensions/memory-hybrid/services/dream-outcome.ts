@@ -75,6 +75,11 @@ export function evaluateDreamOutcome(
   const minSessions = options.minSessions ?? 3;
   const run = store.getDreamRun(dreamRunId);
 
+  const finish = (report: DreamOutcomeReport): DreamOutcomeReport => {
+    if (run) persistOutcomeDecision(store, dreamRunId, report);
+    return report;
+  };
+
   const emptyAfter = after;
   if (!run) {
     return {
@@ -92,69 +97,69 @@ export function evaluateDreamOutcome(
   const toSec = run.metricsObserveUntil ?? fromSec + cfg.autoRollback.observeWindowHours * 3600;
 
   if (after.sessionsObserved < minSessions) {
-    return {
+    return finish({
       dreamRunId,
       window: { fromSec, toSec, sessions: after.sessionsObserved },
       baseline,
       after,
       decision: "insufficient_data",
       reason: "insufficient_sessions",
-    };
+    });
   }
 
   if (!baseline) {
-    return {
+    return finish({
       dreamRunId,
       window: { fromSec, toSec, sessions: after.sessionsObserved },
       baseline: null,
       after,
       decision: "insufficient_data",
       reason: "missing_baseline",
-    };
+    });
   }
 
   const drop = baseline.effectScore - after.effectScore;
   const shouldRollback = drop >= cfg.autoRollback.regressionThreshold;
 
   if (!shouldRollback) {
-    return {
+    return finish({
       dreamRunId,
       window: { fromSec, toSec, sessions: after.sessionsObserved },
       baseline,
       after,
       decision: "keep",
       reason: `effect_score_drop=${drop.toFixed(3)}_below_threshold`,
-    };
+    });
   }
 
   if (!cfg.autoRollback.enabled || options.applyRollback === false) {
-    return {
+    return finish({
       dreamRunId,
       window: { fromSec, toSec, sessions: after.sessionsObserved },
       baseline,
       after,
       decision: "rollback",
       reason: `would_rollback_effect_drop=${drop.toFixed(3)}`,
-    };
+    });
   }
 
   if (nowSec < toSec && options.applyRollback !== true) {
     // Still inside window unless caller forces apply.
-    return {
+    return finish({
       dreamRunId,
       window: { fromSec, toSec, sessions: after.sessionsObserved },
       baseline,
       after,
       decision: "rollback",
       reason: `regression_detected_waiting_window_or_force`,
-    };
+    });
   }
 
   const rollback = rollbackDreamRun(factsDb, store, dreamRunId, {
     reason: `auto_rollback_effect_drop=${drop.toFixed(3)}`,
   });
 
-  return {
+  return finish({
     dreamRunId,
     window: { fromSec, toSec, sessions: after.sessionsObserved },
     baseline,
@@ -162,5 +167,39 @@ export function evaluateDreamOutcome(
     decision: "rollback",
     reason: `auto_rollback_effect_drop=${drop.toFixed(3)}`,
     rollback,
-  };
+  });
+}
+
+/** Persist keep/rollback/insufficient decisions on the dream_run metrics summary (#2173 audit). */
+function persistOutcomeDecision(
+  store: DreamCandidateStore,
+  dreamRunId: string,
+  report: DreamOutcomeReport,
+): void {
+  try {
+    const run = store.getDreamRun(dreamRunId);
+    let base: Record<string, unknown> = {};
+    if (run?.metricsSummaryJson) {
+      try {
+        base = JSON.parse(run.metricsSummaryJson) as Record<string, unknown>;
+      } catch {
+        base = {};
+      }
+    }
+    store.setDreamRunMetrics(dreamRunId, {
+      metricsSummaryJson: JSON.stringify({
+        ...base,
+        outcome: {
+          decision: report.decision,
+          reason: report.reason,
+          at: Math.floor(Date.now() / 1000),
+          window: report.window,
+          baseline: report.baseline,
+          after: report.after,
+        },
+      }),
+    });
+  } catch {
+    // Best-effort audit — never fail the outcome path on journal write.
+  }
 }

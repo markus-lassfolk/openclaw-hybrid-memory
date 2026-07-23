@@ -39,22 +39,40 @@ function countOpenContradictions(db: DatabaseSync): number {
   }
 }
 
+/** Scope feedback to dream sessions when available (#2173 — avoid false global rollback). */
+function sessionScopeSql(sessionIds: string[]): { clause: string; params: string[] } {
+  const ids = [...new Set(sessionIds.map((s) => s.trim()).filter((s) => s.length > 0))];
+  if (ids.length === 0) {
+    return { clause: "", params: [] };
+  }
+  const placeholders = ids.map(() => "?").join(",");
+  return {
+    clause: ` AND (
+      (scope = 'session' AND scope_target IN (${placeholders}))
+      OR provenance_session IN (${placeholders})
+    )`,
+    params: [...ids, ...ids],
+  };
+}
+
 function countFeedbackSignals(
   db: DatabaseSync,
   fromSec: number,
   toSec: number,
   sessionIds: string[],
 ): { corrections: number; praise: number; sessions: number } {
+  const scope = sessionScopeSql(sessionIds);
   let corrections = 0;
   let praise = 0;
+  let sessions = 0;
   try {
     const row = db
       .prepare(
         `SELECT COUNT(*) AS c FROM facts
          WHERE source IN ('self-correction', 'self-correction-analysis')
-           AND created_at >= ? AND created_at <= ?`,
+           AND created_at >= ? AND created_at <= ?${scope.clause}`,
       )
-      .get(fromSec, toSec) as { c: number };
+      .get(fromSec, toSec, ...scope.params) as { c: number };
     corrections = Number(row?.c ?? 0);
   } catch {
     corrections = 0;
@@ -64,14 +82,26 @@ function countFeedbackSignals(
       .prepare(
         `SELECT COUNT(*) AS c FROM facts
          WHERE source = 'reinforcement'
-           AND created_at >= ? AND created_at <= ?`,
+           AND created_at >= ? AND created_at <= ?${scope.clause}`,
       )
-      .get(fromSec, toSec) as { c: number };
+      .get(fromSec, toSec, ...scope.params) as { c: number };
     praise = Number(row?.c ?? 0);
   } catch {
     praise = 0;
   }
-  const sessions = Math.max(sessionIds.length, corrections + praise > 0 ? 1 : 0);
+  try {
+    // Distinct sessions that actually produced feedback in-window (#2173).
+    const row = db
+      .prepare(
+        `SELECT COUNT(DISTINCT COALESCE(NULLIF(provenance_session, ''), scope_target)) AS c FROM facts
+         WHERE source IN ('self-correction', 'self-correction-analysis', 'reinforcement')
+           AND created_at >= ? AND created_at <= ?${scope.clause}`,
+      )
+      .get(fromSec, toSec, ...scope.params) as { c: number };
+    sessions = Number(row?.c ?? 0);
+  } catch {
+    sessions = corrections + praise > 0 ? 1 : 0;
+  }
   return { corrections, praise, sessions };
 }
 
