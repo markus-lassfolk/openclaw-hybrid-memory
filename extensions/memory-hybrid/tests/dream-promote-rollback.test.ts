@@ -272,6 +272,163 @@ describe("dream promote/rollback (#2170)", () => {
     expect(result.error).toMatch(/input_store_revision/);
   });
 
+  it("rollback of a delete op restores the fact instead of hard-deleting it", () => {
+    // Regression: `unsupersede` reverse plans with `newFactId: null` used to fall back to
+    // `entry.appliedFactId` (which equals the target for a delete op) and then hard-delete
+    // the just-restored fact, silently defeating rollback for every delete/contradiction path.
+    const target = factsDb.store({
+      text: "fact to be soft-deleted then restored",
+      category: "preference",
+      importance: 0.6,
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+      scope: "session",
+      scopeTarget: "s1",
+      provenanceSession: "s1",
+    });
+    const preHash = factsDb.getOccToken(target.id)!;
+    const beforeCount = factsDb.count();
+
+    const run = store.createDreamRun({
+      inputStoreRevision: factsDb.computeStoreRevision(),
+      sessionIds: ["s1"],
+      shadow: false,
+    });
+    store.appendCandidateEntries(run.id, [
+      {
+        op: "delete",
+        targetFactId: target.id,
+        preHash,
+        payload: {
+          text: "drop legacy fact",
+          category: "preference",
+          importance: 0,
+          source: "dream-contradictions",
+          entity: null,
+          key: null,
+          value: null,
+          tags: ["dream", "contradiction-resolve"],
+          scope: "session",
+          scopeTarget: "s1",
+        },
+        evidence: {
+          sessionIds: ["s1"],
+          prevalence: { sessions: 1, agents: 1 },
+          rationale: "resolve",
+        },
+        reverse: { op: "unsupersede", payload: { oldFactId: target.id, newFactId: null } },
+      },
+    ]);
+
+    const dreaming = cfg({ enabled: true, shadow: false });
+    dreaming.permissionBoundary = { targetScope: "session", enforce: true, personalMode: false };
+    dreaming.autoPromote.shadowValidation.enabled = false;
+    dreaming.autoPromote.blockOnContradictionWorsening = false;
+
+    const promoted = promoteDreamRun(factsDb, store, run.id, { force: true, cfg: dreaming });
+    expect(promoted.applied).toBe(true);
+    // Soft-delete keeps the row in `facts`; superseded_at is set.
+    const afterPromoteRow = factsDb.getRawDb()
+      .prepare("SELECT id, superseded_at FROM facts WHERE id = ?")
+      .get(target.id) as { id: string; superseded_at: number | null } | undefined;
+    expect(afterPromoteRow?.id).toBe(target.id);
+    expect(afterPromoteRow?.superseded_at).not.toBeNull();
+    expect(factsDb.count()).toBe(beforeCount);
+
+    const rolled = rollbackDreamRun(factsDb, store, run.id, { reason: "test" });
+    expect(rolled.rolledBack).toBe(true);
+    expect(rolled.abortedEntries).toEqual([]);
+    // The fact must be alive again — not silently hard-deleted by the rollback path.
+    const restored = factsDb.getById(target.id);
+    expect(restored).not.toBeNull();
+    expect(restored?.text).toBe("fact to be soft-deleted then restored");
+    const afterRollbackRow = factsDb.getRawDb()
+      .prepare("SELECT superseded_at FROM facts WHERE id = ?")
+      .get(target.id) as { superseded_at: number | null } | undefined;
+    expect(afterRollbackRow?.superseded_at).toBeNull();
+    expect(factsDb.count()).toBe(beforeCount);
+  });
+
+  it("rollback of a supersede op restores the old fact and hard-deletes the replacement", () => {
+    // Companion to the delete-rollback test: `supersede` reverse plans set `newFactId` to
+    // the replacement's id explicitly, so rollback must delete that specific fact (not
+    // the restored target).
+    const target = factsDb.store({
+      text: "original preference",
+      category: "preference",
+      importance: 0.6,
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+      scope: "session",
+      scopeTarget: "s1",
+      provenanceSession: "s1",
+    });
+    const preHash = factsDb.getOccToken(target.id)!;
+    const beforeCount = factsDb.count();
+
+    const run = store.createDreamRun({
+      inputStoreRevision: factsDb.computeStoreRevision(),
+      sessionIds: ["s1"],
+      shadow: false,
+    });
+    store.appendCandidateEntries(run.id, [
+      {
+        op: "supersede",
+        targetFactId: target.id,
+        preHash,
+        payload: {
+          text: "replacement preference",
+          category: "preference",
+          importance: 0.7,
+          source: "dream",
+          entity: null,
+          key: null,
+          value: null,
+          scope: "session",
+          scopeTarget: "s1",
+        },
+        evidence: {
+          sessionIds: ["s1"],
+          prevalence: { sessions: 1, agents: 1 },
+          rationale: "supersede",
+        },
+        reverse: { op: "unsupersede", payload: { oldFactId: target.id } },
+      },
+    ]);
+
+    const dreaming = cfg({ enabled: true, shadow: false });
+    dreaming.permissionBoundary = { targetScope: "session", enforce: true, personalMode: false };
+    dreaming.autoPromote.shadowValidation.enabled = false;
+    dreaming.autoPromote.blockOnContradictionWorsening = false;
+
+    const promoted = promoteDreamRun(factsDb, store, run.id, { force: true, cfg: dreaming });
+    expect(promoted.applied).toBe(true);
+    const replacementId = promoted.appliedFactIds[0]!;
+    expect(replacementId).not.toBe(target.id);
+    // Row count grows by one: target survives as superseded, replacement adds a row.
+    expect(factsDb.count()).toBe(beforeCount + 1);
+    expect(factsDb.getById(replacementId)?.text).toBe("replacement preference");
+
+    const rolled = rollbackDreamRun(factsDb, store, run.id, { reason: "test" });
+    expect(rolled.rolledBack).toBe(true);
+    expect(rolled.abortedEntries).toEqual([]);
+    // Target restored, replacement hard-deleted.
+    expect(factsDb.getById(target.id)?.text).toBe("original preference");
+    const restoredRow = factsDb.getRawDb()
+      .prepare("SELECT superseded_at FROM facts WHERE id = ?")
+      .get(target.id) as { superseded_at: number | null } | undefined;
+    expect(restoredRow?.superseded_at).toBeNull();
+    const gone = factsDb.getRawDb()
+      .prepare("SELECT id FROM facts WHERE id = ?")
+      .get(replacementId);
+    expect(gone).toBeUndefined();
+    expect(factsDb.count()).toBe(beforeCount);
+  });
+
   it("rollback aborts entry on post_hash drift without deleting mutated fact", () => {
     const run = store.createDreamRun({
       inputStoreRevision: factsDb.computeStoreRevision(),

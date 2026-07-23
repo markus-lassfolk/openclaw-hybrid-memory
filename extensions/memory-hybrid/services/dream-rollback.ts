@@ -96,9 +96,23 @@ export function rollbackDreamRun(
               const oldId =
                 (typeof reverse.payload.oldFactId === "string" ? reverse.payload.oldFactId : null) ??
                 entry.targetFactId;
-              const newId =
-                (typeof reverse.payload.newFactId === "string" ? reverse.payload.newFactId : null) ??
-                entry.appliedFactId;
+              // For a `delete` op the applied fact IS the target fact — falling back to
+              // entry.appliedFactId when `newFactId` is explicitly null (delete/contradiction
+              // reverse plans) used to delete the just-restored old fact, defeating the
+              // rollback. Only delete `newId` when the reverse plan supplies an explicit
+              // string id AND that id differs from the restored oldId.
+              const payloadNewFactIdKey = "newFactId" in reverse.payload;
+              const payloadNewFactId = (reverse.payload as { newFactId?: unknown }).newFactId;
+              let newId: string | null = null;
+              if (typeof payloadNewFactId === "string" && payloadNewFactId.length > 0) {
+                newId = payloadNewFactId;
+              } else if (!payloadNewFactIdKey) {
+                // Legacy reverse plans that omit newFactId entirely fall back to entry.appliedFactId,
+                // but only if it isn't the same fact we just restored (never delete the restored fact).
+                if (entry.appliedFactId && entry.appliedFactId !== oldId) {
+                  newId = entry.appliedFactId;
+                }
+              }
               if (oldId) {
                 factsDb
                   .getRawDb()
@@ -109,7 +123,7 @@ export function rollbackDreamRun(
                 factsDb.invalidateSupersededTextsCache();
                 restoredFactIds.push(oldId);
               }
-              if (newId) {
+              if (newId && newId !== oldId) {
                 factsDb.delete(newId);
               }
               break;
