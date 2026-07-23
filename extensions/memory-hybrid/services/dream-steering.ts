@@ -63,7 +63,12 @@ export function categoryMatchesSteeringList(category: string, list: string[]): b
   });
 }
 
-export function shouldSteeringIgnore(category: string, key: string | null, text: string, steering: DreamSteeringConfig): boolean {
+export function shouldSteeringIgnore(
+  category: string,
+  key: string | null,
+  text: string,
+  steering: DreamSteeringConfig,
+): boolean {
   const resolved = resolveSteering(steering);
   const hay = `${category} ${key ?? ""} ${text}`.toLowerCase();
   return resolved.ignore.some((token) => {

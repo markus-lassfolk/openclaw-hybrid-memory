@@ -25,22 +25,12 @@ export function isSharedOccScope(scope: MemoryScope | string | null | undefined)
   return scope === "global" || scope === "user" || scope === "agent";
 }
 
-export function hashFactOccToken(parts: {
-  id: string;
-  revisionCount: number;
-  normalizedHash: string;
-}): string {
-  return createHash("sha256")
-    .update(`${parts.id}:${parts.revisionCount}:${parts.normalizedHash}`)
-    .digest("hex");
+export function hashFactOccToken(parts: { id: string; revisionCount: number; normalizedHash: string }): string {
+  return createHash("sha256").update(`${parts.id}:${parts.revisionCount}:${parts.normalizedHash}`).digest("hex");
 }
 
 /** OCC token for a live MemoryEntry-shaped row (#2175). */
-export function occTokenForFact(fact: {
-  id: string;
-  text: string;
-  revisionCount?: number | null;
-}): string {
+export function occTokenForFact(fact: { id: string; text: string; revisionCount?: number | null }): string {
   return hashFactOccToken({
     id: fact.id,
     revisionCount: fact.revisionCount ?? 0,

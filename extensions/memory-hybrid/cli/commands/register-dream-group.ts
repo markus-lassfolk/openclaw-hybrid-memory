@@ -194,9 +194,7 @@ export function registerDreamGroup(mem: Chainable, ctx: DreamCliContext): void {
         const dreamCfg: DreamingConfig = {
           ...base,
           enabled: true,
-          compose: composeOverride?.length
-            ? (composeOverride as DreamingConfig["compose"])
-            : base.compose,
+          compose: composeOverride?.length ? (composeOverride as DreamingConfig["compose"]) : base.compose,
           candidateStore: { ...base.candidateStore, enabled: true },
         };
 
@@ -212,9 +210,7 @@ export function registerDreamGroup(mem: Chainable, ctx: DreamCliContext): void {
         const attachment = selectDreamSessions(
           rawIds.map((sessionId) => ({
             sessionId,
-            effectiveScope:
-              scopeMap.get(sessionId) ??
-              (base.permissionBoundary.personalMode ? "global" : "session"),
+            effectiveScope: scopeMap.get(sessionId) ?? (base.permissionBoundary.personalMode ? "global" : "session"),
           })),
           dreamCfg.permissionBoundary,
           dreamCfg.maxSessions,
@@ -383,10 +379,7 @@ export function registerDreamGroup(mem: Chainable, ctx: DreamCliContext): void {
         }
 
         const hasManual =
-          opts.effectScore != null ||
-          opts.successRate != null ||
-          opts.retryRate != null ||
-          opts.sessions != null;
+          opts.effectScore != null || opts.successRate != null || opts.retryRate != null || opts.sessions != null;
 
         const after = hasManual
           ? {

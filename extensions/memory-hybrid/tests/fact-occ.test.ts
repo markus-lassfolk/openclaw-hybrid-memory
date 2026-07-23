@@ -6,11 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
-import {
-  MemoryConflictError,
-  computeInputStoreRevision,
-  occTokenForFact,
-} from "../utils/fact-occ.js";
+import { MemoryConflictError, computeInputStoreRevision, occTokenForFact } from "../utils/fact-occ.js";
 
 describe("fact OCC (#2175)", () => {
   let tmpDir: string;

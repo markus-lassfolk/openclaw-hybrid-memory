@@ -1098,9 +1098,7 @@ function finishHybridMemoryRegistration(params: FinishRegistrationParams): void 
     logger: logApi.logger,
     pluginVersion: versionInfo.pluginVersion,
     registerContextEngine:
-      typeof logApi.registerContextEngine === "function"
-        ? logApi.registerContextEngine.bind(logApi)
-        : undefined,
+      typeof logApi.registerContextEngine === "function" ? logApi.registerContextEngine.bind(logApi) : undefined,
   });
 
   // Phase 2.6 / Phase 3: Single plugin context satisfying MemoryPluginAPI (stable internal API).

@@ -123,12 +123,18 @@ function mapCandidate(row: CandidateRow): CandidateEntryRecord {
     dreamRunId: row.dream_run_id,
     op: row.op as CandidateOpKind,
     status: row.status as CandidateEntryStatus,
-    payload: parseJsonObject<CandidatePayload>(row.payload_json, { text: "", category: "preference", importance: 0.5, source: "dream", entity: null, key: null, value: null }),
+    payload: parseJsonObject<CandidatePayload>(row.payload_json, {
+      text: "",
+      category: "preference",
+      importance: 0.5,
+      source: "dream",
+      entity: null,
+      key: null,
+      value: null,
+    }),
     targetFactId: row.target_fact_id,
     sessionIds: parseJsonArray(row.session_ids_json),
-    prevalence: row.prevalence_json
-      ? parseJsonObject<CandidatePrevalence | null>(row.prevalence_json, null)
-      : null,
+    prevalence: row.prevalence_json ? parseJsonObject<CandidatePrevalence | null>(row.prevalence_json, null) : null,
     rationale: row.rationale,
     preHash: row.pre_hash,
     postHash: row.post_hash,
@@ -180,13 +186,9 @@ export class DreamCandidateStore {
     const current = this.getDreamRun(id);
     if (!current) throw new Error(`dream-candidate-store: dream run not found: ${id}`);
     if (current.status !== "pending" && current.status !== "running" && current.status !== "gated") {
-      throw new Error(
-        `dream-candidate-store: cannot rebase revision in status ${current.status} for ${id}`,
-      );
+      throw new Error(`dream-candidate-store: cannot rebase revision in status ${current.status} for ${id}`);
     }
-    this.db
-      .prepare("UPDATE dream_runs SET input_store_revision = ? WHERE id = ?")
-      .run(inputStoreRevision, id);
+    this.db.prepare("UPDATE dream_runs SET input_store_revision = ? WHERE id = ?").run(inputStoreRevision, id);
     const updated = this.getDreamRun(id);
     if (!updated) throw new Error(`dream-candidate-store: dream run missing after rebase: ${id}`);
     return updated;
@@ -223,9 +225,7 @@ export class DreamCandidateStore {
     } else {
       const allowed = ALLOWED_TRANSITIONS[current.status];
       if (!allowed.includes(status)) {
-        throw new Error(
-          `dream-candidate-store: illegal status transition ${current.status} → ${status} for ${id}`,
-        );
+        throw new Error(`dream-candidate-store: illegal status transition ${current.status} → ${status} for ${id}`);
       }
     }
     if (!DREAM_RUN_STATUSES.includes(status)) {
@@ -288,16 +288,11 @@ export class DreamCandidateStore {
     return updated;
   }
 
-  setDreamRunMetrics(
-    id: string,
-    extra: { metricsSummaryJson?: string | null },
-  ): DreamRunRecord {
+  setDreamRunMetrics(id: string, extra: { metricsSummaryJson?: string | null }): DreamRunRecord {
     const current = this.getDreamRun(id);
     if (!current) throw new Error(`dream-candidate-store: dream run not found: ${id}`);
     if (extra.metricsSummaryJson !== undefined) {
-      this.db
-        .prepare("UPDATE dream_runs SET metrics_summary_json = ? WHERE id = ?")
-        .run(extra.metricsSummaryJson, id);
+      this.db.prepare("UPDATE dream_runs SET metrics_summary_json = ? WHERE id = ?").run(extra.metricsSummaryJson, id);
     }
     const updated = this.getDreamRun(id);
     if (!updated) throw new Error(`dream-candidate-store: dream run missing after metrics patch: ${id}`);
@@ -308,9 +303,7 @@ export class DreamCandidateStore {
     const run = this.getDreamRun(dreamRunId);
     if (!run) throw new Error(`dream-candidate-store: dream run not found: ${dreamRunId}`);
     if (run.status !== "pending" && run.status !== "running") {
-      throw new Error(
-        `dream-candidate-store: cannot append candidates to run in status ${run.status}`,
-      );
+      throw new Error(`dream-candidate-store: cannot append candidates to run in status ${run.status}`);
     }
 
     const created: CandidateEntryRecord[] = [];
@@ -354,9 +347,7 @@ export class DreamCandidateStore {
 
   listCandidateEntries(dreamRunId: string): CandidateEntryRecord[] {
     const rows = this.db
-      .prepare(
-        "SELECT * FROM memory_candidate_entries WHERE dream_run_id = ? ORDER BY sort_order ASC, created_at ASC",
-      )
+      .prepare("SELECT * FROM memory_candidate_entries WHERE dream_run_id = ? ORDER BY sort_order ASC, created_at ASC")
       .all(dreamRunId) as CandidateRow[];
     return rows.map(mapCandidate);
   }

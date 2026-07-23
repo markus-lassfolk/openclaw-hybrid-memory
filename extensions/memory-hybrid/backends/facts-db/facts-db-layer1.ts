@@ -561,11 +561,7 @@ export class FactsDBLayer1 extends BaseSqliteStore {
   /** Mark a fact as superseded by a new fact. Sets superseded_at, superseded_by, and valid_until (bi-temporal).
    * When `expectedHash` is set (#2175 OCC), refuse if the live OCC token no longer matches.
    */
-  supersede(
-    oldId: string,
-    newId: string | null,
-    options?: { expectedHash?: string },
-  ): boolean {
+  supersede(oldId: string, newId: string | null, options?: { expectedHash?: string }): boolean {
     if (options?.expectedHash) {
       const current = this.getById(oldId);
       if (!current) return false;

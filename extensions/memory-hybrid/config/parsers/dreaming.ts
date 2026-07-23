@@ -42,15 +42,10 @@ function parseTier(raw: unknown, fallback: DreamingPrevalenceTier): DreamingPrev
   const r = asRecord(raw);
   if (!r) return { ...fallback };
   const minSessions =
-    typeof r.minSessions === "number" && r.minSessions >= 0
-      ? Math.floor(r.minSessions)
-      : fallback.minSessions;
-  const minAgents =
-    typeof r.minAgents === "number" && r.minAgents >= 0 ? Math.floor(r.minAgents) : fallback.minAgents;
+    typeof r.minSessions === "number" && r.minSessions >= 0 ? Math.floor(r.minSessions) : fallback.minSessions;
+  const minAgents = typeof r.minAgents === "number" && r.minAgents >= 0 ? Math.floor(r.minAgents) : fallback.minAgents;
   const minConfidence =
-    typeof r.minConfidence === "number" && Number.isFinite(r.minConfidence)
-      ? r.minConfidence
-      : fallback.minConfidence;
+    typeof r.minConfidence === "number" && Number.isFinite(r.minConfidence) ? r.minConfidence : fallback.minConfidence;
   return { minSessions, minAgents, ...(minConfidence != null ? { minConfidence } : {}) };
 }
 

@@ -86,12 +86,12 @@ describe("dream permission (#2174)", () => {
   });
 
   it("clamps write scope to dream boundary", () => {
-    expect(
-      writeScopeWithinBoundary("global", { targetScope: "session", enforce: true, personalMode: false }),
-    ).toBe(false);
-    expect(
-      writeScopeWithinBoundary("session", { targetScope: "global", enforce: true, personalMode: false }),
-    ).toBe(true);
+    expect(writeScopeWithinBoundary("global", { targetScope: "session", enforce: true, personalMode: false })).toBe(
+      false,
+    );
+    expect(writeScopeWithinBoundary("session", { targetScope: "global", enforce: true, personalMode: false })).toBe(
+      true,
+    );
   });
 });
 

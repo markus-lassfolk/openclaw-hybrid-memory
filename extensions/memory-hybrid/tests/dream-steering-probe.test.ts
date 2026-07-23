@@ -13,11 +13,7 @@ import { promoteDreamRun } from "../services/dream-promote.js";
 import { applyDreamCanaryBoost, hasDreamCanaryTag } from "../services/dream-canary.js";
 import { dreamRunTag, collectDreamMetricSet } from "../services/dream-metrics.js";
 import { probeDreamOutcomes } from "../services/dream-outcome-probe.js";
-import {
-  formatSteeringPromptBlock,
-  resolveSteering,
-  shouldSteeringIgnore,
-} from "../services/dream-steering.js";
+import { formatSteeringPromptBlock, resolveSteering, shouldSteeringIgnore } from "../services/dream-steering.js";
 import { runDream } from "../services/dream-run.js";
 
 describe("dream canary boost (#2173)", () => {

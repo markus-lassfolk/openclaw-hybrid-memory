@@ -85,8 +85,7 @@ export function rollbackDreamRun(
           switch (reverse.op) {
             case "delete_fact": {
               const factId =
-                (typeof reverse.payload.factId === "string" ? reverse.payload.factId : null) ??
-                entry.appliedFactId;
+                (typeof reverse.payload.factId === "string" ? reverse.payload.factId : null) ?? entry.appliedFactId;
               if (factId) {
                 factsDb.delete(factId);
                 restoredFactIds.push(factId);
@@ -117,8 +116,7 @@ export function rollbackDreamRun(
             }
             case "restore_text": {
               const factId =
-                (typeof reverse.payload.factId === "string" ? reverse.payload.factId : null) ??
-                entry.targetFactId;
+                (typeof reverse.payload.factId === "string" ? reverse.payload.factId : null) ?? entry.targetFactId;
               const text = typeof reverse.payload.text === "string" ? reverse.payload.text : null;
               if (factId && text != null) {
                 factsDb.getRawDb().prepare("UPDATE facts SET text = ? WHERE id = ?").run(text, factId);

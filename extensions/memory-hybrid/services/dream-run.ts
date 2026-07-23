@@ -185,17 +185,11 @@ export async function runDream(options: RunDreamOptions): Promise<RunDreamResult
   const sessionIds = boundSessionIds(options.sessionIds, cfg.maxSessions);
   const compose = resolveCompose(cfg);
   const steering = resolveSteering(cfg.steering);
-  const shadow =
-    options.dryShadow === true
-      ? true
-      : cfg.candidateStore.shadow !== false || !cfg.autoPromote.enabled;
+  const shadow = options.dryShadow === true ? true : cfg.candidateStore.shadow !== false || !cfg.autoPromote.enabled;
 
   // Candidate/shadow path must not mutate live store during compose (#2170).
   const liveMutateCompose =
-    options.liveMutateCompose === true &&
-    !shadow &&
-    options.dryShadow !== true &&
-    cfg.candidateStore.enabled !== true;
+    options.liveMutateCompose === true && !shadow && options.dryShadow !== true && cfg.candidateStore.enabled !== true;
 
   const maxMinutes = options.maxRuntimeMinutes ?? cfg.maxRuntimeMinutes;
   const deadlineMs = Date.now() + Math.max(1, maxMinutes) * 60_000;
@@ -347,8 +341,8 @@ export async function runDream(options: RunDreamOptions): Promise<RunDreamResult
 }
 
 /** Map dreaming.compose / skipNightlyOverlap onto nightly maintenance step names. */
-export function nightlyStepsOwnedByDream(cfg: DreamingConfig): ReadonlySet<string> {
-  if (!cfg.enabled || !cfg.skipNightlyOverlap) return new Set();
+export function nightlyStepsOwnedByDream(cfg: DreamingConfig | null | undefined): ReadonlySet<string> {
+  if (!cfg?.enabled || !cfg.skipNightlyOverlap) return new Set();
   const owned = new Set<string>();
   for (const step of resolveCompose(cfg)) {
     switch (step) {

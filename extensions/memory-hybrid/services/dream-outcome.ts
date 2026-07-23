@@ -171,11 +171,7 @@ export function evaluateDreamOutcome(
 }
 
 /** Persist keep/rollback/insufficient decisions on the dream_run metrics summary (#2173 audit). */
-function persistOutcomeDecision(
-  store: DreamCandidateStore,
-  dreamRunId: string,
-  report: DreamOutcomeReport,
-): void {
+function persistOutcomeDecision(store: DreamCandidateStore, dreamRunId: string, report: DreamOutcomeReport): void {
   try {
     const run = store.getDreamRun(dreamRunId);
     let base: Record<string, unknown> = {};

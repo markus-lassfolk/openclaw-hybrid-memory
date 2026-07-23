@@ -15,10 +15,7 @@ import {
   resetPluginRegistrationStateForTests,
   runtimeRef,
 } from "../setup/register-plugin.js";
-import {
-  resetReloadTeardownChainForTests,
-  schedulePluginTeardown,
-} from "../setup/hybrid-memory-reload-coordinator.js";
+import { resetReloadTeardownChainForTests, schedulePluginTeardown } from "../setup/hybrid-memory-reload-coordinator.js";
 import {
   type FullStackApi,
   getFullStackConfig,

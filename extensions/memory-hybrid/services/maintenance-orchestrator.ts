@@ -397,7 +397,11 @@ export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
     dependsOn: ["reflect"],
     featureGate: (cfg) => cfg.personaProposals?.enabled !== false,
   },
-  { name: "pending-digest", tier: "nightly", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.d5, llmTier: "none",
+  {
+    name: "pending-digest",
+    tier: "nightly",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.d5,
+    llmTier: "none",
     // #2177: autonomous Dream installs should not treat nightly human digests as the happy path.
     featureGate: (cfg) => !(cfg.dreaming?.enabled === true && cfg.dreaming?.mode === "autonomous"),
   },

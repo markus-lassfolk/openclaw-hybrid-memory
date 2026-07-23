@@ -117,12 +117,7 @@ export function collectDreamMetricSet(
   input: { fromSec: number; toSec: number; sessionIds: string[] },
 ): DreamMetricSet {
   const db = factsDb.getRawDb();
-  const { corrections, praise, sessions } = countFeedbackSignals(
-    db,
-    input.fromSec,
-    input.toSec,
-    input.sessionIds,
-  );
+  const { corrections, praise, sessions } = countFeedbackSignals(db, input.fromSec, input.toSec, input.sessionIds);
   const effectScore = deriveEffectScore(corrections, praise);
   const successRate = praise + corrections > 0 ? praise / (praise + corrections) : 1;
   const retryRate = corrections;
@@ -142,11 +137,7 @@ export function collectHygieneSnapshot(factsDb: FactsDB): DreamHygieneSnapshot {
   };
 }
 
-export function queryDreamCost(
-  db: DatabaseSync,
-  fromSec: number,
-  toSec: number,
-): DreamCostSnapshot {
+export function queryDreamCost(db: DatabaseSync, fromSec: number, toSec: number): DreamCostSnapshot {
   try {
     const row = db
       .prepare(

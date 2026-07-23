@@ -114,12 +114,7 @@ export type DreamingConfig = {
   steering: DreamSteeringConfig;
 };
 
-export const DEFAULT_DREAM_COMPOSE: DreamComposeStep[] = [
-  "distill",
-  "contradictions",
-  "reflect",
-  "consolidate",
-];
+export const DEFAULT_DREAM_COMPOSE: DreamComposeStep[] = ["distill", "contradictions", "reflect", "consolidate"];
 
 export const DEFAULT_DREAMING_CONFIG: DreamingConfig = {
   enabled: false,

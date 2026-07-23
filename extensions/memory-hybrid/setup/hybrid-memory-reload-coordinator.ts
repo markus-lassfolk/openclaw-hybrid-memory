@@ -176,10 +176,7 @@ const syncWaitArray = new Int32Array(syncWaitBuffer);
  * Prefer this over {@link blockReloadTeardownBeforeOpen}, which cannot drain Promise-based
  * teardown because `Atomics.wait` blocks the event loop (#2181).
  */
-export async function awaitDonorTeardown(
-  donorGeneration: number,
-  timeoutMs = TEARDOWN_WAIT_MS,
-): Promise<boolean> {
+export async function awaitDonorTeardown(donorGeneration: number, timeoutMs = TEARDOWN_WAIT_MS): Promise<boolean> {
   if (donorGeneration < 0) {
     return awaitReloadTeardownBeforeOpen(timeoutMs);
   }

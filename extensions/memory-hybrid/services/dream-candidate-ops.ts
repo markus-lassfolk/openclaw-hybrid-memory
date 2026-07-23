@@ -9,14 +9,7 @@ import { createHash } from "node:crypto";
 import type { StoreFactInput } from "../backends/facts-db/crud.js";
 import { computeInputStoreRevision, occTokenForFact } from "../utils/fact-occ.js";
 
-export type DreamRunStatus =
-  | "pending"
-  | "running"
-  | "gated"
-  | "promoted"
-  | "quarantined"
-  | "rolled_back"
-  | "failed";
+export type DreamRunStatus = "pending" | "running" | "gated" | "promoted" | "quarantined" | "rolled_back" | "failed";
 
 export const DREAM_RUN_STATUSES: readonly DreamRunStatus[] = [
   "pending",
@@ -30,13 +23,7 @@ export const DREAM_RUN_STATUSES: readonly DreamRunStatus[] = [
 
 export type CandidateOpKind = "add" | "supersede" | "delete" | "merge" | "boost";
 
-export type CandidateEntryStatus =
-  | "proposed"
-  | "gated_ok"
-  | "gated_block"
-  | "applied"
-  | "rolled_back"
-  | "skipped";
+export type CandidateEntryStatus = "proposed" | "gated_ok" | "gated_block" | "applied" | "rolled_back" | "skipped";
 
 export type ReverseOpKind = "delete_fact" | "unsupersede" | "restore_text" | "noop";
 
@@ -169,6 +156,9 @@ export function hashFactContent(entry: {
 }
 
 export function makeDreamRunId(now = new Date()): string {
-  const iso = now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  const iso = now
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\.\d{3}Z$/, "Z");
   return `dream-${iso}-${process.pid}`;
 }

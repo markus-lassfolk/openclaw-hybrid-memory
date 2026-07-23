@@ -79,20 +79,14 @@ export function probeDreamOutcomes(
       if (report.rollback?.rolledBack) rolledBack += 1;
     }
 
-    pluginLogger.info?.(
-      `memory-hybrid: dream outcome probe ${run.id} → ${report.decision} (${report.reason})`,
-    );
+    pluginLogger.info?.(`memory-hybrid: dream outcome probe ${run.id} → ${report.decision} (${report.reason})`);
   }
 
   return { examined: candidates.length, kept, rolledBack, insufficient, reports };
 }
 
 /** Capture pre-promote baseline metrics for a dream run (#2173). */
-export function capturePromoteBaseline(
-  factsDb: FactsDB,
-  sessionIds: string[],
-  promotedAtSec: number,
-): string {
+export function capturePromoteBaseline(factsDb: FactsDB, sessionIds: string[], promotedAtSec: number): string {
   const metrics = collectDreamMetricSet(factsDb, {
     fromSec: promotedAtSec - PRE_WINDOW_SEC,
     toSec: promotedAtSec,

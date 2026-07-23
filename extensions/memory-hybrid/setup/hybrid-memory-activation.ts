@@ -57,10 +57,7 @@ export function shouldReturnInitializingToolResult(generation: number): boolean 
   return current.phase === "activating";
 }
 
-export function beginActivation(params: {
-  generation: number;
-  donorGeneration: number;
-}): ActivationState {
+export function beginActivation(params: { generation: number; donorGeneration: number }): ActivationState {
   // Supersede any in-flight activation from a prior re-register.
   if (current && current.phase === "activating") {
     current.aborted = true;
@@ -106,10 +103,7 @@ export function isActivationAborted(generation: number): boolean {
 }
 
 /** Wait until the current activation for `generation` is ready, failed, or superseded. */
-export async function awaitActivationReady(
-  generation: number,
-  timeoutMs = 30_000,
-): Promise<boolean> {
+export async function awaitActivationReady(generation: number, timeoutMs = 30_000): Promise<boolean> {
   if (isActivationReady(generation)) return true;
   if (!current || current.generation !== generation) return false;
   if (current.phase === "failed") return false;

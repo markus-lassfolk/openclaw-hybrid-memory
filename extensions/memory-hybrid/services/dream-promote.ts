@@ -34,11 +34,7 @@ function resolveCfg(cfg?: DreamingConfig): DreamingConfig {
 }
 
 /** Evaluate machine gates for every candidate entry on a dream run. */
-export function evaluateDreamGates(
-  store: DreamCandidateStore,
-  dreamRunId: string,
-  cfg?: DreamingConfig,
-): GateReport {
+export function evaluateDreamGates(store: DreamCandidateStore, dreamRunId: string, cfg?: DreamingConfig): GateReport {
   const dreaming = resolveCfg(cfg);
   const entries = store.listCandidateEntries(dreamRunId);
   const decisions: GateReport["decisions"] = [];
@@ -117,7 +113,7 @@ export function evaluateDreamGates(
     }
     const confidence =
       typeof (entry.payload as { confidence?: unknown }).confidence === "number"
-        ? ((entry.payload as { confidence: number }).confidence)
+        ? (entry.payload as { confidence: number }).confidence
         : undefined;
     if (tier.minConfidence != null && confidence != null && confidence < tier.minConfidence) {
       decisions.push({
@@ -186,11 +182,7 @@ function applyEntry(
       if (result.skipped) return { appliedFactId: null, postHash: null };
       // Per-fact OCC (#2175): use candidate preHash from propose time, never live token.
       const expectedHash = entry.preHash ?? undefined;
-      factsDb.supersede(
-        entry.targetFactId,
-        result.entry.id,
-        expectedHash ? { expectedHash } : undefined,
-      );
+      factsDb.supersede(entry.targetFactId, result.entry.id, expectedHash ? { expectedHash } : undefined);
       return {
         appliedFactId: result.entry.id,
         postHash: hashFactContent(result.entry),
@@ -199,11 +191,7 @@ function applyEntry(
     case "delete": {
       if (!entry.targetFactId) throw new Error("delete requires targetFactId");
       const expectedHash = entry.preHash ?? undefined;
-      factsDb.supersede(
-        entry.targetFactId,
-        null,
-        expectedHash ? { expectedHash } : undefined,
-      );
+      factsDb.supersede(entry.targetFactId, null, expectedHash ? { expectedHash } : undefined);
       return { appliedFactId: entry.targetFactId, postHash: null };
     }
     default:
@@ -379,10 +367,9 @@ export function promoteDreamRun(
     };
   }
 
-  const observeUntil =
-    dreaming.autoRollback.enabled
-      ? Math.floor(Date.now() / 1000) + dreaming.autoRollback.observeWindowHours * 3600
-      : null;
+  const observeUntil = dreaming.autoRollback.enabled
+    ? Math.floor(Date.now() / 1000) + dreaming.autoRollback.observeWindowHours * 3600
+    : null;
 
   const promotedAt = Math.floor(Date.now() / 1000);
   const baselineJson = capturePromoteBaseline(factsDb, run.sessionIds, promotedAt);
@@ -411,10 +398,6 @@ export function promoteDreamRun(
   };
 }
 
-export function quarantineDreamRun(
-  store: DreamCandidateStore,
-  dreamRunId: string,
-  reason: string,
-): void {
+export function quarantineDreamRun(store: DreamCandidateStore, dreamRunId: string, reason: string): void {
   store.updateDreamRunStatus(dreamRunId, "quarantined", { failureReason: reason });
 }

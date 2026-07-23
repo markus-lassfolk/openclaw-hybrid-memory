@@ -45,10 +45,7 @@ export function clearLiveToolExecutorsForGeneration(generation: number): void {
   liveToolExecutorsByGeneration.delete(generation);
 }
 
-function resolveLiveToolExecutor(
-  toolName: string,
-  generation: number,
-): ((...args: unknown[]) => unknown) | null {
+function resolveLiveToolExecutor(toolName: string, generation: number): ((...args: unknown[]) => unknown) | null {
   return liveToolExecutorsByGeneration.get(generation)?.get(toolName) ?? null;
 }
 

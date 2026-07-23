@@ -144,9 +144,7 @@ export function registerFullPlugin(api: FullStackApi, pluginConfig: Record<strin
 
 /** Wait for deferred Phase B activation after a re-register that took the full-teardown path (#2181). */
 export async function awaitPluginActivation(timeoutMs = 30_000): Promise<boolean> {
-  const { awaitActivationReady, getActivationState, runtimeRef } = await import(
-    "../../setup/register-plugin.js"
-  );
+  const { awaitActivationReady, getActivationState, runtimeRef } = await import("../../setup/register-plugin.js");
   const state = getActivationState();
   if (!state || state.phase === "ready" || state.phase === "idle") {
     return runtimeRef.value != null;
