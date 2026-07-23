@@ -80,15 +80,17 @@ function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
   }
 
   if (m.runSelfCorrectionRun) {
-    runners["self-correction"] = async ({ dryRun }) => {
+    runners["self-correction"] = async ({ dryRun, steering }) => {
       const result = await m.runSelfCorrectionRun!({ dryRun: true, applyTools: false });
-      return { detail: `dryRun=${dryRun} ${JSON.stringify(result ?? "self-correction done")}` };
+      return {
+        detail: `steering=${steering.profile} dryRun=${dryRun} ${formatSteeringPromptBlock(steering).split("\n")[0]} ${JSON.stringify(result ?? "self-correction done")}`,
+      };
     };
   }
 
   if (m.runContradictionCandidates || m.runResolveContradictionsAuto) {
-    runners.contradictions = async ({ dryRun }) => {
-      const parts: string[] = [];
+    runners.contradictions = async ({ dryRun, steering }) => {
+      const parts: string[] = [`steering=${steering.profile}`];
       if (m.runContradictionCandidates) {
         const c = await m.runContradictionCandidates({ dryRun });
         parts.push(`candidates=${JSON.stringify(c)}`);
@@ -120,7 +122,7 @@ function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
   }
 
   if (m.runConsolidate) {
-    runners.consolidate = async ({ dryRun }) => {
+    runners.consolidate = async ({ dryRun, steering }) => {
       const result = await m.runConsolidate({
         threshold: 0.92,
         limit: 10,
@@ -128,14 +130,18 @@ function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
         includeStructured: true,
         model: "",
       });
-      return { detail: JSON.stringify(result) };
+      return {
+        detail: `steering=${steering.profile} ${formatSteeringPromptBlock(steering).split("\n")[0]} ${JSON.stringify(result)}`,
+      };
     };
   }
 
   if (m.runDreamCycle) {
-    runners["dream-cycle-core"] = async ({ dryRun }) => {
+    runners["dream-cycle-core"] = async ({ dryRun, steering }) => {
       const result = await m.runDreamCycle!({ dryRun, verbose: false });
-      return { detail: JSON.stringify(result) };
+      return {
+        detail: `steering=${steering.profile} ${formatSteeringPromptBlock(steering).split("\n")[0]} ${JSON.stringify(result)}`,
+      };
     };
   }
 

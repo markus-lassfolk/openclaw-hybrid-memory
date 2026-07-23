@@ -1,5 +1,5 @@
 /**
- * Dream steering + outcome probe (#2176 / #2173).
+ * Dream steering + outcome probe + canary (#2176 / #2173).
  */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,14 +10,31 @@ import { DreamCandidateStore } from "../backends/dream-candidate-store.js";
 import { DEFAULT_DREAMING_CONFIG } from "../config/types/dreaming.js";
 import { evaluateDreamGates } from "../services/dream-promote.js";
 import { promoteDreamRun } from "../services/dream-promote.js";
-import { dreamRunTag } from "../services/dream-metrics.js";
-import { collectDreamMetricSet } from "../services/dream-metrics.js";
+import { applyDreamCanaryBoost, hasDreamCanaryTag } from "../services/dream-canary.js";
+import { dreamRunTag, collectDreamMetricSet } from "../services/dream-metrics.js";
 import { probeDreamOutcomes } from "../services/dream-outcome-probe.js";
 import {
   formatSteeringPromptBlock,
   resolveSteering,
   shouldSteeringIgnore,
 } from "../services/dream-steering.js";
+import { runDream } from "../services/dream-run.js";
+
+describe("dream canary boost (#2173)", () => {
+  it("detects dream-run tags and boosts recall scores", () => {
+    expect(hasDreamCanaryTag(["dream-run:dream-1"])).toBe(true);
+    expect(hasDreamCanaryTag(["preference"])).toBe(false);
+    const boosted = applyDreamCanaryBoost(
+      [
+        { score: 1, entry: { tags: ["dream-run:x"] } },
+        { score: 1.05, entry: { tags: ["other"] } },
+      ],
+      { enabled: true },
+    );
+    expect(boosted[0]!.entry.tags?.[0]).toContain("dream-run:");
+    expect(boosted[0]!.score).toBeGreaterThan(1.05);
+  });
+});
 
 describe("dream steering (#2176)", () => {
   let tmpDir: string;
@@ -33,6 +50,32 @@ describe("dream steering (#2176)", () => {
   afterEach(() => {
     factsDb.close();
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("stores resolved steering snapshot on dream run metrics (#2176)", async () => {
+    const cfg = structuredClone(DEFAULT_DREAMING_CONFIG);
+    cfg.enabled = true;
+    cfg.candidateStore = { enabled: true, shadow: true };
+    cfg.steering = {
+      profile: "coding",
+      promote: [],
+      ignore: [],
+      notes: "prefer procedures",
+    };
+    const result = await runDream({
+      factsDb,
+      store,
+      cfg,
+      sessionIds: ["s1"],
+      steps: {},
+      promote: false,
+    });
+    expect(result.run.steeringPolicyId).toBe("coding");
+    const summary = JSON.parse(result.run.metricsSummaryJson ?? "{}") as {
+      steering?: { profile: string; notes: string | null };
+    };
+    expect(summary.steering?.profile).toBe("coding");
+    expect(summary.steering?.notes).toBe("prefer procedures");
   });
 
   it("resolves profile defaults", () => {

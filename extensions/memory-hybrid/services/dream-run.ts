@@ -203,10 +203,21 @@ export async function runDream(options: RunDreamOptions): Promise<RunDreamResult
     const run = store.createDreamRun({
       inputStoreRevision: factsDb.computeStoreRevision(),
       sessionIds,
-      steeringPolicyId: options.steeringPolicyId ?? null,
+      steeringPolicyId: options.steeringPolicyId ?? steering.profile,
       shadow,
     });
     store.updateDreamRunStatus(run.id, "running");
+    store.setDreamRunMetrics(run.id, {
+      metricsSummaryJson: JSON.stringify({
+        steering: {
+          profile: steering.profile,
+          promote: steering.promote,
+          ignore: steering.ignore,
+          notes: steering.notes ?? null,
+        },
+        recordedAt: Math.floor(Date.now() / 1000),
+      }),
+    });
 
     const stepSummaries: DreamStepSummary[] = [];
     const collectedCandidates: CandidateEntryInput[] = [];
@@ -293,7 +304,17 @@ export async function runDream(options: RunDreamOptions): Promise<RunDreamResult
         endedAt,
       });
       try {
-        store.setDreamRunMetrics(run.id, { metricsSummaryJson: JSON.stringify(summary) });
+        store.setDreamRunMetrics(run.id, {
+          metricsSummaryJson: JSON.stringify({
+            ...summary,
+            steering: {
+              profile: steering.profile,
+              promote: steering.promote,
+              ignore: steering.ignore,
+              notes: steering.notes ?? null,
+            },
+          }),
+        });
       } catch {
         // Best-effort ROI row (#2179).
       }

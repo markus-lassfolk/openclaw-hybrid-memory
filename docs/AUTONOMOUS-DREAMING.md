@@ -58,7 +58,7 @@ There is **no separate Rumination Engine** process ([#2178](https://github.com/m
 After promote ([#2173](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2173)):
 
 1. Capture a **pre-promote baseline** (session-scoped feedback signals).
-2. Tag applied facts `dream-run:<id>` for attribution.
+2. Tag applied facts `dream-run:<id>` for attribution. While `autoRollback` is enabled, recall mildly **prefers** those tagged facts (canary boost) so post-promote curriculum is exercised.
 3. Observe for `autoRollback.observeWindowHours`.
 4. Nightly `dream-outcome-probe` (when autoRollback enabled) collects after-window metrics **scoped to the dream’s sessions**, compares effect score, and **auto-rollbacks** via reverse plan on regression.
 5. Decisions (`keep` / `rollback` / `insufficient_data`) are journaled on `dream_runs.metrics_summary_json`. Insufficient data never false-rollbacks.
