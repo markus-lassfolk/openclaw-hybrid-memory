@@ -197,7 +197,15 @@ describe("dream contradiction worsening gate (#2170)", () => {
       },
     ]);
     const entry = store.listCandidateEntries(run.id)[0]!;
-    expect(evaluateContradictionWorsening(factsDb, entry).worsens).toBe(false);
+    const gate = evaluateContradictionWorsening(factsDb, entry);
+    expect(gate.worsens).toBe(false);
+    expect(gate.reason).toBe("contradiction_resolve_ok");
+
+    // Promote path must honor the same carve-out — otherwise contradictions compose is dead under
+    // default blockOnContradictionWorsening.
+    const report = evaluateDreamGates(store, run.id, DEFAULT_DREAMING_CONFIG, factsDb);
+    expect(report.ok).toBe(true);
+    expect(report.decisions[0]?.pass).toBe(true);
   });
 
   it("passes unstructured add without entity/key", () => {
