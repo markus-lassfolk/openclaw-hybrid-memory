@@ -199,7 +199,7 @@ openclaw hybrid-mem dream report --since-days 30 --json
 openclaw hybrid-mem dream validate-shadow --json
 ```
 
-## Host rollout (Maeve / Doris)
+## Host rollout
 
 1. Deploy a build that includes Autonomous Dreaming (`dream_runs` / `memory_candidate_entries` schema).
 2. Migrate config from legacy dream-cycle (`frequency` / `phases`) to:
@@ -221,7 +221,7 @@ openclaw hybrid-mem dream validate-shadow --json
 4. `openclaw hybrid-mem dream validate-shadow --json` — exit 0 required.
 5. Only then: `candidateStore.shadow: false` and `autoPromote.enabled: true`.
 
-**Observed 2026-07-23 (re-probed evening):** Maeve (`polly2` / `192.168.1.224`) reachable; extension install still pre-Dream schema (`facts.db` has **no** `dream_runs` / candidate tables); config still legacy `frequency`/`phases` with **no** `autoPromote` (safe — gate cannot fire until deploy + config migration). Doris (`192.168.1.198`) **unreachable** (100% ping loss). Code-side `shadowValidation` + `dream validate-shadow` are ready; host ROI campaign starts only after PR deploy on Maeve.
+After promote is live:
 
 - Inspect / promote / rollback / observe / report via CLI above
 - `dreaming.mode: "supervised"` for operators who want digest-first workflows
