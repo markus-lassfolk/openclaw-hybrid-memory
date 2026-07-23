@@ -135,7 +135,7 @@ describe("dream steering (#2176)", () => {
       { ...entryBase, payload: { ...entryBase.payload, text: "durable user preference" } },
     ]);
 
-    const report = evaluateDreamGates(store, run.id, cfg);
+    const report = evaluateDreamGates(store, run.id, cfg, factsDb);
     expect(report.decisions.filter((d) => d.reason === "steering_ignore")).toHaveLength(1);
     expect(report.decisions.filter((d) => d.pass)).toHaveLength(1);
   });

@@ -112,6 +112,30 @@ export function deriveEffectScore(corrections: number, praise: number): number {
   return Math.max(-1, Math.min(1, raw));
 }
 
+function readToolEffectivenessAggregate(
+  db: DatabaseSync,
+  fromSec: number,
+  toSec: number,
+): { successRate: number; totalCalls: number } | null {
+  try {
+    const row = db
+      .prepare(
+        `SELECT COALESCE(SUM(success_calls), 0) AS ok,
+                COALESCE(SUM(total_calls), 0) AS total
+         FROM tool_effectiveness
+         WHERE last_updated >= ? AND last_updated <= ?`,
+      )
+      .get(fromSec, toSec) as { ok: number; total: number } | undefined;
+    const total = Number(row?.total ?? 0);
+    if (!Number.isFinite(total) || total <= 0) return null;
+    const ok = Number(row?.ok ?? 0);
+    return { successRate: Math.max(0, Math.min(1, ok / total)), totalCalls: total };
+  } catch {
+    // Table may not exist in this DB — feedback proxy remains the primary signal.
+    return null;
+  }
+}
+
 export function collectDreamMetricSet(
   factsDb: FactsDB,
   input: { fromSec: number; toSec: number; sessionIds: string[] },
@@ -119,13 +143,36 @@ export function collectDreamMetricSet(
   const db = factsDb.getRawDb();
   const { corrections, praise, sessions } = countFeedbackSignals(db, input.fromSec, input.toSec, input.sessionIds);
   const effectScore = deriveEffectScore(corrections, praise);
-  const successRate = praise + corrections > 0 ? praise / (praise + corrections) : 1;
+  const feedbackSuccess = praise + corrections > 0 ? praise / (praise + corrections) : 1;
   const retryRate = corrections;
+  const tool = readToolEffectivenessAggregate(db, input.fromSec, input.toSec);
+
+  if (tool && praise + corrections > 0) {
+    // Prefer blended signal when both feedback and tool effectiveness exist (#2173).
+    const successRate = 0.5 * feedbackSuccess + 0.5 * tool.successRate;
+    return {
+      successRate,
+      retryRate,
+      effectScore,
+      sessionsObserved: sessions,
+      signalSource: "blended",
+    };
+  }
+  if (tool && praise + corrections === 0) {
+    return {
+      successRate: tool.successRate,
+      retryRate,
+      effectScore: tool.successRate * 2 - 1,
+      sessionsObserved: Math.max(sessions, 1),
+      signalSource: "tool_effectiveness",
+    };
+  }
   return {
-    successRate,
+    successRate: feedbackSuccess,
     retryRate,
     effectScore,
     sessionsObserved: sessions,
+    signalSource: "feedback_proxy",
   };
 }
 

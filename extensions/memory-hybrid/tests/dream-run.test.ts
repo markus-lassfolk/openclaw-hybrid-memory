@@ -18,6 +18,7 @@ function dreamCfg(partial: Partial<DreamingConfig> = {}): DreamingConfig {
     enabled: true,
     candidateStore: { enabled: true, shadow: true },
     autoPromote: {
+      ...structuredClone(DEFAULT_DREAMING_CONFIG.autoPromote),
       enabled: false,
       requireProvenance: true,
       blockOnContradictionWorsening: true,
@@ -42,9 +43,33 @@ describe("runDream (#2171)", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("creates dream_run + candidate even when promote disabled", async () => {
+  it("creates dream_run; stage candidates when runners emit them; curriculum is metrics-only", async () => {
     const before = factsDb.count();
-    const distill = vi.fn(async () => ({ detail: "distill-ok" }));
+    const distill = vi.fn(async () => ({
+      detail: "distill-ok",
+      candidates: [
+        {
+          op: "add" as const,
+          payload: {
+            text: "real distill insight",
+            category: "preference",
+            importance: 0.6,
+            entity: null,
+            key: null,
+            value: null,
+            source: "dream-distill",
+            scope: "session" as const,
+            scopeTarget: "s1",
+          },
+          evidence: {
+            sessionIds: ["s1"],
+            prevalence: { sessions: 1, agents: 1 },
+            rationale: "test distill proposal",
+          },
+          reverse: { op: "delete_fact" as const, payload: {} },
+        },
+      ],
+    }));
     const reflect = vi.fn(async () => ({ detail: "reflect-ok" }));
 
     const result = await runDream({
@@ -57,7 +82,8 @@ describe("runDream (#2171)", () => {
     });
 
     expect(result.dreamRunId).toMatch(/^dream-/);
-    expect(result.candidates.length).toBeGreaterThanOrEqual(1);
+    expect(result.candidates.length).toBe(1);
+    expect(result.candidates[0]?.payload.text).toBe("real distill insight");
     expect(result.promoteResult).toBeUndefined();
     expect(result.costFeature).toBe(CostFeature.dream);
     expect(distill).toHaveBeenCalledOnce();
@@ -66,9 +92,24 @@ describe("runDream (#2171)", () => {
     const run = store.getDreamRun(result.dreamRunId);
     expect(run).toBeTruthy();
     expect(run!.sessionIds).toEqual(["s1", "s2", "s3"]);
-    expect(store.listCandidateEntries(result.dreamRunId).length).toBeGreaterThanOrEqual(1);
-    // Curriculum candidate is not applied when promote is off.
+    expect(store.listCandidateEntries(result.dreamRunId).length).toBe(1);
     expect(factsDb.count()).toBe(before);
+  });
+
+  it("records curriculum summary in metrics when stages emit zero candidates", async () => {
+    const distill = vi.fn(async () => ({ detail: "empty" }));
+    const result = await runDream({
+      factsDb,
+      store,
+      cfg: dreamCfg({ compose: ["distill"], promoteAfterRun: false }),
+      sessionIds: ["s1"],
+      steps: { distill },
+      promote: false,
+    });
+    expect(result.candidates.length).toBe(0);
+    const run = store.getDreamRun(result.dreamRunId)!;
+    const metrics = JSON.parse(run.metricsSummaryJson ?? "{}") as { curriculumSummary?: { note?: string } };
+    expect(metrics.curriculumSummary?.note).toContain("no_stage_candidates");
   });
 
   it("drops reflect when dream-cycle-core is also composed", async () => {

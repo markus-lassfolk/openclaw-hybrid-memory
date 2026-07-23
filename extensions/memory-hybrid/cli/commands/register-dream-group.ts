@@ -11,12 +11,21 @@ import { DEFAULT_DREAMING_CONFIG } from "../../config/types/dreaming.js";
 import { promoteDreamRun } from "../../services/dream-promote.js";
 import { rollbackDreamRun } from "../../services/dream-rollback.js";
 import { type DreamStepRunners, runDream } from "../../services/dream-run.js";
+import {
+  consolidateProposalsToCandidates,
+  contradictionProposalsToCandidates,
+  distillProposalsToCandidates,
+  pinContradictionResolves,
+  reflectProposalsToCandidates,
+  selfCorrectionProposalsToCandidates,
+} from "../../services/dream-compose-candidates.js";
 import { selectDreamSessions } from "../../services/dream-permission.js";
 import { buildDreamRoiReport } from "../../services/dream-roi.js";
 import { evaluateDreamOutcome } from "../../services/dream-outcome.js";
 import { collectDreamMetricSet } from "../../services/dream-metrics.js";
 import { probeDreamOutcomes } from "../../services/dream-outcome-probe.js";
 import { formatSteeringPromptBlock } from "../../services/dream-steering.js";
+import { evaluateShadowValidationFromStore } from "../../services/dream-shadow-validation.js";
 import type { ManageContext } from "../context.js";
 import type { Chainable } from "../shared.js";
 import { createCommandGroup } from "./cli-group-utils.js";
@@ -40,6 +49,7 @@ export type DreamCliContext = {
     | "runSelfCorrectionRun"
     | "runContradictionCandidates"
     | "runResolveContradictionsAuto"
+    | "runResolveContradictionsDryRun"
     | "runReflection"
     | "runConsolidate"
     | "runDreamCycle"
@@ -54,7 +64,7 @@ function printJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
-function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
+export function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
   const m = ctx.manage;
   if (!m) return {};
 
@@ -70,59 +80,107 @@ function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
   const runners: DreamStepRunners = {};
 
   if (m.runDistill) {
-    runners.distill = async ({ dryRun, steering }) => {
+    runners.distill = async ({ dryRun, steering, sessionIds, dreamRunId }) => {
       const steeringPrompt = formatSteeringPromptBlock(steering);
-      const result = await m.runDistill!({ days: 7, dryRun, steeringPrompt }, sink);
+      // Always pass sessionIds (possibly empty) so distill never scoops an unrestricted window (#2174).
+      const result = await m.runDistill!(
+        {
+          days: 7,
+          dryRun,
+          steeringPrompt,
+          sessionIds,
+          ...(sessionIds.length > 0 ? { maxSessions: sessionIds.length } : {}),
+        },
+        sink,
+      );
+      const candidates = distillProposalsToCandidates({
+        proposals: result.extracted ?? [],
+        sessionIds,
+        dreamRunId,
+      });
       return {
-        detail: `steering=${steering.profile} dryRun=${dryRun} ${steeringPrompt.split("\n")[0]} stored=${result.stored}`,
+        detail: `steering=${steering.profile} dryRun=${dryRun} attached=${sessionIds.length} scanned=${result.sessionsScanned} ${steeringPrompt.split("\n")[0]} stored=${result.stored} proposed=${candidates.length}`,
+        candidates,
       };
     };
   }
 
   if (m.runSelfCorrectionRun) {
-    runners["self-correction"] = async ({ dryRun, steering }) => {
-      const result = await m.runSelfCorrectionRun!({ dryRun: true, applyTools: false });
+    runners["self-correction"] = async ({ dryRun, steering, sessionIds, dreamRunId }) => {
+      const result = await m.runSelfCorrectionRun!({
+        dryRun: true,
+        applyTools: false,
+        sessionIds,
+        days: 7,
+      });
+      const candidates = selfCorrectionProposalsToCandidates({
+        proposals: result.extracted ?? [],
+        sessionIds,
+        dreamRunId,
+      });
       return {
-        detail: `steering=${steering.profile} dryRun=${dryRun} ${formatSteeringPromptBlock(steering).split("\n")[0]} ${JSON.stringify(result ?? "self-correction done")}`,
+        detail: `steering=${steering.profile} dryRun=${dryRun} attached=${sessionIds.length} proposed=${candidates.length} analysed=${result.analysed} ${formatSteeringPromptBlock(steering).split("\n")[0]}`,
+        candidates,
       };
     };
   }
 
-  if (m.runContradictionCandidates || m.runResolveContradictionsAuto) {
-    runners.contradictions = async ({ dryRun, steering }) => {
+  if (m.runContradictionCandidates || m.runResolveContradictionsDryRun || m.runResolveContradictionsAuto) {
+    runners.contradictions = async ({ dryRun, steering, sessionIds, dreamRunId }) => {
       const parts: string[] = [`steering=${steering.profile}`];
       if (m.runContradictionCandidates) {
-        const c = await m.runContradictionCandidates({ dryRun });
-        parts.push(`candidates=${JSON.stringify(c)}`);
+        const c = await m.runContradictionCandidates({ dryRun: true });
+        parts.push(`candidates_scan=${JSON.stringify(c)}`);
       }
-      if (dryRun) {
-        parts.push("resolve=skipped_dry_run");
-      } else if (m.runResolveContradictionsAuto) {
+      let candidates = undefined;
+      if (m.runResolveContradictionsDryRun) {
+        const dry = await m.runResolveContradictionsDryRun();
+        const proposals = pinContradictionResolves(dry.autoResolvable, ctx.factsDb);
+        candidates = contradictionProposalsToCandidates({ proposals, sessionIds, dreamRunId });
+        parts.push(
+          `autoResolvable=${dry.autoResolvable.length} ambiguous=${dry.ambiguous.length} proposed=${candidates.length}`,
+        );
+      } else if (!dryRun && m.runResolveContradictionsAuto) {
         const r = await m.runResolveContradictionsAuto({});
         parts.push(`resolve=${JSON.stringify(r)}`);
+      } else {
+        parts.push("resolve=skipped_no_dry_run_binding");
       }
-      return { detail: parts.join("; ") || "contradictions skipped" };
+      return { detail: parts.join("; ") || "contradictions skipped", candidates };
     };
   }
 
   if (m.runReflection) {
-    runners.reflect = async ({ dryRun, steering }) => {
+    runners.reflect = async ({ dryRun, steering, sessionIds, dreamRunId }) => {
       const steeringPrompt = formatSteeringPromptBlock(steering);
+      const boundary = ctx.dreaming?.permissionBoundary ?? DEFAULT_DREAMING_CONFIG.permissionBoundary;
       const result = await m.runReflection({
         window: 7,
         dryRun,
         model: "",
         verbose: false,
         steeringPrompt,
+        sessionIds,
+      });
+      const candidates = reflectProposalsToCandidates({
+        proposals: (result.patterns ?? []).map((text) => ({ text })),
+        sessionIds,
+        dreamRunId,
+        writeScope: boundary.targetScope,
+        writeScopeTarget:
+          boundary.targetScope === "session" || boundary.targetScope === "agent" || boundary.targetScope === "user"
+            ? (sessionIds[0] ?? null)
+            : null,
       });
       return {
-        detail: `${steeringPrompt.split("\n")[0]} ${JSON.stringify(result)}`,
+        detail: `${steeringPrompt.split("\n")[0]} attached=${sessionIds.length} patterns=${result.patternsStored} proposed=${candidates.length} ${JSON.stringify({ ...result, patterns: undefined })}`,
+        candidates,
       };
     };
   }
 
   if (m.runConsolidate) {
-    runners.consolidate = async ({ dryRun, steering }) => {
+    runners.consolidate = async ({ dryRun, steering, sessionIds, dreamRunId }) => {
       const result = await m.runConsolidate({
         threshold: 0.92,
         limit: 10,
@@ -130,8 +188,36 @@ function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
         includeStructured: true,
         model: "",
       });
+      const proposals = (result.previews ?? []).map((p) => {
+        const sourcePreHashes: Record<string, string> = {};
+        for (const id of p.memberIds) {
+          try {
+            const token = ctx.factsDb.getOccToken(id);
+            if (token) sourcePreHashes[id] = token;
+          } catch {
+            // Skip OCC pin if fact vanished between propose-time reads.
+          }
+        }
+        return {
+          sourceFactIds: p.memberIds,
+          mergedText: p.mergedText,
+          category: p.category,
+          entity: p.entity,
+          key: p.key,
+          value: p.value,
+          scope: p.scope,
+          scopeTarget: p.scopeTarget,
+          sourcePreHashes,
+        };
+      });
+      const candidates = consolidateProposalsToCandidates({
+        proposals,
+        sessionIds,
+        dreamRunId,
+      });
       return {
-        detail: `steering=${steering.profile} ${formatSteeringPromptBlock(steering).split("\n")[0]} ${JSON.stringify(result)}`,
+        detail: `steering=${steering.profile} ${formatSteeringPromptBlock(steering).split("\n")[0]} merged=${result.merged} proposed=${candidates.length}`,
+        candidates,
       };
     };
   }
@@ -325,6 +411,38 @@ export function registerDreamGroup(mem: Chainable, ctx: DreamCliContext): void {
         db: ctx.factsDb.getRawDb(),
       });
       printJson(report);
+    });
+
+  (group.command("validate-shadow") as ArgumentChainable)
+    .description(
+      "Evaluate shadow ROI criteria required before autoPromote apply (#2179). Exit 0=pass, 1=fail.",
+    )
+    .option("--since-days <n>", "Lookback days (default: autoPromote.shadowValidation.lookbackDays)")
+    .option("--json", "Machine-readable JSON")
+    .action((opts: { sinceDays?: string; json?: boolean }) => {
+      const store = getStore(ctx.factsDb);
+      const cfg = ctx.dreaming ?? DEFAULT_DREAMING_CONFIG;
+      const lookbackDays =
+        opts.sinceDays != null
+          ? Math.max(1, Number.parseInt(opts.sinceDays, 10) || cfg.autoPromote.shadowValidation.lookbackDays)
+          : undefined;
+      const result = evaluateShadowValidationFromStore(store, {
+        thresholds: cfg.autoPromote.shadowValidation,
+        lookbackDays,
+        db: ctx.factsDb.getRawDb(),
+      });
+      printJson({
+        ok: result.ok,
+        reasons: result.reasons,
+        metrics: result.metrics,
+        thresholds: result.thresholds,
+        lookbackDays: result.lookbackDays,
+        autoPromoteEnabled: cfg.autoPromote.enabled,
+        howToRead:
+          "Run shadow dreams (candidateStore.shadow=true, autoPromote.enabled=false) until validate-shadow exits 0. " +
+          "Then set candidateStore.shadow=false and autoPromote.enabled=true. Promote --force bypasses this gate.",
+      });
+      if (!result.ok) process.exitCode = 1;
     });
 
   (group.command("observe") as ArgumentChainable)

@@ -267,18 +267,39 @@ export async function runDream(options: RunDreamOptions): Promise<RunDreamResult
         store.setInputStoreRevision(run.id, factsDb.computeStoreRevision());
       }
 
+      // Curriculum summary is metrics-only — never a promoteable candidate (#2170/#2171).
+      // Real learning must come from compose stage proposed ops.
       if (collectedCandidates.length === 0) {
-        collectedCandidates.push(
-          curriculumCandidate({
-            dreamRunId: run.id,
-            sessionIds,
-            stepSummaries,
-            compose,
+        const summary = curriculumCandidate({
+          dreamRunId: run.id,
+          sessionIds,
+          stepSummaries,
+          compose,
+        });
+        store.setDreamRunMetrics(run.id, {
+          metricsSummaryJson: JSON.stringify({
+            steering: {
+              profile: steering.profile,
+              promote: steering.promote,
+              ignore: steering.ignore,
+              notes: steering.notes ?? null,
+            },
+            curriculumSummary: {
+              text: summary.payload.text,
+              compose,
+              stepSummaries,
+              note: "no_stage_candidates — shadow/dry-run stages emitted zero proposed ops",
+            },
+            recordedAt: Math.floor(Date.now() / 1000),
           }),
+        });
+        pluginLogger.info(
+          `memory-hybrid: dream ${run.id} produced zero stage candidates; curriculum summary recorded in metrics only`,
         );
       }
 
-      const candidates = store.appendCandidateEntries(run.id, collectedCandidates);
+      const candidates =
+        collectedCandidates.length > 0 ? store.appendCandidateEntries(run.id, collectedCandidates) : [];
 
       const shouldPromote =
         options.promote === true ||
@@ -300,8 +321,18 @@ export async function runDream(options: RunDreamOptions): Promise<RunDreamResult
         endedAt,
       });
       try {
+        const prior = store.getDreamRun(run.id);
+        let priorJson: Record<string, unknown> = {};
+        if (prior?.metricsSummaryJson) {
+          try {
+            priorJson = JSON.parse(prior.metricsSummaryJson) as Record<string, unknown>;
+          } catch {
+            priorJson = {};
+          }
+        }
         store.setDreamRunMetrics(run.id, {
           metricsSummaryJson: JSON.stringify({
+            ...priorJson,
             ...summary,
             steering: {
               profile: steering.profile,
@@ -314,6 +345,7 @@ export async function runDream(options: RunDreamOptions): Promise<RunDreamResult
               excludedCount: options.excludedSessions?.length ?? 0,
               excluded: options.excludedSessions ?? [],
             },
+            candidateCount: candidates.length,
           }),
         });
       } catch {

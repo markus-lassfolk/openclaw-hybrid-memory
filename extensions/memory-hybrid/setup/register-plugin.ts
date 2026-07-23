@@ -825,6 +825,7 @@ async function runDeferredFullTeardownActivation(params: {
       `memory-hybrid: deferred activation ready (generation=${registrationGeneration}, totalMs=${Date.now() - startedAt})`,
     );
   } catch (err) {
+    stubHandle.dispose();
     if (!isActivationAborted(registrationGeneration)) {
       markActivationFailed(registrationGeneration, err);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {

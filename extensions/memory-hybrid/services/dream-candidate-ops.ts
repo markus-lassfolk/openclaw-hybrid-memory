@@ -42,7 +42,7 @@ export type CandidateEvidence = {
 /** Forward payload for add/supersede/merge/boost. Optional id used when caller wants a stable applied id. */
 export type CandidatePayload = StoreFactInput & {
   id?: string;
-  /** Test/stub: mark that applying this entry would worsen contradictions (#2170 gate stub). */
+  /** Optional hard-fail flag for tests / explicit quarantine (#2170). Live gate also uses FactsDB heuristics. */
   contradictionWorsens?: boolean;
 };
 
@@ -160,5 +160,8 @@ export function makeDreamRunId(now = new Date()): string {
     .toISOString()
     .replace(/[-:]/g, "")
     .replace(/\.\d{3}Z$/, "Z");
-  return `dream-${iso}-${process.pid}`;
+  const unique = `${now.getMilliseconds().toString().padStart(3, "0")}${Math.floor(Math.random() * 1e6)
+    .toString()
+    .padStart(6, "0")}`;
+  return `dream-${iso}-${process.pid}-${unique}`;
 }

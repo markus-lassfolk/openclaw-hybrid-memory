@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { classifyDistillBatchFailureKind } from "../cli/cmd-distill.js";
+import { classifyDistillBatchFailureKind, filterSessionFilesByAllowlist } from "../cli/cmd-distill.js";
 import { extractTextFromSessionJsonl } from "../cli/distill-session-jsonl.js";
 
 describe("extractTextFromSessionJsonl", () => {
@@ -49,5 +49,28 @@ describe("classifyDistillBatchFailureKind", () => {
 
   it("treats direct aborted requests as retryable timeout failures", () => {
     expect(classifyDistillBatchFailureKind(new Error("Request was aborted"))).toBe("timeout");
+  });
+});
+
+describe("filterSessionFilesByAllowlist (#2174)", () => {
+  const files = [
+    { path: "/home/u/.openclaw/agents/main/sessions/sess-a.jsonl" },
+    { path: "/home/u/.openclaw/agents/main/sessions/sess-b.jsonl" },
+    { path: "/home/u/.openclaw/agents/main/sessions/other.jsonl" },
+  ];
+
+  it("passes through when allowlist is undefined", () => {
+    expect(filterSessionFilesByAllowlist(files, undefined)).toEqual(files);
+  });
+
+  it("returns empty when allowlist is empty (fail closed)", () => {
+    expect(filterSessionFilesByAllowlist(files, [])).toEqual([]);
+  });
+
+  it("keeps only matching session stems", () => {
+    expect(filterSessionFilesByAllowlist(files, ["sess-a", "sess-b"]).map((f) => f.path)).toEqual([
+      files[0].path,
+      files[1].path,
+    ]);
   });
 });

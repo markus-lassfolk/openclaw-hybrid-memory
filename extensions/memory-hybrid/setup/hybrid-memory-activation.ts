@@ -57,6 +57,17 @@ export function shouldReturnInitializingToolResult(generation: number): boolean 
   return current.phase === "activating";
 }
 
+/** True when Phase B activation failed for this generation (fail-closed tool responses). */
+export function isActivationFailed(generation: number): boolean {
+  return Boolean(current && current.generation === generation && current.phase === "failed");
+}
+
+/** Error message from a failed activation, if any. */
+export function getActivationFailureError(generation: number): string | null {
+  if (!current || current.generation !== generation || current.phase !== "failed") return null;
+  return current.error;
+}
+
 export function beginActivation(params: { generation: number; donorGeneration: number }): ActivationState {
   // Supersede any in-flight activation from a prior re-register.
   if (current && current.phase === "activating") {

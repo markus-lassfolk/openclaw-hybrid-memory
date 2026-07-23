@@ -31,10 +31,33 @@ export type DreamingAutoPromoteConfig = {
   /** Require session evidence or non-empty rationale. Default: true. */
   requireProvenance: boolean;
   /**
-   * Block promote when a candidate would worsen high-severity unresolved contradictions.
-   * Stub for #2170 (always passes unless an entry opts into `contradictionWorsens`). Default: true.
+   * Block promote when a candidate would worsen high-severity contradictions
+   * against live FactsDB (heuristic score / verified peers / unresolved deletes).
+   * Explicit `payload.contradictionWorsens` still hard-fails. Default: true.
    */
   blockOnContradictionWorsening: boolean;
+  /**
+   * Fail closed: refuse live apply until shadow ROI criteria pass (#2179).
+   * Operators check with `dream validate-shadow`; `--force` bypasses.
+   */
+  shadowValidation: DreamingShadowValidationConfig;
+};
+
+export type DreamingShadowValidationConfig = {
+  /** When true (default), autoPromote apply requires a passing shadow window. */
+  enabled: boolean;
+  /** Minimum shadow dream runs in lookback. Default: 7. */
+  minShadowRuns: number;
+  /** Minimum shadow runs that wouldPromote / gated OK. Default: 3. */
+  minWouldPromoteRuns: number;
+  /** Max quarantined/decided rate. Default: 0.5. */
+  maxQuarantineRate: number;
+  /** Max failed/decided rate. Default: 0.2. */
+  maxFailureRate: number;
+  /** Max share of shadow runs with zero candidates. Default: 0.3. */
+  maxZeroCandidateRate: number;
+  /** Lookback window in days. Default: 30. */
+  lookbackDays: number;
 };
 
 export type DreamingAutoRollbackConfig = {
@@ -53,6 +76,13 @@ export type DreamingPrevalenceTier = {
   /** Optional minimum confidence 0..1 when payload carries confidence. */
   minConfidence?: number;
 };
+
+/**
+ * Absolute heuristic score (0..1) at/above which a promote is treated as
+ * worsening contradictions vs live FactsDB (#2170). Aligns with stacked
+ * negation/numeric/polarity signals in `scoreFactContradiction`.
+ */
+export const DREAM_CONTRADICTION_WORSEN_SCORE = 0.55;
 
 export type DreamingPrevalenceConfig = {
   session: DreamingPrevalenceTier;
@@ -132,6 +162,15 @@ export const DEFAULT_DREAMING_CONFIG: DreamingConfig = {
     enabled: false,
     requireProvenance: true,
     blockOnContradictionWorsening: true,
+    shadowValidation: {
+      enabled: true,
+      minShadowRuns: 7,
+      minWouldPromoteRuns: 3,
+      maxQuarantineRate: 0.5,
+      maxFailureRate: 0.2,
+      maxZeroCandidateRate: 0.3,
+      lookbackDays: 30,
+    },
   },
   autoRollback: {
     enabled: false,
@@ -140,7 +179,7 @@ export const DEFAULT_DREAMING_CONFIG: DreamingConfig = {
   },
   prevalence: {
     session: { minSessions: 1, minAgents: 1 },
-    agent: { minSessions: 1, minAgents: 1 },
+    agent: { minSessions: 2, minAgents: 1 },
     user: { minSessions: 2, minAgents: 1, minConfidence: 0.7 },
     global: { minSessions: 3, minAgents: 2 },
     personalSingleTenant: false,

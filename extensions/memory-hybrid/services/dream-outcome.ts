@@ -15,11 +15,18 @@ import { rollbackDreamRun } from "./dream-rollback.js";
 export type DreamMetricSet = {
   /** Aggregate task/tool success rate 0..1. */
   successRate: number;
-  /** Mean retries per task. */
+  /** Mean retries per task (v1: correction-event count proxy). */
   retryRate: number;
   /** Optional effect score (higher is better). */
   effectScore: number;
   sessionsObserved: number;
+  /**
+   * Provenance of the metric set (#2173).
+   * - feedback_proxy: self-correction / reinforcement fact counts
+   * - blended: feedback + tool_effectiveness when available
+   * - tool_effectiveness: tool table only (rare)
+   */
+  signalSource?: "feedback_proxy" | "blended" | "tool_effectiveness";
 };
 
 export type DreamOutcomeDecision = "keep" | "rollback" | "insufficient_data";

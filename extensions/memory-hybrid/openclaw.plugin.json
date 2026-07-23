@@ -2178,6 +2178,41 @@
               "blockOnContradictionWorsening": {
                 "type": "boolean",
                 "description": "Block promote when contradiction gate fails (default: true)."
+              },
+              "shadowValidation": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "Fail-closed ROI gate before autoPromote apply. Check with dream validate-shadow.",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "Require passing shadow window before live apply (default: true)."
+                  },
+                  "minShadowRuns": {
+                    "type": "number",
+                    "description": "Minimum shadow dream runs in lookback (default: 7)."
+                  },
+                  "minWouldPromoteRuns": {
+                    "type": "number",
+                    "description": "Minimum gated/wouldPromote shadow runs (default: 3)."
+                  },
+                  "maxQuarantineRate": {
+                    "type": "number",
+                    "description": "Max quarantined/decided rate (default: 0.5)."
+                  },
+                  "maxFailureRate": {
+                    "type": "number",
+                    "description": "Max failed/decided rate (default: 0.2)."
+                  },
+                  "maxZeroCandidateRate": {
+                    "type": "number",
+                    "description": "Max share of shadow runs with zero candidates (default: 0.3)."
+                  },
+                  "lookbackDays": {
+                    "type": "number",
+                    "description": "Lookback window days (default: 30)."
+                  }
+                }
               }
             }
           },

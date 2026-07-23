@@ -86,6 +86,13 @@ interface ReflectionOptions {
   thinkingMode?: import("./chat.js").MiniMaxThinkingMode;
   /** Dream steering block appended to reflection prompt (#2176). */
   steeringPrompt?: string;
+  /**
+   * Dream attachment allowlist (#2174).
+   * - `undefined` → legacy nightly: `globalOnly` facts (safe for global pattern writes).
+   * - `[]` → analyze nothing (fail closed).
+   * - non-empty → only facts with matching provenance_session / session scope_target.
+   */
+  sessionIds?: string[];
 }
 
 interface ReflectionResult {
@@ -94,6 +101,8 @@ interface ReflectionResult {
   patternsStored: number;
   window: number;
   semanticOutcome?: string;
+  /** Dry-run / Dream compose: pattern texts for candidate emission (#2170). */
+  patterns?: string[];
 }
 
 interface ReflectionRulesResult {
@@ -586,11 +595,21 @@ export async function runReflection(
   const touchReflectLastRun = () => {
     if (!opts.dryRun) recordMaintenanceTimestamp(factsDb.sqlitePath, ".reflect_last_run");
   };
-  // globalOnly: reflection's synthesized output is stored as scope='global' (visible to every
-  // agent/user/session) below, so its input must not read agent/user/session-scoped facts —
-  // otherwise a private observation becomes a globally-visible pattern. Deliberate cross-scope
-  // generalization is cross-agent-learning.ts's job (explicit opt-in, provenance tracked).
-  const recentFacts = factsDb.getRecentFacts(windowDays, { globalOnly: true });
+  // Nightly/CLI (sessionIds undefined): globalOnly so private facts never become global patterns.
+  // Dream compose (sessionIds set): mine only attached sessions — empty allowlist → zero facts.
+  let recentFacts: MemoryEntry[];
+  if (opts.sessionIds === undefined) {
+    recentFacts = factsDb.getRecentFacts(windowDays, { globalOnly: true });
+  } else if (opts.sessionIds.length === 0) {
+    recentFacts = [];
+  } else {
+    const allow = new Set(opts.sessionIds.map((s) => s.trim()).filter(Boolean));
+    recentFacts = factsDb.getRecentFacts(windowDays, { globalOnly: false }).filter((f) => {
+      const provenance = f.provenanceSession?.trim();
+      if (provenance && allow.has(provenance)) return true;
+      return f.scope === "session" && !!f.scopeTarget && allow.has(f.scopeTarget);
+    });
+  }
 
   if (recentFacts.length < config.minObservations) {
     logger.info(`memory-hybrid: reflection — ${recentFacts.length} facts in window (min ${config.minObservations})`);
@@ -751,6 +770,7 @@ export async function runReflection(
   let candidateIndex = 0;
   let deadlineReached = false;
   const inRunFactVectors = new Map<string, { vector: number[]; embeddingModel: string }>();
+  const wouldStorePatterns: string[] = [];
 
   for (const patternText of uniqueNewPatterns) {
     if (maintenanceRunDeadlineReached()) {
@@ -794,6 +814,7 @@ export async function runReflection(
     if (opts.dryRun) {
       logger.info(`memory-hybrid: reflection [dry-run] would store: ${patternText.slice(0, 60)}...`);
       stored++;
+      wouldStorePatterns.push(patternText);
       continue;
     }
 
@@ -1170,6 +1191,8 @@ export async function runReflection(
     patternsExtracted: uniqueNewPatterns.length,
     patternsStored: stored,
     window: windowDays,
+    // Dream compose needs the texts that would store (post-dedupe), not only counts (#2170).
+    patterns: (opts.dryRun ? wouldStorePatterns : uniqueNewPatterns).slice(0, 20),
     // vectorStoreFailures/metadataFailures are infrastructure errors (LanceDB locked/disk full,
     // SQLite write failure after a successful vector store) -- distinct from newPatternEmbedFailures
     // (an embedding-API call failure), but both silently vanish a synthesized pattern the same way.

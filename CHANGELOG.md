@@ -29,6 +29,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Autonomous Dreaming: compose stages emit real candidates (distill/reflect/consolidate/contradictions/self-correction); curriculum metrics-only; nightly `dream-run` + fail-closed skip overlap; Phase B fail-closed tools; `autoPromote.shadowValidation` + `dream validate-shadow` gate live apply until shadow ROI passes; unique dream run ids under concurrent creates (#2169 follow-through).
+
 ## [2026.7.222] - 2026-07-18
 
 Implements The Loom (Epic #2150): an agent-native continuity, belief, evidence, and open-loop operating layer on top of hybrid-memory. Enabled by default (`loom.enabled: true`; set `false` to disable, or disable individual sections with `loom.<section>.enabled: false`). A nightly maintenance step runs the belief stale-claim sweep and a drift scan as part of the normal maintenance cycle; both are also runnable on demand (`hybrid-mem belief sweep-stale`, `hybrid-mem loom maintenance`, `hybrid-mem drift scout`). See `docs/THE-LOOM.md`.

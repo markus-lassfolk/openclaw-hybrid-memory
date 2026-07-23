@@ -18,10 +18,12 @@ import {
   hashFactContent,
 } from "./dream-candidate-ops.js";
 import { writeScopeWithinBoundary } from "./dream-permission.js";
+import { evaluateContradictionWorsening } from "./dream-contradiction-gate.js";
 import { MemoryConflictError } from "../utils/fact-occ.js";
 import { capturePromoteBaseline } from "./dream-outcome-probe.js";
 import { buildRunMetricsSummary, dreamRunTag } from "./dream-metrics.js";
 import { shouldSteeringIgnore } from "./dream-steering.js";
+import { evaluateShadowValidationFromStore } from "./dream-shadow-validation.js";
 
 export type PromoteDreamRunOptions = {
   /** Apply even when shadow=true / autoPromote disabled (CLI escape hatch). */
@@ -34,7 +36,12 @@ function resolveCfg(cfg?: DreamingConfig): DreamingConfig {
 }
 
 /** Evaluate machine gates for every candidate entry on a dream run. */
-export function evaluateDreamGates(store: DreamCandidateStore, dreamRunId: string, cfg?: DreamingConfig): GateReport {
+export function evaluateDreamGates(
+  store: DreamCandidateStore,
+  dreamRunId: string,
+  cfg?: DreamingConfig,
+  factsDb?: FactsDB,
+): GateReport {
   const dreaming = resolveCfg(cfg);
   const entries = store.listCandidateEntries(dreamRunId);
   const decisions: GateReport["decisions"] = [];
@@ -54,14 +61,28 @@ export function evaluateDreamGates(store: DreamCandidateStore, dreamRunId: strin
       }
     }
 
-    if (dreaming.autoPromote.blockOnContradictionWorsening && entry.payload.contradictionWorsens === true) {
-      decisions.push({
-        entryId: entry.id,
-        pass: false,
-        reason: "contradiction_worsens",
-      });
-      store.updateCandidateEntry(entry.id, { status: "gated_block" });
-      continue;
+    if (dreaming.autoPromote.blockOnContradictionWorsening) {
+      if (!factsDb) {
+        decisions.push({
+          entryId: entry.id,
+          pass: false,
+          reason: "contradiction_gate_missing_factsdb",
+        });
+        store.updateCandidateEntry(entry.id, { status: "gated_block" });
+        continue;
+      }
+      const contradiction = evaluateContradictionWorsening(factsDb, entry);
+      if (contradiction.worsens) {
+        decisions.push({
+          entryId: entry.id,
+          pass: false,
+          reason: contradiction.reason.startsWith("contradiction_")
+            ? contradiction.reason
+            : `contradiction_worsens:${contradiction.reason}`,
+        });
+        store.updateCandidateEntry(entry.id, { status: "gated_block" });
+        continue;
+      }
     }
 
     // Blast-radius / prevalence (#2172).
@@ -266,7 +287,7 @@ export function promoteDreamRun(
     };
   }
 
-  const gateReport = evaluateDreamGates(store, dreamRunId, dreaming);
+  const gateReport = evaluateDreamGates(store, dreamRunId, dreaming, factsDb);
   store.updateDreamRunStatus(dreamRunId, "gated", {
     gateReportJson: JSON.stringify(gateReport),
   });
@@ -287,7 +308,7 @@ export function promoteDreamRun(
 
   const shadowOnly = run.shadow || !dreaming.autoPromote.enabled;
   if (shadowOnly && !options.force) {
-    pluginLogger.info?.(
+    pluginLogger.info(
       `memory-hybrid: dream ${dreamRunId} gated OK (wouldPromote) — shadow/autoPromote off; not applying`,
     );
     return {
@@ -297,6 +318,30 @@ export function promoteDreamRun(
       gateReport: { ...gateReport, wouldPromote: true },
       appliedFactIds: [],
     };
+  }
+
+  // Fail closed: autoPromote apply requires passing shadow ROI window (#2179).
+  if (dreaming.autoPromote.enabled && !options.force && dreaming.autoPromote.shadowValidation.enabled) {
+    const validation = evaluateShadowValidationFromStore(store, {
+      thresholds: dreaming.autoPromote.shadowValidation,
+      db: factsDb.getRawDb(),
+    });
+    if (!validation.ok) {
+      const reason = `shadow_validation_failed:${validation.reasons.join(",")}`;
+      store.updateDreamRunStatus(dreamRunId, "failed", {
+        failureReason: reason,
+        gateReportJson: JSON.stringify({ ...gateReport, shadowValidation: validation }),
+      });
+      pluginLogger.warn(`memory-hybrid: dream ${dreamRunId} promote blocked — ${reason}`);
+      return {
+        applied: false,
+        shadow: run.shadow,
+        status: "failed",
+        gateReport: { ...gateReport, wouldPromote: true, reason },
+        appliedFactIds: [],
+        error: reason,
+      };
+    }
   }
 
   const appliedFactIds: string[] = [];

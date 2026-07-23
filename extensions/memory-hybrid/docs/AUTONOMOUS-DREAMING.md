@@ -15,6 +15,8 @@ Epic [#2169](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/21
 
 The **candidate store is for autonomous safety**, not a human review inbox. The machine gates, promotes, observes outcomes, and rolls back.
 
+Compose stages under shadow/candidate mode run with `dryRun: true` and must emit **structured proposed ops** (add / merge / delete with OCC `preHash` where applicable). A synthetic curriculum summary is **metrics-only** when stages emit zero proposals — it is never a promoteable candidate.
+
 ## Task path vs Dream path
 
 ```text
@@ -49,7 +51,7 @@ sessions + store snapshot
  ROI report (#2179)
 ```
 
-Existing Dream Cycle, distill, reflection, consolidate, Loom, and Event Bus producers are **composed under Dream**, not deleted. When `dreaming.enabled` and `skipNightlyOverlap` are true, overlapping nightly steps are skipped so Dream owns them.
+Existing Dream Cycle, distill, reflection, consolidate, Loom, and Event Bus producers are **composed under Dream**, not deleted. When `dreaming.enabled` and `skipNightlyOverlap` are true, overlapping nightly steps are skipped **only if** the nightly `dream-run` maintenance step is scheduled (fail closed: otherwise the owned steps still run so curation is not dropped).
 
 There is **no separate Rumination Engine** process ([#2178](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2178)): Event Bus status lifecycle is advanced by distributed consumers (maintenance + Dream).
 
@@ -64,7 +66,7 @@ Machine gates require evidence before promote. Defaults:
 | user | 2 | 1 |
 | global | 3 | 2 |
 
-Optional `minConfidence` per tier. `personalSingleTenant` lowers the global agent bar to 1. Missing provenance or `contradictionWorsens` blocks promote.
+Optional `minConfidence` per tier. `personalSingleTenant` lowers the global agent bar to 1. Missing provenance or live contradiction-worsening (heuristic / verified peer / unresolved delete) blocks promote.
 
 ## Permission-scoped attachment (#2174)
 
@@ -74,8 +76,12 @@ Optional `minConfidence` per tier. `personalSingleTenant` lowers the global agen
 - More-private content cannot feed a more-public dream (`SCOPE_RANK[source] >= SCOPE_RANK[target]`)
 - Writes cannot exceed the dream target scope
 - `dream run` persists `attachment.excluded[]` (sessionId + reason) on the run metrics; included ids live in `session_ids_json`
+- **Nightly `dream-run`** discovers recent sessions from FactsDB (`provenance_session` / session `scope_target`), then applies the same `selectDreamSessions` filter — it does **not** scoop an empty or unrestricted time window
+- Dream **distill** / **self-correction** compose pass the attached session allowlist (empty → process zero transcripts)
+- Dream **reflect** mines only attached-session facts (`provenance_session` / session `scope_target`); nightly `reflect` remains `globalOnly`
+- ACL resolution never invents `global` from `scope=global` fact writes alone (those only prove the session existed). Transcript found under `agents/<id>/sessions/` floors to **agent**. Explicit `--session-scopes id:global` (or `personalMode`) is required for global attachment.
 
-Example: dream targeting `global` with sessions `{s1:session, s2:global}` attaches only `s2` unless `personalMode: true`.
+Example: dream targeting `global` with sessions `{s1:session, s2:agent}` attaches **neither** unless scopes are explicitly upgraded or `personalMode: true`.
 
 ## Optimistic concurrency (#2175)
 
@@ -93,6 +99,8 @@ After promote ([#2173](https://github.com/markus-lassfolk/openclaw-hybrid-memory
 4. Nightly `dream-outcome-probe` (when autoRollback enabled) collects after-window metrics **scoped to the dream’s sessions**, compares effect score, and **auto-rollbacks** via reverse plan on regression.
 5. Decisions (`keep` / `rollback` / `insufficient_data`) are journaled on `dream_runs.metrics_summary_json`. Insufficient data never false-rollbacks.
 
+**v1 signal note:** Outcome metrics prefer a **blended** signal when `tool_effectiveness` rows exist in the same DB (`signalSource: blended|tool_effectiveness|feedback_proxy`). Otherwise they fall back to **feedback proxies** (self-correction / reinforcement fact counts). Full closed-loop task-success attribution is still a follow-up.
+
 ## How to read Dream ROI
 
 `hybrid-mem dream report --since-days 30 --json` ([#2179](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2179)):
@@ -106,6 +114,18 @@ After promote ([#2173](https://github.com/markus-lassfolk/openclaw-hybrid-memory
 | `howToRead` | Inline guidance string |
 
 Shadow mode first: compare ROI and rollback rate before turning `autoPromote` on.
+
+```bash
+# Accumulate shadow runs (autoPromote stays false; candidateStore.shadow true)
+openclaw hybrid-mem dream run --dry-shadow --json
+openclaw hybrid-mem dream validate-shadow --json   # exit 1 until criteria pass
+
+# Only after validate-shadow exits 0:
+#   dreaming.candidateStore.shadow: false
+#   dreaming.autoPromote.enabled: true
+```
+
+`autoPromote.shadowValidation` (enabled by default) **refuses live apply** until the lookback window has enough shadow runs with acceptable quarantine/failure/zero-candidate rates. `--force` promote bypasses the gate (escape hatch / canary only).
 
 ## Steering (set-and-forget)
 
@@ -133,7 +153,8 @@ No nightly UI confirmation. Profile id is stored on each `dream_run`.
       enabled: false,
       shadow: true
     },
-    autoPromote: { enabled: false, requireProvenance: true, blockOnContradictionWorsening: true },
+    autoPromote: { enabled: false, requireProvenance: true, blockOnContradictionWorsening: true,
+      shadowValidation: { enabled: true, minShadowRuns: 7, minWouldPromoteRuns: 3 } },
     autoRollback: { enabled: false, observeWindowHours: 24, regressionThreshold: 0.15 },
     prevalence: { /* session/agent/user/global bars — #2172 */ },
     permissionBoundary: {
@@ -175,9 +196,31 @@ openclaw hybrid-mem dream rollback <id>       # escape hatch
 openclaw hybrid-mem dream observe <id>        # auto-collect metrics; --apply to rollback
 openclaw hybrid-mem dream observe --all       # probe elapsed windows
 openclaw hybrid-mem dream report --since-days 30 --json
+openclaw hybrid-mem dream validate-shadow --json
 ```
 
-## Escape hatches (keep)
+## Host rollout (Maeve / Doris)
+
+1. Deploy a build that includes Autonomous Dreaming (`dream_runs` / `memory_candidate_entries` schema).
+2. Migrate config from legacy dream-cycle (`frequency` / `phases`) to:
+
+```json5
+{
+  dreaming: {
+    enabled: true,
+    mode: "autonomous",
+    candidateStore: { enabled: true, shadow: true },
+    autoPromote: { enabled: false },   // keep off until validate-shadow passes
+    autoRollback: { enabled: false },
+  }
+}
+```
+
+3. Accumulate nightly `dream-run` (or CLI `dream run --dry-shadow`) for ≥ `shadowValidation.minShadowRuns` days.
+4. `openclaw hybrid-mem dream validate-shadow --json` — exit 0 required.
+5. Only then: `candidateStore.shadow: false` and `autoPromote.enabled: true`.
+
+**Observed 2026-07-23 (re-probed evening):** Maeve (`polly2` / `192.168.1.224`) reachable; extension install still pre-Dream schema (`facts.db` has **no** `dream_runs` / candidate tables); config still legacy `frequency`/`phases` with **no** `autoPromote` (safe — gate cannot fire until deploy + config migration). Doris (`192.168.1.198`) **unreachable** (100% ping loss). Code-side `shadowValidation` + `dream validate-shadow` are ready; host ROI campaign starts only after PR deploy on Maeve.
 
 - Inspect / promote / rollback / observe / report via CLI above
 - `dreaming.mode: "supervised"` for operators who want digest-first workflows

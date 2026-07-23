@@ -142,6 +142,27 @@ export function gatherSessionFiles(opts: {
   return out;
 }
 
+/**
+ * Restrict gathered session files to an allowlist of session ids (#2174).
+ * When `sessionIds` is defined (including empty), only matching files are kept —
+ * empty allowlist → no files (fail closed for Dream attachment).
+ * Matching: basename without `.jsonl` equals id, or path contains `/${id}.jsonl` / `/${id}`.
+ */
+export function filterSessionFilesByAllowlist<T extends { path: string }>(
+  files: T[],
+  sessionIds: string[] | undefined,
+): T[] {
+  if (sessionIds === undefined) return files;
+  if (sessionIds.length === 0) return [];
+  const ids = [...new Set(sessionIds.map((s) => s.trim()).filter((s) => s.length > 0))];
+  if (ids.length === 0) return [];
+  return files.filter((f) => {
+    const base = f.path.split(/[/\\]/).pop() ?? "";
+    const stem = base.endsWith(".jsonl") ? base.slice(0, -".jsonl".length) : base;
+    return ids.some((id) => stem === id || stem.startsWith(`${id}.`) || f.path.includes(`/${id}.jsonl`) || f.path.includes(`\\${id}.jsonl`));
+  });
+}
+
 export function runDistillWindowForCli(ctx: HandlerContext, _opts: { json: boolean }): DistillWindowResult {
   const { resolvedSqlitePath } = ctx;
   const memoryDir = dirname(resolvedSqlitePath);
@@ -234,6 +255,12 @@ export async function runDistillForCli(
     force?: boolean;
     /** Dream steering block appended to distill prompt (#2176). */
     steeringPrompt?: string;
+    /**
+     * When set (including empty), only process matching session JSONL files (#2174).
+     * Empty array → process nothing (fail closed for Dream with no attached sessions).
+     * Undefined → legacy: all sessions in the gather window.
+     */
+    sessionIds?: string[];
   },
   sink: DistillCliSink,
 ): Promise<DistillCliResult> {
@@ -280,11 +307,15 @@ export async function runDistillForCli(
       );
     }
 
-    const sessionFiles = gatherSessionFiles(gatherOpts);
+    const sessionFiles = filterSessionFilesByAllowlist(gatherSessionFiles(gatherOpts), opts.sessionIds);
     const maxSessions = opts.maxSessions ?? 0;
     let filesToProcess = maxSessions > 0 ? sessionFiles.slice(0, maxSessions) : sessionFiles;
     if (filesToProcess.length === 0) {
-      sink.log("No session files found under ~/.openclaw/agents/*/sessions/");
+      const allowlistNote =
+        opts.sessionIds !== undefined
+          ? ` (session allowlist size=${opts.sessionIds.length})`
+          : "";
+      sink.log(`No session files found under ~/.openclaw/agents/*/sessions/${allowlistNote}`);
       if (shouldAcquireLock && !opts.dryRun) {
         factsDb.updateScanCursor(SCAN_TYPE, 0, 0);
         clearScanLock(SCAN_TYPE);
@@ -864,6 +895,8 @@ export async function runDistillForCli(
           stored: 0,
           dedupSkipped: 0,
           dryRun: true,
+          // Surfaced for Dream compose candidate emission (#2170).
+          extracted: allFacts.slice(0, 40),
           semanticEmpty,
         },
         { semanticEmpty },

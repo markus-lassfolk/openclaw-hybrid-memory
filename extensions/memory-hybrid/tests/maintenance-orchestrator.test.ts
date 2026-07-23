@@ -30,8 +30,10 @@ describe("maintenance-orchestrator", () => {
     if (openclawDir) rmSync(openclawDir, { recursive: true, force: true });
   });
 
-  it("registers 57 maintenance steps", () => {
-    expect(MAINTENANCE_STEPS.length).toBe(57);
+  it("registers 59 maintenance steps (includes dream-outcome-probe + dream-run)", () => {
+    expect(MAINTENANCE_STEPS.length).toBe(59);
+    expect(MAINTENANCE_STEPS.some((s) => s.name === "dream-run")).toBe(true);
+    expect(MAINTENANCE_STEPS.some((s) => s.name === "dream-outcome-probe")).toBe(true);
   });
 
   it("skips steps when guard has not expired", async () => {

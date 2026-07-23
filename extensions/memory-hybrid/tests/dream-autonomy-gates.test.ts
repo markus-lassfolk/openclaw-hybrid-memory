@@ -1,7 +1,7 @@
 /**
  * Dream prevalence / permission / outcome / ROI / OCC (#2172–#2175, #2179).
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,7 +9,11 @@ import { FactsDB } from "../backends/facts-db.js";
 import { DreamCandidateStore } from "../backends/dream-candidate-store.js";
 import { DEFAULT_DREAMING_CONFIG } from "../config/types/dreaming.js";
 import { evaluateDreamOutcome } from "../services/dream-outcome.js";
-import { selectDreamSessions, writeScopeWithinBoundary } from "../services/dream-permission.js";
+import {
+  discoverDreamSessionAcls,
+  selectDreamSessions,
+  writeScopeWithinBoundary,
+} from "../services/dream-permission.js";
 import { promoteDreamRun } from "../services/dream-promote.js";
 import { buildDreamRoiReport } from "../services/dream-roi.js";
 import { runDream } from "../services/dream-run.js";
@@ -67,6 +71,119 @@ describe("dream prevalence gate (#2172)", () => {
     expect(result.status).toBe("quarantined");
     expect(result.gateReport.decisions[0]?.reason).toMatch(/prevalence_insufficient_global/);
   });
+
+  it("allows single-session session-tier promote (agent bar does not apply)", () => {
+    const cfg = structuredClone(DEFAULT_DREAMING_CONFIG);
+    cfg.autoPromote.enabled = true;
+    cfg.candidateStore.shadow = false;
+    cfg.permissionBoundary.targetScope = "session";
+
+    const run = store.createDreamRun({
+      inputStoreRevision: factsDb.computeStoreRevision(),
+      sessionIds: ["s1"],
+      shadow: false,
+    });
+    store.appendCandidateEntries(run.id, [
+      {
+        op: "add",
+        payload: {
+          text: "session scratch",
+          category: "preference",
+          importance: 0.5,
+          source: "dream",
+          entity: null,
+          key: null,
+          value: null,
+          scope: "session",
+          scopeTarget: "s1",
+        },
+        evidence: {
+          sessionIds: ["s1"],
+          prevalence: { sessions: 1, agents: 1 },
+          rationale: "one session ok",
+        },
+        reverse: { op: "delete_fact", payload: {} },
+      },
+    ]);
+
+    const result = promoteDreamRun(factsDb, store, run.id, { force: true, cfg });
+    expect(result.status).toBe("promoted");
+    expect(result.applied).toBe(true);
+  });
+
+  it("personalSingleTenant lowers global agent bar to 1", () => {
+    const cfg = structuredClone(DEFAULT_DREAMING_CONFIG);
+    cfg.autoPromote.enabled = true;
+    cfg.candidateStore.shadow = false;
+    cfg.permissionBoundary.targetScope = "global";
+    cfg.prevalence.personalSingleTenant = true;
+
+    const run = store.createDreamRun({
+      id: "dream-pst-block",
+      inputStoreRevision: factsDb.computeStoreRevision(),
+      sessionIds: ["s1", "s2"],
+      shadow: false,
+    });
+    store.appendCandidateEntries(run.id, [
+      {
+        op: "add",
+        payload: {
+          text: "personal vault global",
+          category: "preference",
+          importance: 0.8,
+          source: "dream",
+          entity: null,
+          key: null,
+          value: null,
+          scope: "global",
+        },
+        evidence: {
+          sessionIds: ["s1", "s2"],
+          prevalence: { sessions: 2, agents: 1 },
+          rationale: "two sessions one agent",
+        },
+        reverse: { op: "delete_fact", payload: {} },
+      },
+    ]);
+
+    const blocked = promoteDreamRun(factsDb, store, run.id, {
+      force: true,
+      cfg: { ...cfg, prevalence: { ...cfg.prevalence, personalSingleTenant: false } },
+    });
+    expect(blocked.status).toBe("quarantined");
+    expect(blocked.gateReport.decisions[0]?.reason).toMatch(/prevalence_insufficient_global/);
+
+    // Fresh run — previous entry was gated_block
+    const run2 = store.createDreamRun({
+      id: "dream-pst-allow",
+      inputStoreRevision: factsDb.computeStoreRevision(),
+      sessionIds: ["s1", "s2"],
+      shadow: false,
+    });
+    store.appendCandidateEntries(run2.id, [
+      {
+        op: "add",
+        payload: {
+          text: "personal vault global 2",
+          category: "preference",
+          importance: 0.8,
+          source: "dream",
+          entity: null,
+          key: null,
+          value: null,
+          scope: "global",
+        },
+        evidence: {
+          sessionIds: ["s1", "s2"],
+          prevalence: { sessions: 2, agents: 1 },
+          rationale: "two sessions one agent",
+        },
+        reverse: { op: "delete_fact", payload: {} },
+      },
+    ]);
+    const allowed = promoteDreamRun(factsDb, store, run2.id, { force: true, cfg });
+    expect(allowed.status).toBe("promoted");
+  });
 });
 
 describe("dream permission (#2174)", () => {
@@ -92,6 +209,92 @@ describe("dream permission (#2174)", () => {
     expect(writeScopeWithinBoundary("session", { targetScope: "global", enforce: true, personalMode: false })).toBe(
       true,
     );
+  });
+
+  it("discovers nightly sessions with fail-closed ACL (never invent global from fact writes)", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "dream-discover-"));
+    const factsDb = new FactsDB(join(tmpDir, "facts.db"));
+    const openclawHome = join(tmpDir, "openclaw");
+    try {
+      mkdirSync(join(openclawHome, "agents", "main", "sessions"), { recursive: true });
+      writeFileSync(join(openclawHome, "agents", "main", "sessions", "sess-pub.jsonl"), "{}\n");
+
+      factsDb.store({
+        text: "session-scoped fact",
+        category: "preference",
+        importance: 0.5,
+        source: "test",
+        entity: null,
+        key: null,
+        value: null,
+        scope: "session",
+        scopeTarget: "sess-a",
+        provenanceSession: "sess-a",
+      });
+      factsDb.store({
+        text: "global-scoped fact from session",
+        category: "preference",
+        importance: 0.5,
+        source: "test",
+        entity: null,
+        key: null,
+        value: null,
+        scope: "global",
+        provenanceSession: "sess-pub",
+      });
+      const bad = factsDb.store({
+        text: "orphan provenance",
+        category: "preference",
+        importance: 0.5,
+        source: "test",
+        entity: null,
+        key: null,
+        value: null,
+        scope: "session",
+        scopeTarget: "sess-bad",
+        provenanceSession: "sess-bad",
+      });
+      factsDb.getRawDb().prepare("UPDATE facts SET scope = ? WHERE id = ?").run("not-a-scope", bad.id);
+
+      const discovered = discoverDreamSessionAcls(factsDb.getRawDb(), {
+        lookbackDays: 7,
+        limit: 20,
+        openclawHome,
+      });
+      expect(discovered.find((d) => d.sessionId === "sess-a")?.effectiveScope).toBe("session");
+      // Global fact writes do not prove public ACL; transcript path floors to agent.
+      expect(discovered.find((d) => d.sessionId === "sess-pub")?.effectiveScope).toBe("agent");
+      expect(discovered.find((d) => d.sessionId === "sess-bad")?.effectiveScope ?? null).toBeNull();
+
+      const withoutArtifact = discoverDreamSessionAcls(factsDb.getRawDb(), {
+        lookbackDays: 7,
+        limit: 20,
+        resolveArtifact: false,
+      });
+      expect(withoutArtifact.find((d) => d.sessionId === "sess-pub")?.effectiveScope ?? null).toBeNull();
+
+      const sessionDream = selectDreamSessions(
+        discovered,
+        { targetScope: "session", enforce: true, personalMode: false },
+        20,
+      );
+      expect(sessionDream.included.sort()).toEqual(["sess-a", "sess-pub"].sort());
+      expect(sessionDream.excluded.some((e) => e.sessionId === "sess-bad" && e.reason === "unresolved_acl")).toBe(
+        true,
+      );
+
+      const globalDream = selectDreamSessions(
+        discovered,
+        { targetScope: "global", enforce: true, personalMode: false },
+        20,
+      );
+      // Neither session nor agent ACL feeds a global dream without explicit --session-scopes.
+      expect(globalDream.included).toEqual([]);
+      expect(globalDream.excluded.map((e) => e.sessionId).sort()).toEqual(["sess-a", "sess-bad", "sess-pub"].sort());
+    } finally {
+      factsDb.close();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -133,7 +336,31 @@ describe("dream compose + OCC (#2170/#2171/#2175)", () => {
           value: null,
         });
       }
-      return { detail: `dryRun=${dryRun}` };
+      return {
+        detail: `dryRun=${dryRun}`,
+        candidates: [
+          {
+            op: "add" as const,
+            payload: {
+              text: "shadow proposed preference",
+              category: "preference",
+              importance: 0.5,
+              entity: null,
+              key: null,
+              value: null,
+              source: "dream-distill",
+              scope: "session" as const,
+              scopeTarget: "s1",
+            },
+            evidence: {
+              sessionIds: ["s1"],
+              prevalence: { sessions: 1, agents: 1 },
+              rationale: "shadow compose proposal",
+            },
+            reverse: { op: "delete_fact" as const, payload: {} },
+          },
+        ],
+      };
     });
 
     const result = await runDream({
@@ -149,7 +376,7 @@ describe("dream compose + OCC (#2170/#2171/#2175)", () => {
     expect(mutating).toHaveBeenCalled();
     expect(mutating.mock.calls[0]![0].dryRun).toBe(true);
     expect(factsDb.count()).toBe(before);
-    expect(result.candidates.length).toBeGreaterThanOrEqual(1);
+    expect(result.candidates.length).toBe(1);
     expect(result.promoteResult?.applied).toBe(false);
     expect(result.promoteResult?.error).toBeUndefined();
     expect(result.promoteResult?.status).not.toBe("failed");
@@ -282,6 +509,66 @@ describe("dream outcome + ROI (#2173/#2179)", () => {
     );
     expect(worseOutcome.decision).toBe("rollback");
     expect(worseOutcome.reason).toContain("would_rollback");
+  });
+
+  it("insufficient sessions never false-rollbacks (#2173)", () => {
+    const cfg = structuredClone(DEFAULT_DREAMING_CONFIG);
+    cfg.autoPromote.enabled = true;
+    cfg.autoRollback.enabled = true;
+    cfg.candidateStore.shadow = false;
+    cfg.permissionBoundary.targetScope = "session";
+
+    const run = store.createDreamRun({
+      inputStoreRevision: factsDb.computeStoreRevision(),
+      sessionIds: ["s1"],
+      shadow: false,
+    });
+    store.appendCandidateEntries(run.id, [
+      {
+        op: "add",
+        payload: {
+          text: "keep under insufficient data",
+          category: "preference",
+          importance: 0.5,
+          source: "dream",
+          entity: null,
+          key: null,
+          value: null,
+          scope: "session",
+          scopeTarget: "s1",
+        },
+        evidence: {
+          sessionIds: ["s1"],
+          prevalence: { sessions: 1, agents: 1 },
+          rationale: "ok",
+        },
+        reverse: { op: "delete_fact", payload: {} },
+      },
+    ]);
+
+    const promoted = promoteDreamRun(factsDb, store, run.id, { force: true, cfg });
+    expect(promoted.applied).toBe(true);
+    store.updateDreamRunStatus(run.id, "promoted", {
+      metricsBaselineJson: JSON.stringify({
+        successRate: 1,
+        retryRate: 0,
+        effectScore: 1,
+        sessionsObserved: 0,
+      }),
+    });
+    const before = factsDb.count();
+
+    const outcome = evaluateDreamOutcome(
+      factsDb,
+      store,
+      run.id,
+      { successRate: 0, retryRate: 99, effectScore: -1, sessionsObserved: 1 },
+      { cfg, applyRollback: true, minSessions: 3 },
+    );
+    expect(outcome.decision).toBe("insufficient_data");
+    expect(outcome.reason).toBe("insufficient_sessions");
+    expect(outcome.rollback).toBeUndefined();
+    expect(factsDb.count()).toBe(before);
   });
 
   it("auto-rollbacks when a real baseline regresses", () => {

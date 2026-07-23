@@ -586,6 +586,46 @@ export function buildCliMaintenanceRunners(
     });
     return `examined=${result.examined} kept=${result.kept} rolledBack=${result.rolledBack} insufficient=${result.insufficient} semantic=success`;
   });
+  set("dream-run", async () => {
+    if (b.cfg.dreaming?.enabled !== true) {
+      return "skipped (dreaming.enabled=false) semantic=success";
+    }
+    const { buildStepRunners } = await import("../register-dream-group.js");
+    const { runDream } = await import("../../../services/dream-run.js");
+    const { discoverDreamSessionAcls, selectDreamSessions } = await import(
+      "../../../services/dream-permission.js"
+    );
+    const dreaming = b.cfg.dreaming;
+    const store = new DreamCandidateStore(b.factsDb.getRawDb());
+    // Nightly dream: discover recent sessions from FactsDB and attach under permissionBoundary (#2174).
+    const discovered = discoverDreamSessionAcls(b.factsDb.getRawDb(), {
+      lookbackDays: 7,
+      limit: dreaming.maxSessions ?? 20,
+    });
+    const attachment = selectDreamSessions(
+      discovered,
+      dreaming.permissionBoundary ?? {
+        targetScope: "session",
+        enforce: true,
+        personalMode: false,
+      },
+      dreaming.maxSessions ?? 20,
+    );
+    const result = await runDream({
+      factsDb: b.factsDb,
+      store,
+      cfg: dreaming,
+      sessionIds: attachment.included,
+      excludedSessions: attachment.excluded,
+      steps: buildStepRunners({
+        factsDb: b.factsDb,
+        dreaming,
+        manage: b,
+      }),
+      promote: dreaming.autoPromote?.enabled === true || dreaming.promoteAfterRun === true,
+    });
+    return `dreamRunId=${result.dreamRunId} sessions=${attachment.included.length} excluded=${attachment.excluded.length} candidates=${result.candidates.length} steps=${result.stepSummaries.length} timedOut=${result.timedOut} promote=${result.promoteResult?.status ?? "none"} semantic=success`;
+  });
   set("cross-agent-learning", async () => runCrossAgentLearningStep(followUpDeps, verbose));
   set("tool-effectiveness", async () => runToolEffectivenessStep(followUpDeps, verbose));
   set("crystallization-proposals", async () => runCrystallizationProposalsStep(followUpDeps));

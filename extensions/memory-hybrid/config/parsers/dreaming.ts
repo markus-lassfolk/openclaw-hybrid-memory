@@ -127,6 +127,23 @@ export function parseDreamingConfig(cfg: Record<string, unknown>): DreamingConfi
       enabled: autoPromoteRaw?.enabled === true,
       requireProvenance: autoPromoteRaw?.requireProvenance !== false,
       blockOnContradictionWorsening: autoPromoteRaw?.blockOnContradictionWorsening !== false,
+      shadowValidation: (() => {
+        const sv = asRecord(autoPromoteRaw?.shadowValidation);
+        const d = DEFAULT_DREAMING_CONFIG.autoPromote.shadowValidation;
+        const num = (v: unknown, fallback: number, min = 0, max = 1e9) => {
+          if (typeof v !== "number" || !Number.isFinite(v)) return fallback;
+          return Math.max(min, Math.min(max, v));
+        };
+        return {
+          enabled: sv?.enabled !== false,
+          minShadowRuns: Math.floor(num(sv?.minShadowRuns, d.minShadowRuns, 0, 365)),
+          minWouldPromoteRuns: Math.floor(num(sv?.minWouldPromoteRuns, d.minWouldPromoteRuns, 0, 365)),
+          maxQuarantineRate: num(sv?.maxQuarantineRate, d.maxQuarantineRate, 0, 1),
+          maxFailureRate: num(sv?.maxFailureRate, d.maxFailureRate, 0, 1),
+          maxZeroCandidateRate: num(sv?.maxZeroCandidateRate, d.maxZeroCandidateRate, 0, 1),
+          lookbackDays: Math.floor(num(sv?.lookbackDays, d.lookbackDays, 1, 365)),
+        };
+      })(),
     },
     autoRollback: {
       enabled: autoRollbackRaw?.enabled === true,

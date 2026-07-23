@@ -29,6 +29,7 @@ export function registerAllCliGroups(mem: Chainable, ctx: ManageContext, distill
       runSelfCorrectionRun: ctx.runSelfCorrectionRun,
       runContradictionCandidates: ctx.runContradictionCandidates,
       runResolveContradictionsAuto: ctx.runResolveContradictionsAuto,
+      runResolveContradictionsDryRun: ctx.runResolveContradictionsDryRun,
       runReflection: ctx.runReflection,
       runConsolidate: ctx.runConsolidate,
       runDreamCycle: ctx.runDreamCycle,

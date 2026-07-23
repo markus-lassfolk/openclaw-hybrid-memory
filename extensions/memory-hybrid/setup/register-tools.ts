@@ -17,7 +17,7 @@ import {
   resolveCurrentToolExecutor,
   setCurrentToolExecutor,
 } from "./hybrid-memory-generation-state.js";
-import { shouldReturnInitializingToolResult } from "./hybrid-memory-activation.js";
+import { shouldReturnInitializingToolResult, isActivationFailed, getActivationFailureError } from "./hybrid-memory-activation.js";
 import { patchMemoryToolRegistrationApi } from "../utils/tool-search-wrapper-args.js";
 import { type ToolsContext, toolInstallers } from "./tool-installers.js";
 
@@ -130,6 +130,39 @@ export function buildInitializingToolSafeResult(
   };
 }
 
+/** Fail-closed result when Phase B activation failed — never pretend we are still initializing. */
+export function buildActivationFailedToolSafeResult(
+  toolName: string,
+  ownerGeneration: number,
+  error: string | null,
+): {
+  content: Array<{ type: "text"; text: string }>;
+  details: Record<string, unknown>;
+} {
+  const detail = error?.trim() ? error.trim() : "deferred activation failed";
+  return {
+    content: [
+      {
+        type: "text",
+        text:
+          `memory-hybrid: activation failed — tool "${toolName}" is unavailable ` +
+          `(generation ${ownerGeneration}: ${detail}). Re-register or restart the gateway.`,
+      },
+    ],
+    details: {
+      ok: false,
+      initializing: false,
+      activationFailed: true,
+      reloading: false,
+      skipped: true,
+      tool: toolName,
+      registrationGeneration: ownerGeneration,
+      activationPhase: "failed",
+      error: detail,
+    },
+  };
+}
+
 export function createGenerationGuardedToolsApi(
   ctx: Pick<ToolsContext, "registrationGeneration" | "currentRegistrationGenerationRef">,
   api: ClawdbotPluginApi,
@@ -159,13 +192,21 @@ export function createGenerationGuardedToolsApi(
       if (currentGeneration === ownerGeneration) {
         // Two-phase activation (#2181): current-generation stubs wait for Phase B before
         // invoking the live body (or the original execute when registration was fully sync).
-        if (shouldReturnInitializingToolResult(ownerGeneration)) {
-          const live = resolveLiveToolExecutor(toolName, ownerGeneration);
-          if (!live) return buildInitializingToolSafeResult(toolName, ownerGeneration);
-          return live(...executeArgs);
-        }
         const live = resolveLiveToolExecutor(toolName, ownerGeneration);
-        return (live ?? originalExecute)(...executeArgs);
+        if (live) return live(...executeArgs);
+        if (shouldReturnInitializingToolResult(ownerGeneration)) {
+          return buildInitializingToolSafeResult(toolName, ownerGeneration);
+        }
+        // Phase B failed (or ready without a live body): never fall through to the Phase A
+        // stub that always returns "initializing" — that soft-sticks tools forever.
+        if (isActivationFailed(ownerGeneration)) {
+          return buildActivationFailedToolSafeResult(
+            toolName,
+            ownerGeneration,
+            getActivationFailureError(ownerGeneration),
+          );
+        }
+        return originalExecute(...executeArgs);
       }
 
       const delegatedExecute = resolveCurrentToolExecutor(toolName, currentGeneration);
@@ -248,7 +289,16 @@ export function registerActivationToolStubs(
       name: toolName,
       description: `memory-hybrid: ${toolName} (activating)`,
       parameters: { type: "object", properties: {} },
-      execute: async () => buildInitializingToolSafeResult(toolName, ownerGeneration),
+      execute: async () => {
+        if (isActivationFailed(ownerGeneration)) {
+          return buildActivationFailedToolSafeResult(
+            toolName,
+            ownerGeneration,
+            getActivationFailureError(ownerGeneration),
+          );
+        }
+        return buildInitializingToolSafeResult(toolName, ownerGeneration);
+      },
     } as never);
   }
   return handle;
