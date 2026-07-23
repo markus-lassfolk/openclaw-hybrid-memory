@@ -134,7 +134,13 @@ export type ManageContext = {
     skipped?: boolean;
     skipReason?: string;
   }>;
-  runReflection: (opts: { window: number; dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
+  runReflection: (opts: {
+    window: number;
+    dryRun: boolean;
+    model: string;
+    verbose?: boolean;
+    steeringPrompt?: string;
+  }) => Promise<{
     factsAnalyzed: number;
     patternsExtracted: number;
     patternsStored: number;
@@ -197,7 +203,7 @@ export type ManageContext = {
     apply?: boolean;
   }>;
   runDistill?: (
-    opts: { dryRun: boolean; days?: number; verbose?: boolean },
+    opts: { dryRun: boolean; days?: number; verbose?: boolean; steeringPrompt?: string },
     sink: { log: (s: string) => void; warn: (s: string) => void },
   ) => Promise<{
     stored: number;

@@ -92,6 +92,8 @@ export type DreamRunRecord = {
   rollbackReason: string | null;
   metricsBaselineJson: string | null;
   metricsObserveUntil: number | null;
+  /** Per-run ROI / cost summary (#2179). */
+  metricsSummaryJson: string | null;
 };
 
 export type CandidateEntryRecord = {

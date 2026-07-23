@@ -1601,6 +1601,11 @@ export function migrateDreamCandidateTables(db: DatabaseSync): void {
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_mce_run_status ON memory_candidate_entries(dream_run_id, status)",
   );
+
+  const dreamCols = db.prepare("PRAGMA table_info(dream_runs)").all() as Array<{ name: string }>;
+  if (!dreamCols.some((c) => c.name === "metrics_summary_json")) {
+    db.exec("ALTER TABLE dream_runs ADD COLUMN metrics_summary_json TEXT");
+  }
 }
 
 /** Epic #1918: pin/snooze, quality, evolution, maintenance audit, dedup, mine batch. */

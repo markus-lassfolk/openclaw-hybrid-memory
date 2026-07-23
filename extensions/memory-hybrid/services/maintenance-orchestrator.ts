@@ -287,6 +287,13 @@ export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
     featureGate: (cfg) => cfg.verification?.enabled === true && cfg.verification?.continuousVerification === true,
   },
   {
+    name: "dream-outcome-probe",
+    tier: "nightly",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20,
+    llmTier: "none",
+    featureGate: (cfg) => cfg.dreaming?.autoRollback?.enabled === true,
+  },
+  {
     name: "closed-loop-analysis",
     tier: "nightly",
     guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h68,

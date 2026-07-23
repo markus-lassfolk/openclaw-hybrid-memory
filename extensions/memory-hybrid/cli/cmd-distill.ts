@@ -232,6 +232,8 @@ export async function runDistillForCli(
     maxSessionTokens?: number;
     full?: boolean;
     force?: boolean;
+    /** Dream steering block appended to distill prompt (#2176). */
+    steeringPrompt?: string;
   },
   sink: DistillCliSink,
 ): Promise<DistillCliResult> {
@@ -390,7 +392,8 @@ export async function runDistillForCli(
     type DistillBlock = { text: string; tokens: number };
     const blocks: DistillBlock[] = [];
     const distillPrompt = loadPrompt("distill-sessions");
-    const promptPrefix = `${distillPrompt}\n\n`;
+    const steeringBlock = opts.steeringPrompt?.trim() ? `${opts.steeringPrompt.trim()}\n\n` : "";
+    const promptPrefix = `${distillPrompt}\n\n${steeringBlock}`;
     const promptTokens = estimateTokens(promptPrefix);
     const primaryCatalogBatchLimit = distillBatchTokenLimit(model);
     const primaryCatalogMaxOut = distillMaxOutputTokens(model);

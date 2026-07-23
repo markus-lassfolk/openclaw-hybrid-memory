@@ -14,6 +14,8 @@ import { type DreamStepRunners, runDream } from "../../services/dream-run.js";
 import { selectDreamSessions } from "../../services/dream-permission.js";
 import { buildDreamRoiReport } from "../../services/dream-roi.js";
 import { evaluateDreamOutcome } from "../../services/dream-outcome.js";
+import { probeDreamOutcomes } from "../../services/dream-outcome-probe.js";
+import { formatSteeringPromptBlock } from "../../services/dream-steering.js";
 import type { ManageContext } from "../context.js";
 import type { Chainable } from "../shared.js";
 import { createCommandGroup } from "./cli-group-utils.js";
@@ -67,10 +69,11 @@ function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
   const runners: DreamStepRunners = {};
 
   if (m.runDistill) {
-    runners.distill = async ({ dryRun }) => {
-      const result = await m.runDistill!({ days: 7, dryRun }, sink);
+    runners.distill = async ({ dryRun, steering }) => {
+      const steeringPrompt = formatSteeringPromptBlock(steering);
+      const result = await m.runDistill!({ days: 7, dryRun, steeringPrompt }, sink);
       return {
-        detail: `dryRun=${dryRun} stored=${result.stored} extracted=${result.factsExtracted} sessions=${result.sessionsScanned}`,
+        detail: `steering=${steering.profile} dryRun=${dryRun} ${steeringPrompt.split("\n")[0]} stored=${result.stored}`,
       };
     };
   }
@@ -100,14 +103,18 @@ function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
   }
 
   if (m.runReflection) {
-    runners.reflect = async ({ dryRun }) => {
+    runners.reflect = async ({ dryRun, steering }) => {
+      const steeringPrompt = formatSteeringPromptBlock(steering);
       const result = await m.runReflection({
         window: 7,
         dryRun,
         model: "",
         verbose: false,
+        steeringPrompt,
       });
-      return { detail: JSON.stringify(result) };
+      return {
+        detail: `${steeringPrompt.split("\n")[0]} ${JSON.stringify(result)}`,
+      };
     };
   }
 

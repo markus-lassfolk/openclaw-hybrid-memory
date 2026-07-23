@@ -12,6 +12,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { DreamCandidateStore } from "../backends/dream-candidate-store.js";
 import type { DreamComposeStep, DreamingConfig } from "../config/types/dreaming.js";
 import { DEFAULT_DREAMING_CONFIG } from "../config/types/dreaming.js";
+import type { DreamSteeringConfig } from "../config/types/dreaming.js";
 import {
   clearMaintenanceRunDeadline,
   maintenanceRunDeadlineReached,
@@ -27,6 +28,8 @@ import type {
   PromoteResult,
 } from "./dream-candidate-ops.js";
 import { promoteDreamRun } from "./dream-promote.js";
+import { buildRunMetricsSummary } from "./dream-metrics.js";
+import { resolveSteering } from "./dream-steering.js";
 
 export type DreamStepSummary = {
   step: DreamComposeStep;
@@ -39,6 +42,7 @@ export type DreamStepRunner = (ctx: {
   dreamRunId: string;
   sessionIds: string[];
   steeringPolicyId: string | null;
+  steering: DreamSteeringConfig;
   /** When false, runners must not mutate FactsDB (shadow / candidate-only). */
   dryRun: boolean;
   abortSignal?: AbortSignal;
@@ -178,6 +182,7 @@ export async function runDream(options: RunDreamOptions): Promise<RunDreamResult
 
   const sessionIds = boundSessionIds(options.sessionIds, cfg.maxSessions);
   const compose = resolveCompose(cfg);
+  const steering = resolveSteering(cfg.steering);
   const shadow =
     options.dryShadow === true
       ? true
@@ -235,7 +240,8 @@ export async function runDream(options: RunDreamOptions): Promise<RunDreamResult
           const result = await runner({
             dreamRunId: run.id,
             sessionIds,
-            steeringPolicyId: options.steeringPolicyId ?? null,
+            steeringPolicyId: options.steeringPolicyId ?? steering.profile,
+            steering,
             dryRun: !liveMutateCompose,
           });
           stepSummaries.push({ step, ok: true, detail: result.detail });
@@ -278,6 +284,18 @@ export async function runDream(options: RunDreamOptions): Promise<RunDreamResult
           force: options.forcePromote === true,
           cfg,
         });
+      }
+
+      const endedAt = Math.floor(Date.now() / 1000);
+      const summary = buildRunMetricsSummary(factsDb, {
+        sessionIds,
+        startedAt: run.startedAt ?? run.createdAt,
+        endedAt,
+      });
+      try {
+        store.setDreamRunMetrics(run.id, { metricsSummaryJson: JSON.stringify(summary) });
+      } catch {
+        // Best-effort ROI row (#2179).
       }
 
       const updated = store.getDreamRun(run.id) ?? run;

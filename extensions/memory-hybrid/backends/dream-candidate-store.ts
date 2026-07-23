@@ -72,6 +72,7 @@ type DreamRunRow = {
   rollback_reason: string | null;
   metrics_baseline_json: string | null;
   metrics_observe_until: number | null;
+  metrics_summary_json: string | null;
 };
 
 type CandidateRow = {
@@ -112,6 +113,7 @@ function mapDreamRun(row: DreamRunRow): DreamRunRecord {
     rollbackReason: row.rollback_reason,
     metricsBaselineJson: row.metrics_baseline_json,
     metricsObserveUntil: row.metrics_observe_until,
+    metricsSummaryJson: row.metrics_summary_json ?? null,
   };
 }
 
@@ -211,6 +213,7 @@ export class DreamCandidateStore {
       gateReportJson?: string | null;
       metricsBaselineJson?: string | null;
       metricsObserveUntil?: number | null;
+      metricsSummaryJson?: string | null;
     },
   ): DreamRunRecord {
     const current = this.getDreamRun(id);
@@ -273,11 +276,31 @@ export class DreamCandidateStore {
       sets.push("metrics_observe_until = ?");
       params.push(extra.metricsObserveUntil);
     }
+    if (extra?.metricsSummaryJson !== undefined) {
+      sets.push("metrics_summary_json = ?");
+      params.push(extra.metricsSummaryJson);
+    }
 
     params.push(id);
     this.db.prepare(`UPDATE dream_runs SET ${sets.join(", ")} WHERE id = ?`).run(...(params as never[]));
     const updated = this.getDreamRun(id);
     if (!updated) throw new Error(`dream-candidate-store: dream run missing after update: ${id}`);
+    return updated;
+  }
+
+  setDreamRunMetrics(
+    id: string,
+    extra: { metricsSummaryJson?: string | null },
+  ): DreamRunRecord {
+    const current = this.getDreamRun(id);
+    if (!current) throw new Error(`dream-candidate-store: dream run not found: ${id}`);
+    if (extra.metricsSummaryJson !== undefined) {
+      this.db
+        .prepare("UPDATE dream_runs SET metrics_summary_json = ? WHERE id = ?")
+        .run(extra.metricsSummaryJson, id);
+    }
+    const updated = this.getDreamRun(id);
+    if (!updated) throw new Error(`dream-candidate-store: dream run missing after metrics patch: ${id}`);
     return updated;
   }
 

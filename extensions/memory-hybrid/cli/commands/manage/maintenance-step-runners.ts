@@ -23,13 +23,15 @@ import {
   isEntityEnrichmentHardFailure,
 } from "../../../services/entity-enrichment-adaptive.js";
 import { syncLifecycleFromGitHub } from "../../../services/lifecycle/github-adapter.js";
+import { runLoomMaintenance } from "../../../services/loom-maintenance.js";
 import {
   parseSemanticTokenFromSummary,
   semanticOutcomeBlocksOrchestratorGuard,
   semanticOutcomeIsPartialFailure,
 } from "../../../services/maintenance-job-run/index.js";
 import type { MaintenanceStepRunner } from "../../../services/maintenance-orchestrator.js";
-import { runLoomMaintenance } from "../../../services/loom-maintenance.js";
+import { DreamCandidateStore } from "../../../backends/dream-candidate-store.js";
+import { probeDreamOutcomes } from "../../../services/dream-outcome-probe.js";
 import { runPassiveObserver } from "../../../services/passive-observer.js";
 import { runPendingDigestAutopilotCron } from "../../../services/pending-digest-autopilot-cron.js";
 import { resolveSweepPromotionDeps, runSerendipitySweep } from "../../../services/serendipity-sweep-cron.js";
@@ -572,6 +574,18 @@ export function buildCliMaintenanceRunners(
 
   set("continuous-verification", async () => runContinuousVerificationStep(followUpDeps, verbose));
   set("closed-loop-analysis", async () => runClosedLoopAnalysisStep(followUpDeps, verbose));
+  set("dream-outcome-probe", async () => {
+    if (b.cfg.dreaming?.autoRollback?.enabled !== true) {
+      return "skipped (dreaming.autoRollback disabled) semantic=success";
+    }
+    const store = new DreamCandidateStore(b.factsDb.getRawDb());
+    const result = probeDreamOutcomes(b.factsDb, store, {
+      cfg: b.cfg.dreaming,
+      applyRollback: true,
+      limit: 20,
+    });
+    return `examined=${result.examined} kept=${result.kept} rolledBack=${result.rolledBack} insufficient=${result.insufficient} semantic=success`;
+  });
   set("cross-agent-learning", async () => runCrossAgentLearningStep(followUpDeps, verbose));
   set("tool-effectiveness", async () => runToolEffectivenessStep(followUpDeps, verbose));
   set("crystallization-proposals", async () => runCrystallizationProposalsStep(followUpDeps));

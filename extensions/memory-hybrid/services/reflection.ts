@@ -84,6 +84,8 @@ interface ReflectionOptions {
   modelSource?: string;
   adaptiveStatePath?: string;
   thinkingMode?: import("./chat.js").MiniMaxThinkingMode;
+  /** Dream steering block appended to reflection prompt (#2176). */
+  steeringPrompt?: string;
 }
 
 interface ReflectionResult {
@@ -632,7 +634,7 @@ export async function runReflection(
     .sort()
     .join(",");
   const inputHash = createHash("sha256")
-    .update(`${windowDays}:${opts.model}:${factsBlock}:${existingPatternsFingerprint}`)
+    .update(`${windowDays}:${opts.model}:${factsBlock}:${existingPatternsFingerprint}:${opts.steeringPrompt ?? ""}`)
     .digest("hex")
     .slice(0, 16);
   const prevHash = factsDb.getMaintenanceState("reflection_input_hash");
@@ -642,7 +644,9 @@ export async function runReflection(
     return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0, window: windowDays };
   }
 
-  const prompt = fillPrompt(loadPrompt("reflection"), { window: String(windowDays), facts: factsBlock });
+  const prompt =
+    fillPrompt(loadPrompt("reflection"), { window: String(windowDays), facts: factsBlock }) +
+    (opts.steeringPrompt?.trim() ? `\n\n${opts.steeringPrompt.trim()}` : "");
 
   if (opts.verbose) {
     logger.info(

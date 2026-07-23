@@ -19,6 +19,9 @@ import {
 } from "./dream-candidate-ops.js";
 import { writeScopeWithinBoundary } from "./dream-permission.js";
 import { MemoryConflictError } from "../utils/fact-occ.js";
+import { capturePromoteBaseline } from "./dream-outcome-probe.js";
+import { buildRunMetricsSummary, dreamRunTag } from "./dream-metrics.js";
+import { shouldSteeringIgnore } from "./dream-steering.js";
 
 export type PromoteDreamRunOptions = {
   /** Apply even when shadow=true / autoPromote disabled (CLI escape hatch). */
@@ -77,11 +80,15 @@ export function evaluateDreamGates(
       continue;
     }
 
-    // Steering ignore list (#2176): block categories/keys the policy says to ignore.
-    const ignore = dreaming.steering.ignore.map((s) => s.toLowerCase());
-    const category = String(entry.payload.category ?? "").toLowerCase();
-    const key = String(entry.payload.key ?? "").toLowerCase();
-    if (ignore.some((token) => token && (category.includes(token) || key.includes(token) || entry.payload.text.toLowerCase().includes(token)))) {
+    // Steering ignore list (#2176).
+    if (
+      shouldSteeringIgnore(
+        String(entry.payload.category ?? ""),
+        entry.payload.key ?? null,
+        entry.payload.text,
+        dreaming.steering,
+      )
+    ) {
       decisions.push({
         entryId: entry.id,
         pass: false,
@@ -131,7 +138,12 @@ export function evaluateDreamGates(
   return { ok, decisions, wouldPromote };
 }
 
-function applyEntry(factsDb: FactsDB, entry: CandidateEntryRecord): { appliedFactId: string | null; postHash: string | null } {
+function applyEntry(
+  factsDb: FactsDB,
+  entry: CandidateEntryRecord,
+  dreamRunId?: string,
+): { appliedFactId: string | null; postHash: string | null } {
+  const dreamTags = dreamRunId ? [dreamRunTag(dreamRunId)] : [];
   switch (entry.op) {
     case "add":
     case "merge":
@@ -146,6 +158,7 @@ function applyEntry(factsDb: FactsDB, entry: CandidateEntryRecord): { appliedFac
         entity: storeInput.entity ?? null,
         key: storeInput.key ?? null,
         value: storeInput.value ?? null,
+        tags: [...(storeInput.tags ?? []), ...dreamTags],
       });
       if (result.skipped) return { appliedFactId: null, postHash: null };
       // preferredId is advisory only — FactsDB assigns UUIDs; reverse plan uses applied id.
@@ -168,6 +181,7 @@ function applyEntry(factsDb: FactsDB, entry: CandidateEntryRecord): { appliedFac
         key: storeInput.key ?? null,
         value: storeInput.value ?? null,
         supersedesId: entry.targetFactId,
+        tags: [...(storeInput.tags ?? []), ...dreamTags],
       });
       if (result.skipped) return { appliedFactId: null, postHash: null };
       // Per-fact OCC (#2175): use candidate preHash from propose time, never live token.
@@ -308,7 +322,7 @@ export function promoteDreamRun(
           .sort((a, b) => a.sortOrder - b.sortOrder);
         for (const entry of entries) {
           try {
-            const { appliedFactId, postHash } = applyEntry(factsDb, entry);
+            const { appliedFactId, postHash } = applyEntry(factsDb, entry, dreamRunId);
             store.updateCandidateEntry(entry.id, {
               status: "applied",
               appliedFactId,
@@ -331,7 +345,14 @@ export function promoteDreamRun(
                         }
                       : entry.reverse,
             });
-            if (appliedFactId) appliedFactIds.push(appliedFactId);
+            if (appliedFactId) {
+              appliedFactIds.push(appliedFactId);
+              try {
+                factsDb.addTag(appliedFactId, dreamRunTag(dreamRunId));
+              } catch {
+                // Best-effort attribution tag (#2173).
+              }
+            }
           } catch (err) {
             if (err instanceof MemoryConflictError) {
               store.updateCandidateEntry(entry.id, { status: "gated_block" });
@@ -363,14 +384,21 @@ export function promoteDreamRun(
       ? Math.floor(Date.now() / 1000) + dreaming.autoRollback.observeWindowHours * 3600
       : null;
 
-  // Do not invent effectScore baseline (#2173) — leave null until a real probe records metrics.
-  // Store only structural snapshot metadata for debugging.
+  const promotedAt = Math.floor(Date.now() / 1000);
+  const baselineJson = capturePromoteBaseline(factsDb, run.sessionIds, promotedAt);
+  const metricsSummary = buildRunMetricsSummary(factsDb, {
+    sessionIds: run.sessionIds,
+    startedAt: run.startedAt,
+    endedAt: promotedAt,
+  });
+
   store.updateDreamRunStatus(dreamRunId, "promoted", {
-    metricsBaselineJson: null,
+    metricsBaselineJson: baselineJson,
     metricsObserveUntil: observeUntil,
+    metricsSummaryJson: JSON.stringify(metricsSummary),
     gateReportJson: JSON.stringify({
       ...gateReport,
-      structuralSnapshot: { factCount: factsDb.count(), at: Math.floor(Date.now() / 1000) },
+      structuralSnapshot: { factCount: factsDb.count(), at: promotedAt },
     }),
   });
 

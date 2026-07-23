@@ -6,6 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { DreamCandidateStore } from "../backends/dream-candidate-store.js";
 import type { DreamRunRecord } from "./dream-candidate-ops.js";
 import { parseBaseline, type DreamMetricSet } from "./dream-outcome.js";
+import type { DreamRunMetricsSummary } from "./dream-metrics.js";
 
 export type DreamRoiRow = {
   dreamRunId: string;
@@ -44,6 +45,15 @@ export type DreamRoiReport = {
   };
   howToRead: string;
 };
+
+function parseRunSummary(json: string | null | undefined): DreamRunMetricsSummary | null {
+  if (!json) return null;
+  try {
+    return JSON.parse(json) as DreamRunMetricsSummary;
+  } catch {
+    return null;
+  }
+}
 
 function summarizeOutcome(run: DreamRunRecord): DreamRoiRow["outcome"]["summary"] {
   if (run.status === "rolled_back") return "rolled_back";
@@ -96,10 +106,12 @@ export function buildDreamRoiReport(
 
   const rows: DreamRoiRow[] = runsInWindow.map((run) => {
     const entries = store.listCandidateEntries(run.id);
+    const perRun = parseRunSummary(run.metricsSummaryJson);
     const wallSeconds =
-      run.startedAt != null && (run.gatedAt ?? run.promotedAt ?? run.failedAt) != null
+      perRun?.wallSeconds ??
+      (run.startedAt != null && (run.gatedAt ?? run.promotedAt ?? run.failedAt) != null
         ? Math.max(0, (run.gatedAt ?? run.promotedAt ?? run.failedAt)! - run.startedAt)
-        : null;
+        : null);
     return {
       dreamRunId: run.id,
       status: run.status,
@@ -111,9 +123,9 @@ export function buildDreamRoiReport(
       cost: {
         feature: "dream",
         wallSeconds,
-        tokens: costAgg?.tokens ?? null,
-        usdProxy: costAgg?.usdProxy ?? null,
-        source: costAgg ? "llm_cost_log" : "insufficient_data",
+        tokens: perRun?.tokens ?? null,
+        usdProxy: perRun?.usdProxy ?? null,
+        source: perRun?.source ?? (costAgg ? "llm_cost_log" : "insufficient_data"),
       },
       outcome: {
         baseline: parseBaseline(run.metricsBaselineJson),

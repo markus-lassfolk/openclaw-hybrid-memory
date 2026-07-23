@@ -230,7 +230,7 @@ describe("dream outcome + ROI (#2173/#2179)", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("does not invent baseline — insufficient_data until probe records metrics", () => {
+  it("captures real baseline at promote — no invented perfect score", () => {
     const cfg = structuredClone(DEFAULT_DREAMING_CONFIG);
     cfg.autoPromote.enabled = true;
     cfg.autoRollback.enabled = true;
@@ -267,17 +267,21 @@ describe("dream outcome + ROI (#2173/#2179)", () => {
 
     const promoted = promoteDreamRun(factsDb, store, run.id, { force: true, cfg });
     expect(promoted.applied).toBe(true);
-    expect(store.getDreamRun(run.id)?.metricsBaselineJson).toBeNull();
+    const baseline = store.getDreamRun(run.id)?.metricsBaselineJson;
+    expect(baseline).toBeTruthy();
+    const parsed = JSON.parse(baseline!) as { effectScore: number };
+    expect(parsed.effectScore).toBeLessThanOrEqual(1);
+    expect(parsed.effectScore).toBeGreaterThanOrEqual(-1);
 
-    const outcome = evaluateDreamOutcome(
+    const worseOutcome = evaluateDreamOutcome(
       factsDb,
       store,
       run.id,
-      { successRate: 0.2, retryRate: 3, effectScore: 0.5, sessionsObserved: 5 },
-      { cfg, applyRollback: true, minSessions: 3 },
+      { successRate: 0.1, retryRate: 5, effectScore: -0.5, sessionsObserved: 5 },
+      { cfg, applyRollback: false, minSessions: 3 },
     );
-    expect(outcome.decision).toBe("insufficient_data");
-    expect(outcome.reason).toBe("missing_baseline");
+    expect(worseOutcome.decision).toBe("rollback");
+    expect(worseOutcome.reason).toContain("would_rollback");
   });
 
   it("auto-rollbacks when a real baseline regresses", () => {
