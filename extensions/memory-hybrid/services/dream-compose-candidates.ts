@@ -7,6 +7,7 @@
 
 import type { MemoryCategory } from "../types/memory.js";
 import type { CandidateEntryInput } from "./dream-candidate-ops.js";
+import { aclFitsTarget, type DreamWriteScope } from "./dream-permission.js";
 
 /** Max candidates emitted per compose stage (keeps promote/gate bounded). */
 export const DREAM_COMPOSE_CANDIDATE_CAP = 40;
@@ -228,8 +229,11 @@ export function consolidateProposalsToCandidates(input: {
   proposals: ConsolidateProposedMerge[];
   sessionIds: string[];
   dreamRunId: string;
-  /** Optional provenance sessions keyed by source fact id (from FactsDB). */
-  sourceProvenanceByFactId?: Record<string, string[]>;
+  /**
+   * Provenance sessions keyed by source fact id (required for Dream ACL).
+   * Missing map → no candidates (fail closed).
+   */
+  sourceProvenanceByFactId: Record<string, string[]>;
 }): CandidateEntryInput[] {
   const out: CandidateEntryInput[] = [];
   let sortOrder = 0;
@@ -240,26 +244,26 @@ export function consolidateProposalsToCandidates(input: {
     const text = merge.mergedText?.trim();
     if (!text || merge.sourceFactIds.length < 2) continue;
 
-    const provenance = new Set<string>();
+    // Every source must have non-empty provenance fully inside the allowlist (#2174).
+    const perSource: string[][] = [];
+    let provenanceOk = true;
     for (const id of merge.sourceFactIds) {
-      for (const p of input.sourceProvenanceByFactId?.[id] ?? []) {
-        if (p.trim()) provenance.add(p.trim());
+      const prov = [...new Set((input.sourceProvenanceByFactId[id] ?? []).map((p) => p.trim()).filter(Boolean))];
+      if (prov.length === 0 || prov.some((p) => !allow.has(p))) {
+        provenanceOk = false;
+        break;
       }
+      perSource.push(prov);
     }
-    // Fail closed: every source must be attributable to the allowlist when provenance is known;
-    // if no provenance map provided, require merge.scopeTarget / sessionIds intersection via scope.
-    if (input.sourceProvenanceByFactId) {
-      if (provenance.size === 0 || ![...provenance].some((p) => allow.has(p))) continue;
-      if ([...provenance].some((p) => !allow.has(p))) continue;
-    } else if (merge.scope === "session" && merge.scopeTarget && !allow.has(merge.scopeTarget)) {
-      continue;
-    } else if (merge.scope === "session" && !merge.scopeTarget) {
-      continue;
-    }
+    if (!provenanceOk) continue;
 
-    const evidenceSessions = [...provenance].filter((p) => allow.has(p));
-    const evidence =
-      evidenceSessions.length > 0 ? evidenceSessions : merge.scope === "session" && merge.scopeTarget ? [merge.scopeTarget] : [...allow];
+    // OCC fail-closed: require propose-time preHash for every source delete.
+    if (merge.sourceFactIds.some((id) => !merge.sourcePreHashes[id])) continue;
+
+    const evidenceSessions = [...new Set(perSource.flat())];
+    // Clamp write scope to session when a single evidence session; otherwise agent (never invent global).
+    const writeScope = evidenceSessions.length === 1 ? ("session" as const) : ("agent" as const);
+    const writeTarget = evidenceSessions.length === 1 ? evidenceSessions[0]! : "dream-multi";
 
     out.push({
       op: "merge",
@@ -272,11 +276,11 @@ export function consolidateProposalsToCandidates(input: {
         value: merge.value ?? null,
         source: "dream-consolidate",
         tags: [...(merge.tags ?? []), "dream", "consolidated"],
-        scope: (merge.scope as "global" | "user" | "agent" | "session" | undefined) ?? "agent",
-        scopeTarget: merge.scopeTarget ?? null,
+        scope: writeScope,
+        scopeTarget: writeTarget,
       },
       evidence: evidenceForSessions(
-        evidence,
+        evidenceSessions,
         `consolidate dry-run merge of ${merge.sourceFactIds.length} facts for dream ${input.dreamRunId}`,
       ),
       reverse: { op: "delete_fact", payload: {} },
@@ -284,8 +288,7 @@ export function consolidateProposalsToCandidates(input: {
     });
 
     for (const sourceId of merge.sourceFactIds) {
-      const preHash = merge.sourcePreHashes[sourceId];
-      if (!preHash) continue;
+      const preHash = merge.sourcePreHashes[sourceId]!;
       out.push({
         op: "delete",
         payload: {
@@ -296,13 +299,13 @@ export function consolidateProposalsToCandidates(input: {
           key: null,
           value: null,
           source: "dream-consolidate",
-          scope: (merge.scope as "global" | "user" | "agent" | "session" | undefined) ?? "agent",
-          scopeTarget: merge.scopeTarget ?? null,
+          scope: writeScope,
+          scopeTarget: writeTarget,
         },
         targetFactId: sourceId,
         preHash,
         evidence: evidenceForSessions(
-          evidence,
+          evidenceSessions,
           `consolidate delete source ${sourceId} (OCC pinned at propose) for dream ${input.dreamRunId}`,
         ),
         reverse: { op: "noop", payload: { note: "source restore requires backup; consolidate reverse is best-effort" } },
@@ -382,19 +385,40 @@ export function contradictionProposalsToCandidates(input: {
   proposals: ContradictionProposedResolve[];
   sessionIds: string[];
   dreamRunId: string;
+  /** Dream permission target — used when agent/user/global facts lack provenance sessions. */
+  targetScope?: DreamWriteScope;
+  personalMode?: boolean;
 }): CandidateEntryInput[] {
   const out: CandidateEntryInput[] = [];
   let sortOrder = 0;
   const allow = new Set(input.sessionIds.map((s) => s.trim()).filter(Boolean));
+  if (allow.size === 0) return out;
+  const targetScope = input.targetScope ?? "session";
+
   for (const pair of input.proposals.slice(0, DREAM_COMPOSE_CANDIDATE_CAP)) {
     if (!pair.preHash || !pair.factIdOld) continue;
     const provenance = (pair.provenanceSessionIds ?? []).map((s) => s.trim()).filter(Boolean);
-    if (allow.size > 0) {
-      if (provenance.length === 0 || !provenance.some((p) => allow.has(p))) continue;
+    const factScope: DreamWriteScope =
+      pair.scope === "session" || pair.scope === "agent" || pair.scope === "user" || pair.scope === "global"
+        ? pair.scope
+        : "agent";
+    const sessionTarget = typeof pair.scopeTarget === "string" ? pair.scopeTarget.trim() : "";
+
+    let evidenceSessions: string[] = [];
+    if (provenance.some((p) => allow.has(p))) {
+      evidenceSessions = provenance.filter((p) => allow.has(p));
+    } else if (factScope === "session" && sessionTarget && allow.has(sessionTarget)) {
+      evidenceSessions = [sessionTarget];
+    } else if (
+      factScope !== "session" &&
+      aclFitsTarget(factScope, targetScope, input.personalMode === true)
+    ) {
+      // Shared/public facts may feed a more-private dream; evidence is the attachment, not invented provenance.
+      evidenceSessions = [...allow];
     } else {
       continue;
     }
-    const evidenceSessions = provenance.filter((p) => allow.has(p));
+
     out.push({
       op: "delete",
       targetFactId: pair.factIdOld,
@@ -408,7 +432,7 @@ export function contradictionProposalsToCandidates(input: {
         value: null,
         source: "dream-contradictions",
         tags: ["dream", "contradiction-resolve"],
-        scope: (pair.scope as "session" | "agent" | "user" | "global" | undefined) ?? "agent",
+        scope: factScope,
         scopeTarget: pair.scopeTarget ?? null,
       },
       evidence: evidenceForSessions(

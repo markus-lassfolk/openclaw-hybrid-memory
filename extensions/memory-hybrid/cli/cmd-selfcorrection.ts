@@ -12,7 +12,7 @@ import { getEnv } from "../utils/env-manager.js";
 
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, basename } from "node:path";
 
 import {
   getCronModelConfig,
@@ -324,6 +324,7 @@ type SelfCorrectionApplyResult = {
     key?: string | null;
     value?: string | null;
     tags?: string[];
+    sourceSessionId?: string | null;
   }>;
 };
 
@@ -385,6 +386,18 @@ async function applySelfCorrectionRemediations(params: {
         }
       }
       if (opts.dryRun) {
+        const src =
+          a.sourceIncident ??
+          (typeof a.incidentIndex === "number" && incidents[a.incidentIndex]
+            ? incidents[a.incidentIndex]
+            : undefined);
+        const sessionFile = src?.sessionFile?.trim() || "";
+        const base = sessionFile ? basename(sessionFile) : "";
+        const sourceSessionId = base
+          ? base.endsWith(".jsonl")
+            ? base.slice(0, -".jsonl".length)
+            : base
+          : undefined;
         extracted.push({
           text,
           category: "technical",
@@ -392,6 +405,7 @@ async function applySelfCorrectionRemediations(params: {
           key: remediationKey,
           value: text.slice(0, 200),
           tags: Array.isArray(obj.tags) ? obj.tags : [],
+          sourceSessionId,
         });
         continue;
       }

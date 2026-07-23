@@ -334,6 +334,7 @@ export type SelfCorrectionRunResult = {
     key?: string | null;
     value?: string | null;
     tags?: string[];
+    sourceSessionId?: string | null;
   }>;
 };
 

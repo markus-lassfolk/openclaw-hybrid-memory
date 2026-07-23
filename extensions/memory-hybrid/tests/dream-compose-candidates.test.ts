@@ -24,10 +24,11 @@ describe("dream-compose-candidates (#2170/#2175)", () => {
     expect(candidates[0]?.preHash).toBeUndefined();
   });
 
-  it("maps consolidate merges with OCC preHash on deletes", () => {
+  it("maps consolidate merges with OCC preHash on deletes when provenance is allowlisted", () => {
     const candidates = consolidateProposalsToCandidates({
       dreamRunId: "dream-1",
       sessionIds: ["s1"],
+      sourceProvenanceByFactId: { a: ["s1"], b: ["s1"] },
       proposals: [
         {
           sourceFactIds: ["a", "b"],
@@ -41,6 +42,59 @@ describe("dream-compose-candidates (#2170/#2175)", () => {
     const deletes = candidates.filter((c) => c.op === "delete");
     expect(deletes).toHaveLength(2);
     expect(deletes.every((c) => typeof c.preHash === "string" && c.preHash.length > 0)).toBe(true);
+    expect(candidates.find((c) => c.op === "merge")?.payload.scope).toBe("session");
+    expect(candidates.find((c) => c.op === "merge")?.payload.scopeTarget).toBe("s1");
+  });
+
+  it("skips consolidate merges when any source lacks allowlisted provenance", () => {
+    const candidates = consolidateProposalsToCandidates({
+      dreamRunId: "dream-1",
+      sessionIds: ["s1"],
+      sourceProvenanceByFactId: { a: ["s1"], b: [] },
+      proposals: [
+        {
+          sourceFactIds: ["a", "b"],
+          mergedText: "Should not launder empty provenance",
+          category: "preference",
+          sourcePreHashes: { a: "hash-a", b: "hash-b" },
+        },
+      ],
+    });
+    expect(candidates).toHaveLength(0);
+  });
+
+  it("skips consolidate merges when any source provenance escapes the allowlist", () => {
+    const candidates = consolidateProposalsToCandidates({
+      dreamRunId: "dream-1",
+      sessionIds: ["s1"],
+      sourceProvenanceByFactId: { a: ["s1"], b: ["s2"] },
+      proposals: [
+        {
+          sourceFactIds: ["a", "b"],
+          mergedText: "Cross-session launder attempt",
+          category: "preference",
+          sourcePreHashes: { a: "hash-a", b: "hash-b" },
+        },
+      ],
+    });
+    expect(candidates).toHaveLength(0);
+  });
+
+  it("skips consolidate merges when any source lacks OCC preHash", () => {
+    const candidates = consolidateProposalsToCandidates({
+      dreamRunId: "dream-1",
+      sessionIds: ["s1"],
+      sourceProvenanceByFactId: { a: ["s1"], b: ["s1"] },
+      proposals: [
+        {
+          sourceFactIds: ["a", "b"],
+          mergedText: "Incomplete OCC pins",
+          category: "preference",
+          sourcePreHashes: { a: "hash-a" },
+        },
+      ],
+    });
+    expect(candidates).toHaveLength(0);
   });
 
   it("maps contradiction resolves with preHash", () => {
@@ -63,6 +117,47 @@ describe("dream-compose-candidates (#2170/#2175)", () => {
     expect(candidates[0]?.op).toBe("delete");
     expect(candidates[0]?.targetFactId).toBe("o1");
     expect(candidates[0]?.preHash).toBe("occ-old");
+  });
+
+  it("admits agent-scoped contradiction resolves without provenance when they fit the dream target", () => {
+    const candidates = contradictionProposalsToCandidates({
+      dreamRunId: "dream-1",
+      sessionIds: ["s1", "s2"],
+      targetScope: "session",
+      proposals: [
+        {
+          contradictionId: "c-agent",
+          factIdNew: "n1",
+          factIdOld: "o1",
+          preHash: "occ-old",
+          provenanceSessionIds: [],
+          scope: "agent",
+          scopeTarget: null,
+        },
+      ],
+    });
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]?.evidence?.sessionIds?.sort()).toEqual(["s1", "s2"]);
+  });
+
+  it("rejects session-scoped contradiction resolves that lack allowlisted provenance/target", () => {
+    const candidates = contradictionProposalsToCandidates({
+      dreamRunId: "dream-1",
+      sessionIds: ["s1"],
+      targetScope: "session",
+      proposals: [
+        {
+          contradictionId: "c-private",
+          factIdNew: "n1",
+          factIdOld: "o1",
+          preHash: "occ-old",
+          provenanceSessionIds: [],
+          scope: "session",
+          scopeTarget: "other-session",
+        },
+      ],
+    });
+    expect(candidates).toHaveLength(0);
   });
 
   it("pinContradictionResolves skips superseded or missing OCC", () => {
@@ -120,5 +215,22 @@ describe("dream-compose-candidates (#2170/#2175)", () => {
     expect(candidates[0]?.op).toBe("add");
     expect(candidates[0]?.payload.source).toBe("dream-self-correction");
     expect(candidates[0]?.payload.scope).toBe("session");
+  });
+
+  it("attributes self-correction writes to sourceSessionId when present", () => {
+    const candidates = selfCorrectionProposalsToCandidates({
+      dreamRunId: "dream-1",
+      sessionIds: ["s1", "s2"],
+      proposals: [
+        {
+          text: "Prefer --json for maintenance CLIs",
+          category: "technical",
+          sourceSessionId: "s2",
+        },
+      ],
+    });
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]?.payload.scope).toBe("session");
+    expect(candidates[0]?.payload.scopeTarget).toBe("s2");
   });
 });

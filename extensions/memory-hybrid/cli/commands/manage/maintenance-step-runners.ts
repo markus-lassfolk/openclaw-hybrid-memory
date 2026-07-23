@@ -601,6 +601,7 @@ export function buildCliMaintenanceRunners(
     const discovered = discoverDreamSessionAcls(b.factsDb.getRawDb(), {
       lookbackDays: 7,
       limit: dreaming.maxSessions ?? 20,
+      openclawHome: resolveOpenclawHomeFromSqlitePath(b.resolvedSqlitePath),
     });
     const attachment = selectDreamSessions(
       discovered,

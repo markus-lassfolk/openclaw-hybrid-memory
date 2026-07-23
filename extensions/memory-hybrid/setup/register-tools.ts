@@ -17,7 +17,7 @@ import {
   resolveCurrentToolExecutor,
   setCurrentToolExecutor,
 } from "./hybrid-memory-generation-state.js";
-import { shouldReturnInitializingToolResult, isActivationFailed, getActivationFailureError } from "./hybrid-memory-activation.js";
+import { shouldReturnInitializingToolResult, isActivationFailed, isActivationReady, getActivationFailureError } from "./hybrid-memory-activation.js";
 import { patchMemoryToolRegistrationApi } from "../utils/tool-search-wrapper-args.js";
 import { type ToolsContext, toolInstallers } from "./tool-installers.js";
 
@@ -197,8 +197,7 @@ export function createGenerationGuardedToolsApi(
         if (shouldReturnInitializingToolResult(ownerGeneration)) {
           return buildInitializingToolSafeResult(toolName, ownerGeneration);
         }
-        // Phase B failed (or ready without a live body): never fall through to the Phase A
-        // stub that always returns "initializing" — that soft-sticks tools forever.
+        // Phase B failed: never fall through to the Phase A stub that always returns "initializing".
         if (isActivationFailed(ownerGeneration)) {
           return buildActivationFailedToolSafeResult(
             toolName,
@@ -206,12 +205,16 @@ export function createGenerationGuardedToolsApi(
             getActivationFailureError(ownerGeneration),
           );
         }
-        // Ready generation but no live executor bound — fail closed.
-        return buildActivationFailedToolSafeResult(
-          toolName,
-          ownerGeneration,
-          "tool executor not bound after activation",
-        );
+        // Two-phase ready but live body never bound — fail closed.
+        if (isActivationReady(ownerGeneration)) {
+          return buildActivationFailedToolSafeResult(
+            toolName,
+            ownerGeneration,
+            "tool executor not bound after activation",
+          );
+        }
+        // Sync registerTools / no activation state for this generation: use the registered body.
+        return originalExecute(...executeArgs);
       }
 
       const delegatedExecute = resolveCurrentToolExecutor(toolName, currentGeneration);

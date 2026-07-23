@@ -153,7 +153,14 @@ export function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
       if (m.runResolveContradictionsDryRun) {
         const dry = await m.runResolveContradictionsDryRun();
         const proposals = pinContradictionResolves(dry.autoResolvable, ctx.factsDb);
-        candidates = contradictionProposalsToCandidates({ proposals, sessionIds, dreamRunId });
+        const boundary = ctx.dreaming?.permissionBoundary ?? DEFAULT_DREAMING_CONFIG.permissionBoundary;
+        candidates = contradictionProposalsToCandidates({
+          proposals,
+          sessionIds,
+          dreamRunId,
+          targetScope: boundary.targetScope,
+          personalMode: boundary.personalMode === true,
+        });
         parts.push(
           `autoResolvable=${dry.autoResolvable.length} ambiguous=${dry.ambiguous.length} proposed=${candidates.length}`,
         );
@@ -191,10 +198,14 @@ export function buildStepRunners(ctx: DreamCliContext): DreamStepRunners {
         dreamRunId,
         writeScope: boundary.targetScope,
         writeScopeTarget:
-          boundary.targetScope === "session" && sessionIds.length === 1
-            ? sessionIds[0]!
+          boundary.targetScope === "session"
+            ? sessionIds.length === 1
+              ? sessionIds[0]!
+              : "dream-multi"
             : boundary.targetScope === "agent" || boundary.targetScope === "user"
-              ? (sessionIds[0] ?? "dream-multi")
+              ? sessionIds.length === 1
+                ? sessionIds[0]!
+                : "dream-multi"
               : null,
       });
       return {
