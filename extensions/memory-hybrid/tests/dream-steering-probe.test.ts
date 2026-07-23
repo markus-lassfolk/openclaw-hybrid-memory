@@ -67,15 +67,21 @@ describe("dream steering (#2176)", () => {
       store,
       cfg,
       sessionIds: ["s1"],
+      excludedSessions: [{ sessionId: "s-private", reason: "acl_too_private" }],
       steps: {},
       promote: false,
     });
     expect(result.run.steeringPolicyId).toBe("coding");
     const summary = JSON.parse(result.run.metricsSummaryJson ?? "{}") as {
-      steering?: { profile: string; notes: string | null };
+      steering?: { profile: string; notes: string | null; promote: string[] };
+      attachment?: { includedCount: number; excludedCount: number; excluded: Array<{ sessionId: string }> };
     };
     expect(summary.steering?.profile).toBe("coding");
     expect(summary.steering?.notes).toBe("prefer procedures");
+    expect(summary.steering?.promote).toContain("procedure");
+    expect(summary.attachment?.includedCount).toBe(1);
+    expect(summary.attachment?.excludedCount).toBe(1);
+    expect(summary.attachment?.excluded[0]?.sessionId).toBe("s-private");
   });
 
   it("resolves profile defaults", () => {

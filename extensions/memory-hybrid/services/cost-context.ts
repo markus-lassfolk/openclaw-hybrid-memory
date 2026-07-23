@@ -7,10 +7,13 @@ const costContext = new AsyncLocalStorage<string>();
  * Any LLM calls made within `fn` will be attributed to `feature` in the cost log.
  * This is opt-in — calls outside a withCostFeature context are labeled "unknown".
  *
- * NOTE: Currently only used in tests. Production code relies on heuristic feature detection.
- * @internal
+ * Nested calls keep the outer label (e.g. CostFeature.dream under runDream must not be
+ * overwritten by distill/reflect/consolidate step labels — #2179).
  */
 export function withCostFeature<T>(feature: string, fn: () => T): T {
+  if (costContext.getStore() != null) {
+    return fn();
+  }
   return costContext.run(feature, fn);
 }
 

@@ -53,6 +53,36 @@ Existing Dream Cycle, distill, reflection, consolidate, Loom, and Event Bus prod
 
 There is **no separate Rumination Engine** process ([#2178](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2178)): Event Bus status lifecycle is advanced by distributed consumers (maintenance + Dream).
 
+## Blast-radius / prevalence (#2172)
+
+Machine gates require evidence before promote. Defaults:
+
+| Scope | minSessions | minAgents |
+|-------|-------------|-----------|
+| session | 1 | 1 |
+| agent | 2 | 1 |
+| user | 2 | 1 |
+| global | 3 | 2 |
+
+Optional `minConfidence` per tier. `personalSingleTenant` lowers the global agent bar to 1. Missing provenance or `contradictionWorsens` blocks promote.
+
+## Permission-scoped attachment (#2174)
+
+`permissionBoundary.targetScope` (default **session**) controls which transcripts may feed a dream:
+
+- Fail closed: unresolved ACL → exclude
+- More-private content cannot feed a more-public dream (`SCOPE_RANK[source] >= SCOPE_RANK[target]`)
+- Writes cannot exceed the dream target scope
+- `dream run` persists `attachment.excluded[]` (sessionId + reason) on the run metrics; included ids live in `session_ids_json`
+
+Example: dream targeting `global` with sessions `{s1:session, s2:global}` attaches only `s2` unless `personalMode: true`.
+
+## Optimistic concurrency (#2175)
+
+- Dream run snapshots `input_store_revision` at start
+- Promote refuses if live store revision drifted (unless `--force`)
+- Per-fact supersede/delete uses candidate `preHash` (propose-time OCC token), not a live token at apply time
+
 ## Self-heal (outcome feedback) — autonomy substitute for deny
 
 After promote ([#2173](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2173)):

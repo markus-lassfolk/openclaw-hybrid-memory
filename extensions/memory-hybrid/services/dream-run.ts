@@ -73,6 +73,8 @@ export type RunDreamOptions = {
    * candidateStore/shadow is on — compose must emit candidates without live writes (#2170/#2171).
    */
   liveMutateCompose?: boolean;
+  /** Sessions excluded by permission boundary — persisted on run metrics (#2174). */
+  excludedSessions?: Array<{ sessionId: string; reason: string }>;
 };
 
 export type RunDreamResult = {
@@ -312,6 +314,11 @@ export async function runDream(options: RunDreamOptions): Promise<RunDreamResult
               promote: steering.promote,
               ignore: steering.ignore,
               notes: steering.notes ?? null,
+            },
+            attachment: {
+              includedCount: sessionIds.length,
+              excludedCount: options.excludedSessions?.length ?? 0,
+              excluded: options.excludedSessions ?? [],
             },
           }),
         });

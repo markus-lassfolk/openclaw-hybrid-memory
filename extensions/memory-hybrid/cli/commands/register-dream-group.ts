@@ -226,6 +226,7 @@ export function registerDreamGroup(mem: Chainable, ctx: DreamCliContext): void {
             store: getStore(ctx.factsDb),
             cfg: dreamCfg,
             sessionIds: attachment.included,
+            excludedSessions: attachment.excluded,
             steeringPolicyId: opts.steering ?? dreamCfg.steering.profile,
             steps: buildStepRunners(ctx),
             dryShadow: opts.dryShadow === true,

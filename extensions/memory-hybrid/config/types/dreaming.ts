@@ -158,8 +158,9 @@ export const DEFAULT_DREAMING_CONFIG: DreamingConfig = {
   },
   steering: {
     profile: "personal",
-    promote: ["preference", "procedure", "tool_failure"],
-    ignore: ["one_off_debug", "transient_path", "secret_like"],
+    // Empty lists → resolveSteering applies STEERING_PROFILES.personal (#2176).
+    promote: [],
+    ignore: [],
     notes: undefined,
   },
 };
