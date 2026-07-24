@@ -134,8 +134,9 @@ describe("runDream (#2171)", () => {
   });
 
   it("restores an outer maintenance deadline after dream completes", async () => {
-    const { setMaintenanceRunDeadlineMs, getMaintenanceRunDeadlineMs, clearMaintenanceRunDeadline } =
-      await import("../utils/maintenance-run-deadline.js");
+    const { setMaintenanceRunDeadlineMs, getMaintenanceRunDeadlineMs, clearMaintenanceRunDeadline } = await import(
+      "../utils/maintenance-run-deadline.js"
+    );
     clearMaintenanceRunDeadline();
     const outer = Date.now() + 60_000;
     setMaintenanceRunDeadlineMs(outer);

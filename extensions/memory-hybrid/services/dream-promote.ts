@@ -163,7 +163,10 @@ export function evaluateDreamGates(
         decisions.push({
           entryId: entry.id,
           pass: false,
-          reason: confidence == null ? `confidence_missing_required_${tier.minConfidence}` : `confidence_below_${tier.minConfidence}`,
+          reason:
+            confidence == null
+              ? `confidence_missing_required_${tier.minConfidence}`
+              : `confidence_below_${tier.minConfidence}`,
         });
         store.updateCandidateEntry(entry.id, { status: "gated_block" });
         continue;
@@ -328,9 +331,7 @@ export function promoteDreamRun(
   }
 
   const gateReport = evaluateDreamGates(store, dreamRunId, dreaming, factsDb);
-  const gateReportWithDrift = revisionDrifted
-    ? { ...gateReport, storeRevisionDrifted: true as const }
-    : gateReport;
+  const gateReportWithDrift = revisionDrifted ? { ...gateReport, storeRevisionDrifted: true as const } : gateReport;
   store.updateDreamRunStatus(dreamRunId, "gated", {
     gateReportJson: JSON.stringify(gateReportWithDrift),
   });

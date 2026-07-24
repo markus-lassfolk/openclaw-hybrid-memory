@@ -637,8 +637,7 @@ export function buildCliMaintenanceRunners(
     }
     const boundSteps = result.stepSummaries.filter((s) => s.skipped !== true);
     const failedBound = boundSteps.filter((s) => s.ok === false);
-    const allSkipped =
-      result.stepSummaries.length > 0 && result.stepSummaries.every((s) => s.skipped === true);
+    const allSkipped = result.stepSummaries.length > 0 && result.stepSummaries.every((s) => s.skipped === true);
     if (allSkipped && dreaming.skipNightlyOverlap === true) {
       throw new Error(
         `dream-run all compose stages skipped dreamRunId=${result.dreamRunId} — refusing skipNightlyOverlap ownership semantic=partial`,

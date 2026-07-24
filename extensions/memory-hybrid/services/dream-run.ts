@@ -406,11 +406,7 @@ export async function runDream(options: RunDreamOptions): Promise<RunDreamResult
       // original error). Fall back to a best-effort metrics annotation instead (QA follow-up).
       try {
         const current = store.getDreamRun(run.id);
-        if (
-          current?.status === "pending" ||
-          current?.status === "running" ||
-          current?.status === "gated"
-        ) {
+        if (current?.status === "pending" || current?.status === "running" || current?.status === "gated") {
           store.updateDreamRunStatus(run.id, "failed", { failureReason: message });
         } else {
           pluginLogger.warn(
