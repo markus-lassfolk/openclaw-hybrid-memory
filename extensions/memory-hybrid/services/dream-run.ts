@@ -341,13 +341,17 @@ export async function runDream(options: RunDreamOptions): Promise<RunDreamResult
         });
       }
 
-      const endedAt = Math.floor(Date.now() / 1000);
-      const summary = buildRunMetricsSummary(factsDb, {
-        sessionIds,
-        startedAt: run.startedAt ?? run.createdAt,
-        endedAt,
-      });
+      // Best-effort ROI/metrics annotation. MUST NOT destabilize promote status if it throws —
+      // outer catch would mark the run failed and re-throw an illegal-transition error on a
+      // status that's already `promoted`, poisoning the run record even though promote succeeded
+      // (QA follow-up: metrics-collection failure must never invalidate a successful promote).
       try {
+        const endedAt = Math.floor(Date.now() / 1000);
+        const summary = buildRunMetricsSummary(factsDb, {
+          sessionIds,
+          startedAt: run.startedAt ?? run.createdAt,
+          endedAt,
+        });
         const prior = store.getDreamRun(run.id);
         let priorJson: Record<string, unknown> = {};
         if (prior?.metricsSummaryJson) {
@@ -375,8 +379,13 @@ export async function runDream(options: RunDreamOptions): Promise<RunDreamResult
             candidateCount: candidates.length,
           }),
         });
-      } catch {
-        // Best-effort ROI row (#2179).
+      } catch (metricsErr) {
+        // Best-effort ROI row (#2179). Log but never fail the run over a metrics write.
+        pluginLogger.warn(
+          `memory-hybrid: dream ${run.id} post-promote metrics write failed (non-fatal): ${
+            metricsErr instanceof Error ? metricsErr.message : String(metricsErr)
+          }`,
+        );
       }
 
       const updated = store.getDreamRun(run.id) ?? run;
@@ -391,7 +400,30 @@ export async function runDream(options: RunDreamOptions): Promise<RunDreamResult
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      store.updateDreamRunStatus(run.id, "failed", { failureReason: message });
+      // Only mark failed when the current status still permits it — a promote that succeeded
+      // before an unrelated later throw (e.g. metrics collection) must not roll back to
+      // `failed` (illegal transition `promoted → failed` would itself throw and mask the
+      // original error). Fall back to a best-effort metrics annotation instead (QA follow-up).
+      try {
+        const current = store.getDreamRun(run.id);
+        if (
+          current?.status === "pending" ||
+          current?.status === "running" ||
+          current?.status === "gated"
+        ) {
+          store.updateDreamRunStatus(run.id, "failed", { failureReason: message });
+        } else {
+          pluginLogger.warn(
+            `memory-hybrid: dream ${run.id} post-terminal error ignored (status=${current?.status ?? "unknown"}): ${message}`,
+          );
+        }
+      } catch (statusErr) {
+        pluginLogger.warn(
+          `memory-hybrid: dream ${run.id} failed to record failure status (${
+            statusErr instanceof Error ? statusErr.message : String(statusErr)
+          }); original error: ${message}`,
+        );
+      }
       throw err;
     } finally {
       // Restore outer orchestrator deadline (do not leave the rest of the nightly pass unbounded).

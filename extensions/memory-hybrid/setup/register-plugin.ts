@@ -1081,6 +1081,23 @@ function finishHybridMemoryRegistration(params: FinishRegistrationParams): void 
     timers: createTimers(),
   };
 
+  // Deferred-activation supersede guard (#2181 follow-up): a later register() may have run
+  // while Phase B was awaiting donor teardown / opening DBs. If the generation counter has
+  // moved past us, our runtime is stale — do NOT stomp `runtimeRef` with handles the host
+  // will never talk to (the newer generation may already own runtimeRef, or is about to).
+  // Close what we just opened and bail. Sync path (`toolMode === "sync"`) is atomic under
+  // the Atomics.wait registration gate, so this guard only fires in the deferred path.
+  if (toolMode === "bind-live" && registrationGenerationRef.value !== registrationGeneration) {
+    logApi.logger.warn?.(
+      `memory-hybrid: deferred activation generation ${registrationGeneration} superseded by ` +
+        `generation ${registrationGenerationRef.value}; discarding freshly opened runtime instead of stomping runtimeRef`,
+    );
+    closeFailedRegistrationRuntime(newRuntime);
+    stubHandle?.dispose();
+    // Signal to the caller (runDeferredFullTeardownActivation) that we bailed out.
+    throw new Error("deferred_activation_superseded");
+  }
+
   runtimeRef.value = newRuntime;
 
   // The donor generation's tracking is no longer needed: even if its teardown is still

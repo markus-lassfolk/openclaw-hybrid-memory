@@ -109,8 +109,21 @@ export function markActivationFailed(generation: number, error: unknown): void {
   current.resolveSettled();
 }
 
+/**
+ * True when the deferred activation for `generation` should stop / bail out.
+ *
+ * A newer register() calling `beginActivation` mutates the prior state to
+ * {aborted: true, phase: "failed"} but then swings `current` to the newer generation. If we
+ * only checked `current.generation === generation && current.aborted`, the older deferred
+ * activation would observe `current.generation !== generation` and treat that as "not
+ * aborted" — proceeding to open its DBs, call `finishHybridMemoryRegistration`, and stomp
+ * `runtimeRef` with a stale runtime the host will never talk to (QA follow-up: superseded
+ * activation must self-cancel).
+ */
 export function isActivationAborted(generation: number): boolean {
-  return Boolean(current && current.generation === generation && current.aborted);
+  if (!current) return true;
+  if (current.generation !== generation) return true;
+  return current.aborted;
 }
 
 /** Wait until the current activation for `generation` is ready, failed, or superseded. */

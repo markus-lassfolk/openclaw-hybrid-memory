@@ -300,9 +300,19 @@ export function promoteDreamRun(
     store.updateDreamRunStatus(dreamRunId, "running");
   }
 
-  // OCC: refuse if live store drifted since dream snapshot (#2175).
+  // OCC: refuse LIVE APPLY if the store drifted since dream snapshot (#2175). Shadow-only runs
+  // never apply and background writes (auto-capture / other maintenance) inevitably shift the
+  // store fingerprint during a Dream — failing shadow-only runs on drift would consistently
+  // mark every nightly shadow Dream as `failed`, poisoning shadow ROI validation (raising
+  // failureRate) and alarming operators over a non-actionable condition (QA follow-up).
+  //
+  // For shadow-only, drift is recorded in the gate report metadata but the run continues to
+  // gate normally — wouldPromote reflects the current-store view, which is what shadow ROI
+  // needs anyway.
   const currentRevision = factsDb.computeStoreRevision();
-  if (currentRevision !== run.inputStoreRevision && !options.force) {
+  const revisionDrifted = currentRevision !== run.inputStoreRevision;
+  const shadowOnlyRun = run.shadow || !dreaming.autoPromote.enabled;
+  if (revisionDrifted && !options.force && !shadowOnlyRun) {
     store.updateDreamRunStatus(dreamRunId, "failed", {
       failureReason: "stale_input_store_revision",
       gateReportJson: JSON.stringify({ ok: false, reason: "stale_input_store_revision" }),
@@ -318,8 +328,11 @@ export function promoteDreamRun(
   }
 
   const gateReport = evaluateDreamGates(store, dreamRunId, dreaming, factsDb);
+  const gateReportWithDrift = revisionDrifted
+    ? { ...gateReport, storeRevisionDrifted: true as const }
+    : gateReport;
   store.updateDreamRunStatus(dreamRunId, "gated", {
-    gateReportJson: JSON.stringify(gateReport),
+    gateReportJson: JSON.stringify(gateReportWithDrift),
   });
 
   // Empty compose: terminal gated with wouldPromote=false — never apply or treat as reject-quarantine.

@@ -132,18 +132,25 @@ export function evaluateDreamOutcome(
     });
   }
 
-  if (
-    baseline.signalSource &&
-    after.signalSource &&
-    baseline.signalSource !== after.signalSource
-  ) {
+  // Signal-source comparability (#2173):
+  //   - Both present and different → insufficient_data (blended vs feedback_proxy has different
+  //     effect-score ranges; comparing them can drive spurious auto-rollbacks).
+  //   - baseline defined + after undefined (manual CLI override without signalSource) → let it
+  //     through, operator explicitly chose the comparison.
+  //   - after defined + baseline undefined (legacy baseline stored pre-#2173) → treat legacy
+  //     baseline as feedback_proxy (the pre-blended default). Only fail closed when after is
+  //     explicitly "blended" or "tool_effectiveness" vs legacy — those are genuinely not
+  //     effect-score-comparable to a feedback_proxy baseline (QA follow-up: asymmetric
+  //     signalSource shouldn't drive rollbacks either).
+  const baselineSignal = baseline.signalSource ?? (after.signalSource ? "feedback_proxy" : undefined);
+  if (baselineSignal && after.signalSource && baselineSignal !== after.signalSource) {
     return finish({
       dreamRunId,
       window: { fromSec, toSec, sessions: after.sessionsObserved },
       baseline,
       after,
       decision: "insufficient_data",
-      reason: `signal_source_mismatch_${baseline.signalSource}_vs_${after.signalSource}`,
+      reason: `signal_source_mismatch_${baselineSignal}_vs_${after.signalSource}`,
     });
   }
 
