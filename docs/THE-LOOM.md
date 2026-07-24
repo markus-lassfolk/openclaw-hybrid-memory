@@ -78,7 +78,7 @@ The existing Serendipity Protocol (`docs/SERENDIPITY-PROTOCOL.md`) gained additi
 
 | Tool | Purpose |
 | --- | --- |
-| `memory_evidence_capsule_create` / `_show` / `_attach` / `_list` | Evidence capsules |
+| `memory_evidence_capsule_create` / `_show` / `_attach` / `_list` | Evidence capsules (`LoomStore` also supports verified-at marking, exposed in CLI as `evidence verify`) |
 | `memory_belief_assert` / `_get` / `_verify` / `_contradict` / `_supersede` / `_explain` | Belief graph |
 | `memory_live_check_list` / `_satisfy` / `_require` | Live-check contracts |
 | `memory_loop_create` / `_list` / `_update` / `_close` | Open-loop ledger |
@@ -97,14 +97,21 @@ openclaw hybrid-mem evidence create "Doris M365 auth restored" --claim "..." --e
 openclaw hybrid-mem belief assert --entity Doris --key m365_identity --value doris@lassfolk.net --why "..." --live-check --live-check-reason "mutable auth state"
 openclaw hybrid-mem belief explain <claimId>
 openclaw hybrid-mem belief sweep-stale --json                 # degrade beliefs past the staleness window (also runs nightly)
+openclaw hybrid-mem evidence verify <capsuleId> --json
 openclaw hybrid-mem live-checks list
+openclaw hybrid-mem live-checks require <claimId> --reason "mutable auth state" --check "m365-agent-cli whoami"
 openclaw hybrid-mem live-checks satisfy <claimId> --evidence <capsuleId>
 openclaw hybrid-mem loops create "Verify Doris M365 auth" --type needs_verification --closure "whoami succeeds"
+openclaw hybrid-mem loops update <loopId> --status blocked --next "wait for admin consent"
 openclaw hybrid-mem loops close <loopId> --evidence <capsuleId>
-openclaw hybrid-mem drift scout --json
+openclaw hybrid-mem drift scout --dry-run --json
+openclaw hybrid-mem drift list --status open
+openclaw hybrid-mem drift update <findingId> --status acknowledged
 openclaw hybrid-mem memory-lifecycle candidates --json
 openclaw hybrid-mem memory-lifecycle demote <factId> --reason "stale"
+openclaw hybrid-mem memory-lifecycle quarantine <factId> --reason "prompt injection" --confirm
 openclaw hybrid-mem attention rank --scope workspace --json
+openclaw hybrid-mem attention restore claim <claimId>
 openclaw hybrid-mem runway --json
 openclaw hybrid-mem loom brief --scope "Doris M365 auth" --format md
 openclaw hybrid-mem loom report --format html --output ./loom-report.html
@@ -112,9 +119,16 @@ openclaw hybrid-mem loom maintenance --json                   # run the nightly 
 openclaw hybrid-mem procedures triage --batch 20 --json   # (#2147, extends the existing procedure CLI)
 ```
 
+
+### CLI parity and safety conventions
+
+The Loom CLI mirrors the agent tool surface and backend mutators as operator commands. Non-mutating commands (`list`, `show`, `rank`, `brief`, `report`, `runway`, lifecycle `candidates`, drift `scout` without apply) are read-only/report-only by default. Mutating commands are explicit verbs (`create`, `attach`, `verify`, `require`, `satisfy`, `update`, `close`, `demote`, `snooze`, `restore`, lifecycle actions). Destructive lifecycle operations keep the existing guards: `quarantine` and `delete` require `--confirm`, and deleting a verified fact can additionally require `--strong-confirm DELETE-VERIFIED`. Drift fixes use the narrow `--apply-safe` / `--apply-safe-drift` convention; `--dry-run` is accepted to make report-only mode explicit and conflicts with apply flags. There is intentionally no blanket `--force` for Loom commands because no backend operation has a safe force/bypass semantic today.
+
+All Loom command groups accept `-v, --verbose` and `--debug`. Verbose/debug diagnostics are written to stderr and describe read/write mode decisions, target ids, and confirmation/apply gates; they avoid raw fact/evidence text and secret-like values. `HYBRID_MEMORY_VERBOSE=1` and `HYBRID_MEMORY_DEBUG=1` also enable the same diagnostics.
+
 ### Nightly maintenance
 
-The Loom registers a `loom-maintenance` step in the standard maintenance orchestrator (nightly tier). Each night it runs the belief **stale-claim sweep** (degrading `verified`/`believed` claims past `loom.beliefs.staleAfterDays` to `stale`) and a **drift scan** over facts (deprecated commands + unresolved contradictions), recording findings for later review. It is **report-only** by default — it never rewrites fact text unless `loom.maintenance.applySafeDrift` is set. Gated on `loom.maintenance.enabled` (which follows `loom.enabled`). Run it on demand with `hybrid-mem loom maintenance`, or run just the sweep with `hybrid-mem belief sweep-stale`.
+The Loom registers a `loom-maintenance` step in the standard maintenance orchestrator (nightly tier). Each night it runs the belief **stale-claim sweep** (degrading `verified`/`believed` claims past `loom.beliefs.staleAfterDays` to `stale`) and a **drift scan** over facts (deprecated commands + unresolved contradictions), recording findings for later review. It is **report-only** by default — it never rewrites fact text unless `loom.maintenance.applySafeDrift` is set. Gated on `loom.maintenance.enabled` (which follows `loom.enabled`). Run it on demand with `hybrid-mem loom maintenance --dry-run`, use `--apply-safe-drift` only for mechanical auto-safe drift fixes, or run just the sweep with `hybrid-mem belief sweep-stale`.
 
 `memory-lifecycle` (not `lifecycle`) is used for the CLI group because `lifecycle` is already the GitHub-sync-adapters command group (#1196).
 
