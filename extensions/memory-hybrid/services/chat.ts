@@ -17,7 +17,7 @@ import { getEnv } from "../utils/env-manager.js";
 import { extractAssistantMessageText } from "../utils/llm-message.js";
 import { pluginLogger } from "../utils/logger.js";
 import { applyOpenClawGatewayModelRequest, isOpenClawGatewayClient } from "../utils/openclaw-gateway-http.js";
-import { withCostFeature } from "./cost-context.js";
+import { getCurrentCostFeature, withCostFeature } from "./cost-context.js";
 import { capturePluginError } from "./error-reporter.js";
 import {
   formatProviderRateLimitHeaderSummary,
@@ -547,7 +547,9 @@ export async function chatCompleteDetailed(opts: {
           { model, content, temperature, maxTokens: effectiveMaxTokens },
           { signal: controller.signal },
         );
-      const { text, raw } = await (feature ? withCostFeature(feature, doCreate) : doCreate());
+      // Prefer outer ALS label (e.g. CostFeature.dream under runDream) over nested step labels (#2179).
+      const effectiveFeature = getCurrentCostFeature() ?? feature;
+      const { text, raw } = await (effectiveFeature ? withCostFeature(effectiveFeature, doCreate) : doCreate());
       clearTimeout(timeoutId);
       if (signal) signal.removeEventListener("abort", onAbort);
       return { text, finishReason: mapResponsesFinishReason(raw) };
@@ -583,9 +585,12 @@ export async function chatCompleteDetailed(opts: {
         requestBody as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0],
         createOpts,
       );
-    // If feature is provided, wrap in withCostFeature so the proxy attributes the call correctly.
+    // Prefer outer ALS label (e.g. CostFeature.dream under runDream) over nested step labels (#2179).
     // Cost recording itself is done by the OpenAI proxy in setup/init-databases.ts.
-    const resp = (await (feature ? withCostFeature(feature, doCreate) : doCreate())) as OpenAI.Chat.ChatCompletion;
+    const effectiveFeature = getCurrentCostFeature() ?? feature;
+    const resp = (await (effectiveFeature
+      ? withCostFeature(effectiveFeature, doCreate)
+      : doCreate())) as OpenAI.Chat.ChatCompletion;
     clearTimeout(timeoutId);
     if (signal) signal.removeEventListener("abort", onAbort);
     const choice = resp.choices?.[0];

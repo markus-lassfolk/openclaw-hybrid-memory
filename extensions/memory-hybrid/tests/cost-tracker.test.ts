@@ -345,16 +345,18 @@ describe("CostTracker", () => {
       expect(getCurrentCostFeature()).toBeUndefined();
     });
 
-    it("labels are scoped — outer label is restored after inner completes", () => {
-      let inner: string | undefined;
+    it("nested withCostFeature preserves outer label (#2179 dream attribution)", () => {
+      // Nested calls keep the outer ALS label so dream compose is not overwritten by
+      // distill/reflect/consolidate sub-labels (see services/cost-context.ts).
+      let nested: string | undefined;
       let outer: string | undefined;
       withCostFeature("outer", () => {
         withCostFeature("inner", () => {
-          inner = getCurrentCostFeature();
+          nested = getCurrentCostFeature();
         });
         outer = getCurrentCostFeature();
       });
-      expect(inner).toBe("inner");
+      expect(nested).toBe("outer");
       expect(outer).toBe("outer");
     });
 

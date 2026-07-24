@@ -234,12 +234,27 @@ export type IngestFilesSink = {
   warn: (s: string) => void;
 };
 
+/** Parsed distill fact preview (dry-run) for Dream compose (#2170). */
+export type DistillExtractedPreview = {
+  category: string;
+  text: string;
+  entity?: string | null;
+  key?: string | null;
+  value?: string | null;
+  source_date?: string | null;
+  tags?: string[];
+  /** Basename stem of the session JSONL that produced this fact (#2174). */
+  sourceSessionId?: string | null;
+};
+
 export type DistillCliResult = {
   sessionsScanned: number;
   factsExtracted: number;
   stored: number;
   dedupSkipped: number;
   dryRun: boolean;
+  /** Dry-run only: fact bodies for Dream candidate emission (#2170). */
+  extracted?: DistillExtractedPreview[];
   skipped?: boolean;
   semanticEmpty?: boolean;
   partialFailure?: boolean;
@@ -311,6 +326,16 @@ export type SelfCorrectionRunResult = {
   jobRunId?: string;
   /** Unified semantic outcome from JobRun framework. */
   semanticOutcome?: string;
+  /** Dry-run only: MEMORY_STORE bodies for Dream candidate emission (#2170). */
+  extracted?: Array<{
+    text: string;
+    category: string;
+    entity?: string | null;
+    key?: string | null;
+    value?: string | null;
+    tags?: string[];
+    sourceSessionId?: string | null;
+  }>;
 };
 
 export type AnalyzeFeedbackPhrasesResult = {

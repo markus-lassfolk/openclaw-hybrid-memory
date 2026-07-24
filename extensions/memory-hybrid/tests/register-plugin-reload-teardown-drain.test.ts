@@ -1,14 +1,9 @@
 /**
- * Regression tests for the reload-coordinator gate used by runMemoryHybridRegister.
+ * Regression tests for the reload-coordinator helpers used by two-phase activation (#2181)
+ * and the pure gate decision matrix retained for observability/tests (#2111).
  *
- * Reproduces the rapid-hot-reload teardown race that surfaced in #2058/#2059 follow-up:
- *   1. reuseDatabases=true + vault-registry close scheduled against the donor runtime
- *   2. soft drain timeout exceeded → must NOT inherit closed handles (fall back to fresh)
- *   3. full teardown path with a hard drain timeout → must recover to a fresh open instead of
- *      throwing and failing plugin initialization (#2111).
- *
- * These tests exercise the helpers exported from hybrid-memory-reload-coordinator.ts and
- * the gate decision logic in register-plugin via lightweight mocks of the dependencies.
+ * Production register() no longer calls blockReloadTeardownBeforeOpen (Atomics.wait starves
+ * Promise-chain teardown). Deferred activation uses awaitDonorTeardown / awaitReloadTeardownBeforeOpen.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

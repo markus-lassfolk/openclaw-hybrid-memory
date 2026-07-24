@@ -2072,6 +2072,170 @@
         },
         "description": "Nightly dream cycle: prune, consolidate, reflect"
       },
+      "dreaming": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Autonomous dreaming: unified Dream compose (#2171) + candidate store + machine promote/rollback (#2170). Not a human review inbox. Defaults: enabled off, candidate store off, shadow on, autoPromote/autoRollback off.",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Master switch for unified Dream product operation (default: false)."
+          },
+          "compose": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["distill", "self-correction", "reflect", "consolidate", "contradictions", "dream-cycle-core"]
+            },
+            "description": "Ordered compose stages for dream run (default: distill, contradictions, reflect, consolidate)."
+          },
+          "maxSessions": {
+            "type": "number",
+            "description": "Max session ids attached to a Dream run, 1..100 (default: 20)."
+          },
+          "maxRuntimeMinutes": {
+            "type": "number",
+            "description": "Hard wall-clock ceiling for a Dream run in minutes (default: 30)."
+          },
+          "skipNightlyOverlap": {
+            "type": "boolean",
+            "description": "When Dream is enabled, skip overlapping nightly maintenance steps (default: false — opt-in; enable only after autoPromote/shadow campaign is ready)."
+          },
+          "promoteAfterRun": {
+            "type": "boolean",
+            "description": "Call machine promote after compose (default: false; also follows autoPromote.enabled)."
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["autonomous", "supervised"],
+            "description": "Product mode (#2177). autonomous = machine gates are happy path (default)."
+          },
+          "prevalence": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Blast-radius prevalence bars by scope (#2172).",
+            "properties": {
+              "session": { "type": "object", "additionalProperties": true },
+              "agent": { "type": "object", "additionalProperties": true },
+              "user": { "type": "object", "additionalProperties": true },
+              "global": { "type": "object", "additionalProperties": true },
+              "personalSingleTenant": { "type": "boolean" }
+            }
+          },
+          "permissionBoundary": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Permission-scoped transcript attachment (#2174).",
+            "properties": {
+              "targetScope": {
+                "type": "string",
+                "enum": ["session", "agent", "user", "global"]
+              },
+              "enforce": { "type": "boolean" },
+              "personalMode": { "type": "boolean" }
+            }
+          },
+          "steering": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Dream steering policy (#2176) — set-and-forget, not a review inbox.",
+            "properties": {
+              "profile": {
+                "type": "string",
+                "enum": ["personal", "coding", "ops", "custom"]
+              },
+              "promote": { "type": "array", "items": { "type": "string" } },
+              "ignore": { "type": "array", "items": { "type": "string" } },
+              "notes": { "type": "string" }
+            }
+          },
+          "candidateStore": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Persist dream candidate entries without mutating live store until promote (default: false)."
+              },
+              "shadow": {
+                "type": "boolean",
+                "description": "When true, gate decisions are logged but candidates are not applied unless promote --force (default: true)."
+              }
+            }
+          },
+          "autoPromote": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Apply gated-ok candidates to the live store (default: false)."
+              },
+              "requireProvenance": {
+                "type": "boolean",
+                "description": "Require session evidence or rationale on each candidate (default: true)."
+              },
+              "blockOnContradictionWorsening": {
+                "type": "boolean",
+                "description": "Block promote when contradiction gate fails (default: true)."
+              },
+              "shadowValidation": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "Fail-closed ROI gate before autoPromote apply. Check with dream validate-shadow.",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "Require passing shadow window before live apply (default: true)."
+                  },
+                  "minShadowRuns": {
+                    "type": "number",
+                    "description": "Minimum shadow dream runs in lookback (default: 7)."
+                  },
+                  "minWouldPromoteRuns": {
+                    "type": "number",
+                    "description": "Minimum gated/wouldPromote shadow runs (default: 3)."
+                  },
+                  "maxQuarantineRate": {
+                    "type": "number",
+                    "description": "Max quarantined/decided rate (default: 0.5)."
+                  },
+                  "maxFailureRate": {
+                    "type": "number",
+                    "description": "Max failed/decided rate (default: 0.2)."
+                  },
+                  "maxZeroCandidateRate": {
+                    "type": "number",
+                    "description": "Max share of shadow runs with zero candidates (default: 0.3)."
+                  },
+                  "lookbackDays": {
+                    "type": "number",
+                    "description": "Lookback window days (default: 30)."
+                  }
+                }
+              }
+            }
+          },
+          "autoRollback": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Enable post-promote auto-rollback on regression (default: false)."
+              },
+              "observeWindowHours": {
+                "type": "number",
+                "description": "Observation window hours after promote (default: 24)."
+              },
+              "regressionThreshold": {
+                "type": "number",
+                "description": "Effect-score drop threshold for rollback stub (default: 0.15)."
+              }
+            }
+          }
+        }
+      },
       "passiveObserver": {
         "type": "object",
         "additionalProperties": false,

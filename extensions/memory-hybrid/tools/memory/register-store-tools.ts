@@ -214,6 +214,12 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               "Fact id — or an array of fact ids — this one supersedes (replaces). Marks the old fact(s) as superseded and links the new one.",
           }),
         ),
+        expectedHash: Type.Optional(
+          Type.String({
+            description:
+              "OCC token from a prior read (FactsDB.getOccToken). When set on shared-scope supersedes, refuse with memory_conflict if the target changed (#2175).",
+          }),
+        ),
         scope: Type.Optional(stringEnum(MEMORY_SCOPES as unknown as readonly string[])),
         scopeTarget: Type.Optional(
           Type.String({
@@ -250,6 +256,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             decayClass: paramDecayClass,
             tags: paramTags,
             supersedes,
+            expectedHash,
             scope: paramScope,
             scopeTarget: paramScopeTarget,
             verification_tier: verificationTier,
@@ -266,6 +273,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             decayClass?: DecayClass;
             tags?: string[];
             supersedes?: string | string[];
+            expectedHash?: string;
             scope?: "global" | "user" | "agent" | "session";
             scopeTarget?: string;
             verification_tier?: string;
@@ -1219,18 +1227,40 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             // the request. Out-of-scope/unknown ids were already collected in supersedesBlocked.
             const supersededAppliedIds: string[] = [];
             if (storeResult.newlyStored) {
-              for (const supersededId of supersedesScopeValid) {
-                const applied = storeFactsDb.supersede(supersededId, entry.id);
-                if (applied) {
-                  supersededAppliedIds.push(supersededId);
-                  aliasDb?.deleteByFactId(supersededId);
-                  await deleteVectorForFactId({
-                    vectorDb: storeVectorDb,
-                    factId: supersededId,
-                    logger: api.logger,
-                    context: "store-manual-supersede",
-                  });
+              const occHash =
+                typeof expectedHash === "string" && expectedHash.trim().length > 0 ? expectedHash.trim() : undefined;
+              try {
+                for (const supersededId of supersedesScopeValid) {
+                  const applied = storeFactsDb.supersede(
+                    supersededId,
+                    entry.id,
+                    occHash ? { expectedHash: occHash } : undefined,
+                  );
+                  if (applied) {
+                    supersededAppliedIds.push(supersededId);
+                    aliasDb?.deleteByFactId(supersededId);
+                    await deleteVectorForFactId({
+                      vectorDb: storeVectorDb,
+                      factId: supersededId,
+                      logger: api.logger,
+                      context: "store-manual-supersede",
+                    });
+                  }
                 }
+              } catch (occErr) {
+                const { MemoryConflictError } = await import("../../utils/fact-occ.js");
+                if (occErr instanceof MemoryConflictError) {
+                  return {
+                    content: [
+                      {
+                        type: "text",
+                        text: `memory_store: ${occErr.message}. Re-read the fact and retry with a fresh expectedHash.`,
+                      },
+                    ],
+                    details: occErr.details,
+                  };
+                }
+                throw occErr;
               }
             }
 

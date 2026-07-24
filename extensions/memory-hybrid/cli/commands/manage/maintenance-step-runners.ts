@@ -23,13 +23,15 @@ import {
   isEntityEnrichmentHardFailure,
 } from "../../../services/entity-enrichment-adaptive.js";
 import { syncLifecycleFromGitHub } from "../../../services/lifecycle/github-adapter.js";
+import { runLoomMaintenance } from "../../../services/loom-maintenance.js";
 import {
   parseSemanticTokenFromSummary,
   semanticOutcomeBlocksOrchestratorGuard,
   semanticOutcomeIsPartialFailure,
 } from "../../../services/maintenance-job-run/index.js";
 import type { MaintenanceStepRunner } from "../../../services/maintenance-orchestrator.js";
-import { runLoomMaintenance } from "../../../services/loom-maintenance.js";
+import { DreamCandidateStore } from "../../../backends/dream-candidate-store.js";
+import { probeDreamOutcomes } from "../../../services/dream-outcome-probe.js";
 import { runPassiveObserver } from "../../../services/passive-observer.js";
 import { runPendingDigestAutopilotCron } from "../../../services/pending-digest-autopilot-cron.js";
 import { resolveSweepPromotionDeps, runSerendipitySweep } from "../../../services/serendipity-sweep-cron.js";
@@ -572,6 +574,85 @@ export function buildCliMaintenanceRunners(
 
   set("continuous-verification", async () => runContinuousVerificationStep(followUpDeps, verbose));
   set("closed-loop-analysis", async () => runClosedLoopAnalysisStep(followUpDeps, verbose));
+  set("dream-outcome-probe", async () => {
+    if (b.cfg.dreaming?.autoRollback?.enabled !== true) {
+      return "skipped (dreaming.autoRollback disabled) semantic=success";
+    }
+    const store = new DreamCandidateStore(b.factsDb.getRawDb());
+    const result = probeDreamOutcomes(b.factsDb, store, {
+      cfg: b.cfg.dreaming,
+      applyRollback: true,
+      limit: 20,
+    });
+    return `examined=${result.examined} kept=${result.kept} rolledBack=${result.rolledBack} insufficient=${result.insufficient} semantic=success`;
+  });
+  set("dream-run", async () => {
+    if (b.cfg.dreaming?.enabled !== true) {
+      return "skipped (dreaming.enabled=false) semantic=success";
+    }
+    const { buildStepRunners } = await import("../register-dream-group.js");
+    const { runDream } = await import("../../../services/dream-run.js");
+    const { discoverDreamSessionAcls, selectDreamSessions } = await import("../../../services/dream-permission.js");
+    const dreaming = b.cfg.dreaming;
+    const store = new DreamCandidateStore(b.factsDb.getRawDb());
+    // Nightly dream: discover recent sessions from FactsDB and attach under permissionBoundary (#2174).
+    const discovered = discoverDreamSessionAcls(b.factsDb.getRawDb(), {
+      lookbackDays: 7,
+      limit: dreaming.maxSessions ?? 20,
+      openclawHome: resolveOpenclawHomeFromSqlitePath(b.resolvedSqlitePath),
+    });
+    const attachment = selectDreamSessions(
+      discovered,
+      dreaming.permissionBoundary ?? {
+        targetScope: "session",
+        enforce: true,
+        personalMode: false,
+      },
+      dreaming.maxSessions ?? 20,
+    );
+    // Fail closed for ownership: empty attachment must not claim skipNightlyOverlap success.
+    if (attachment.included.length === 0 && dreaming.skipNightlyOverlap === true) {
+      throw new Error(
+        `dream-run no attached sessions (discovered=${discovered.length} excluded=${attachment.excluded.length}) — refusing skipNightlyOverlap ownership semantic=partial`,
+      );
+    }
+    const result = await runDream({
+      factsDb: b.factsDb,
+      store,
+      cfg: dreaming,
+      sessionIds: attachment.included,
+      excludedSessions: attachment.excluded,
+      steps: buildStepRunners({
+        factsDb: b.factsDb,
+        dreaming,
+        manage: b,
+      }),
+      // Always gate after compose (shadow when autoPromote off). Never leave nightly dreams in `running`.
+      promote: true,
+    });
+    if (result.timedOut) {
+      throw new Error(
+        `dream-run timed out dreamRunId=${result.dreamRunId} candidates=${result.candidates.length} promote=${result.promoteResult?.status ?? "none"} semantic=partial`,
+      );
+    }
+    const boundSteps = result.stepSummaries.filter((s) => s.skipped !== true);
+    const failedBound = boundSteps.filter((s) => s.ok === false);
+    const allSkipped = result.stepSummaries.length > 0 && result.stepSummaries.every((s) => s.skipped === true);
+    if (allSkipped && dreaming.skipNightlyOverlap === true) {
+      throw new Error(
+        `dream-run all compose stages skipped dreamRunId=${result.dreamRunId} — refusing skipNightlyOverlap ownership semantic=partial`,
+      );
+    }
+    if (boundSteps.length > 0 && failedBound.length === boundSteps.length) {
+      throw new Error(
+        `dream-run all compose steps failed dreamRunId=${result.dreamRunId} steps=${failedBound.length} semantic=failed`,
+      );
+    }
+    if (!result.promoteResult) {
+      throw new Error(`dream-run missing gate/promote result dreamRunId=${result.dreamRunId} semantic=failed`);
+    }
+    return `dreamRunId=${result.dreamRunId} sessions=${attachment.included.length} excluded=${attachment.excluded.length} candidates=${result.candidates.length} steps=${result.stepSummaries.length} timedOut=${result.timedOut} promote=${result.promoteResult.status} semantic=success`;
+  });
   set("cross-agent-learning", async () => runCrossAgentLearningStep(followUpDeps, verbose));
   set("tool-effectiveness", async () => runToolEffectivenessStep(followUpDeps, verbose));
   set("crystallization-proposals", async () => runCrystallizationProposalsStep(followUpDeps));

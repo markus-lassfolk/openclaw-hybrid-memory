@@ -48,6 +48,7 @@ import { pickSerendipityFact } from "../../services/serendipity.js";
 import { sanitizePromptInjection } from "../../services/skill-prompt-injection.js";
 import type { ScopeFilter, SearchResult } from "../../types/memory.js";
 import { isConsolidatedDerivedFact } from "../../utils/consolidation-controls.js";
+import { applyDreamCanaryBoost } from "../../services/dream-canary.js";
 import { resolveEntityLookupNames } from "../../utils/entity-lookup-resolve.js";
 import { yieldEventLoop } from "../../utils/event-loop-yield.js";
 import { isStaleLifecycleGeneration } from "../../utils/lifecycle-generation.js";
@@ -1134,7 +1135,10 @@ export async function runRecall(
       return { ...r, score: s };
     });
     boosted.sort((a, b) => b.score - a.score);
-    candidates = boosted;
+    // Prefer dream-run-tagged facts while outcome observation is active (#2173 canary).
+    candidates = applyDreamCanaryBoost(boosted, {
+      enabled: ctx.cfg.dreaming?.enabled === true && ctx.cfg.dreaming?.autoRollback?.enabled === true,
+    });
     if (hotFactIds.size > 0) {
       candidates = candidates.filter((r) => !hotFactIds.has(r.entry.id));
     }
