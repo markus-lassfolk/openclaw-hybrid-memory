@@ -1537,6 +1537,73 @@ export function runFactsMigrations(db: DatabaseSync): void {
   migrateContradictionsResolvedAt(db);
   migrateEpisodeRelationsConfidence(db);
   migrateEpic1918Columns(db);
+
+  // Autonomous dreaming candidate store (#2170) — additive tables, no schemaVersion bump
+  migrateDreamCandidateTables(db);
+}
+
+/**
+ * Dream candidate / shadow store (#2170).
+ * Option B: dream_runs + memory_candidate_entries with apply + reverse plans.
+ */
+export function migrateDreamCandidateTables(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS dream_runs (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN (
+          'pending','running','gated','promoted','quarantined','rolled_back','failed'
+        )),
+      input_store_revision TEXT NOT NULL,
+      session_ids_json TEXT NOT NULL DEFAULT '[]',
+      steering_policy_id TEXT,
+      gate_report_json TEXT,
+      shadow INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      started_at INTEGER,
+      gated_at INTEGER,
+      promoted_at INTEGER,
+      rolled_back_at INTEGER,
+      failed_at INTEGER,
+      failure_reason TEXT,
+      rollback_reason TEXT,
+      metrics_baseline_json TEXT,
+      metrics_observe_until INTEGER
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_dream_runs_status ON dream_runs(status)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_dream_runs_created ON dream_runs(created_at)");
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memory_candidate_entries (
+      id TEXT PRIMARY KEY,
+      dream_run_id TEXT NOT NULL REFERENCES dream_runs(id),
+      op TEXT NOT NULL CHECK(op IN ('add','supersede','delete','merge','boost')),
+      status TEXT NOT NULL DEFAULT 'proposed'
+        CHECK(status IN ('proposed','gated_ok','gated_block','applied','rolled_back','skipped')),
+      payload_json TEXT NOT NULL,
+      target_fact_id TEXT,
+      session_ids_json TEXT NOT NULL DEFAULT '[]',
+      prevalence_json TEXT,
+      rationale TEXT,
+      pre_hash TEXT,
+      post_hash TEXT,
+      reverse_op TEXT NOT NULL CHECK(reverse_op IN (
+        'delete_fact','unsupersede','restore_text','noop'
+      )),
+      reverse_payload_json TEXT NOT NULL,
+      applied_fact_id TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_mce_run ON memory_candidate_entries(dream_run_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_mce_run_status ON memory_candidate_entries(dream_run_id, status)");
+
+  const dreamCols = db.prepare("PRAGMA table_info(dream_runs)").all() as Array<{ name: string }>;
+  if (!dreamCols.some((c) => c.name === "metrics_summary_json")) {
+    db.exec("ALTER TABLE dream_runs ADD COLUMN metrics_summary_json TEXT");
+  }
 }
 
 /** Epic #1918: pin/snooze, quality, evolution, maintenance audit, dedup, mine batch. */

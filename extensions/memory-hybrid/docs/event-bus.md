@@ -1,8 +1,10 @@
-# Event Bus — Sensor/Rumination Event Pipeline
+# Event Bus — Sensor Event Pipeline
 
 ## What Is the Event Bus?
 
-The Event Bus is an append-only SQLite table (`memory_events`) that decouples **sensor sweeps** (producers) from the **Rumination Engine** (consumer). Sensors write raw observations; the Rumination Engine reads, promotes, and archives them. No direct coupling between producers and consumers is needed.
+The Event Bus is an append-only SQLite table (`memory_events`) that decouples **sensor sweeps** (producers) from **downstream consumers**. Sensors write raw observations; maintenance and Dream paths read, promote status, and archive them. No direct coupling between producers and consumers is required.
+
+> **Architecture note (#2178):** Earlier docs referred to a single “Rumination Engine” consumer. That module was never shipped as a discrete service. Actual consumers today are **sensor-aware maintenance steps**, **Dream Cycle / Autonomous Dreaming**, and ad-hoc status updates via `EventBus.updateStatus`. The status lifecycle API remains; there is no separate rumination process. See [AUTONOMOUS-DREAMING.md](./AUTONOMOUS-DREAMING.md) for the continual-learning control plane.
 
 ## Schema
 
@@ -33,7 +35,7 @@ raw → processed → surfaced → pushed → archived
 | Status | Meaning |
 |--------|---------|
 | `raw` | Just written by a sensor; not yet examined |
-| `processed` | Examined by Rumination Engine |
+| `processed` | Examined by a consumer (maintenance / dream / other) |
 | `surfaced` | Promoted to agent context or memory |
 | `pushed` | Delivered to an external sink |
 | `archived` | Eligible for pruning |
@@ -58,7 +60,7 @@ Insert a new event. Returns the auto-generated row `id`.
 | `importance` | `number` | `0.5` | Salience score in `[0, 1]` |
 | `fingerprint` | `string` | `undefined` | SHA-256 hash for dedup; use `computeFingerprint()` |
 
-Throws `RangeError` if `importance` is outside `[0, 1]` or is `NaN`. (All comparisons with `NaN` return `false` in JavaScript, so the guard is written as `!(importance >= 0 && importance <= 1)` to catch `NaN` explicitly.)
+Throws `RangeError` if `importance` is outside `[0, 1]` or is `NaN`.
 
 ### `queryEvents(filter?): MemoryEvent[]`
 
@@ -81,41 +83,19 @@ Transition one event to a new status. Sets `processed_at` on the first non-`raw`
 
 Returns `true` if an event with the same fingerprint was written within `cooldownHours` (default `6`). Callers should skip `appendEvent` when `dedup` returns `true`.
 
-```typescript
-const fp = computeFingerprint(`${type}:${entityId}:${summary}`);
-if (!bus.dedup(fp, 6)) {
-  bus.appendEvent(type, source, payload, 0.7, fp);
-}
-```
-
 ### `pruneArchived(olderThanDays?: number): number`
 
 Delete archived events older than `olderThanDays` (default `30`). Returns the count of deleted rows.
 
-### `isOpen(): boolean`
+### `isOpen(): boolean` / `close(): void`
 
-Returns `true` if the underlying database connection is open.
-
-### `close(): void`
-
-Close the database connection. Idempotent.
-
-## `computeFingerprint(input: string): string`
-
-Standalone helper (also exported via `_testing`). Returns the SHA-256 hex digest of `input`. Compose the input from stable, identifying fields:
-
-```typescript
-import { computeFingerprint } from "./backends/event-bus.js";
-
-const fp = computeFingerprint(`context_shift:${projectId}:${summary}:daily`);
-```
+Connection helpers. `close()` is idempotent.
 
 ## Integration Example
 
 ```typescript
 const bus = new EventBus("~/.openclaw/memory-events.db");
 
-// Sensor writes an observation
 const fp = computeFingerprint(`context_shift:proj-42:switched to testing`);
 if (!bus.dedup(fp)) {
   const id = bus.appendEvent(
@@ -126,14 +106,13 @@ if (!bus.dedup(fp)) {
     fp,
   );
 
-  // Rumination Engine processes it
+  // A maintenance / dream consumer examines raw events:
   const [event] = bus.queryEvents({ status: "raw", type: "context_shift" });
   bus.updateStatus(event.id, "processed");
   // ... promote to memory, then:
   bus.updateStatus(event.id, "surfaced");
 }
 
-// Nightly prune
 bus.pruneArchived(30);
 bus.close();
 ```
@@ -146,7 +125,7 @@ bus.close();
 ~/.openclaw/
   memory.db          ← Layer 2: long-term facts
   event-log.db       ← Layer 1: session episodic log
-  memory-events.db   ← Event Bus: sensor → rumination pipeline
+  memory-events.db   ← Event Bus: sensor → consumer pipeline
   memory-vectors/    ← Layer 3: semantic index
 ```
 
@@ -155,7 +134,7 @@ bus.close();
 | | Event Log (`event-log.ts`) | Event Bus (`event-bus.ts`) |
 |--|---|---|
 | Producer | Agent conversation hooks | Sensor sweeps |
-| Consumer | Dream Cycle / consolidation | Rumination Engine |
+| Consumer | Dream Cycle / consolidation / Autonomous Dreaming | Maintenance steps, Dream paths, ad-hoc `updateStatus` |
 | Scope | Session-scoped episodes | Cross-session observations |
 | Key field | `sessionId` | `fingerprint`, `status` |
 | Dedup | No | Yes (cooldown window) |

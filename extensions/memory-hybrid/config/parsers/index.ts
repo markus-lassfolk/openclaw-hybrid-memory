@@ -10,6 +10,7 @@ import {
   parseProceduresConfig,
   parseReflectionConfig,
 } from "./capture.js";
+import { parseDreamingConfig } from "./dreaming.js";
 import {
   DEFAULT_LANCE_PATH,
   DEFAULT_MODEL,
@@ -828,6 +829,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     maintenance: parseMaintenanceConfig(cfg),
     research: parseResearchConfig(cfg),
     nightlyCycle: parseNightlyCycleConfig(cfg),
+    dreaming: parseDreamingConfig(cfg),
     reinforcement: parseReinforcementConfig(cfg),
     clusters: parseClustersConfig(cfg),
     health: parseHealthConfig(cfg),

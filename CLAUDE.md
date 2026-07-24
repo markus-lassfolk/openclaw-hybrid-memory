@@ -57,7 +57,7 @@ Key patterns:
 - SQLite uses the **synchronous** `node:sqlite` API (`DatabaseSync`) — no async/await on DB calls. Always use parameterized statements; SQL string interpolation is a blocking review issue.
 - All stores extend `backends/base-sqlite-store.ts` (WAL pragmas, reconnection after SIGUSR1/SIGUSR2, deferred close) and implement `close()`; after close they throw `"<StoreName> is closed"`. DB operations must handle errors explicitly — background timers must never crash the gateway process.
 - Vector search results are re-ranked in the service layer; result-set sizes are bounded via `OPENCLAW_HYBRID_MEM_*` env vars.
-- Event Bus (`backends/event-bus.ts`): append-only `memory_events` table decoupling sensor producers from the Rumination Engine consumer; status lifecycle `raw → processed → surfaced → pushed → archived`.
+- Event Bus (`backends/event-bus.ts`): append-only `memory_events` table decoupling sensor producers from distributed consumers (maintenance / Dream paths); status lifecycle `raw → processed → surfaced → pushed → archived`. There is no separate Rumination Engine process (#2178).
 - Agent tool names use **underscores** (`memory_store`), never dots. The canonical list is `contracts/agent-tool-names.ts`; parity is enforced by `npm run test:schema-gate`.
 - Schema migrations (`backends/migrations/`) run at plugin init. Bump `schemaVersion` in `versionInfo.ts` for breaking schema changes.
 - Embeddings are required at runtime (OpenAI, Ollama, ONNX, or Google); LLM features use tiered chat models (`llm.nano` / `llm.default` / `llm.heavy`) with ordered fallback. See `docs/LLM-AND-PROVIDERS.md`.

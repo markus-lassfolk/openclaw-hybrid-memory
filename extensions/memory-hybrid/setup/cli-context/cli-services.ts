@@ -55,7 +55,14 @@ interface CliContextServices {
     model: string;
     onProgress?: (progress: { clusterIndex: number; totalClusters: number; merged: number }) => void;
   }) => Promise<{ clustersFound: number; merged: number; deleted: number }>;
-  runReflection: (opts: { window: number; dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
+  runReflection: (opts: {
+    window: number;
+    dryRun: boolean;
+    model: string;
+    verbose?: boolean;
+    steeringPrompt?: string;
+    sessionIds?: string[];
+  }) => Promise<{
     factsAnalyzed: number;
     patternsExtracted: number;
     patternsStored: number;

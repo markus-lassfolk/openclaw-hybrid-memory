@@ -1,4 +1,5 @@
 import type { ConfigMode, VerbosityLevel } from "./types/index.js";
+import { DEFAULT_DREAMING_CONFIG } from "./types/dreaming.js";
 
 /** Default categories — can be extended via config.categories */
 export const DEFAULT_MEMORY_CATEGORIES = [
@@ -135,6 +136,7 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
     workflowTracking: { enabled: false },
     selfExtension: { enabled: false },
     crystallization: { enabled: false },
+    dreaming: structuredClone(DEFAULT_DREAMING_CONFIG),
     verification: { enabled: true },
     provenance: { enabled: true },
     aliases: { enabled: false },
@@ -191,6 +193,7 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
     workflowTracking: { enabled: false },
     selfExtension: { enabled: false },
     crystallization: { enabled: false },
+    dreaming: structuredClone(DEFAULT_DREAMING_CONFIG),
     verification: { enabled: false },
     provenance: { enabled: false },
     aliases: { enabled: false },

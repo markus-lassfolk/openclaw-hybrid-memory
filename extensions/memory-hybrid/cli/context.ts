@@ -133,13 +133,23 @@ export type ManageContext = {
     semanticOutcome?: string;
     skipped?: boolean;
     skipReason?: string;
+    previews?: import("../services/consolidation.js").ConsolidateClusterPreview[];
   }>;
-  runReflection: (opts: { window: number; dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
+  runReflection: (opts: {
+    window: number;
+    dryRun: boolean;
+    model: string;
+    verbose?: boolean;
+    steeringPrompt?: string;
+    /** Dream attachment allowlist (#2174). */
+    sessionIds?: string[];
+  }) => Promise<{
     factsAnalyzed: number;
     patternsExtracted: number;
     patternsStored: number;
     window: number;
     semanticOutcome?: string;
+    patterns?: string[];
   }>;
   runReflectionRules: (opts: {
     dryRun: boolean;
@@ -197,7 +207,15 @@ export type ManageContext = {
     apply?: boolean;
   }>;
   runDistill?: (
-    opts: { dryRun: boolean; days?: number; verbose?: boolean },
+    opts: {
+      dryRun: boolean;
+      days?: number;
+      verbose?: boolean;
+      steeringPrompt?: string;
+      /** When set (including empty), restrict distill to these session ids (#2174). */
+      sessionIds?: string[];
+      maxSessions?: number;
+    },
     sink: { log: (s: string) => void; warn: (s: string) => void },
   ) => Promise<{
     stored: number;
@@ -210,6 +228,7 @@ export type ManageContext = {
     batchFailureReason?: string;
     jobRunId?: string;
     semanticOutcome?: string;
+    extracted?: import("./types.js").DistillExtractedPreview[];
   }>;
   runRecordDistill?: () => Promise<unknown>;
   runExtractProcedures?: (opts: {
@@ -286,6 +305,8 @@ export type ManageContext = {
     applyTools?: boolean;
     full?: boolean;
     verbose?: boolean;
+    /** Dream attachment allowlist (#2174); empty = scan none. */
+    sessionIds?: string[];
   }) => Promise<SelfCorrectionRunResult>;
   runExport: (opts: {
     outputPath: string;

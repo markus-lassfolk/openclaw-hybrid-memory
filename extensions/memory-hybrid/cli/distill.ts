@@ -59,6 +59,7 @@ export type DistillContext = {
       maxSessionTokens?: number;
       full?: boolean;
       force?: boolean;
+      sessionIds?: string[];
     },
     sink: DistillCliSink,
   ) => Promise<DistillCliResult>;

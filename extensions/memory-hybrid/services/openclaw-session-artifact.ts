@@ -3,7 +3,7 @@
  * for a given session key. Used to reconcile ACTIVE-TASKS.md when subagent rows drift (#978).
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -95,6 +95,68 @@ export async function findOpenClawSessionJsonlForKey(
   }
   for (const name of names) {
     const hit = await tryDir(join(agentsRoot, name, "sessions"));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/**
+ * Best-effort sync locate of a session JSONL under ~/.openclaw/agents/<agent>/sessions/.
+ * Returns agentId from the path parent — used as an ACL floor for Dream (#2174), never as global.
+ */
+export function locateSessionTranscriptSync(
+  sessionKey: string,
+  openclawHome = join(homedir(), ".openclaw"),
+): { path: string; agentId: string } | null {
+  const key = sessionKey.trim();
+  if (!key) return null;
+
+  const baseCandidates: string[] = [
+    `${key}.jsonl`,
+    `${key.replace(/:/g, "_")}.jsonl`,
+    `${key.replace(/:/g, "-")}.jsonl`,
+  ];
+  const uuidMatch = key.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+  if (uuidMatch) {
+    baseCandidates.push(`${uuidMatch[1]}.jsonl`);
+  }
+
+  const tryDir = (agentId: string, sessionsDir: string): { path: string; agentId: string } | null => {
+    if (!existsSync(sessionsDir)) return null;
+    for (const name of baseCandidates) {
+      const p = join(sessionsDir, name);
+      if (existsSync(p)) return { path: p, agentId };
+    }
+    if (!uuidMatch) return null;
+    try {
+      for (const f of readdirSync(sessionsDir)) {
+        if (!f.endsWith(".jsonl") || f.startsWith(".deleted")) continue;
+        const base = f.slice(0, -".jsonl".length);
+        const u = uuidMatch[1];
+        if (base === u || f.includes(u)) return { path: join(sessionsDir, f), agentId };
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  };
+
+  const agentIdFromKey = parseAgentIdFromSessionKey(key);
+  if (agentIdFromKey) {
+    const hit = tryDir(agentIdFromKey, join(openclawHome, "agents", agentIdFromKey, "sessions"));
+    if (hit) return hit;
+  }
+
+  const agentsRoot = join(openclawHome, "agents");
+  if (!existsSync(agentsRoot)) return null;
+  let names: string[];
+  try {
+    names = readdirSync(agentsRoot);
+  } catch {
+    return null;
+  }
+  for (const name of names) {
+    const hit = tryDir(name, join(agentsRoot, name, "sessions"));
     if (hit) return hit;
   }
   return null;

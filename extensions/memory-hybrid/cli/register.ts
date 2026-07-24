@@ -171,6 +171,10 @@ export type HybridMemCliContext = {
       maxSessions?: number;
       maxSessionTokens?: number;
       full?: boolean;
+      force?: boolean;
+      steeringPrompt?: string;
+      /** Dream attachment allowlist (#2174); empty = process none. */
+      sessionIds?: string[];
     },
     sink: DistillCliSink,
   ) => Promise<DistillCliResult>;
@@ -246,7 +250,14 @@ export type HybridMemCliContext = {
     limit: number;
     model: string;
   }) => Promise<{ clustersFound: number; merged: number; deleted: number }>;
-  runReflection: (opts: { window: number; dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
+  runReflection: (opts: {
+    window: number;
+    dryRun: boolean;
+    model: string;
+    verbose?: boolean;
+    steeringPrompt?: string;
+    sessionIds?: string[];
+  }) => Promise<{
     factsAnalyzed: number;
     patternsExtracted: number;
     patternsStored: number;
@@ -385,6 +396,8 @@ export type HybridMemCliContext = {
     applyTools?: boolean;
     full?: boolean;
     verbose?: boolean;
+    /** Dream attachment allowlist (#2174); empty = scan none. */
+    sessionIds?: string[];
   }) => Promise<SelfCorrectionRunResult>;
   runAnalyzeFeedbackPhrases: (opts: {
     days?: number;
