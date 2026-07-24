@@ -46,6 +46,17 @@ interface ConsolidateOptions {
   fuzzyDedupe?: boolean;
 }
 
+export type ConsolidateClusterPreview = {
+  memberIds: string[];
+  mergedText: string;
+  category: MemoryCategory | string;
+  key?: string | null;
+  value?: string | null;
+  scope?: "global" | "user" | "agent" | "session";
+  scopeTarget?: string | null;
+  entity?: string | null;
+};
+
 interface ConsolidateResult {
   clustersFound: number;
   merged: number;
@@ -55,6 +66,8 @@ interface ConsolidateResult {
   semanticOutcome?: string;
   skipped?: boolean;
   skipReason?: string;
+  /** Dry-run only: cluster merge previews for Dream compose (#2170). */
+  previews?: ConsolidateClusterPreview[];
 }
 
 /**
@@ -235,6 +248,7 @@ export async function runConsolidate(
   let storeDedupeVectorFallbackSuppressed = 0;
   const consolidationRunId = provenanceService ? randomUUID() : null;
   let clusterIndex = 0;
+  const dryRunPreviews: ConsolidateClusterPreview[] = [];
   for (const clusterIds of clusters) {
     clusterIndex++;
     const emitClusterProgress = () => opts.onProgress?.({ clusterIndex, totalClusters: clusters.length, merged });
@@ -294,6 +308,18 @@ export async function runConsolidate(
       logger.info(
         `memory-hybrid: consolidate [dry-run] would merge ${clusterIds.length} facts → "${mergedText.slice(0, 80)}..."`,
       );
+      if (dryRunPreviews.length < 20) {
+        dryRunPreviews.push({
+          memberIds: [...clusterIds],
+          mergedText,
+          category,
+          key: mergedKey,
+          value: mergedValue,
+          scope: (first?.scope as "global" | "user" | "agent" | "session" | undefined) ?? "global",
+          scopeTarget: first?.scopeTarget ?? null,
+          entity: first?.entity ?? null,
+        });
+      }
       merged++;
       emitClusterProgress();
       continue;
@@ -511,5 +537,6 @@ export async function runConsolidate(
     clustersFailed: clustersFailed > 0 ? clustersFailed : undefined,
     vectorFailures: vectorFailures > 0 ? vectorFailures : undefined,
     semanticOutcome: clustersFailed > 0 || vectorFailures > 0 ? "partial" : "success",
+    ...(opts.dryRun && dryRunPreviews.length > 0 ? { previews: dryRunPreviews } : {}),
   };
 }

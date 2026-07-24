@@ -142,6 +142,28 @@ export function gatherSessionFiles(opts: {
   return out;
 }
 
+/**
+ * Restrict gathered session files to an allowlist of session ids (#2174).
+ * When `sessionIds` is defined (including empty), only matching files are kept —
+ * empty allowlist → no files (fail closed for Dream attachment).
+ * Matching is exact basename stem equality only (no path substring / prefix matches).
+ */
+export function filterSessionFilesByAllowlist<T extends { path: string }>(
+  files: T[],
+  sessionIds: string[] | undefined,
+): T[] {
+  if (sessionIds === undefined) return files;
+  if (sessionIds.length === 0) return [];
+  const ids = new Set(sessionIds.map((s) => s.trim()).filter((s) => s.length > 0));
+  if (ids.size === 0) return [];
+  return files.filter((f) => {
+    const base = f.path.split(/[/\\]/).pop() ?? "";
+    if (!base.endsWith(".jsonl") || base.startsWith(".deleted")) return false;
+    const stem = base.slice(0, -".jsonl".length);
+    return ids.has(stem);
+  });
+}
+
 export function runDistillWindowForCli(ctx: HandlerContext, _opts: { json: boolean }): DistillWindowResult {
   const { resolvedSqlitePath } = ctx;
   const memoryDir = dirname(resolvedSqlitePath);
@@ -232,6 +254,14 @@ export async function runDistillForCli(
     maxSessionTokens?: number;
     full?: boolean;
     force?: boolean;
+    /** Dream steering block appended to distill prompt (#2176). */
+    steeringPrompt?: string;
+    /**
+     * When set (including empty), only process matching session JSONL files (#2174).
+     * Empty array → process nothing (fail closed for Dream with no attached sessions).
+     * Undefined → legacy: all sessions in the gather window.
+     */
+    sessionIds?: string[];
   },
   sink: DistillCliSink,
 ): Promise<DistillCliResult> {
@@ -278,11 +308,12 @@ export async function runDistillForCli(
       );
     }
 
-    const sessionFiles = gatherSessionFiles(gatherOpts);
+    const sessionFiles = filterSessionFilesByAllowlist(gatherSessionFiles(gatherOpts), opts.sessionIds);
     const maxSessions = opts.maxSessions ?? 0;
     let filesToProcess = maxSessions > 0 ? sessionFiles.slice(0, maxSessions) : sessionFiles;
     if (filesToProcess.length === 0) {
-      sink.log("No session files found under ~/.openclaw/agents/*/sessions/");
+      const allowlistNote = opts.sessionIds !== undefined ? ` (session allowlist size=${opts.sessionIds.length})` : "";
+      sink.log(`No session files found under ~/.openclaw/agents/*/sessions/${allowlistNote}`);
       if (shouldAcquireLock && !opts.dryRun) {
         factsDb.updateScanCursor(SCAN_TYPE, 0, 0);
         clearScanLock(SCAN_TYPE);
@@ -387,10 +418,11 @@ export async function runDistillForCli(
         : { version: ADAPTIVE_MODEL_LIMITS_VERSION, models: {} }
       : { version: ADAPTIVE_MODEL_LIMITS_VERSION, models: {} };
 
-    type DistillBlock = { text: string; tokens: number };
+    type DistillBlock = { text: string; tokens: number; sessionId?: string };
     const blocks: DistillBlock[] = [];
     const distillPrompt = loadPrompt("distill-sessions");
-    const promptPrefix = `${distillPrompt}\n\n`;
+    const steeringBlock = opts.steeringPrompt?.trim() ? `${opts.steeringPrompt.trim()}\n\n` : "";
+    const promptPrefix = `${distillPrompt}\n\n${steeringBlock}`;
     const promptTokens = estimateTokens(promptPrefix);
     const primaryCatalogBatchLimit = distillBatchTokenLimit(model);
     const primaryCatalogMaxOut = distillMaxOutputTokens(model);
@@ -428,6 +460,9 @@ export async function runDistillForCli(
           );
         }
 
+        const base = basename(fp);
+        const sessionId = base.endsWith(".jsonl") ? base.slice(0, -".jsonl".length) : base;
+
         // Safety check: ensure chunks don't exceed model catalog input limit (prompt + block)
         const validChunks = chunks.filter((chunk, idx) => {
           const chunkTokens = estimateTokens(chunk);
@@ -446,7 +481,7 @@ export async function runDistillForCli(
               ? `\n--- SESSION: ${basename(fp)} ---\n\n`
               : `\n--- SESSION: ${basename(fp)} (chunk ${c + 1}/${validChunks.length}) ---\n\n`;
           const block = header + validChunks[c];
-          blocks.push({ text: block, tokens: estimateTokens(block) });
+          blocks.push({ text: block, tokens: estimateTokens(block), sessionId });
         }
       } catch (err) {
         capturePluginError(err as Error, {
@@ -471,6 +506,7 @@ export async function runDistillForCli(
       value?: string;
       source_date?: string;
       tags?: string[];
+      sourceSessionId?: string;
     }> = [];
     const progress = createProgressReporter(sink, Math.max(1, blocks.length), "Distilling session chunks");
     let processedBlocks = 0;
@@ -540,12 +576,19 @@ export async function runDistillForCli(
       }
     };
 
-    const buildBatch = (startIdx: number, batchTokenLimit: number): { text: string; count: number; tokens: number } => {
+    const buildBatch = (
+      startIdx: number,
+      batchTokenLimit: number,
+    ): { text: string; count: number; tokens: number; sessionId: string | null } => {
       let text = "";
       let tokens = promptTokens;
       let count = 0;
+      const firstSessionId = blocks[startIdx]?.sessionId ?? null;
+      // Dream allowlist path: keep batches single-session for attribution (#2174).
+      const isolateSessions = opts.sessionIds !== undefined;
       for (let i = startIdx; i < blocks.length; i++) {
         const b = blocks[i];
+        if (isolateSessions && firstSessionId != null && b.sessionId !== firstSessionId) break;
         const sep = text ? "\n" : "";
         const nextTokens = tokens + b.tokens;
         if (count > 0 && nextTokens > batchTokenLimit) break;
@@ -554,7 +597,13 @@ export async function runDistillForCli(
         tokens = nextTokens;
         count++;
       }
-      return { text, count, tokens };
+      let sessionId: string | null = null;
+      if (count > 0) {
+        const ids = Array.from({ length: count }, (_, i) => blocks[startIdx + i]?.sessionId ?? null);
+        const first = ids[0] ?? null;
+        sessionId = ids.every((id) => id === first) ? first : null;
+      }
+      return { text, count, tokens, sessionId };
     };
 
     let batchFailures = 0;
@@ -749,6 +798,7 @@ export async function runDistillForCli(
               value,
               source_date: source_date ?? undefined,
               tags,
+              sourceSessionId: batch.sessionId ?? undefined,
             });
           } catch (err) {
             capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:parse-json" });
@@ -861,6 +911,8 @@ export async function runDistillForCli(
           stored: 0,
           dedupSkipped: 0,
           dryRun: true,
+          // Surfaced for Dream compose candidate emission (#2170).
+          extracted: allFacts.slice(0, 40),
           semanticEmpty,
         },
         { semanticEmpty },

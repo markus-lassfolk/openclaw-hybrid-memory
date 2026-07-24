@@ -31,6 +31,7 @@ import {
   reflectRulesStepSummaryIndicatesFailure,
   semanticOutcomeBlocksOrchestratorGuard,
 } from "./maintenance-job-run/semantic-outcome.js";
+import { nightlyStepsOwnedByDream } from "./dream-run.js";
 
 export type StepTier = "cycle" | "nightly";
 export type StepLlmTier = "none" | "nano" | "maintenance" | "default" | "heavy" | "embed" | "local";
@@ -189,7 +190,15 @@ export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
   { name: "evolution-pass", tier: "cycle", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20, llmTier: "none" },
   { name: "per-folder-context", tier: "cycle", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.d5, llmTier: "none" },
 
-  // --- Nightly tier — staggered (14) ---
+  // --- Nightly tier — staggered ---
+  // Unified Dream runs first so skipNightlyOverlap only drops owned steps after a successful dream-run.
+  {
+    name: "dream-run",
+    tier: "nightly",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20,
+    llmTier: "heavy",
+    featureGate: (cfg) => cfg.dreaming?.enabled === true,
+  },
   { name: "extract-daily", tier: "nightly", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20, llmTier: "nano" },
   {
     name: "distill",
@@ -284,6 +293,13 @@ export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
     guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h44,
     llmTier: "local",
     featureGate: (cfg) => cfg.verification?.enabled === true && cfg.verification?.continuousVerification === true,
+  },
+  {
+    name: "dream-outcome-probe",
+    tier: "nightly",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20,
+    llmTier: "none",
+    featureGate: (cfg) => cfg.dreaming?.autoRollback?.enabled === true,
   },
   {
     name: "closed-loop-analysis",
@@ -389,7 +405,14 @@ export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
     dependsOn: ["reflect"],
     featureGate: (cfg) => cfg.personaProposals?.enabled !== false,
   },
-  { name: "pending-digest", tier: "nightly", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.d5, llmTier: "none" },
+  {
+    name: "pending-digest",
+    tier: "nightly",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.d5,
+    llmTier: "none",
+    // #2177: autonomous Dream installs should not treat nightly human digests as the happy path.
+    featureGate: (cfg) => !(cfg.dreaming?.enabled === true && cfg.dreaming?.mode === "autonomous"),
+  },
   {
     name: "digest-autopilot",
     tier: "nightly",
@@ -710,6 +733,38 @@ export async function runMaintenanceOrchestrator(
         continue;
       }
 
+      if (nightlyStepsOwnedByDream(cfg.dreaming).has(step.name)) {
+        // Fail closed: only skip owned nightly stages after dream-run succeeded in THIS run.
+        // Scheduling alone is not enough — a failed/deferred dream-run must not drop curation.
+        const dreamRunResult = results.find((r) => r.name === "dream-run");
+        if (dreamRunResult?.status === "ok") {
+          pushStepResult({
+            name: step.name,
+            status: "skipped_gate",
+            summary: "owned by unified Dream (dreaming.skipNightlyOverlap; dream-run ok)",
+            durationMs: 0,
+          });
+          continue;
+        }
+        const dreamRunDef = MAINTENANCE_STEPS.find((s) => s.name === "dream-run");
+        const dreamRunScheduled =
+          Boolean(dreamRunDef) &&
+          (!dreamRunDef?.featureGate || dreamRunDef.featureGate(cfg)) &&
+          typeof runners.get("dream-run") === "function";
+        if (dreamRunScheduled && !dreamRunResult) {
+          logger?.warn?.(
+            `maintenance-orchestrator: dreaming.skipNightlyOverlap wants ${step.name} owned by Dream, but dream-run has not completed yet — running step to avoid a maintenance hole`,
+          );
+        } else if (dreamRunScheduled && dreamRunResult) {
+          logger?.warn?.(
+            `maintenance-orchestrator: dreaming.skipNightlyOverlap wants ${step.name} owned by Dream, but dream-run status=${dreamRunResult.status} — running step to avoid a maintenance hole`,
+          );
+        } else if (!dreamRunScheduled) {
+          logger?.warn?.(
+            `maintenance-orchestrator: dreaming.skipNightlyOverlap requested skip of ${step.name}, but dream-run is not scheduled — running step to avoid a maintenance hole`,
+          );
+        }
+      }
       if (step.featureGate && !step.featureGate(cfg)) {
         pushStepResult({
           name: step.name,

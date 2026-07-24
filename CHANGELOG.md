@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Autonomous Dreaming (#2169): machine-gated candidate promote/rollback is the happy path for continual learning; human approve/deny and pending digests are escape hatches (`dreaming.mode: autonomous` by default). See `docs/AUTONOMOUS-DREAMING.md`.
+
 - Maintenance validation: ignore guard/gate skipped `reflect-rules` runs in semantic zero-stored checks, suppress the analyzer's own current in-flight HM_EXIT ledger, and classify nested distill abort/timeout errors as retryable within the existing fallback/shrink budget.
 
 ### Added
@@ -26,6 +28,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ---
 
 ## [Unreleased]
+
+### Fixed
+
+- Autonomous Dreaming: compose stages emit real candidates (distill/reflect/consolidate/contradictions/self-correction); curriculum metrics-only; nightly `dream-run` + fail-closed skip overlap; Phase B fail-closed tools; `autoPromote.shadowValidation` + `dream validate-shadow` gate live apply until shadow ROI passes; unique dream run ids under concurrent creates (#2169 follow-through).
+- Autonomous Dreaming QA: fail-closed multi-session attribution (no `sessionIds[0]` collapse), exact session allowlist matching, ACL-filtered consolidate/contradictions, live contradiction-resolve deletes, OCC-required delete/supersede, shadow would-promote only when gate says so, skip owned nightly steps only after successful `dream-run`, and activation fail-closed when tools are unbound (#2169/#2174/#2175).
 
 ## [2026.7.222] - 2026-07-18
 

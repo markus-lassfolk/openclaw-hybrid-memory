@@ -203,6 +203,105 @@ describe("tool registration generation guard", () => {
     expect(disposeRoute).toHaveBeenCalledTimes(1);
   });
 
+  it("returns initializing safe result while activation is in progress for the current generation", async () => {
+    const { beginActivation, markActivationReady, resetActivationStateForTests } = await import(
+      "../setup/hybrid-memory-activation.js"
+    );
+    const { setLiveToolExecutor, clearLiveToolExecutorsForGeneration } = await import("../setup/register-tools.js");
+    resetActivationStateForTests();
+
+    const state = getHybridMemoryRegistrationState();
+    const { api, tools } = makeRegisterToolApi();
+    state.registrationGenerationRef.value = 10;
+    beginActivation({ generation: 10, donorGeneration: 9 });
+
+    const registration = createGenerationGuardedToolsApi(
+      {
+        registrationGeneration: 10,
+        currentRegistrationGenerationRef: state.registrationGenerationRef,
+      },
+      api as never,
+    );
+    const liveExecute = vi.fn(async () => ({ content: [{ type: "text", text: "live" }], details: { ok: true } }));
+    registration.api.registerTool({
+      name: "memory_recall",
+      execute: async () => ({ content: [{ type: "text", text: "stub" }], details: { ok: false } }),
+    } as never);
+
+    const result = (await tools[0]!.execute()) as { details?: { initializing?: boolean } };
+    expect(result.details?.initializing).toBe(true);
+    expect(liveExecute).not.toHaveBeenCalled();
+
+    setLiveToolExecutor(10, "memory_recall", liveExecute);
+    markActivationReady(10);
+    const live = (await tools[0]!.execute()) as { details?: { ok?: boolean; initializing?: boolean } };
+    expect(live.details?.initializing).not.toBe(true);
+    expect(liveExecute).toHaveBeenCalledTimes(1);
+
+    clearLiveToolExecutorsForGeneration(10);
+    registration.handle.dispose();
+    resetActivationStateForTests();
+  });
+
+  it("falls through to original execute when sync-registered with no activation state", async () => {
+    const { resetActivationStateForTests } = await import("../setup/hybrid-memory-activation.js");
+    resetActivationStateForTests();
+
+    const state = getHybridMemoryRegistrationState();
+    const { api, tools } = makeRegisterToolApi();
+    state.registrationGenerationRef.value = 11;
+
+    const registration = createGenerationGuardedToolsApi(
+      {
+        registrationGeneration: 11,
+        currentRegistrationGenerationRef: state.registrationGenerationRef,
+      },
+      api as never,
+    );
+    const originalExecute = vi.fn(async () => ({
+      content: [{ type: "text", text: "sync-ok" }],
+      details: { ok: true },
+    }));
+    registration.api.registerTool({ name: "memory_recall", execute: originalExecute } as never);
+
+    const result = await tools[0]!.execute();
+    expect(originalExecute).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ details: { ok: true } });
+
+    registration.handle.dispose();
+    resetActivationStateForTests();
+  });
+
+  it("fail-closes when activation is ready but live executor was never bound", async () => {
+    const { beginActivation, markActivationReady, resetActivationStateForTests } = await import(
+      "../setup/hybrid-memory-activation.js"
+    );
+    resetActivationStateForTests();
+
+    const state = getHybridMemoryRegistrationState();
+    const { api, tools } = makeRegisterToolApi();
+    state.registrationGenerationRef.value = 12;
+    beginActivation({ generation: 12, donorGeneration: 11 });
+
+    const registration = createGenerationGuardedToolsApi(
+      {
+        registrationGeneration: 12,
+        currentRegistrationGenerationRef: state.registrationGenerationRef,
+      },
+      api as never,
+    );
+    const originalExecute = vi.fn(async () => ({ content: [{ type: "text", text: "should-not-run" }] }));
+    registration.api.registerTool({ name: "memory_recall", execute: originalExecute } as never);
+    markActivationReady(12);
+
+    const result = (await tools[0]!.execute()) as { details?: { activationFailed?: boolean } };
+    expect(originalExecute).not.toHaveBeenCalled();
+    expect(result.details?.activationFailed).toBe(true);
+
+    registration.handle.dispose();
+    resetActivationStateForTests();
+  });
+
   it("keeps generation state on globalThis across module reload", async () => {
     vi.resetModules();
     const moduleA = await import("../setup/hybrid-memory-generation-state.js");

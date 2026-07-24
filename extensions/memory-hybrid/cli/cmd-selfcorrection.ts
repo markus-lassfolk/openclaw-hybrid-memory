@@ -12,7 +12,7 @@ import { getEnv } from "../utils/env-manager.js";
 
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, basename } from "node:path";
 
 import {
   getCronModelConfig,
@@ -72,7 +72,7 @@ import { parseSelfCorrectionLLMResponse } from "../services/self-correction-llm-
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { estimateTokens } from "../utils/text.js";
-import { gatherSessionFiles } from "./cmd-distill.js";
+import { filterSessionFilesByAllowlist, gatherSessionFiles } from "./cmd-distill.js";
 import { getMaxMtime } from "./cmd-extract-sessions.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
 import { runMaintenanceHeartbeat } from "./commands/manage/maintenance-heartbeat.js";
@@ -316,6 +316,16 @@ type SelfCorrectionApplyResult = {
   proposals: string[];
   toolsSuggestions: string[];
   toolsApplied: number;
+  /** Dry-run MEMORY_STORE previews for Dream compose (#2170). */
+  extracted: Array<{
+    text: string;
+    category: string;
+    entity?: string | null;
+    key?: string | null;
+    value?: string | null;
+    tags?: string[];
+    sourceSessionId?: string | null;
+  }>;
 };
 
 async function applySelfCorrectionRemediations(params: {
@@ -337,6 +347,7 @@ async function applySelfCorrectionRemediations(params: {
   const { factsDb, vectorDb, embeddings, openai, proposalsDb, logger, cfg } = ctx;
   const proposals: string[] = [];
   const toolsSuggestions: string[] = [];
+  const extracted: SelfCorrectionApplyResult["extracted"] = [];
   let autoFixed = 0;
   let toolsApplied = 0;
   const toApply = analysed
@@ -374,7 +385,24 @@ async function applySelfCorrectionRemediations(params: {
           continue;
         }
       }
-      if (opts.dryRun) continue;
+      if (opts.dryRun) {
+        const src =
+          a.sourceIncident ??
+          (typeof a.incidentIndex === "number" && incidents[a.incidentIndex] ? incidents[a.incidentIndex] : undefined);
+        const sessionFile = src?.sessionFile?.trim() || "";
+        const base = sessionFile ? basename(sessionFile) : "";
+        const sourceSessionId = base ? (base.endsWith(".jsonl") ? base.slice(0, -".jsonl".length) : base) : undefined;
+        extracted.push({
+          text,
+          category: "technical",
+          entity: obj.entity ?? null,
+          key: remediationKey,
+          value: text.slice(0, 200),
+          tags: Array.isArray(obj.tags) ? obj.tags : [],
+          sourceSessionId,
+        });
+        continue;
+      }
       try {
         const storeResult = factsDb.storeWithResult(
           {
@@ -551,7 +579,7 @@ async function applySelfCorrectionRemediations(params: {
     }
   }
 
-  return { autoFixed, proposals, toolsSuggestions, toolsApplied };
+  return { autoFixed, proposals, toolsSuggestions, toolsApplied, extracted };
 }
 
 function buildSelfCorrectionReportLines(params: {
@@ -677,6 +705,11 @@ export async function runSelfCorrectionRunForCli(
     verbose?: boolean;
     /** Override JobRun artifact root (tests). */
     jobRunLogRoot?: string;
+    /**
+     * When set (including empty), only scan matching session JSONL (#2174 Dream attachment).
+     * Empty → no sessions. Undefined → legacy gather window.
+     */
+    sessionIds?: string[];
   },
 ): Promise<SelfCorrectionRunResult> {
   const { bypassScanCooldown } = resolveScanMaintenanceOverrides(opts);
@@ -725,10 +758,13 @@ export async function runSelfCorrectionRunForCli(
       let scFilePaths: string[] | undefined;
       const scanDays = opts.days ?? 3;
       const pfCfgSC = buildPreFilterConfig(cfg);
-      if (pfCfgSC.enabled) {
-        const sessionFiles = gatherSessionFiles({ days: scanDays });
-        const allPaths = sessionFiles.map((f: { path: string; mtime: number }) => f.path);
-        if (allPaths.length > 0) {
+      const gathered = filterSessionFilesByAllowlist(gatherSessionFiles({ days: scanDays }), opts.sessionIds);
+      const allPaths = gathered.map((f: { path: string; mtime: number }) => f.path);
+      if (opts.sessionIds !== undefined && allPaths.length === 0) {
+        incidents = [];
+        extractSessionsScanned = 0;
+      } else {
+        if (pfCfgSC.enabled && allPaths.length > 0) {
           const pfResult = await preFilterSessions(allPaths, pfCfgSC);
           if (!pfResult.ollamaUnavailable) {
             logger.info?.(
@@ -737,47 +773,52 @@ export async function runSelfCorrectionRunForCli(
             scFilePaths = pfResult.kept;
           } else {
             logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: Ollama unavailable — scanning all sessions`);
-            scFilePaths = allPaths; // avoid redundant gatherSessionFiles inside runSelfCorrectionExtractForCli
+            scFilePaths = allPaths;
           }
+        } else if (opts.sessionIds !== undefined) {
+          scFilePaths = allPaths;
         }
-      }
-      const extractResult = runSelfCorrectionExtractForCli(ctx, {
-        days: scanDays,
-        filePaths: scFilePaths,
-        verbose: opts.verbose,
-      });
-      extractSessionsScanned = extractResult.sessionsScanned;
-      incidents = extractResult.incidents;
-      const scCfgExtract = cfg.selfCorrection ?? DEFAULT_SELF_CORRECTION;
-      if (scCfgExtract.llmExtract !== false && incidents.length >= 0) {
-        const correctionRegex = getCorrectionSignalRegex();
-        const pathsForHeuristic =
-          scFilePaths ?? gatherSessionFiles({ days: scanDays }).map((f: { path: string }) => f.path);
-        const heuristic = collectHeuristicFeedbackCandidates({
-          filePaths: pathsForHeuristic,
-          correctionRegex,
+        const extractResult = runSelfCorrectionExtractForCli(ctx, {
+          days: scanDays,
+          filePaths: scFilePaths,
+          verbose: opts.verbose,
         });
-        incidents = mergeCorrectionIncidents(incidents, heuristic.slice(0, 80));
-        if (incidents.length > 0) {
-          const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(
-            cfg,
-            "maintenance",
-            scCfgExtract.model,
-          );
-          const filtered = await classifyAndFilterCorrectionIncidents({
-            incidents,
-            openai,
-            model: scCfgExtract.model ?? defaultModel,
-            fallbackModels,
-            minConfidence: scCfgExtract.llmExtractMinConfidence ?? 0.6,
-            batchSize: 10,
-            factsDb,
-            logger: {
-              info: (msg) => logger.info?.(msg),
-              warn: (msg) => logger.warn?.(msg),
-            },
+        extractSessionsScanned = extractResult.sessionsScanned;
+        incidents = extractResult.incidents;
+        const scCfgExtract = cfg.selfCorrection ?? DEFAULT_SELF_CORRECTION;
+        if (scCfgExtract.llmExtract !== false && incidents.length >= 0) {
+          const correctionRegex = getCorrectionSignalRegex();
+          const pathsForHeuristic =
+            scFilePaths ??
+            filterSessionFilesByAllowlist(gatherSessionFiles({ days: scanDays }), opts.sessionIds).map(
+              (f: { path: string }) => f.path,
+            );
+          const heuristic = collectHeuristicFeedbackCandidates({
+            filePaths: pathsForHeuristic,
+            correctionRegex,
           });
-          incidents = filtered.incidents;
+          incidents = mergeCorrectionIncidents(incidents, heuristic.slice(0, 80));
+          if (incidents.length > 0) {
+            const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(
+              cfg,
+              "maintenance",
+              scCfgExtract.model,
+            );
+            const filtered = await classifyAndFilterCorrectionIncidents({
+              incidents,
+              openai,
+              model: scCfgExtract.model ?? defaultModel,
+              fallbackModels,
+              minConfidence: scCfgExtract.llmExtractMinConfidence ?? 0.6,
+              batchSize: 10,
+              factsDb,
+              logger: {
+                info: (msg) => logger.info?.(msg),
+                warn: (msg) => logger.warn?.(msg),
+              },
+            });
+            incidents = filtered.incidents;
+          }
         }
       }
     }
@@ -1320,7 +1361,7 @@ export async function runSelfCorrectionRunForCli(
       modelSource,
       scFallbackModels,
     });
-    const { autoFixed, proposals, toolsSuggestions, toolsApplied } = applied;
+    const { autoFixed, proposals, toolsSuggestions, toolsApplied, extracted } = applied;
 
     const reportLines = buildSelfCorrectionReportLines({
       today,
@@ -1380,6 +1421,7 @@ export async function runSelfCorrectionRunForCli(
       reportPath: opts.dryRun ? null : reportPath,
       toolsSuggestions: toolsSuggestions.length > 0 ? toolsSuggestions : undefined,
       toolsApplied: toolsApplied > 0 ? toolsApplied : undefined,
+      extracted: opts.dryRun && extracted.length > 0 ? extracted : undefined,
       retryCount: diagnostics.retries,
       fallbackCount: diagnostics.fallbacks,
       parseFailures: diagnostics.parseFailures,

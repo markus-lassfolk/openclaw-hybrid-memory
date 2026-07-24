@@ -22,6 +22,7 @@ import { benignFinalizationMessages, pendingCiTurnMessages } from "./fixtures/ma
 import {
   E2E_EMBEDDING_DIM,
   assertFullStackPaths,
+  awaitPluginActivation,
   getFullStackConfig,
   invokeHooks,
   makeFullStackApi,
@@ -121,10 +122,14 @@ describe("Comprehensive e2e — full plugin register()", () => {
           expect(await awaitReloadTeardownBeforeOpen(HOT_RELOAD_RETRY_WAIT_MS)).toBe(true);
           registerFullPlugin(api, stableConfig);
         }
+        // Two-phase activation (#2181): second register may publish stubs and finish Phase B async.
+        // Await ready before recall so we do not assert against initializing stub payloads.
+        expect(await awaitPluginActivation(HOT_RELOAD_TEST_TIMEOUT_MS)).toBe(true);
         const recall = api.getTool("memory_recall")!;
         const recalled = (await recall.execute("c2", { id: factId })) as {
-          details?: { count: number; memories?: { text: string }[] };
+          details?: { count: number; memories?: { text: string }[]; initializing?: boolean };
         };
+        expect(recalled.details?.initializing).not.toBe(true);
         expect(recalled.details?.count).toBe(1);
         expect(recalled.details?.memories?.[0]?.text).toContain("hot reload");
       },

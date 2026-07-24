@@ -1,6 +1,8 @@
 /**
- * Event Bus — append-only SQLite table that all sensor sweeps write to and the
- * Rumination Engine reads from.
+ * Event Bus — append-only SQLite table that sensor sweeps write to.
+ * Downstream consumers (maintenance steps, Dream Cycle / Autonomous Dreaming)
+ * read events and advance status. There is no separate “Rumination Engine”
+ * process (#2178) — the lifecycle API is shared; consumers are distributed.
  *
  * Status lifecycle: raw → processed → surfaced → pushed → archived
  */
@@ -48,8 +50,9 @@ export function computeFingerprint(input: string): string {
  * Manages the SQLite-backed Event Bus for the hybrid memory system.
  * Provides an append-only store for incoming telemetry, sensor data, and
  * unstructured events. Events transition through a defined lifecycle
- * (raw -> processed -> surfaced -> pushed -> archived) as they are consumed
- * by the Rumination Engine.
+ * (raw -> processed -> surfaced -> pushed -> archived) as distributed
+ * consumers (maintenance steps, Dream) advance them — there is no separate
+ * Rumination Engine process (#2178).
  */
 export class EventBus extends BaseSqliteStore {
   protected readonly dbPath: string;
