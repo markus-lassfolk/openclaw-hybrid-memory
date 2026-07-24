@@ -96,3 +96,86 @@ describe("hybrid-mem loom maintenance (#2150)", () => {
     expect(factsDb.getAll({ includeSuperseded: true }).find((f) => f.id === fact.id)?.text).toContain("old-cmd");
   });
 });
+
+describe("hybrid-mem Loom CLI parity commands", () => {
+  it("exposes direct live-check require/satisfy and loop update commands", async () => {
+    const claim = loomStore.assertClaim({ entity: "Doris", predicate: "auth", value: "unknown" });
+    const loop = loomStore.createOpenLoop({ title: "Verify auth", loopType: "needs_verification" });
+
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((msg: string) => logs.push(String(msg)));
+
+    const mem = makeProgram({});
+    await mem.parseAsync(["live-checks", "require", claim.id.slice(0, 8), "--reason", "mutable", "--check", "whoami"], {
+      from: "user",
+    });
+    await mem.parseAsync(["loops", "update", loop.id.slice(0, 8), "--status", "blocked", "--next", "wait"], {
+      from: "user",
+    });
+
+    expect(loomStore.getClaim(claim.id)?.liveCheckRequired).toBe(true);
+    expect(loomStore.getClaim(claim.id)?.suggestedChecks[0]?.text).toBe("whoami");
+    expect(loomStore.getOpenLoop(loop.id)?.status).toBe("blocked");
+    expect(loomStore.getOpenLoop(loop.id)?.nextAction).toBe("wait");
+    expect(logs.join("\n")).toContain("requires a live check");
+    expect(logs.join("\n")).toContain("Updated");
+  });
+
+  it("verifies evidence capsules and updates drift findings from the CLI", async () => {
+    const capsule = loomStore.createEvidenceCapsule({
+      content: {
+        title: "proof",
+        claim: "claim",
+        evidence: [],
+        commandsRun: [],
+        artifacts: [],
+        unverifiedItems: [],
+        riskFlags: [],
+        limits: undefined,
+        redactionCount: 0,
+        redacted: false,
+      },
+    });
+    const finding = loomStore.createDriftFinding({ driftType: "deprecated_command", oldText: "old-cmd" });
+
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const mem = makeProgram({});
+    await mem.parseAsync(["evidence", "verify", capsule.id.slice(0, 8), "--at", "2026-01-01T00:00:00.000Z"], {
+      from: "user",
+    });
+    await mem.parseAsync(["drift", "update", finding.id.slice(0, 8), "--status", "acknowledged"], { from: "user" });
+
+    expect(loomStore.getEvidenceCapsule(capsule.id)?.verifiedAt).toBe("2026-01-01T00:00:00.000Z");
+    expect(loomStore.getDriftFinding(finding.id)?.status).toBe("acknowledged");
+  });
+
+  it("keeps drift scout report-only by default and rejects conflicting dry-run/apply flags", async () => {
+    storeFact("Run `old-cmd` for reports.");
+    const cfgWithDrift = parseConfig({
+      embedding: { provider: "ollama", model: "nomic-embed-text" },
+      loom: { drift: { deprecatedCommands: { "old-cmd": "new-cmd" } } },
+    });
+
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const mem = makeProgram({ cfg: cfgWithDrift as never });
+    await mem.parseAsync(["drift", "scout", "--dry-run", "--json"], { from: "user" });
+    expect(factsDb.getAll({ includeSuperseded: true })[0]?.text).toContain("old-cmd");
+
+    await expect(mem.parseAsync(["drift", "scout", "--dry-run", "--apply-safe"], { from: "user" })).rejects.toThrow(
+      /Choose either --dry-run or --apply-safe/,
+    );
+  });
+
+  it("documents debug/verbose and exposes no blanket force flag in Loom help", () => {
+    const mem = makeProgram({});
+    const liveChecks = mem.commands.find((c) => c.name() === "live-checks");
+    expect(liveChecks).toBeTruthy();
+    const help = liveChecks?.helpInformation() ?? "";
+    expect(help).toContain("--verbose");
+    expect(help).toContain("--debug");
+    expect(help).not.toContain("--force");
+  });
+});
