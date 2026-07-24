@@ -157,7 +157,7 @@ jobs:
           fi
       - name: Sync derived version literals (openclaw.plugin.json, installer) — issue #2115
         run: node scripts/sync-plugin-version.cjs
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
@@ -200,7 +200,7 @@ jobs:
           if [ "$CURRENT" != "$VERSION" ]; then
             cd packages/openclaw-hybrid-memory-install && npm version --no-git-tag-version "$VERSION"
           fi
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
