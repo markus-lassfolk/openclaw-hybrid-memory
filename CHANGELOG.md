@@ -36,6 +36,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+
+## [2026.7.225]
+
+### Fixed
+- Prevented deferred generation-2 activation from passing omitted database paths to the host path resolver; bootstrap now falls back to documented defaults and warns safely.
+- Added deferred full-teardown regression coverage for omitted paths with legacy dreaming configuration, plus source-context error logging.
+
 ## [2026.7.224] - 2026-07-25
 
 ### Fixed

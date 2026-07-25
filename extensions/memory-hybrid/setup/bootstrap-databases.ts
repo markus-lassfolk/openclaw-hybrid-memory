@@ -19,7 +19,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { CredentialType, HybridMemoryConfig } from "../config.js";
-import { normalizeResolvedSecretValue } from "../config/parsers/core.js";
+import { DEFAULT_LANCE_PATH, DEFAULT_SQLITE_PATH, normalizeResolvedSecretValue } from "../config/parsers/core.js";
 import { is403QuotaOrRateLimitLike, is429OrWrapped } from "../services/chat.js";
 import { CREDENTIAL_REDACTION_MIGRATION_FLAG, migrateCredentialsToVault } from "../services/credential-migration.js";
 import { runEmbeddingMaintenance } from "../services/embedding-migration.js";
@@ -395,6 +395,19 @@ export function createReusedDatabaseBootstrap(
   });
 }
 
+function normalizeDatabasePath(
+  value: unknown,
+  fallback: string,
+  field: "lanceDbPath" | "sqlitePath",
+  api: ClawdbotPluginApi,
+): string {
+  if (typeof value === "string" && value.trim()) return value;
+  api.logger.warn?.(
+    `memory-hybrid: database bootstrap received missing or invalid ${field}; using the documented default (${field === "lanceDbPath" ? "DEFAULT_LANCE_PATH" : "DEFAULT_SQLITE_PATH"}).`,
+  );
+  return fallback;
+}
+
 /**
  * Initializes all databases and services for the plugin.
  *
@@ -416,8 +429,12 @@ export function initializeDatabases(
 ): DatabaseContext {
   const bootRegistrationGeneration = opts?.bootRegistrationGeneration ?? -1;
   const isBootstrapSuperseded = (): boolean => isRegistrationSuperseded(bootRegistrationGeneration);
-  const resolvedLancePath = api.resolvePath(cfg.lanceDbPath);
-  const resolvedSqlitePath = api.resolvePath(cfg.sqlitePath);
+  // Config parsing normally supplies these defaults. Keep the bootstrap boundary safe for
+  // deferred activation handoffs that may carry an older or partially reconstructed config.
+  const lanceDbPath = normalizeDatabasePath(cfg.lanceDbPath, DEFAULT_LANCE_PATH, "lanceDbPath", api);
+  const sqlitePath = normalizeDatabasePath(cfg.sqlitePath, DEFAULT_SQLITE_PATH, "sqlitePath", api);
+  const resolvedLancePath = api.resolvePath(lanceDbPath);
+  const resolvedSqlitePath = api.resolvePath(sqlitePath);
   setKeywordsPath(dirname(resolvedSqlitePath));
 
   recordStartupMemoryCheckpoint({

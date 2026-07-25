@@ -833,10 +833,12 @@ async function runDeferredFullTeardownActivation(params: {
         operation: "plugin-register:deferred-activation",
         severity: "error",
       });
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      const errorSource = err instanceof Error && err.stack ? `\n${err.stack}` : "";
       logApi.logger.error?.(
-        `memory-hybrid: deferred activation failed for generation ${registrationGeneration}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+        `memory-hybrid: deferred activation failed for generation ${registrationGeneration} ` +
+          `(donorGeneration=${donorGeneration}, staged=${loadContext.isStaging}, packageVersion=${loadContext.packageVersion}): ` +
+          `${errorMessage}${errorSource}`,
       );
     }
   }
