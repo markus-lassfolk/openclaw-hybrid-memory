@@ -29,6 +29,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.223] - 2026-07-25
+
+### Changed — CI dependency-cache storage optimization
+
+- Completes the CI-storage optimization introduced in `02574106fffdbab66ec23cfa3fc867706616294f`: every dependency-installing job in `.github/workflows/ci.yml` and the release publish job now uses `actions/setup-node@v7`'s built-in `cache: npm` with the authoritative lockfile path instead of caching `node_modules` with `actions/cache`.
+- The graph-app job declares both the plugin and graph-app lockfiles, so its shared npm cache invalidates when either dependency graph changes; it still installs both projects explicitly before their respective test/build and browser-smoke steps.
+- Cache storage now contains npm's content-addressable download cache rather than platform- and Node-version-specific installed dependency trees. This preserves reproducible install behavior while avoiding redundant large `node_modules` archives.
+- The coverage artifact is explicitly retained for 14 days; no other artifact or storage policy was deferred.
+
+### Release metadata
+
+- Bumps `openclaw-hybrid-memory` and the lockstep standalone installer to `2026.7.223`. `package.json` remains the source of truth; `openclaw.plugin.json` and installer metadata are synchronized by `scripts/sync-plugin-version.cjs`.
+
 ### Fixed
 
 - Autonomous Dreaming: compose stages emit real candidates (distill/reflect/consolidate/contradictions/self-correction); curriculum metrics-only; nightly `dream-run` + fail-closed skip overlap; Phase B fail-closed tools; `autoPromote.shadowValidation` + `dream validate-shadow` gate live apply until shadow ROI passes; unique dream run ids under concurrent creates (#2169 follow-through).
