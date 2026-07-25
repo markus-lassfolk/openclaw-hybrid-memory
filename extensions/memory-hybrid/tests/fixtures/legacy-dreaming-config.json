@@ -1,0 +1,11 @@
+{
+  "embedding": { "provider": "ollama", "model": "nomic-embed-text" },
+  "dreaming": {
+    "enabled": true,
+    "frequency": "15 3 * * *",
+    "model": "azure-foundry/gpt-4.1-mini",
+    "execution": "sequential",
+    "phases": ["distill", "reflect", "consolidate"],
+    "verboseLogging": true
+  }
+}

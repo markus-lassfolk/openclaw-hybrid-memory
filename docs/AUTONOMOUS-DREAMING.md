@@ -226,3 +226,23 @@ After promote is live:
 - Inspect / promote / rollback / observe / report via CLI above
 - `dreaming.mode: "supervised"` for operators who want digest-first workflows
 - Manual `--force` promote under shadow for debugging
+
+## Legacy config compatibility
+
+Releases after the Autonomous Dream migration continue to **accept** the legacy
+`dreaming.frequency`, `model`, `execution`, `phases`, and `verboseLogging` keys so an
+upgrade cannot prevent the gateway from starting. The plugin emits an actionable
+startup warning whenever it sees them; compatibility acceptance is intentionally not a
+silent config discard.
+
+| Legacy key | Compatibility behavior |
+| --- | --- |
+| `frequency` | A five- or six-field cron expression is used as `nightlyCycle.schedule` if that setting is absent. Other frequency formats are retained for boot compatibility but require operator migration. |
+| `model` | Used as `nightlyCycle.model` if that setting is absent. |
+| `phases` | Maps to `dreaming.compose` only when every phase is a supported modern compose stage and `compose` is absent. Unsupported values remain non-operative and are named in the warning. |
+| `execution` | No lossless equivalent; retained for boot compatibility and called out in the warning. |
+| `verboseLogging` | No lossless equivalent; retained for boot compatibility and called out in the warning. |
+
+Explicit modern settings always win. Replace legacy keys with `nightlyCycle.schedule`,
+`nightlyCycle.model`, and `dreaming.compose` during a normal maintenance window, then
+remove the legacy keys after confirming the startup warning is gone.

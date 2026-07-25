@@ -1,7 +1,7 @@
 {
   "id": "openclaw-hybrid-memory",
   "kind": "memory",
-  "version": "2026.7.223",
+  "version": "2026.7.224",
   "contracts": {
     "tools": [
       "active_task_checkpoint",
@@ -2233,6 +2233,27 @@
                 "description": "Effect-score drop threshold for rollback stub (default: 0.15)."
               }
             }
+          },
+          "frequency": {
+            "type": "string",
+            "description": "Deprecated compatibility key. A 5/6-field cron expression becomes nightlyCycle.schedule when no explicit schedule is set."
+          },
+          "model": {
+            "type": "string",
+            "description": "Deprecated compatibility key. Used as nightlyCycle.model when no explicit model is set."
+          },
+          "execution": {
+            "type": "string",
+            "description": "Deprecated compatibility key retained so legacy configurations boot; see AUTONOMOUS-DREAMING migration guidance."
+          },
+          "phases": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Deprecated compatibility key. Recognized stage names map to dreaming.compose when compose is unset."
+          },
+          "verboseLogging": {
+            "type": "boolean",
+            "description": "Deprecated compatibility key retained so legacy configurations boot; see AUTONOMOUS-DREAMING migration guidance."
           }
         }
       },
