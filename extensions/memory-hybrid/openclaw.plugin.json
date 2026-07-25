@@ -2244,6 +2244,7 @@
             "description": "Deprecated compatibility key. Used as nightlyCycle.model when no explicit model is set."
           },
           "execution": {
+            "type": "string",
             "description": "Deprecated compatibility key retained so legacy configurations boot; see AUTONOMOUS-DREAMING migration guidance."
           },
           "phases": {

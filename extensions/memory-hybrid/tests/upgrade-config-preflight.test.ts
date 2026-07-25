@@ -1,13 +1,15 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   loadPluginManifestSchema,
   validatePluginConfigAgainstSchema,
 } from "../cli/install/upgrade-config-preflight.js";
+import { parseDreamingConfig } from "../config/parsers/dreaming.js";
 import { hybridConfigSchema } from "../config.js";
+import { pluginLogger } from "../utils/logger.js";
 
 const hybridRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const manifestPath = join(hybridRoot, "openclaw.plugin.json");
@@ -48,6 +50,33 @@ describe("upgrade config preflight (#2000)", () => {
     expect(parsed.nightlyCycle.schedule).toBe("15 3 * * *");
     expect(parsed.nightlyCycle.model).toBe("azure-foundry/gpt-4.1-mini");
     expect(parsed.dreaming.compose).toEqual(["distill", "reflect", "consolidate"]);
+  });
+
+  it("accepts unmappable legacy dreaming keys and emits actionable migration warning", () => {
+    const legacy = JSON.parse(
+      readFileSync(join(hybridRoot, "tests", "fixtures", "legacy-dreaming-config.json"), "utf8"),
+    ) as Record<string, unknown>;
+    const schema = loadPluginManifestSchema(manifestPath);
+    expect(validatePluginConfigAgainstSchema(legacy, schema)).toEqual({ ok: true, errors: [] });
+
+    const warn = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+    try {
+      expect(() => parseDreamingConfig(legacy)).not.toThrow();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("execution, phases, verboseLogging"));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("No lossless runtime mapping exists for"));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("AUTONOMOUS-DREAMING.md#legacy-config-compatibility"));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("declares legacy execution and verboseLogging types in the manifest", () => {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+      configSchema?: { properties?: { dreaming?: { properties?: Record<string, { type?: string }> } } };
+    };
+    const properties = manifest.configSchema?.properties?.dreaming?.properties;
+    expect(properties?.execution?.type).toBe("string");
+    expect(properties?.verboseLogging?.type).toBe("boolean");
   });
 
   it("validatePluginConfigAgainstSchema rejects unknown graph keys when schema disallows extras", () => {
