@@ -25,7 +25,7 @@ export type DreamMetricSet = {
    * - task_outcomes: transcript-derived success/partial/failure trajectories
    * - feedback_proxy: legacy fallback from self-correction / reinforcement facts
    */
-  signalSource?: "feedback_proxy" | "task_outcomes" | "blended" | "tool_effectiveness";
+  signalSource?: "feedback_proxy" | "task_outcomes" | "task_success" | "blended" | "tool_effectiveness";
 };
 
 export type DreamOutcomeDecision = "keep" | "rollback" | "insufficient_data";
@@ -47,6 +47,7 @@ export function parseBaseline(json: string | null | undefined): DreamMetricSet |
     if (typeof parsed.effectScore !== "number") return null;
     const signalSource =
       parsed.signalSource === "task_outcomes" ||
+      parsed.signalSource === "task_success" ||
       parsed.signalSource === "feedback_proxy" ||
       parsed.signalSource === "blended" ||
       parsed.signalSource === "tool_effectiveness"
