@@ -8,7 +8,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   awaitActivationReady,
   getActivationState,
@@ -90,6 +91,37 @@ describe("two-phase reload activation (#2181)", () => {
       details?: { initializing?: boolean };
     };
     expect(after.details?.initializing).not.toBe(true);
+  });
+
+  it("activates generation 2 with omitted DB paths without passing undefined to resolvePath", async () => {
+    const legacyDreaming = JSON.parse(
+      readFileSync(join(process.cwd(), "tests", "fixtures", "legacy-dreaming-config.json"), "utf8"),
+    ) as Record<string, unknown>;
+    const resolvePath = vi.fn((path: string) => {
+      if (typeof path !== "string") throw new TypeError('The "path" argument must be of type string.');
+      return path;
+    });
+    api.resolvePath = resolvePath;
+
+    registerFullPlugin(api, getFullStackConfig(tmpDir, legacyDreaming));
+    const firstGeneration = runtimeRef.value!.bootRegistrationGeneration!;
+    const deferredConfig = getFullStackConfig(tmpDir, legacyDreaming);
+    delete deferredConfig.sqlitePath;
+    delete deferredConfig.lanceDbPath;
+
+    registerFullPlugin(api, deferredConfig);
+    const activation = getActivationState();
+    expect(activation?.generation).toBeGreaterThan(firstGeneration);
+    expect(await awaitActivationReady(activation!.generation, 20_000)).toBe(true);
+    expect(runtimeRef.value?.bootRegistrationGeneration).toBe(activation!.generation);
+    expect(resolvePath).toHaveBeenCalled();
+    expect(resolvePath.mock.calls.flat().every((path) => typeof path === "string")).toBe(true);
+
+    // The legacy dreaming migration is parsed independently and remains intact across the handoff.
+    expect(runtimeRef.value?.cfg.dreaming.compose).toEqual(["distill", "reflect", "consolidate"]);
+    expect(runtimeRef.value?.cfg.nightlyCycle.schedule).toBe("15 3 * * *");
+    expect(runtimeRef.value?.cfg.nightlyCycle.model).toBe("azure-foundry/gpt-4.1-mini");
+    expect(getActivationState()?.phase).toBe("ready");
   });
 
   it("never throws 'reload teardown did not drain before opening new databases'", async () => {
