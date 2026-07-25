@@ -112,26 +112,47 @@ export function deriveEffectScore(corrections: number, praise: number): number {
   return Math.max(-1, Math.min(1, raw));
 }
 
-function readToolEffectivenessAggregate(
+type TaskOutcomeAggregate = {
+  successes: number;
+  failures: number;
+  partials: number;
+  sessions: number;
+};
+
+/**
+ * Read transcript-derived task outcomes persisted by extract-implicit-feedback.
+ * These rows live in the facts DB and retain their source session, allowing a
+ * Dream observation window to measure only the sessions it promoted for.
+ */
+function readTaskOutcomeAggregate(
   db: DatabaseSync,
   fromSec: number,
   toSec: number,
-): { successRate: number; totalCalls: number } | null {
+  sessionIds: string[],
+): TaskOutcomeAggregate | null {
+  const ids = [...new Set(sessionIds.map((id) => id.trim()).filter(Boolean))];
+  const scope = ids.length > 0 ? ` AND session_file IN (${ids.map(() => "?").join(",")})` : "";
   try {
     const row = db
       .prepare(
-        `SELECT COALESCE(SUM(success_calls), 0) AS ok,
-                COALESCE(SUM(total_calls), 0) AS total
-         FROM tool_effectiveness
-         WHERE last_updated >= ? AND last_updated <= ?`,
+        `SELECT
+           COALESCE(SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END), 0) AS successes,
+           COALESCE(SUM(CASE WHEN outcome = 'failure' THEN 1 ELSE 0 END), 0) AS failures,
+           COALESCE(SUM(CASE WHEN outcome = 'partial' THEN 1 ELSE 0 END), 0) AS partials,
+           COUNT(DISTINCT NULLIF(session_file, '')) AS sessions
+         FROM feedback_trajectories
+         WHERE created_at >= ? AND created_at <= ?${scope}`,
       )
-      .get(fromSec, toSec) as { ok: number; total: number } | undefined;
-    const total = Number(row?.total ?? 0);
-    if (!Number.isFinite(total) || total <= 0) return null;
-    const ok = Number(row?.ok ?? 0);
-    return { successRate: Math.max(0, Math.min(1, ok / total)), totalCalls: total };
+      .get(fromSec, toSec, ...ids) as TaskOutcomeAggregate | undefined;
+    const successes = Number(row?.successes ?? 0);
+    const failures = Number(row?.failures ?? 0);
+    const partials = Number(row?.partials ?? 0);
+    const sessions = Number(row?.sessions ?? 0);
+    if (successes + failures + partials <= 0) return null;
+    return { successes, failures, partials, sessions };
   } catch {
-    // Table may not exist in this DB — feedback proxy remains the primary signal.
+    // Older installations can lack the trajectory table; preserve the safe
+    // feedback-proxy fallback rather than inventing a task-success result.
     return null;
   }
 }
@@ -141,35 +162,28 @@ export function collectDreamMetricSet(
   input: { fromSec: number; toSec: number; sessionIds: string[] },
 ): DreamMetricSet {
   const db = factsDb.getRawDb();
-  const { corrections, praise, sessions } = countFeedbackSignals(db, input.fromSec, input.toSec, input.sessionIds);
-  const effectScore = deriveEffectScore(corrections, praise);
-  const feedbackSuccess = praise + corrections > 0 ? praise / (praise + corrections) : 1;
-  const retryRate = corrections;
-  const tool = readToolEffectivenessAggregate(db, input.fromSec, input.toSec);
-
-  if (tool && praise + corrections > 0) {
-    // Prefer blended signal when both feedback and tool effectiveness exist (#2173).
-    const successRate = 0.5 * feedbackSuccess + 0.5 * tool.successRate;
+  const taskOutcomes = readTaskOutcomeAggregate(db, input.fromSec, input.toSec, input.sessionIds);
+  if (taskOutcomes) {
+    const total = taskOutcomes.successes + taskOutcomes.failures + taskOutcomes.partials;
+    // A partial task represents half a successful completion. This keeps the
+    // metric in [0,1] while retaining the trajectory classifier's uncertainty.
+    const successRate = (taskOutcomes.successes + 0.5 * taskOutcomes.partials) / total;
+    const retryRate = (taskOutcomes.failures + taskOutcomes.partials) / total;
     return {
       successRate,
       retryRate,
-      effectScore,
-      sessionsObserved: sessions,
-      signalSource: "blended",
+      effectScore: successRate * 2 - 1,
+      sessionsObserved: taskOutcomes.sessions,
+      signalSource: "task_outcomes",
     };
   }
-  if (tool && praise + corrections === 0) {
-    return {
-      successRate: tool.successRate,
-      retryRate,
-      effectScore: tool.successRate * 2 - 1,
-      sessionsObserved: Math.max(sessions, 1),
-      signalSource: "tool_effectiveness",
-    };
-  }
+
+  const { corrections, praise, sessions } = countFeedbackSignals(db, input.fromSec, input.toSec, input.sessionIds);
+  const effectScore = deriveEffectScore(corrections, praise);
+  const feedbackSuccess = praise + corrections > 0 ? praise / (praise + corrections) : 1;
   return {
     successRate: feedbackSuccess,
-    retryRate,
+    retryRate: corrections,
     effectScore,
     sessionsObserved: sessions,
     signalSource: "feedback_proxy",

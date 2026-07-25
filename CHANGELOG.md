@@ -37,6 +37,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The graph-app job declares both the plugin and graph-app lockfiles, so its shared npm cache invalidates when either dependency graph changes; it still installs both projects explicitly before their respective test/build and browser-smoke steps.
 - Cache storage now contains npm's content-addressable download cache rather than platform- and Node-version-specific installed dependency trees. This preserves reproducible install behavior while avoiding redundant large `node_modules` archives.
 - The coverage artifact is explicitly retained for 14 days; no other artifact or storage policy was deferred.
+- Completes PR #2182 / #2173's explicitly documented outcome-signal follow-up: post-promotion rollback now uses session-scoped, transcript-derived task success/partial/failure trajectories from `feedback_trajectories` whenever available. The legacy feedback proxy remains only as an explicit compatibility fallback; cross-source automatic comparisons fail closed.
 
 ### Release metadata
 

@@ -9,6 +9,7 @@ import { FactsDB } from "../backends/facts-db.js";
 import { DreamCandidateStore } from "../backends/dream-candidate-store.js";
 import { DEFAULT_DREAMING_CONFIG } from "../config/types/dreaming.js";
 import { evaluateDreamOutcome } from "../services/dream-outcome.js";
+import { collectDreamMetricSet } from "../services/dream-metrics.js";
 import {
   discoverDreamSessionAcls,
   selectDreamSessions,
@@ -17,6 +18,58 @@ import {
 import { promoteDreamRun } from "../services/dream-promote.js";
 import { buildDreamRoiReport } from "../services/dream-roi.js";
 import { runDream } from "../services/dream-run.js";
+
+describe("dream task-outcome metrics (#2173 completion)", () => {
+  let tmpDir: string;
+  let factsDb: FactsDB;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "dream-task-outcomes-"));
+    factsDb = new FactsDB(join(tmpDir, "facts.db"));
+  });
+
+  afterEach(() => {
+    factsDb.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("uses session-scoped transcript task outcomes instead of an unscoped tool aggregate", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const db = factsDb.getRawDb();
+    const insert = db.prepare(
+      "INSERT INTO feedback_trajectories (id, session_file, turns_json, outcome, outcome_signal, lessons_json, topic, tools_used, turn_count, created_at) VALUES (?, ?, '[]', ?, 'test', '[]', 'test', '[]', 3, ?)",
+    );
+    insert.run("success-a", "dream-session-a", "success", now);
+    insert.run("partial-a", "dream-session-a", "partial", now);
+    insert.run("failure-a", "dream-session-a", "failure", now);
+    // A successful task in another session must not make this Dream look healthier.
+    insert.run("success-b", "unrelated-session", "success", now);
+
+    const metrics = collectDreamMetricSet(factsDb, {
+      fromSec: now - 1,
+      toSec: now + 1,
+      sessionIds: ["dream-session-a"],
+    });
+
+    expect(metrics).toMatchObject({
+      signalSource: "task_outcomes",
+      sessionsObserved: 1,
+      successRate: 0.5,
+      retryRate: 2 / 3,
+      effectScore: 0,
+    });
+  });
+
+  it("uses feedback proxy only when no trajectory outcome exists", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const metrics = collectDreamMetricSet(factsDb, {
+      fromSec: now - 1,
+      toSec: now + 1,
+      sessionIds: ["no-trajectory"],
+    });
+    expect(metrics.signalSource).toBe("feedback_proxy");
+  });
+});
 
 describe("dream prevalence gate (#2172)", () => {
   let tmpDir: string;

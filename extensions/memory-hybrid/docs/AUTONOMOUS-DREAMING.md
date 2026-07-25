@@ -99,7 +99,7 @@ After promote ([#2173](https://github.com/markus-lassfolk/openclaw-hybrid-memory
 4. Nightly `dream-outcome-probe` (when autoRollback enabled) collects after-window metrics **scoped to the dream’s sessions**, compares effect score, and **auto-rollbacks** via reverse plan on regression.
 5. Decisions (`keep` / `rollback` / `insufficient_data`) are journaled on `dream_runs.metrics_summary_json`. Insufficient data never false-rollbacks.
 
-**v1 signal note:** Outcome metrics prefer a **blended** signal when `tool_effectiveness` rows exist in the same DB (`signalSource: blended|tool_effectiveness|feedback_proxy`). Otherwise they fall back to **feedback proxies** (self-correction / reinforcement fact counts). Full closed-loop task-success attribution is still a follow-up.
+**Outcome signal:** Outcome metrics use transcript-derived task trajectories written by `extract-implicit-feedback` (`signalSource: task_outcomes`): successful tasks count as 1, partial tasks as 0.5, and failed tasks as 0. The observation is scoped to the Dream run's session IDs. On installations without trajectory rows, Dream retains the documented **feedback-proxy** fallback (self-correction / reinforcement facts) and never compares it to a task-outcome baseline for automatic rollback.
 
 ## How to read Dream ROI
 
