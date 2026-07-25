@@ -7,7 +7,7 @@
 - Dream outcome probes now use session-allowlisted terminal workflow success/failure traces for full closed-loop task-success attribution; feedback remains a fallback when no terminal trace exists.
 
 ### Changed
-- Bump memory-hybrid release version to `2026.7.223`.
+- Bump memory-hybrid release version to `2026.7.224`.
 
 - Autonomous Dreaming (#2169): machine-gated candidate promote/rollback is the happy path for continual learning; human approve/deny and pending digests are escape hatches (`dreaming.mode: autonomous` by default). See `docs/AUTONOMOUS-DREAMING.md`.
 
@@ -35,6 +35,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ---
 
 ## [Unreleased]
+
+## [2026.7.224] - 2026-07-25
+
+### Fixed
+
+- Upgrade compatibility: legacy `dreaming.frequency`, `model`, `execution`, `phases`, and `verboseLogging` are accepted by the plugin manifest instead of preventing gateway boot. Lossless cron/model/phase mappings are applied at runtime; unmappable values emit actionable migration diagnostics. A fixture-backed schema and parser regression test protects this contract.
+
+### Release metadata
+
+- Bumps `openclaw-hybrid-memory` and the lockstep standalone installer to `2026.7.224`. `package.json` remains the source of truth; `openclaw.plugin.json` and installer metadata are synchronized by `scripts/sync-plugin-version.cjs`.
 
 ## [2026.7.223] - 2026-07-25
 
