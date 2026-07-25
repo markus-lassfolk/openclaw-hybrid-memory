@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Fixed
+- Upgrade compatibility: legacy `dreaming.frequency`, `model`, `execution`, `phases`, and `verboseLogging` are accepted by the plugin manifest instead of preventing gateway boot. Lossless cron/model/phase mappings are applied at runtime; unmappable values emit actionable migration diagnostics. A fixture-backed schema and parser regression test protects this contract.
 - Dream outcome probes now use session-allowlisted terminal workflow success/failure traces for full closed-loop task-success attribution; feedback remains a fallback when no terminal trace exists.
 
 ### Changed

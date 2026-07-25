@@ -1,3 +1,5 @@
+import { pluginLogger } from "../../utils/logger.js";
+
 import type {
   CouncilConfig,
   CouncilProvenanceMode,
@@ -51,12 +53,33 @@ export function parseProvenanceConfig(cfg: Record<string, unknown>): ProvenanceC
 
 export function parseNightlyCycleConfig(cfg: Record<string, unknown>): NightlyCycleConfig {
   const nightlyCycleRaw = cfg.nightlyCycle as Record<string, unknown> | undefined;
+  const legacyDreaming = cfg.dreaming as Record<string, unknown> | undefined;
+  const legacyFrequency = legacyDreaming?.frequency;
+  // A cron expression is the only legacy frequency representation with a lossless schedule mapping.
+  const legacyCron =
+    typeof legacyFrequency === "string" &&
+    legacyFrequency.trim().split(/\s+/).length >= 5 &&
+    legacyFrequency.trim().split(/\s+/).length <= 6
+      ? legacyFrequency.trim()
+      : undefined;
+  const legacyModel =
+    typeof legacyDreaming?.model === "string" && legacyDreaming.model.trim().length > 0
+      ? legacyDreaming.model.trim()
+      : undefined;
+  if (legacyCron && (typeof nightlyCycleRaw?.schedule !== "string" || nightlyCycleRaw.schedule.trim().length === 0)) {
+    pluginLogger.warn(
+      "memory-hybrid: migrated deprecated dreaming.frequency cron expression to nightlyCycle.schedule for this run.",
+    );
+  }
+  if (legacyModel && (typeof nightlyCycleRaw?.model !== "string" || nightlyCycleRaw.model.trim().length === 0)) {
+    pluginLogger.warn("memory-hybrid: migrated deprecated dreaming.model to nightlyCycle.model for this run.");
+  }
   return {
     enabled: nightlyCycleRaw?.enabled === true,
     schedule:
       typeof nightlyCycleRaw?.schedule === "string" && nightlyCycleRaw.schedule.trim().length > 0
         ? nightlyCycleRaw.schedule.trim()
-        : "45 2 * * *",
+        : (legacyCron ?? "45 2 * * *"),
     reflectWindowDays:
       typeof nightlyCycleRaw?.reflectWindowDays === "number" && nightlyCycleRaw.reflectWindowDays >= 1
         ? Math.min(90, Math.floor(nightlyCycleRaw.reflectWindowDays))
@@ -70,7 +93,7 @@ export function parseNightlyCycleConfig(cfg: Record<string, unknown>): NightlyCy
     model:
       typeof nightlyCycleRaw?.model === "string" && nightlyCycleRaw.model.trim().length > 0
         ? nightlyCycleRaw.model.trim()
-        : undefined,
+        : legacyModel,
     consolidateAfterDays:
       typeof nightlyCycleRaw?.consolidateAfterDays === "number" && nightlyCycleRaw.consolidateAfterDays >= 1
         ? Math.min(365, Math.floor(nightlyCycleRaw.consolidateAfterDays))

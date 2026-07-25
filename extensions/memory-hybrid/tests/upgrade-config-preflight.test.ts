@@ -7,6 +7,7 @@ import {
   loadPluginManifestSchema,
   validatePluginConfigAgainstSchema,
 } from "../cli/install/upgrade-config-preflight.js";
+import { hybridConfigSchema } from "../config.js";
 
 const hybridRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const manifestPath = join(hybridRoot, "openclaw.plugin.json");
@@ -34,6 +35,19 @@ describe("upgrade config preflight (#2000)", () => {
     const result = validatePluginConfigAgainstSchema(MAEVE_GRAPH_CONFIG, schema);
     expect(result.ok).toBe(true);
     expect(result.errors).toEqual([]);
+  });
+
+  it("accepts and losslessly maps the legacy dreaming fixture that previously blocked gateway boot", () => {
+    const legacy = JSON.parse(
+      readFileSync(join(hybridRoot, "tests", "fixtures", "legacy-dreaming-config.json"), "utf8"),
+    ) as Record<string, unknown>;
+    const schema = loadPluginManifestSchema(manifestPath);
+    expect(validatePluginConfigAgainstSchema(legacy, schema)).toEqual({ ok: true, errors: [] });
+
+    const parsed = hybridConfigSchema.parse(legacy);
+    expect(parsed.nightlyCycle.schedule).toBe("15 3 * * *");
+    expect(parsed.nightlyCycle.model).toBe("azure-foundry/gpt-4.1-mini");
+    expect(parsed.dreaming.compose).toEqual(["distill", "reflect", "consolidate"]);
   });
 
   it("validatePluginConfigAgainstSchema rejects unknown graph keys when schema disallows extras", () => {

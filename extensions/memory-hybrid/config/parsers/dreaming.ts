@@ -2,6 +2,7 @@
  * Parse `dreaming` config (#2170–#2177). Opt-in flags use `=== true`; shadow defaults on when enabled.
  */
 
+import { pluginLogger } from "../../utils/logger.js";
 import {
   DEFAULT_DREAM_COMPOSE,
   DEFAULT_DREAMING_CONFIG,
@@ -38,6 +39,36 @@ function parseCompose(raw: unknown): DreamComposeStep[] {
   return out.length > 0 ? out : [...DEFAULT_DREAM_COMPOSE];
 }
 
+/**
+ * Legacy `dreaming.phases` used the same stage names as modern `compose`.
+ * Only map it when every value is recognised: silently dropping an old phase
+ * would be worse than keeping the default pipeline and emitting a diagnostic.
+ */
+function legacyPhasesToCompose(raw: unknown): DreamComposeStep[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  if (!raw.every((item) => typeof item === "string" && COMPOSE_STEPS.has(item as DreamComposeStep))) {
+    return undefined;
+  }
+  return raw as DreamComposeStep[];
+}
+
+function warnLegacyDreamingConfig(raw: Record<string, unknown>, phasesMapped: boolean): void {
+  const legacyKeys = ["frequency", "model", "execution", "phases", "verboseLogging"].filter((key) => key in raw);
+  if (legacyKeys.length === 0) return;
+  const unmapped = [
+    "frequency (unless it is a 5/6-field cron expression; then it becomes nightlyCycle.schedule)",
+    "execution",
+    "verboseLogging",
+    ...(phasesMapped ? [] : "phases" in raw ? ["phases (contains unsupported stage names)"] : []),
+  ];
+  pluginLogger.warn(
+    `memory-hybrid: deprecated dreaming config keys accepted for upgrade compatibility: ${legacyKeys.join(", ")}. ` +
+      `${phasesMapped ? "Mapped dreaming.phases to dreaming.compose; " : ""}` +
+      "dreaming.model is used as nightlyCycle.model when no explicit nightlyCycle.model is set. " +
+      `No lossless runtime mapping exists for ${unmapped.join(", ")}; review docs/AUTONOMOUS-DREAMING.md#legacy-config-compatibility.`,
+  );
+}
+
 function parseTier(raw: unknown, fallback: DreamingPrevalenceTier): DreamingPrevalenceTier {
   const r = asRecord(raw);
   if (!r) return { ...fallback };
@@ -64,6 +95,8 @@ export function parseDreamingConfig(cfg: Record<string, unknown>): DreamingConfi
   const prevalenceRaw = asRecord(raw.prevalence);
   const permissionRaw = asRecord(raw.permissionBoundary);
   const steeringRaw = asRecord(raw.steering);
+  const legacyCompose = raw.compose === undefined ? legacyPhasesToCompose(raw.phases) : undefined;
+  warnLegacyDreamingConfig(raw, legacyCompose !== undefined);
 
   const candidateEnabled = candidateRaw?.enabled === true;
   const shadow =
@@ -114,7 +147,7 @@ export function parseDreamingConfig(cfg: Record<string, unknown>): DreamingConfi
   return {
     enabled: raw.enabled === true,
     mode,
-    compose: parseCompose(raw.compose),
+    compose: legacyCompose ?? parseCompose(raw.compose),
     maxSessions,
     maxRuntimeMinutes,
     skipNightlyOverlap: raw.skipNightlyOverlap === true,
