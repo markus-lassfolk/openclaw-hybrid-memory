@@ -2,7 +2,9 @@
  * Dream metrics collection (#2173 / #2179) — baseline + after-window signals from the facts DB.
  */
 
-import type { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
+import { existsSync } from "node:fs";
+import { defaultWorkflowDbPath } from "./maintenance-coverage.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { DreamMetricSet } from "./dream-outcome.js";
 
@@ -112,68 +114,69 @@ export function deriveEffectScore(corrections: number, praise: number): number {
   return Math.max(-1, Math.min(1, raw));
 }
 
-function readToolEffectivenessAggregate(
-  db: DatabaseSync,
+/**
+ * Read actual task outcomes from workflow traces, which are persisted separately
+ * from facts/tool-effectiveness.  This is deliberately session-allowlisted: a
+ * dream must never judge a promotion using unrelated users' task outcomes.
+ */
+function readTaskSuccessAggregate(
   fromSec: number,
   toSec: number,
-): { successRate: number; totalCalls: number } | null {
+  sessionIds: string[],
+  workflowDbPath = defaultWorkflowDbPath(),
+): { successRate: number; total: number; sessions: number } | null {
+  const ids = [...new Set(sessionIds.map((id) => id.trim()).filter(Boolean))];
+  if (ids.length === 0 || !existsSync(workflowDbPath)) return null;
+  let db: DatabaseSync | null = null;
   try {
+    db = new DatabaseSync(workflowDbPath, { readOnly: true });
+    const placeholders = ids.map(() => "?").join(",");
+    const from = new Date(fromSec * 1000).toISOString();
+    const to = new Date(toSec * 1000).toISOString();
     const row = db
       .prepare(
-        `SELECT COALESCE(SUM(success_calls), 0) AS ok,
-                COALESCE(SUM(total_calls), 0) AS total
-         FROM tool_effectiveness
-         WHERE last_updated >= ? AND last_updated <= ?`,
+        `SELECT
+           SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END) AS ok,
+           COUNT(*) AS total,
+           COUNT(DISTINCT session_id) AS sessions
+         FROM workflow_traces
+         WHERE created_at >= ? AND created_at <= ?
+           AND session_id IN (${placeholders})
+           AND outcome IN ('success', 'failure')`,
       )
-      .get(fromSec, toSec) as { ok: number; total: number } | undefined;
+      .get(from, to, ...ids) as { ok: number; total: number; sessions: number } | undefined;
     const total = Number(row?.total ?? 0);
-    if (!Number.isFinite(total) || total <= 0) return null;
-    const ok = Number(row?.ok ?? 0);
-    return { successRate: Math.max(0, Math.min(1, ok / total)), totalCalls: total };
+    if (!Number.isFinite(total) || total === 0) return null;
+    return { successRate: Math.max(0, Math.min(1, Number(row?.ok ?? 0) / total)), total, sessions: Number(row?.sessions ?? 0) };
   } catch {
-    // Table may not exist in this DB — feedback proxy remains the primary signal.
+    // The workflow database is optional and may be unavailable during reload.
     return null;
+  } finally {
+    db?.close();
   }
 }
 
 export function collectDreamMetricSet(
   factsDb: FactsDB,
-  input: { fromSec: number; toSec: number; sessionIds: string[] },
+  input: { fromSec: number; toSec: number; sessionIds: string[]; workflowDbPath?: string },
 ): DreamMetricSet {
   const db = factsDb.getRawDb();
   const { corrections, praise, sessions } = countFeedbackSignals(db, input.fromSec, input.toSec, input.sessionIds);
-  const effectScore = deriveEffectScore(corrections, praise);
   const feedbackSuccess = praise + corrections > 0 ? praise / (praise + corrections) : 1;
+  const task = readTaskSuccessAggregate(input.fromSec, input.toSec, input.sessionIds, input.workflowDbPath);
   const retryRate = corrections;
-  const tool = readToolEffectivenessAggregate(db, input.fromSec, input.toSec);
 
-  if (tool && praise + corrections > 0) {
-    // Prefer blended signal when both feedback and tool effectiveness exist (#2173).
-    const successRate = 0.5 * feedbackSuccess + 0.5 * tool.successRate;
-    return {
-      successRate,
-      retryRate,
-      effectScore,
-      sessionsObserved: sessions,
-      signalSource: "blended",
-    };
+  // A completed task's success/failure is the primary closed-loop outcome. Blend
+  // it with explicit feedback only when both signals exist; unknown traces never
+  // create a false success signal.
+  if (task && praise + corrections > 0) {
+    const successRate = 0.75 * task.successRate + 0.25 * feedbackSuccess;
+    return { successRate, retryRate, effectScore: successRate * 2 - 1, sessionsObserved: Math.max(sessions, task.sessions), signalSource: "blended" };
   }
-  if (tool && praise + corrections === 0) {
-    return {
-      successRate: tool.successRate,
-      retryRate,
-      effectScore: tool.successRate * 2 - 1,
-      sessionsObserved: Math.max(sessions, 1),
-      signalSource: "tool_effectiveness",
-    };
+  if (task) {
+    return { successRate: task.successRate, retryRate, effectScore: task.successRate * 2 - 1, sessionsObserved: Math.max(sessions, task.sessions), signalSource: "task_success" };
   }
-  return {
-    successRate: feedbackSuccess,
-    retryRate,
-    effectScore,
-    sessionsObserved: sessions,
-    signalSource: "feedback_proxy",
-  };
+  return { successRate: feedbackSuccess, retryRate, effectScore: deriveEffectScore(corrections, praise), sessionsObserved: sessions, signalSource: "feedback_proxy" };
 }
 
 export function collectHygieneSnapshot(factsDb: FactsDB): DreamHygieneSnapshot {

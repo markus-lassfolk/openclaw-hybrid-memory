@@ -26,7 +26,7 @@ export type DreamMetricSet = {
    * - blended: feedback + tool_effectiveness when available
    * - tool_effectiveness: tool table only (rare)
    */
-  signalSource?: "feedback_proxy" | "blended" | "tool_effectiveness";
+  signalSource?: "feedback_proxy" | "blended" | "task_success" | "tool_effectiveness";
 };
 
 export type DreamOutcomeDecision = "keep" | "rollback" | "insufficient_data";
@@ -49,6 +49,7 @@ export function parseBaseline(json: string | null | undefined): DreamMetricSet |
     const signalSource =
       parsed.signalSource === "blended" ||
       parsed.signalSource === "tool_effectiveness" ||
+      parsed.signalSource === "task_success" ||
       parsed.signalSource === "feedback_proxy"
         ? parsed.signalSource
         : undefined;

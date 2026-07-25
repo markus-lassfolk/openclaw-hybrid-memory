@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+- Dream outcome probes now use session-allowlisted terminal workflow success/failure traces for full closed-loop task-success attribution; feedback remains a fallback when no terminal trace exists.
+
+### Changed
+- Bump memory-hybrid release version to `2026.7.223`.
+
 - Autonomous Dreaming (#2169): machine-gated candidate promote/rollback is the happy path for continual learning; human approve/deny and pending digests are escape hatches (`dreaming.mode: autonomous` by default). See `docs/AUTONOMOUS-DREAMING.md`.
 
 - Maintenance validation: ignore guard/gate skipped `reflect-rules` runs in semantic zero-stored checks, suppress the analyzer's own current in-flight HM_EXIT ledger, and classify nested distill abort/timeout errors as retryable within the existing fallback/shrink budget.
