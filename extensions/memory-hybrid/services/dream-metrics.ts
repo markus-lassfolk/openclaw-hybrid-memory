@@ -147,7 +147,11 @@ function readTaskSuccessAggregate(
       .get(from, to, ...ids) as { ok: number; total: number; sessions: number } | undefined;
     const total = Number(row?.total ?? 0);
     if (!Number.isFinite(total) || total === 0) return null;
-    return { successRate: Math.max(0, Math.min(1, Number(row?.ok ?? 0) / total)), total, sessions: Number(row?.sessions ?? 0) };
+    return {
+      successRate: Math.max(0, Math.min(1, Number(row?.ok ?? 0) / total)),
+      total,
+      sessions: Number(row?.sessions ?? 0),
+    };
   } catch {
     // The workflow database is optional and may be unavailable during reload.
     return null;
@@ -173,13 +177,15 @@ function readTaskOutcomeAggregate(
   const ids = [...new Set(sessionIds.map((id) => id.trim()).filter(Boolean))];
   const scope = ids.length > 0 ? ` AND session_file IN (${ids.map(() => "?").join(",")})` : "";
   try {
-    const row = db.prepare(`SELECT
+    const row = db
+      .prepare(`SELECT
       COALESCE(SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END), 0) AS successes,
       COALESCE(SUM(CASE WHEN outcome = 'failure' THEN 1 ELSE 0 END), 0) AS failures,
       COALESCE(SUM(CASE WHEN outcome = 'partial' THEN 1 ELSE 0 END), 0) AS partials,
       COUNT(DISTINCT NULLIF(session_file, '')) AS sessions
       FROM feedback_trajectories
-      WHERE created_at >= ? AND created_at <= ?${scope}`).get(fromSec, toSec, ...ids) as TaskOutcomeAggregate | undefined;
+      WHERE created_at >= ? AND created_at <= ?${scope}`)
+      .get(fromSec, toSec, ...ids) as TaskOutcomeAggregate | undefined;
     const successes = Number(row?.successes ?? 0);
     const failures = Number(row?.failures ?? 0);
     const partials = Number(row?.partials ?? 0);
@@ -200,15 +206,33 @@ export function collectDreamMetricSet(
   const retryRate = corrections;
   const task = readTaskSuccessAggregate(input.fromSec, input.toSec, input.sessionIds, input.workflowDbPath);
   if (task) {
-    return { successRate: task.successRate, retryRate, effectScore: task.successRate * 2 - 1, sessionsObserved: Math.max(sessions, task.sessions), signalSource: "task_success" };
+    return {
+      successRate: task.successRate,
+      retryRate,
+      effectScore: task.successRate * 2 - 1,
+      sessionsObserved: Math.max(sessions, task.sessions),
+      signalSource: "task_success",
+    };
   }
   const taskOutcomes = readTaskOutcomeAggregate(db, input.fromSec, input.toSec, input.sessionIds);
   if (taskOutcomes) {
     const total = taskOutcomes.successes + taskOutcomes.failures + taskOutcomes.partials;
     const successRate = (taskOutcomes.successes + 0.5 * taskOutcomes.partials) / total;
-    return { successRate, retryRate: (taskOutcomes.failures + taskOutcomes.partials) / total, effectScore: successRate * 2 - 1, sessionsObserved: taskOutcomes.sessions, signalSource: "task_outcomes" };
+    return {
+      successRate,
+      retryRate: (taskOutcomes.failures + taskOutcomes.partials) / total,
+      effectScore: successRate * 2 - 1,
+      sessionsObserved: taskOutcomes.sessions,
+      signalSource: "task_outcomes",
+    };
   }
-  return { successRate: feedbackSuccess, retryRate, effectScore: deriveEffectScore(corrections, praise), sessionsObserved: sessions, signalSource: "feedback_proxy" };
+  return {
+    successRate: feedbackSuccess,
+    retryRate,
+    effectScore: deriveEffectScore(corrections, praise),
+    sessionsObserved: sessions,
+    signalSource: "feedback_proxy",
+  };
 }
 
 export function collectHygieneSnapshot(factsDb: FactsDB): DreamHygieneSnapshot {

@@ -90,7 +90,12 @@ describe("dream steering (#2176)", () => {
     const now = Date.now();
     workflowStore.record({ goal: "attached success", toolSequence: ["read"], outcome: "success", sessionId: "s1" });
     workflowStore.record({ goal: "attached failure", toolSequence: ["read"], outcome: "failure", sessionId: "s1" });
-    workflowStore.record({ goal: "unattached failure", toolSequence: ["read"], outcome: "failure", sessionId: "other" });
+    workflowStore.record({
+      goal: "unattached failure",
+      toolSequence: ["read"],
+      outcome: "failure",
+      sessionId: "other",
+    });
     const metrics = collectDreamMetricSet(factsDb, {
       fromSec: Math.floor(now / 1000) - 5,
       toSec: Math.floor(now / 1000) + 5,
