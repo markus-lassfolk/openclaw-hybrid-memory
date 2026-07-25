@@ -20,7 +20,13 @@ const extDir =
 	process.env.OPENCLAW_EXTENSIONS_DIR ||
 	path.join(os.homedir(), ".openclaw", "extensions");
 const pluginDir = path.join(extDir, "openclaw-hybrid-memory");
-const tmpDir = path.join(os.tmpdir(), `openclaw-plugin-install-${process.pid}`);
+const installWorkDir = path.join(
+	path.dirname(extDir),
+	".cache",
+	`openclaw-hybrid-memory-installer-${process.pid}`,
+);
+const tmpDir = path.join(installWorkDir, "pack");
+const stagingDir = path.join(installWorkDir, "staging");
 // apache-arrow is a peer dependency of @lancedb/lancedb@0.31 that npm does not
 // auto-install; declare it here so the installer installs it explicitly if the
 // staged tree is missing it (issue #2116).
@@ -98,10 +104,21 @@ function rmPathBestEffort(absPath, label) {
 	}
 }
 
-const stagingDir = path.join(
-	extDir,
-	`.openclaw-hybrid-memory-staging-${process.pid}`,
-);
+function assertInstallablePackage(rootDir) {
+	const manifestPath = path.join(rootDir, "package.json");
+	if (!fs.existsSync(manifestPath)) {
+		throw new Error(
+			`Package manifest is missing from staged package (${manifestPath}). ` +
+				"Refusing to run npm install; the published tarball must include package.json.",
+		);
+	}
+	try {
+		JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`Package manifest in staged package is invalid (${manifestPath}): ${message}`);
+	}
+}
 
 try {
 	console.log(`Installing openclaw-hybrid-memory@${version} to ${pluginDir}\n`);
@@ -112,9 +129,10 @@ try {
 		`Docs: https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/UPGRADE-PLUGIN.md\n`,
 	);
 
-	if (fs.existsSync(stagingDir)) {
-		fs.rmSync(stagingDir, { recursive: true, force: true });
-	}
+	// Keep all transient trees outside extensions: OpenClaw scans every directory there
+	// and must never discover a half-installed staging or rollback copy as a plugin.
+	fs.mkdirSync(extDir, { recursive: true });
+	fs.mkdirSync(installWorkDir, { recursive: true });
 	fs.mkdirSync(stagingDir, { recursive: true });
 
 	console.log("Fetching via npm pack...");
@@ -129,12 +147,13 @@ try {
 	);
 	const tgzPath = path.join(tmpDir, tgz);
 	run("tar", ["-xzf", tgzPath, "-C", stagingDir, "--strip-components=1"]);
+	assertInstallablePackage(stagingDir);
 
 	console.log("Installing deps and rebuilding native modules in staging...");
 	run("npm", ["install", "--omit=dev"], { cwd: stagingDir });
 	ensureRuntimeDependenciesInstalled(stagingDir);
 
-	const backupDir = `${pluginDir}.bak.${Date.now()}`;
+	const backupDir = path.join(installWorkDir, `rollback-${Date.now()}`);
 	if (fs.existsSync(pluginDir)) {
 		console.log("Swapping staging into place (backing up previous plugin)...");
 		fs.renameSync(pluginDir, backupDir);
@@ -159,14 +178,13 @@ try {
 	}
 
 	console.log("Cleaning up...");
-	rmPathBestEffort(tmpDir, "npm pack temp directory (.tgz and folder)");
+	rmPathBestEffort(installWorkDir, "installer work directory");
 
 	console.log(
 		"\nDone. Restart the gateway: openclaw gateway stop && openclaw gateway start",
 	);
 } catch (err) {
-	rmPathBestEffort(stagingDir, "staging directory");
-	rmPathBestEffort(tmpDir, "npm pack temp directory (.tgz and folder)");
+	rmPathBestEffort(installWorkDir, "installer work directory");
 	console.error("Install failed:", err.message);
 	process.exit(1);
 }

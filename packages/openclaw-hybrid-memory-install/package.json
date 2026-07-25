@@ -1,6 +1,6 @@
 {
   "name": "openclaw-hybrid-memory-install",
-  "version": "2026.7.225",
+  "version": "2026.7.226",
   "description": "Standalone installer for openclaw-hybrid-memory. Use when OpenClaw config validation fails.",
   "bin": {
     "openclaw-hybrid-memory-install": "./install.js"
@@ -19,5 +19,8 @@
     "url": "git+https://github.com/markus-lassfolk/openclaw-hybrid-memory.git",
     "directory": "packages/openclaw-hybrid-memory-install"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/*.test.cjs"
+  }
 }
