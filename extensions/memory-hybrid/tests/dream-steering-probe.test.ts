@@ -4,6 +4,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { WorkflowStore } from "../backends/workflow-store.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { DreamCandidateStore } from "../backends/dream-candidate-store.js";
@@ -36,14 +37,19 @@ describe("dream steering (#2176)", () => {
   let tmpDir: string;
   let factsDb: FactsDB;
   let store: DreamCandidateStore;
+  let workflowStore: WorkflowStore;
+  let workflowDbPath: string;
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "dream-steer-"));
     factsDb = new FactsDB(join(tmpDir, "facts.db"));
     store = new DreamCandidateStore(factsDb.getRawDb());
+    workflowDbPath = join(tmpDir, "workflow-traces.db");
+    workflowStore = new WorkflowStore(workflowDbPath);
   });
 
   afterEach(() => {
+    workflowStore.close();
     factsDb.close();
     rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -78,6 +84,27 @@ describe("dream steering (#2176)", () => {
     expect(summary.attachment?.includedCount).toBe(1);
     expect(summary.attachment?.excludedCount).toBe(1);
     expect(summary.attachment?.excluded[0]?.sessionId).toBe("s-private");
+  });
+
+  it("uses attached-session terminal workflow outcomes before feedback proxies (#2173)", () => {
+    const now = Date.now();
+    workflowStore.record({ goal: "attached success", toolSequence: ["read"], outcome: "success", sessionId: "s1" });
+    workflowStore.record({ goal: "attached failure", toolSequence: ["read"], outcome: "failure", sessionId: "s1" });
+    workflowStore.record({
+      goal: "unattached failure",
+      toolSequence: ["read"],
+      outcome: "failure",
+      sessionId: "other",
+    });
+    const metrics = collectDreamMetricSet(factsDb, {
+      fromSec: Math.floor(now / 1000) - 5,
+      toSec: Math.floor(now / 1000) + 5,
+      sessionIds: ["s1"],
+      workflowDbPath,
+    });
+    expect(metrics.signalSource).toBe("task_success");
+    expect(metrics.successRate).toBe(0.5);
+    expect(metrics.sessionsObserved).toBe(1);
   });
 
   it("resolves profile defaults", () => {
@@ -148,11 +175,15 @@ describe("dream outcome probe (#2173)", () => {
   let tmpDir: string;
   let factsDb: FactsDB;
   let store: DreamCandidateStore;
+  let workflowStore: WorkflowStore;
+  let workflowDbPath: string;
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "dream-probe-"));
     factsDb = new FactsDB(join(tmpDir, "facts.db"));
     store = new DreamCandidateStore(factsDb.getRawDb());
+    workflowDbPath = join(tmpDir, "workflow-traces.db");
+    workflowStore = new WorkflowStore(workflowDbPath);
   });
 
   afterEach(() => {

@@ -2,7 +2,9 @@
  * Dream metrics collection (#2173 / #2179) — baseline + after-window signals from the facts DB.
  */
 
-import type { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
+import { existsSync } from "node:fs";
+import { defaultWorkflowDbPath } from "./maintenance-coverage.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { DreamMetricSet } from "./dream-outcome.js";
 
@@ -112,65 +114,122 @@ export function deriveEffectScore(corrections: number, praise: number): number {
   return Math.max(-1, Math.min(1, raw));
 }
 
-function readToolEffectivenessAggregate(
+/**
+ * Read actual task outcomes from workflow traces, which are persisted separately
+ * from facts/tool-effectiveness.  This is deliberately session-allowlisted: a
+ * dream must never judge a promotion using unrelated users' task outcomes.
+ */
+function readTaskSuccessAggregate(
+  fromSec: number,
+  toSec: number,
+  sessionIds: string[],
+  workflowDbPath = defaultWorkflowDbPath(),
+): { successRate: number; total: number; sessions: number } | null {
+  const ids = [...new Set(sessionIds.map((id) => id.trim()).filter(Boolean))];
+  if (ids.length === 0 || !existsSync(workflowDbPath)) return null;
+  let db: DatabaseSync | null = null;
+  try {
+    db = new DatabaseSync(workflowDbPath, { readOnly: true });
+    const placeholders = ids.map(() => "?").join(",");
+    const from = new Date(fromSec * 1000).toISOString();
+    const to = new Date(toSec * 1000).toISOString();
+    const row = db
+      .prepare(
+        `SELECT
+           SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END) AS ok,
+           COUNT(*) AS total,
+           COUNT(DISTINCT session_id) AS sessions
+         FROM workflow_traces
+         WHERE created_at >= ? AND created_at <= ?
+           AND session_id IN (${placeholders})
+           AND outcome IN ('success', 'failure')`,
+      )
+      .get(from, to, ...ids) as { ok: number; total: number; sessions: number } | undefined;
+    const total = Number(row?.total ?? 0);
+    if (!Number.isFinite(total) || total === 0) return null;
+    return {
+      successRate: Math.max(0, Math.min(1, Number(row?.ok ?? 0) / total)),
+      total,
+      sessions: Number(row?.sessions ?? 0),
+    };
+  } catch {
+    // The workflow database is optional and may be unavailable during reload.
+    return null;
+  } finally {
+    db?.close();
+  }
+}
+
+type TaskOutcomeAggregate = {
+  successes: number;
+  failures: number;
+  partials: number;
+  sessions: number;
+};
+
+/** Read transcript-derived outcomes, scoped to the Dream's sessions. */
+function readTaskOutcomeAggregate(
   db: DatabaseSync,
   fromSec: number,
   toSec: number,
-): { successRate: number; totalCalls: number } | null {
+  sessionIds: string[],
+): TaskOutcomeAggregate | null {
+  const ids = [...new Set(sessionIds.map((id) => id.trim()).filter(Boolean))];
+  const scope = ids.length > 0 ? ` AND session_file IN (${ids.map(() => "?").join(",")})` : "";
   try {
     const row = db
-      .prepare(
-        `SELECT COALESCE(SUM(success_calls), 0) AS ok,
-                COALESCE(SUM(total_calls), 0) AS total
-         FROM tool_effectiveness
-         WHERE last_updated >= ? AND last_updated <= ?`,
-      )
-      .get(fromSec, toSec) as { ok: number; total: number } | undefined;
-    const total = Number(row?.total ?? 0);
-    if (!Number.isFinite(total) || total <= 0) return null;
-    const ok = Number(row?.ok ?? 0);
-    return { successRate: Math.max(0, Math.min(1, ok / total)), totalCalls: total };
+      .prepare(`SELECT
+      COALESCE(SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END), 0) AS successes,
+      COALESCE(SUM(CASE WHEN outcome = 'failure' THEN 1 ELSE 0 END), 0) AS failures,
+      COALESCE(SUM(CASE WHEN outcome = 'partial' THEN 1 ELSE 0 END), 0) AS partials,
+      COUNT(DISTINCT NULLIF(session_file, '')) AS sessions
+      FROM feedback_trajectories
+      WHERE created_at >= ? AND created_at <= ?${scope}`)
+      .get(fromSec, toSec, ...ids) as TaskOutcomeAggregate | undefined;
+    const successes = Number(row?.successes ?? 0);
+    const failures = Number(row?.failures ?? 0);
+    const partials = Number(row?.partials ?? 0);
+    const sessions = Number(row?.sessions ?? 0);
+    return successes + failures + partials > 0 ? { successes, failures, partials, sessions } : null;
   } catch {
-    // Table may not exist in this DB — feedback proxy remains the primary signal.
     return null;
   }
 }
 
 export function collectDreamMetricSet(
   factsDb: FactsDB,
-  input: { fromSec: number; toSec: number; sessionIds: string[] },
+  input: { fromSec: number; toSec: number; sessionIds: string[]; workflowDbPath?: string },
 ): DreamMetricSet {
   const db = factsDb.getRawDb();
   const { corrections, praise, sessions } = countFeedbackSignals(db, input.fromSec, input.toSec, input.sessionIds);
-  const effectScore = deriveEffectScore(corrections, praise);
   const feedbackSuccess = praise + corrections > 0 ? praise / (praise + corrections) : 1;
   const retryRate = corrections;
-  const tool = readToolEffectivenessAggregate(db, input.fromSec, input.toSec);
-
-  if (tool && praise + corrections > 0) {
-    // Prefer blended signal when both feedback and tool effectiveness exist (#2173).
-    const successRate = 0.5 * feedbackSuccess + 0.5 * tool.successRate;
+  const task = readTaskSuccessAggregate(input.fromSec, input.toSec, input.sessionIds, input.workflowDbPath);
+  if (task) {
     return {
-      successRate,
+      successRate: task.successRate,
       retryRate,
-      effectScore,
-      sessionsObserved: sessions,
-      signalSource: "blended",
+      effectScore: task.successRate * 2 - 1,
+      sessionsObserved: Math.max(sessions, task.sessions),
+      signalSource: "task_success",
     };
   }
-  if (tool && praise + corrections === 0) {
+  const taskOutcomes = readTaskOutcomeAggregate(db, input.fromSec, input.toSec, input.sessionIds);
+  if (taskOutcomes) {
+    const total = taskOutcomes.successes + taskOutcomes.failures + taskOutcomes.partials;
+    const successRate = (taskOutcomes.successes + 0.5 * taskOutcomes.partials) / total;
     return {
-      successRate: tool.successRate,
-      retryRate,
-      effectScore: tool.successRate * 2 - 1,
-      sessionsObserved: Math.max(sessions, 1),
-      signalSource: "tool_effectiveness",
+      successRate,
+      retryRate: (taskOutcomes.failures + taskOutcomes.partials) / total,
+      effectScore: successRate * 2 - 1,
+      sessionsObserved: taskOutcomes.sessions,
+      signalSource: "task_outcomes",
     };
   }
   return {
     successRate: feedbackSuccess,
     retryRate,
-    effectScore,
+    effectScore: deriveEffectScore(corrections, praise),
     sessionsObserved: sessions,
     signalSource: "feedback_proxy",
   };

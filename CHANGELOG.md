@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+- Dream outcome probes now use session-allowlisted terminal workflow success/failure traces for full closed-loop task-success attribution; feedback remains a fallback when no terminal trace exists.
+
+### Changed
+- Bump memory-hybrid release version to `2026.7.223`.
+
 - Autonomous Dreaming (#2169): machine-gated candidate promote/rollback is the happy path for continual learning; human approve/deny and pending digests are escape hatches (`dreaming.mode: autonomous` by default). See `docs/AUTONOMOUS-DREAMING.md`.
 
 - Maintenance validation: ignore guard/gate skipped `reflect-rules` runs in semantic zero-stored checks, suppress the analyzer's own current in-flight HM_EXIT ledger, and classify nested distill abort/timeout errors as retryable within the existing fallback/shrink budget.
@@ -28,6 +34,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ---
 
 ## [Unreleased]
+
+## [2026.7.223] - 2026-07-25
+
+### Changed — CI dependency-cache storage optimization
+
+- Completes the CI-storage optimization introduced in `02574106fffdbab66ec23cfa3fc867706616294f`: every dependency-installing job in `.github/workflows/ci.yml` and the release publish job now uses `actions/setup-node@v7`'s built-in `cache: npm` with the authoritative lockfile path instead of caching `node_modules` with `actions/cache`.
+- The graph-app job declares both the plugin and graph-app lockfiles, so its shared npm cache invalidates when either dependency graph changes; it still installs both projects explicitly before their respective test/build and browser-smoke steps.
+- Cache storage now contains npm's content-addressable download cache rather than platform- and Node-version-specific installed dependency trees. This preserves reproducible install behavior while avoiding redundant large `node_modules` archives.
+- The coverage artifact is explicitly retained for 14 days; no other artifact or storage policy was deferred.
+- Completes PR #2182 / #2173's explicitly documented outcome-signal follow-up: post-promotion rollback now uses session-scoped, transcript-derived task success/partial/failure trajectories from `feedback_trajectories` whenever available. The legacy feedback proxy remains only as an explicit compatibility fallback; cross-source automatic comparisons fail closed.
+
+### Release metadata
+
+- Bumps `openclaw-hybrid-memory` and the lockstep standalone installer to `2026.7.223`. `package.json` remains the source of truth; `openclaw.plugin.json` and installer metadata are synchronized by `scripts/sync-plugin-version.cjs`.
 
 ### Fixed
 

@@ -26,3 +26,5 @@ jobs:
           sudo install -m 0755 actionlint /usr/local/bin/actionlint
       - name: Lint workflows
         run: actionlint
+      - name: Verify dependency-cache storage policy
+        run: node .github/scripts/verify-dependency-cache-storage.mjs
