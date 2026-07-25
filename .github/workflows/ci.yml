@@ -21,7 +21,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 # Least-privilege default for the GITHUB_TOKEN (explicit jobs may override).
-# actions:write — required for actions/cache and actions/upload-artifact when permissions are explicit.
+# actions:write — required for setup-node cache saves and actions/upload-artifact when permissions are explicit.
 permissions:
   actions: write
   contents: read
@@ -79,13 +79,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}
-      - name: Cache node_modules
-        uses: actions/cache@v6
-        with:
-          path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-${{ matrix.node-version }}-
+          cache: npm
+          cache-dependency-path: extensions/memory-hybrid/package-lock.json
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm install
       - name: Type check
@@ -102,13 +97,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '22.16'
-      - name: Cache node_modules
-        uses: actions/cache@v6
-        with:
-          path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-22.16-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-22.16-
+          cache: npm
+          cache-dependency-path: extensions/memory-hybrid/package-lock.json
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm install
       - name: Maintenance gate (tsc --noEmit + guard/orchestrator tests)
@@ -131,13 +121,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}
-      - name: Cache node_modules
-        uses: actions/cache@v6
-        with:
-          path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-${{ matrix.node-version }}-
+          cache: npm
+          cache-dependency-path: extensions/memory-hybrid/package-lock.json
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm install
       - name: Lint
@@ -161,13 +146,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}
-      - name: Cache node_modules
-        uses: actions/cache@v6
-        with:
-          path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-${{ matrix.node-version }}-
+          cache: npm
+          cache-dependency-path: extensions/memory-hybrid/package-lock.json
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm install
       - name: Run tests
@@ -186,13 +166,10 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '22.16'
-      - name: Cache graph-app node_modules
-        uses: actions/cache@v6
-        with:
-          path: extensions/memory-hybrid/graph-app/node_modules
-          key: ${{ runner.os }}-graphapp-${{ hashFiles('extensions/memory-hybrid/graph-app/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-graphapp-
+          cache: npm
+          cache-dependency-path: |
+            extensions/memory-hybrid/package-lock.json
+            extensions/memory-hybrid/graph-app/package-lock.json
       - name: Install graph-app dependencies
         run: cd extensions/memory-hybrid/graph-app && npm install --no-audit --no-fund
       - name: Unit tests (pure logic)
@@ -203,13 +180,6 @@ jobs:
         run: test -f extensions/memory-hybrid/graph-app/dist/index.html
       # Full-stack browser smoke: real dashboard server + built SPA + the runner's Chrome. Catches
       # what unit tests can't — asset serving, schema drift at runtime, and the SSE live overlay.
-      - name: Cache plugin node_modules
-        uses: actions/cache@v6
-        with:
-          path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-22.16-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-22.16-
       - name: Install plugin dependencies
         run: cd extensions/memory-hybrid && npm install
       - name: Browser smoke (served SPA + live SSE against a real server)
@@ -229,13 +199,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '22.16'
-      - name: Cache node_modules
-        uses: actions/cache@v6
-        with:
-          path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-22.16-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-22.16-
+          cache: npm
+          cache-dependency-path: extensions/memory-hybrid/package-lock.json
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm install
       - name: Run tests with coverage
@@ -250,6 +215,7 @@ jobs:
           name: coverage-report
           path: extensions/memory-hybrid/coverage/
           if-no-files-found: warn
+          retention-days: 14
 
   dead-code:
     name: Dead Code Analysis (knip)
@@ -262,13 +228,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '22.16'
-      - name: Cache node_modules
-        uses: actions/cache@v6
-        with:
-          path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-22.16-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-22.16-
+          cache: npm
+          cache-dependency-path: extensions/memory-hybrid/package-lock.json
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm install
       - name: Run knip
@@ -286,6 +247,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '22.16'
+          cache: npm
+          cache-dependency-path: extensions/memory-hybrid/package-lock.json
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm ci
       - name: Check formatting
@@ -303,13 +266,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '22.16'
-      - name: Cache node_modules
-        uses: actions/cache@v6
-        with:
-          path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-22.16-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-22.16-
+          cache: npm
+          cache-dependency-path: extensions/memory-hybrid/package-lock.json
       - name: Install and build (dist/ required by verify-publish)
         run: cd extensions/memory-hybrid && npm ci && npm run build
       - name: verify-publish invariants
@@ -326,13 +284,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '22.16'
-      - name: Cache node_modules
-        uses: actions/cache@v6
-        with:
-          path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-22.16-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-22.16-
+          cache: npm
+          cache-dependency-path: extensions/memory-hybrid/package-lock.json
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm install
       - name: Strict type check
@@ -360,13 +313,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}
-      - name: Cache node_modules
-        uses: actions/cache@v6
-        with:
-          path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-${{ matrix.node-version }}-
+          cache: npm
+          cache-dependency-path: extensions/memory-hybrid/package-lock.json
       - name: Install dependencies (with optional)
         run: cd extensions/memory-hybrid && npm install --include=optional
       - name: Build dist/ (tsdown)
