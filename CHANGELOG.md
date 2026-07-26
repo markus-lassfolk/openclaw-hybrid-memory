@@ -36,6 +36,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.226] - 2026-07-25
+
+### Fixed
+
+- Standalone installer now unpacks the complete npm tarball into a private `~/.openclaw/.cache` work tree before invoking `npm install --omit=dev`. It preflights the staged `package.json` with an actionable failure, atomically swaps only the finished plugin into `extensions/`, and keeps staging and rollback directories out of the extension scanner. This fixes the Doris `2026.7.225` upgrade failure (`ENOENT` for a missing staged manifest).
+
+### Release metadata
+
+- Bumps `openclaw-hybrid-memory` and the lockstep standalone installer to `2026.7.226`.
+
 
 ## [2026.7.225]
 
