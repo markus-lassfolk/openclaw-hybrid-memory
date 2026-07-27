@@ -767,8 +767,16 @@ export async function runDreamCycle(
     logger.info(`memory-hybrid: dream-cycle [dry-run] — skipping ${stageLabel} (no preview support; would mutate)`);
   };
   const failedStages: string[] = [];
-  const recordStageFailure = (stage: string, err: unknown): void => {
-    if (!failedStages.includes(stage)) failedStages.push(stage);
+  /**
+   * `stage` drives the capturePluginError `operation` tag, so it stays a small, stable set of
+   * slugs for GlitchTip grouping/filtering. `opts.label` (defaulting to `stage`) is the string
+   * actually pushed into `failedStages` / rendered by buildDigestSummary() — callers that want the
+   * failure *reason* to survive into the human-facing digest (e.g. reflect-rules' zeroRulesReason)
+   * pass a distinct, enriched label here without perturbing the tag.
+   */
+  const recordStageFailure = (stage: string, err: unknown, opts?: { label?: string }): void => {
+    const label = opts?.label ?? stage;
+    if (!failedStages.includes(label)) failedStages.push(label);
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: `dream-cycle-${stage.replace(/\s+/g, "-")}`,
       subsystem: "dream-cycle",
@@ -1341,12 +1349,21 @@ export async function runDreamCycle(
         `memory-hybrid: dream-cycle — reflect-rules complete: ${rulesGenerated} rules stored (status=${rulesResult.diagnostics.status}${rulesResult.diagnostics.zeroRulesReason ? `, zero_rules_reason=${rulesResult.diagnostics.zeroRulesReason}` : ""})`,
       );
       if (rulesResult.diagnostics.status === "degraded") {
+        const reason = rulesResult.diagnostics.zeroRulesReason ?? "unknown";
         stageReflectRulesError = new Error(rulesResult.diagnostics.zeroRulesReason ?? "reflect_rules_degraded");
-        recordStageFailure("reflect-rules", stageReflectRulesError);
+        // Carry the failure *reason* into failedStages/the digest summary (not just the bare stage
+        // name) so "N stage(s) failed (reflect-rules)" becomes actionable at a glance instead of
+        // requiring a dig through logs/GlitchTip to learn *why* reflect-rules failed.
+        recordStageFailure("reflect-rules", stageReflectRulesError, { label: `reflect-rules (${reason})` });
       }
     } catch (err) {
       stageReflectRulesError ??= err;
-      recordStageFailure("reflect-rules", err);
+      // Fixed marker (not the raw err.message) — zeroRulesReason values are always short,
+      // comma-free snake_case tokens, and buildDigestSummary() joins failedStages with ", ", so an
+      // arbitrary thrown error message could itself contain commas/parens and corrupt that list
+      // formatting.
+      const reason = "reflect_rules_threw";
+      recordStageFailure("reflect-rules", err, { label: `reflect-rules (${reason})` });
       logger.warn(`memory-hybrid: dream-cycle — reflect-rules step failed: ${err}`);
       reflectionRulesDiagnostics = {
         modelResponseChars: 0,
@@ -1355,7 +1372,7 @@ export async function runDreamCycle(
         rejectedDuplicates: 0,
         rejectedLowConfidence: 0,
         stored: 0,
-        zeroRulesReason: "reflect_rules_threw",
+        zeroRulesReason: reason,
         status: "degraded",
       };
     }

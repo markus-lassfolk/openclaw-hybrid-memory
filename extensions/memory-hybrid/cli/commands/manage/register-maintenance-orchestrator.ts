@@ -6,6 +6,8 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { stepGuardEligible } from "../../../services/cron-guard.js";
+import { initErrorReporter, isErrorReporterActive } from "../../../services/error-reporter.js";
+import { resolveErrorReportQueuePath } from "../../../services/maintenance-failure-reporter.js";
 import {
   effectiveCadenceLabel,
   formatMaintenanceSummary,
@@ -27,6 +29,49 @@ function parseStepList(raw?: string): string[] | undefined {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+/**
+ * Initialize the error reporter for this one-shot maintenance-orchestrator CLI process.
+ *
+ * Without this, the rich diagnostics that services/dream-cycle.ts and services/reflection.ts
+ * already write via capturePluginError() at each stage failure (e.g. reflect-rules'
+ * zeroRulesReason, modelResponseChars, parseSuccess) are silently dropped: capturePluginError()
+ * is a no-op until initErrorReporter() has run in-process, and `cycle`/`nightly`/`full`/`step` are
+ * the CLI commands that actually execute those stages — they never called it. The only other
+ * caller in this CLI path, register-validate-cron-exit.ts's reportMaintenanceFailureIssues(), only
+ * sends a generic post-hoc summary after the fact and runs in a separate process/invocation.
+ *
+ * Mirrors services/maintenance-failure-reporter.ts's ensureMaintenanceReporterReady(): same
+ * `errorReporting.enabled && errorReporting.consent` gate, same idempotency guard via
+ * isErrorReporterActive() (so re-entrant or repeated calls within one process never double-init),
+ * and the same durable on-disk retry queue convention (resolveErrorReportQueuePath) since this is
+ * also a short-lived process with no next-startup drain to recover an in-flight report.
+ */
+async function ensureMaintenanceOrchestratorErrorReporter(b: ManageBindings): Promise<void> {
+  if (isErrorReporterActive()) return;
+  const { errorReporting } = b.cfg;
+  if (!errorReporting?.enabled || !errorReporting?.consent) return;
+  try {
+    await initErrorReporter(
+      {
+        enabled: errorReporting.enabled,
+        dsn: errorReporting.dsn,
+        mode: errorReporting.mode ?? "community",
+        consent: errorReporting.consent,
+        environment: errorReporting.environment,
+        sampleRate: errorReporting.sampleRate ?? 1.0,
+        maxBreadcrumbs: 10,
+        botId: errorReporting.botId,
+        botName: errorReporting.botName,
+        resolvedIssues: errorReporting.resolvedIssues,
+        pendingQueuePath: resolveErrorReportQueuePath(b.resolvedSqlitePath),
+      },
+      b.versionInfo.pluginVersion,
+    );
+  } catch {
+    // Best-effort telemetry setup must never fail the maintenance run itself.
+  }
 }
 
 export function registerMaintenanceOrchestratorCommands(maintenance: Chainable, b: ManageBindings): void {
@@ -53,6 +98,10 @@ export function registerMaintenanceOrchestratorCommands(maintenance: Chainable, 
     if (process.env.HM_RUN_ID) {
       process.env.HM_ORCHESTRATOR_RUN_ID = process.env.HM_RUN_ID;
     }
+    // Must happen before runMaintenanceOrchestrator() below so that any capturePluginError() calls
+    // made by the steps it runs (e.g. dream-cycle's reflect-rules stage) actually reach GlitchTip
+    // instead of silently no-opping.
+    await ensureMaintenanceOrchestratorErrorReporter(b);
     const memoryDir = b.resolvedSqlitePath ? dirname(b.resolvedSqlitePath) : join(homedir(), ".openclaw", "memory");
     const backfillMarker = join(memoryDir, ".backfill-decay-done");
     const runners = buildCliMaintenanceRunners(b, {
