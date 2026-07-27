@@ -36,6 +36,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.227] - 2026-07-27
+
+### Fixed
+
+- Maintenance orchestrator CLI (`maintenance cycle/nightly/full/step`) now initializes the error reporter before running steps, so diagnostics `dream-cycle.ts`/`reflection.ts` already capture for a failed `reflect-rules` stage (parse failure reason, model/fallback used) actually reach GlitchTip instead of being silently dropped. The stage's failure label now also carries the reason (e.g. `reflect-rules (invalid_response_format)`) instead of the bare stage name.
+- Semantic query cache (LanceDB) no longer races its own table-rebuild self-repair against an in-flight cache read/write, which could surface as `Failed to get next batch from stream: lance error: Not found: .../semantic_query_cache.lance/...`. The rebuild now waits for in-flight reads to drain first, mirroring the existing protection on the main table; the same transient message is also no longer reported as a GlitchTip exception, since it was already handled as a safe cache miss.
+- Cron harness now invokes the supported `maintenance validate-exit` command instead of the deprecated `validate-cron-exit` alias, and the guard-file write is now fully mechanical (gated on wrapped-step exit code, validator exit code, parsed validation status, and independent re-verification of every required step in the exit ledger) instead of relying on the executing agent's own judgment.
+- `VectorDB` no longer uses a runtime `import()` for `withEmbedWriteLock`, which could fail to resolve under OpenClaw's custom plugin loader; it's now a static import resolved at module load time.
+- `FactsDB.runCompaction` no longer throws `The database connection is not open` when the capture lifecycle stage triggers compaction while the store is mid-teardown; it now no-ops safely.
+- `memory_loop_list` and five sibling stores (learnings, beliefs, serendipity findings, issues, drift) no longer crash with `filter.status.map is not a function` when a bare string is passed for an array-typed filter field; scalar values are now coerced to arrays at both the tool layer and the store layer.
+- Nightly maintenance telemetry: LLM-call failures in insight-synthesis and generate-proposals are now tagged with a coarse failure class (timeout/provider error/invalid response/empty response); distill batch-failure counts and analyze-maintenance-logs finding titles are now included in GlitchTip issue tags/messages instead of only a summary count.
+
+### Changed
+
+- Nightly maintenance telemetry no longer reports a redundant generic "step exited non-zero" GlitchTip issue when a more specific issue already explains the same step's failure in the same run, and no longer reports the top-level "job exited non-zero" umbrella issue when other issues already reported the same run's failures — both only suppress when a more informative sibling genuinely exists in the same validation pass.
+
 ## [2026.7.226] - 2026-07-25
 
 ### Fixed
