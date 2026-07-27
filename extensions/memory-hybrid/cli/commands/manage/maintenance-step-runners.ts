@@ -369,7 +369,7 @@ export function buildCliMaintenanceRunners(
   set("contradiction-candidates", async () => {
     if (!b.runContradictionCandidates) return "skipped (contradiction candidates unavailable) semantic=success";
     const r = await b.runContradictionCandidates({ dryRun: false, verbose });
-    return `recorded=${r.recorded} pairs=${r.pairsConsidered} llm=${r.llmCalls} scanned=${r.scanned} existing=${r.skippedExisting} structured=${r.skippedStructured} semantic=${r.semanticOutcome}`;
+    return `recorded=${r.recorded} pairs=${r.pairsConsidered} llm=${r.llmCalls} scanned=${r.scanned} existing=${r.skippedExisting} structured=${r.skippedStructured} rejectedByLlm=${r.rejectedByLlm ?? 0} llmFailures=${r.llmFailures ?? 0} semantic=${r.semanticOutcome}`;
   });
 
   set("auto-classify", async () => {

@@ -15,6 +15,7 @@ import type { HandlerContext } from "../cli/handlers.js";
 import type { HybridMemoryConfig } from "../config/types/index.js";
 import { _testing } from "../index.js";
 import * as chatService from "../services/chat.js";
+import * as errorReporterService from "../services/error-reporter.js";
 
 const { FactsDB, ProposalsDB } = _testing;
 
@@ -315,12 +316,61 @@ describe("generate-proposals — JSON retry (#1824)", () => {
     };
 
     const ctx = makeCtxWithMaintenanceFallbackModels(db, proposalsDb, openai);
+    const captureSpy = vi.spyOn(errorReporterService, "capturePluginError");
 
-    await expect(runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f })).rejects.toThrow(
-      "all models failed",
-    );
+    try {
+      await expect(runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f })).rejects.toThrow(
+        "all models failed",
+      );
 
-    expect(openai.chat.completions.create).toHaveBeenCalledTimes(2);
+      expect(openai.chat.completions.create).toHaveBeenCalledTimes(2);
+      // GlitchTip issue 28: each invalid-JSON attempt is tagged so operators can tell a malformed
+      // response apart from a transport/provider failure.
+      expect(captureSpy).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({
+          operation: "runGenerateProposalsForCli:invalid-json",
+          tags: expect.objectContaining({ llm_failure_class: "invalid_response_format" }),
+        }),
+      );
+    } finally {
+      captureSpy.mockRestore();
+    }
+  });
+
+  it("tags a transport/provider LLM call failure with llm_failure_class (GlitchTip issue 28)", async () => {
+    const db = new FactsDB(":memory:");
+    const proposalsDb = new ProposalsDB(":memory:");
+    insertScopedPattern(db, "global", null, "User consistently prefers functional composition over OOP patterns");
+
+    const openai = {
+      chat: {
+        completions: {
+          // Non-retryable config error (401) — keeps the test fast (no backoff) while still
+          // exercising the provider_error bucket end to end.
+          create: vi.fn(async () => {
+            throw new Error("401 Unauthorized");
+          }),
+        },
+      },
+    };
+
+    const ctx = makeCtxWithMaintenanceFallbackModels(db, proposalsDb, openai);
+    const captureSpy = vi.spyOn(errorReporterService, "capturePluginError");
+
+    try {
+      await expect(runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f })).rejects.toThrow();
+
+      expect(captureSpy).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({
+          operation: "runGenerateProposalsForCli:llm",
+          tags: expect.objectContaining({ llm_failure_class: "provider_error" }),
+        }),
+      );
+    } finally {
+      captureSpy.mockRestore();
+    }
   });
 
   it("uses deterministic fallback proposal when insights exist but parsed items are zero", async () => {

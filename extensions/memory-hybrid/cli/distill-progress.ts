@@ -33,6 +33,10 @@ export interface DistillDoneSummary {
   processedBlocks: number;
   batchFailures: number;
   truncatedBatches: number;
+  /** Genuine implementation/model batch failures, excluding deadline-only stops (GlitchTip issue 27
+   *  diagnostics — lets an operator tell "hard failure" from "ran out of time"). Optional so existing
+   *  callers that don't track this separately are unaffected; defaults to 0 in the emitted log line. */
+  hardBatchFailures?: number;
 }
 
 export interface DistillProgressReporter {
@@ -86,7 +90,7 @@ export function startDistillProgress(opts: {
       stop();
       const durationSec = Math.floor((Date.now() - startedMs) / 1000);
       log(
-        `memory-hybrid: distill done — status=${summary.status} extracted=${summary.extracted} blocks=${summary.processedBlocks}/${opts.totalBlocks} batchFailures=${summary.batchFailures} truncatedBatches=${summary.truncatedBatches} duration=${durationSec}s`,
+        `memory-hybrid: distill done — status=${summary.status} extracted=${summary.extracted} blocks=${summary.processedBlocks}/${opts.totalBlocks} batchFailures=${summary.batchFailures} hardBatchFailures=${summary.hardBatchFailures ?? 0} truncatedBatches=${summary.truncatedBatches} duration=${durationSec}s`,
       );
     },
   };
