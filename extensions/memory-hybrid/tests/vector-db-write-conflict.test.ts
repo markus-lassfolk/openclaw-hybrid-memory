@@ -169,6 +169,8 @@ describe("VectorDB withRetryableWriteConflictRetry import wiring (issue #2183 / 
     // at module load time and sidesteps that loader-specific runtime resolution path entirely.
     const source = readFileSync(new URL("../backends/vector-db/vector-db-class.ts", import.meta.url), "utf-8");
     expect(source).not.toMatch(/await\s+import\(\s*["'][^"']*embeddings\/shared\.js["']\s*\)/);
-    expect(source).toMatch(/^import\s*\{\s*withEmbedWriteLock\s*\}\s*from\s*"\.\.\/\.\.\/services\/embeddings\/shared\.js";$/m);
+    expect(source).toMatch(
+      /^import\s*\{\s*withEmbedWriteLock\s*\}\s*from\s*"\.\.\/\.\.\/services\/embeddings\/shared\.js";$/m,
+    );
   });
 });

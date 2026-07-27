@@ -1255,7 +1255,9 @@ exit 2
         env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, OPENCLAW_HOME: home },
       });
 
-      expect(result.stdout + result.stderr).toContain("GUARD_WRITE job=nightly-memory-sweep eligible=0 result=skipped_missing_or_failed_required_step");
+      expect(result.stdout + result.stderr).toContain(
+        "GUARD_WRITE job=nightly-memory-sweep eligible=0 result=skipped_missing_or_failed_required_step",
+      );
       expect(() => readFileSync(guardFilePath(home, "nightly-memory-sweep"), "utf-8")).toThrow();
     });
 
@@ -1350,7 +1352,9 @@ exit 2
       });
 
       expect(result.status).toBe(1);
-      expect(result.stdout + result.stderr).toContain("GUARD_WRITE job=nightly-memory-sweep eligible=0 result=skipped_validate_exit_nonzero");
+      expect(result.stdout + result.stderr).toContain(
+        "GUARD_WRITE job=nightly-memory-sweep eligible=0 result=skipped_validate_exit_nonzero",
+      );
       expect(() => readFileSync(guardFilePath(home, "nightly-memory-sweep"), "utf-8")).toThrow();
     });
 
