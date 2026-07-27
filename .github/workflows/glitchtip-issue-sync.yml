@@ -1,6 +1,9 @@
 name: Sync GlitchTip Issues to GitHub
 
 on:
+  schedule:
+    # Twice a day, live (not dry-run) — 06:00 and 18:00 UTC.
+    - cron: "0 6,18 * * *"
   workflow_dispatch:
     inputs:
       org_slug:
@@ -16,7 +19,7 @@ on:
         required: false
         default: "is:unresolved"
       dry_run:
-        description: "Preview only — do not create any GitHub issues"
+        description: "Preview only — do not create GitHub issues or update GlitchTip issue status"
         type: boolean
         required: false
         default: true
@@ -37,6 +40,7 @@ jobs:
           ORG_SLUG: ${{ inputs.org_slug || 'hybrid-memory' }}
           PROJECT_SLUG: ${{ inputs.project_slug || 'openclaw-hybrid-memory' }}
           QUERY: ${{ inputs.query || 'is:unresolved' }}
-          DRY_RUN: ${{ inputs.dry_run }}
+          # Scheduled runs are always live; manual dispatch keeps the dry-run-by-default safety net.
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node .github/scripts/sync-glitchtip-issues.mjs
