@@ -30,9 +30,9 @@ jobs:
         env:
           GLITCHTIP_TOKEN: ${{ secrets.GLITCHTIP_TOKEN }}
           GLITCHTIP_BASE_URL: ${{ secrets.GLITCHTIP_BASE_URL }}
-          ORG_SLUG: ${{ inputs.org_slug }}
-          PROJECT_SLUG: ${{ inputs.project_slug }}
-          QUERY: ${{ inputs.query }}
+          ORG_SLUG: ${{ inputs.org_slug || 'hybrid-memory' }}
+          PROJECT_SLUG: ${{ inputs.project_slug || 'openclaw-hybrid-memory' }}
+          QUERY: ${{ inputs.query || 'is:unresolved' }}
         run: |
           set -euo pipefail
 
