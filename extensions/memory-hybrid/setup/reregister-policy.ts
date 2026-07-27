@@ -1,5 +1,6 @@
 /** @module reregister-policy — Hot-reload DB teardown vs reuse (OPENCLAW_HYBRID_MEM_REREGISTER_POLICY). */
 import type { PluginRuntime } from "../api/plugin-runtime.js";
+import { DEFAULT_LANCE_PATH, DEFAULT_SQLITE_PATH } from "../config/parsers/core.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { getEnv } from "../utils/env-manager.js";
 
@@ -94,7 +95,32 @@ export function recordReregisterTeardownTimeoutRecovery(): void {
   reregisterMetrics.teardownTimeoutRecoveries += 1;
 }
 
-type PathResolvingApi = { resolvePath: (p: string) => string };
+type PathResolvingApi = {
+  resolvePath: (p: string) => string;
+  logger?: { warn?: (msg: string) => void };
+};
+
+/**
+ * Guards `api.resolvePath()` against a missing/blank `sqlitePath`/`lanceDbPath`, mirroring the
+ * `normalizeDatabasePath()` guard in bootstrap-databases.ts (GlitchTip #33 was the same shape of
+ * bug — an undefined path reaching a `node:path` call — already fixed on the `initializeDatabases`
+ * path by PR #2203; this is defense-in-depth for the other raw `resolvePath(cfg.*Path)` caller).
+ * Today the normalized value only feeds a `!==` string comparison in `evaluateReregisterReuse`, but
+ * guarding here means a future stricter `resolvePath` (or a future caller of the comparison result)
+ * can't silently reintroduce the crash.
+ */
+function normalizeReregisterPath(
+  value: unknown,
+  fallback: string,
+  field: "lanceDbPath" | "sqlitePath",
+  api: PathResolvingApi,
+): string {
+  if (typeof value === "string" && value.trim()) return value;
+  api.logger?.warn?.(
+    `memory-hybrid: reregister policy received missing or invalid ${field}; using the documented default (${field === "lanceDbPath" ? "DEFAULT_LANCE_PATH" : "DEFAULT_SQLITE_PATH"}).`,
+  );
+  return fallback;
+}
 
 function booleanMethod(target: unknown, method: string): boolean | null {
   if (!target || typeof target !== "object") return null;
@@ -151,8 +177,9 @@ const drift = (field: string): ReregisterReuseDecision => ({ reuse: false, reaso
 /**
  * Decide whether a re-register may keep the donor's SQLite/Lance handles, returning a stable
  * reason code alongside the boolean (#2136). Every decline path names why it declined so a full
- * teardown under `reuse-databases` is never unexplained. Pure/side-effect-free — callers record
- * the reason via {@link recordReregisterFullTeardown}.
+ * teardown under `reuse-databases` is never unexplained. Otherwise side-effect-free — callers
+ * record the reason via {@link recordReregisterFullTeardown} — aside from an optional logger
+ * warning from {@link normalizeReregisterPath} when the incoming config's path fields are missing.
  */
 export function evaluateReregisterReuse(
   old: PluginRuntime | null,
@@ -172,8 +199,10 @@ export function evaluateReregisterReuse(
   // stores that immediately throw "The database connection is not open". Treat any
   // closed/failed donor handle as non-reusable and fall back to a full fresh open.
   if (!runtimeStoresStillReusable(old)) return { reuse: false, reason: "donor_handle_closed" };
-  const nextSqlite = api.resolvePath(cfg.sqlitePath);
-  const nextLance = api.resolvePath(cfg.lanceDbPath);
+  // Config parsing normally supplies these defaults; guard the same way as bootstrap-databases.ts
+  // does before initializeDatabases, since this can also see a deferred/reconstructed config.
+  const nextSqlite = api.resolvePath(normalizeReregisterPath(cfg.sqlitePath, DEFAULT_SQLITE_PATH, "sqlitePath", api));
+  const nextLance = api.resolvePath(normalizeReregisterPath(cfg.lanceDbPath, DEFAULT_LANCE_PATH, "lanceDbPath", api));
   if (old.resolvedSqlitePath !== nextSqlite) return { reuse: false, reason: "sqlite_path_changed" };
   if (old.resolvedLancePath !== nextLance) return { reuse: false, reason: "lance_path_changed" };
 

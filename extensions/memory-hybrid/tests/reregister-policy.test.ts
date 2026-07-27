@@ -1,14 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PluginRuntime } from "../api/plugin-runtime.js";
+import { DEFAULT_LANCE_PATH, DEFAULT_SQLITE_PATH } from "../config/parsers/core.js";
 import type { HybridMemoryConfig } from "../config.js";
 import {
   canReuseDatabasesOnReregister,
   evaluateReregisterReuse,
   recordReregisterDatabaseReuse,
   recordReregisterFullTeardown,
+  reregisterMetrics,
   resetReregisterPolicyForTests,
   resolveReregisterPolicy,
-  reregisterMetrics,
   shouldFullTeardownOnReregister,
 } from "../setup/reregister-policy.js";
 
@@ -353,6 +354,36 @@ describe("reregister-policy", () => {
       for (let i = 0; i < 5; i++) {
         expect(evaluateReregisterReuse(donor, minimalCfg(), api).reuse).toBe(true);
       }
+    });
+
+    // Defense-in-depth adjacent to GlitchTip #33 (a "path must be a string" TypeError out of
+    // node:path's dirname(), thrown from initializeDatabases and already fixed there by PR #2203
+    // via normalizeDatabasePath()). evaluateReregisterReuse has its own raw resolvePath(cfg.*Path)
+    // calls that were never guarded; this asserts they can no longer receive a non-string either.
+    it("falls back to documented paths before resolvePath when sqlitePath/lanceDbPath are missing", () => {
+      const warn = vi.fn();
+      const resolvePath = vi.fn((p: string) => {
+        if (typeof p !== "string") throw new TypeError('The "path" argument must be of type string.');
+        return `/home/markus/.openclaw/${p}`;
+      });
+      const guardedApi = { resolvePath, logger: { warn } };
+      const cfg = minimalCfg();
+      const donor = mockOldRuntime(
+        { sqlite: guardedApi.resolvePath(DEFAULT_SQLITE_PATH), lance: guardedApi.resolvePath(DEFAULT_LANCE_PATH) },
+        cfg,
+      );
+      const malformedCfg = { ...cfg, sqlitePath: undefined, lanceDbPath: "  " } as unknown as HybridMemoryConfig;
+
+      let decision: ReturnType<typeof evaluateReregisterReuse> | undefined;
+      expect(() => {
+        decision = evaluateReregisterReuse(donor, malformedCfg, guardedApi);
+      }).not.toThrow();
+
+      expect(decision).toEqual({ reuse: true, reason: "reusable" });
+      expect(resolvePath.mock.calls.map((call) => call[0])).toContain(DEFAULT_SQLITE_PATH);
+      expect(resolvePath.mock.calls.map((call) => call[0])).toContain(DEFAULT_LANCE_PATH);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("missing or invalid sqlitePath"));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("missing or invalid lanceDbPath"));
     });
   });
 
