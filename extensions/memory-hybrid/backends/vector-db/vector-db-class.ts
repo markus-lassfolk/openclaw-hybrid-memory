@@ -625,13 +625,30 @@ export class VectorDB {
       if (!this.db) throw new Error("VectorDB connection not initialized.");
       this.semanticQueryCacheSchemaValid = false;
       this.logWarn(`memory-hybrid: rebuilding semantic query cache table due to ${reason}`);
+      // Issue #34 (GlitchTip): mirror optimize()'s and swapShadowTable()'s exclusion
+      // strategy (#768) before dropping the table out from under a concurrent
+      // getSemanticQueryCacheMatch()/storeSemanticQueryCache()/pruneSemanticQueryCache()
+      // read/write that is still in-flight. setOptimizeLock() also excludes new readers
+      // that arrive during this window from joining the drain count (they will simply
+      // observe whichever table generation is current when they run) and — being keyed
+      // by dbPath — serializes this rebuild against a concurrent main-table optimize() or
+      // shadow-table swap on the same path. Safe against self-deadlock: the caller that
+      // triggered this rebuild (getSemanticQueryCacheMatch/storeSemanticQueryCache's catch
+      // block) has already released its own reader slot via try/finally before reaching
+      // this call, so waitForReadersToDrain() below can never be waiting on ourselves.
+      setOptimizeLock(this.dbPath, true);
       try {
-        await this.db.dropTable(SEMANTIC_QUERY_CACHE_TABLE);
-      } catch {
-        /* ignore */
+        await this.waitForReadersToDrain();
+        try {
+          await this.db.dropTable(SEMANTIC_QUERY_CACHE_TABLE);
+        } catch {
+          /* ignore */
+        }
+        this.semanticQueryCacheTable = null;
+        await this.recreateSemanticQueryCacheTable();
+      } finally {
+        setOptimizeLock(this.dbPath, false);
       }
-      this.semanticQueryCacheTable = null;
-      await this.recreateSemanticQueryCacheTable();
     })();
 
     this.semanticQueryCacheRepairPromise = repairPromise;
@@ -1190,11 +1207,19 @@ export class VectorDB {
   private async pruneSemanticQueryCache(filterKey: string): Promise<void> {
     const table = this.getSemanticQueryCacheTable();
     if (!table) return;
-    const rows = await table
-      .query()
-      .where(`filterKey = '${this.escapeSqlString(filterKey)}'`)
-      .select(["id", "cachedAt"])
-      .toArray();
+    // Issue #34 (GlitchTip): hold a shared reader slot across the prune query/delete calls
+    // so a concurrent rebuildSemanticQueryCacheTable() drop waits for these to finish first.
+    const acquired = this.acquireReader();
+    let rows: Array<Record<string, unknown>>;
+    try {
+      rows = await table
+        .query()
+        .where(`filterKey = '${this.escapeSqlString(filterKey)}'`)
+        .select(["id", "cachedAt"])
+        .toArray();
+    } finally {
+      this.releaseReader(acquired);
+    }
 
     if (rows.length <= SEMANTIC_QUERY_CACHE_MAX_ROWS_PER_FILTER_KEY) return;
 
@@ -1213,7 +1238,12 @@ export class VectorDB {
     for (let i = 0; i < staleRows.length; i += IN_CHUNK) {
       const chunk = staleRows.slice(i, i + IN_CHUNK);
       const idList = chunk.map((row) => `'${this.escapeSqlString(row.id)}'`).join(", ");
-      await table.delete(`id IN (${idList})`);
+      const chunkAcquired = this.acquireReader();
+      try {
+        await table.delete(`id IN (${idList})`);
+      } finally {
+        this.releaseReader(chunkAcquired);
+      }
     }
     this.semanticQueryCachePruneTelemetry = {
       lastFilterKey: filterKey,
@@ -1243,51 +1273,60 @@ export class VectorDB {
 
       const cacheTable = this.getSemanticQueryCacheTable();
       if (!cacheTable) return null;
-      const candidates = await cacheTable.vectorSearch(vector).limit(candidateLimit).toArray();
+      // Issue #34 (GlitchTip): hold a shared reader slot for the vectorSearch() stream so
+      // rebuildSemanticQueryCacheTable()'s waitForReadersToDrain() can see this read is
+      // in-flight before dropping the underlying table out from under it (matches the
+      // search()/hasDuplicate() idiom for the main table, issue #768).
+      const acquired = this.acquireReader();
+      try {
+        const candidates = await cacheTable.vectorSearch(vector).limit(candidateLimit).toArray();
 
-      let bestMatch: SemanticQueryCacheEntry | null = null;
-      for (const row of candidates) {
-        if ((row.filterKey as string | undefined) !== filterKey) continue;
+        let bestMatch: SemanticQueryCacheEntry | null = null;
+        for (const row of candidates) {
+          if ((row.filterKey as string | undefined) !== filterKey) continue;
 
-        const cachedAt = Number(row.cachedAt ?? 0);
-        const ageSec = nowSec - cachedAt;
-        if (!Number.isFinite(cachedAt) || ageSec > ttlSec) {
-          continue;
+          const cachedAt = Number(row.cachedAt ?? 0);
+          const ageSec = nowSec - cachedAt;
+          if (!Number.isFinite(cachedAt) || ageSec > ttlSec) {
+            continue;
+          }
+
+          const candidateVector =
+            typeof row.vector?.toArray === "function"
+              ? row.vector.toArray().map(Number)
+              : typeof row.vector?.toJSON === "function"
+                ? row.vector.toJSON().map(Number)
+                : Array.isArray(row.vector)
+                  ? row.vector.map((value: any) => Number(value))
+                  : ArrayBuffer.isView(row.vector)
+                    ? Array.from(row.vector as ArrayLike<number>, (value: number) => Number(value))
+                    : Array.from((row as any).vector ?? []).map((value: any) => Number(value));
+
+          const similarity = this.computeCosineSimilarity(vector, candidateVector);
+          if (similarity < minSimilarity) continue;
+
+          const entry: SemanticQueryCacheEntry = {
+            id: String(row.id),
+            queryText: String(row.queryText ?? ""),
+            filterKey,
+            factIds: this.parseCacheIds(row.factIds),
+            cachedAt,
+            similarity,
+          };
+
+          if (
+            !bestMatch ||
+            entry.similarity > bestMatch.similarity ||
+            (entry.similarity === bestMatch.similarity && entry.cachedAt > bestMatch.cachedAt)
+          ) {
+            bestMatch = entry;
+          }
         }
 
-        const candidateVector =
-          typeof row.vector?.toArray === "function"
-            ? row.vector.toArray().map(Number)
-            : typeof row.vector?.toJSON === "function"
-              ? row.vector.toJSON().map(Number)
-              : Array.isArray(row.vector)
-                ? row.vector.map((value: any) => Number(value))
-                : ArrayBuffer.isView(row.vector)
-                  ? Array.from(row.vector as ArrayLike<number>, (value: number) => Number(value))
-                  : Array.from((row as any).vector ?? []).map((value: any) => Number(value));
-
-        const similarity = this.computeCosineSimilarity(vector, candidateVector);
-        if (similarity < minSimilarity) continue;
-
-        const entry: SemanticQueryCacheEntry = {
-          id: String(row.id),
-          queryText: String(row.queryText ?? ""),
-          filterKey,
-          factIds: this.parseCacheIds(row.factIds),
-          cachedAt,
-          similarity,
-        };
-
-        if (
-          !bestMatch ||
-          entry.similarity > bestMatch.similarity ||
-          (entry.similarity === bestMatch.similarity && entry.cachedAt > bestMatch.cachedAt)
-        ) {
-          bestMatch = entry;
-        }
+        return bestMatch;
+      } finally {
+        this.releaseReader(acquired);
       }
-
-      return bestMatch;
     } catch (err) {
       if (this.isKnownVectorSchemaError(err)) {
         try {
@@ -1322,16 +1361,23 @@ export class VectorDB {
       const filterKey = entry.filterKey ?? "default";
       const cacheTable = this.getSemanticQueryCacheTable();
       if (!cacheTable) return;
-      await cacheTable.add([
-        {
-          id: randomUUID(),
-          queryText: entry.queryText,
-          filterKey,
-          vector: entry.vector,
-          factIds: JSON.stringify(entry.factIds),
-          cachedAt: entry.cachedAt ?? Math.floor(Date.now() / 1000),
-        },
-      ]);
+      // Issue #34 (GlitchTip): hold a shared reader slot across the add() write so a
+      // concurrent rebuildSemanticQueryCacheTable() drop waits for this to finish first.
+      const acquired = this.acquireReader();
+      try {
+        await cacheTable.add([
+          {
+            id: randomUUID(),
+            queryText: entry.queryText,
+            filterKey,
+            vector: entry.vector,
+            factIds: JSON.stringify(entry.factIds),
+            cachedAt: entry.cachedAt ?? Math.floor(Date.now() / 1000),
+          },
+        ]);
+      } finally {
+        this.releaseReader(acquired);
+      }
       await this.pruneSemanticQueryCache(filterKey);
     } catch (err) {
       if (this.isKnownVectorSchemaError(err)) {

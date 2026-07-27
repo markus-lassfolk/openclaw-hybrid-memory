@@ -144,6 +144,25 @@ describe("UnconfiguredProviderError guard with mocked fetch", () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
+  it("capturePluginError suppresses transient LanceDB read-stream races without calling fetch (GlitchTip issue #34)", async () => {
+    const { capturePluginError, flushErrorReporter } = await import("../services/error-reporter.js");
+
+    // The exact class of message getSemanticQueryCacheMatch()/storeSemanticQueryCache() see
+    // when rebuildSemanticQueryCacheTable()'s dropTable() races their in-flight LanceDB read.
+    const result = capturePluginError(
+      new Error(
+        "Failed to get next batch from stream: lance error: Not found: /home/user/.openclaw/memory/lance/" +
+          "semantic_query_cache.lance/data/12345678-abcd-4ef0-9abc-1234567890ab.lance, path not found",
+      ),
+      { operation: "semantic-query-cache-lookup", severity: "info", subsystem: "vector" },
+    );
+
+    await flushErrorReporter(500);
+
+    expect(result).toBeUndefined();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it("applies 24h dedupe only to invalid_goal_registry_entry, not other fingerprinted warnings (#1988)", async () => {
     const { capturePluginError, flushErrorReporter, resetErrorDedupForTests } = await import(
       "../services/error-reporter.js"

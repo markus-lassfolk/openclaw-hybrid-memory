@@ -828,6 +828,24 @@ describe("Error Reporter", () => {
       expect(shouldDropNoisyError(new Error("Ollama circuit breaker open — retrying in 30s"))).toBe(true);
     });
 
+    it("drops transient LanceDB read-stream races (GlitchTip issue #34)", async () => {
+      const { shouldDropNoisyError } = await import("../services/error-reporter.js");
+
+      // Actual production message: rebuildSemanticQueryCacheTable()'s dropTable() races a
+      // concurrent vectorSearch().toArray() read on the semantic query cache table.
+      expect(
+        shouldDropNoisyError(
+          new Error(
+            "Failed to get next batch from stream: lance error: Not found: /home/user/.openclaw/memory/lance/" +
+              "semantic_query_cache.lance/data/12345678-abcd-4ef0-9abc-1234567890ab.lance, path not found",
+          ),
+        ),
+      ).toBe(true);
+      // Either half of the message alone should also be recognized.
+      expect(shouldDropNoisyError(new Error("Failed to get next batch from stream"))).toBe(true);
+      expect(shouldDropNoisyError(new Error("lance error: Not found: some/other/path.lance"))).toBe(true);
+    });
+
     it("drops wrapped or aggregate errors only when every cause is noisy", async () => {
       const { shouldDropNoisyError } = await import("../services/error-reporter.js");
 
