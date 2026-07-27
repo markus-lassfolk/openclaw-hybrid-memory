@@ -6,8 +6,11 @@
  * (or a /tmp fallback if that path is not writable).
  *
  * HM_EXIT format (one line per hm_step): `{ISO8601Z} {step_name} exit={code}` optionally
- * followed by `status=` and `reason=`. validate-cron-exit treats an empty ledger with no
- * `--- steps ---` section in HM_LOG as wrapper abort (`failureClass=wrapper_aborted_before_steps`).
+ * followed by `status=` and `reason=`. `openclaw hybrid-mem maintenance validate-exit` (invoked
+ * automatically at shell exit; the ledger row/log section header keep the historical
+ * `validate-cron-exit` label for analyzer compatibility — see hm_validate() below) treats an
+ * empty ledger with no `--- steps ---` section in HM_LOG as wrapper abort
+ * (`failureClass=wrapper_aborted_before_steps`).
  */
 
 export type HybridMemCronStep = { name: string; cmd: string; optional?: boolean };
@@ -43,7 +46,8 @@ function shellSafeStepName(name: string): string {
 
 /**
  * Bash script body: `set -euo pipefail`, HM_LOG / HM_EXIT, `hm_step`, labeled steps,
- * and mandatory `validate-cron-exit` on shell exit.
+ * and mandatory `maintenance validate-exit` (plus a mechanical guard-file write gate — see
+ * hm_validate()) on shell exit.
  * Step `name` should be short and shell-safe; any character outside `[A-Za-z0-9-]` is replaced with `_`.
  */
 export function buildHybridMemCronBashBody(
@@ -121,11 +125,79 @@ export function buildHybridMemCronBashBody(
     // could still land those logs ahead of the JSON, making HM_VALIDATION_JSON unparseable.
     // Writing the file from inside the command sidesteps that entirely; `--json` is kept only so
     // the mixed stdout+stderr stream still ends up in HM_LOG for human debugging.
-    '  openclaw hybrid-mem validate-cron-exit --exit-path "$HM_EXIT" --log-path "$HM_LOG" --summary-path "$HM_SUMMARY" --required-steps "${HM_REQUIRED_STEPS[@]}" --allow-skip --json --output-json "$validate_output" 2>&1 | tee -a "$HM_LOG"',
+    //
+    // Invokes the grouped `maintenance validate-exit` command, not the deprecated flat
+    // `validate-cron-exit` alias (issue: cron harness still emitted the deprecated command). The
+    // `--- validate-cron-exit ---` section header above and the `validate-cron-exit exit=...`
+    // ledger row below intentionally keep the OLD name — maintenance-log-analyzer.ts's
+    // isDerivedAnalyzerSelfFailureStep() and logHasValidateMarker() key off that exact literal
+    // string in HM_LOG/HM_EXIT, so renaming the label (as opposed to the invoked command) would
+    // silently break analyzer self-suppression and stale-run detection.
+    '  openclaw hybrid-mem maintenance validate-exit --exit-path "$HM_EXIT" --log-path "$HM_LOG" --summary-path "$HM_SUMMARY" --required-steps "${HM_REQUIRED_STEPS[@]}" --allow-skip --json --output-json "$validate_output" 2>&1 | tee -a "$HM_LOG"',
     '  local validation_ec="${PIPESTATUS[0]}"',
     '  local maintenance_status=""',
     "  # Parse maintenanceStatus without jq to keep cron harness dependencies minimal/portable.",
     '  maintenance_status="$(grep -Eo \'"maintenanceStatus"[[:space:]]*:[[:space:]]*"(success|skipped|partial|failed)"\' "$validate_output" | tail -n1 | sed -E \'s/.*"(success|skipped|partial|failed)"/\\1/\' || true)"',
+    // Mechanical guard-write gate (issue: cron harness's "guard-update contract" was prose-only —
+    // the executing LLM agent was simply told to write the guard file "after successful
+    // completion" with no bash-level code actually checking that). The persistent guard file (see
+    // the GUARD CHECK prefix built by buildGuardPrefix in services/cron-guard.ts) is now written
+    // right here, deterministically, instead of relying on the agent's own judgment. Gated on:
+    // (a) the wrapped step chain itself exited 0 (`original_ec`), (b) `maintenance validate-exit`
+    // itself exited 0, (c) its JSON output was actually produced and parses with
+    // `guardUpdated=true` and `maintenanceStatus="success"` (still parsed without jq, matching
+    // the maintenanceStatus parse above), and (d) every configured required step independently
+    // shows `exit=0` (or an allowed `-skipped` variant) in the raw HM_EXIT ledger — a redundant,
+    // ledger-level recheck that does not simply trust the validator's own JSON verdict.
+    '  local guard_updated=""',
+    '  guard_updated="$(grep -Eo \'"guardUpdated"[[:space:]]*:[[:space:]]*(true|false)\' "$validate_output" | tail -n1 | sed -E \'s/.*:[[:space:]]*(true|false)/\\1/\' || true)"',
+    '  local guard_required_ok=1',
+    '  local req_step',
+    '  for req_step in "${HM_REQUIRED_STEPS[@]}"; do',
+    '    if ! grep -Eq "^[^[:space:]]+[[:space:]]+(${req_step}|${req_step}-skipped)[[:space:]]+exit=0([[:space:]]|\\$)" "$HM_EXIT" 2>/dev/null; then',
+    "      guard_required_ok=0",
+    "      break",
+    "    fi",
+    "  done",
+    '  local guard_gate_reason="ineligible"',
+    "  local guard_eligible=0",
+    '  if [ "$original_ec" -ne 0 ]; then',
+    '    guard_gate_reason="wrapped_step_exit_nonzero"',
+    '  elif [ "$validation_ec" -ne 0 ]; then',
+    '    guard_gate_reason="validate_exit_nonzero"',
+    '  elif [ -z "$guard_updated" ]; then',
+    '    guard_gate_reason="validation_output_unparseable"',
+    '  elif [ "$maintenance_status" != "success" ]; then',
+    '    guard_gate_reason="maintenance_status_not_success"',
+    '  elif [ "$guard_updated" != "true" ]; then',
+    '    guard_gate_reason="validator_guard_not_updated"',
+    '  elif [ "$guard_required_ok" -ne 1 ]; then',
+    '    guard_gate_reason="missing_or_failed_required_step"',
+    "  else",
+    "    guard_eligible=1",
+    '    guard_gate_reason="eligible"',
+    "  fi",
+    // $OW/HM_JOB (not a Node-computed literal) so the write always lands under whatever
+    // OPENCLAW_HOME the harness itself is running with — the same base HM_LOG_BASE already uses
+    // above, and what a test harness overrides via the OPENCLAW_HOME env var stays sandboxed.
+    '  local hm_guard_dir="${OW}/cron/guard"',
+    '  local hm_guard_file="${hm_guard_dir}/${HM_JOB}.ms"',
+    '  local guard_write_result="skipped_${guard_gate_reason}"',
+    '  local guard_tmp=""',
+    '  if [ "$guard_eligible" -eq 1 ]; then',
+    '    if mkdir -p "$hm_guard_dir" 2>/dev/null; then',
+    '      guard_tmp="$(mktemp "${hm_guard_dir}/.${HM_JOB}.ms.XXXXXX" 2>/dev/null || true)"',
+    "      if [ -n \"$guard_tmp\" ] && printf '%s' \"$(date +%s%3N)\" >\"$guard_tmp\" 2>/dev/null && mv -f \"$guard_tmp\" \"$hm_guard_file\" 2>/dev/null; then",
+    '        guard_write_result="written"',
+    "      else",
+    '        [ -n "$guard_tmp" ] && rm -f "$guard_tmp" 2>/dev/null',
+    '        guard_write_result="write_failed"',
+    "      fi",
+    "    else",
+    '      guard_write_result="write_failed"',
+    "    fi",
+    "  fi",
+    '  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) GUARD_WRITE job=${HM_JOB} eligible=${guard_eligible} result=${guard_write_result} reason=${guard_gate_reason} file=${hm_guard_file}" | tee -a "$HM_LOG"',
     '  if [ -n "${HM_VALIDATION_JSON:-}" ]; then',
     '    if [ -s "$validate_output" ]; then',
     '      cp "$validate_output" "$HM_VALIDATION_JSON" 2>/dev/null || cat "$validate_output" >"$HM_VALIDATION_JSON"',
@@ -309,18 +381,18 @@ export function buildHybridMemCronTaskMessage(
     "```",
     "",
     "VALIDATION & GUARD UPDATE (Issue: cron jobs report OK despite failures)",
-    `The bash harness automatically runs \`openclaw hybrid-mem validate-cron-exit\` at shell exit and validates that ALL required steps [${requiredStepsList}] appear in HM_EXIT with exit=0.`,
-    "- If ANY required step is missing from HM_EXIT, has exit≠0, or the log contains 'unknown command', validate-cron-exit returns non-zero and the shell exits non-zero.",
+    `The bash harness automatically runs \`openclaw hybrid-mem maintenance validate-exit\` at shell exit and validates that ALL required steps [${requiredStepsList}] appear in HM_EXIT with exit=0.`,
+    "- If ANY required step is missing from HM_EXIT, has exit≠0, or the log contains 'unknown command', maintenance validate-exit returns non-zero and the shell exits non-zero.",
     "- If a step is replaced with a config-skip variant (e.g., 'distill-skipped' exit=0 when distill.enabled is false), that counts as present.",
-    "- Only after ALL required steps are validated successful: perform the GUARD CHECK timestamp write.",
-    "- If validation fails, do NOT update the guard file.",
+    "- The persistent guard file (see the GUARD CHECK prefix above, if present) is now written MECHANICALLY by the bash harness itself, in hm_validate — not by you. A deterministic bash check gates the write on: the wrapped steps exiting 0, `maintenance validate-exit` itself exiting 0, its JSON output being present/parseable with `guardUpdated: true` and `maintenanceStatus: \"success\"`, and every required step independently confirmed exit=0 (or an allowed skip variant) directly in HM_EXIT.",
+    "- Do NOT write the guard file yourself, even if you believe the run succeeded — read the `GUARD_WRITE ... result=...` line the harness tees into HM_LOG for the actual outcome; a manual write could mask a genuine failure the harness detected.",
     "",
     "REPLY FORMAT:",
     "1. State the overall result: SUCCESS, FAILED, or SKIPPED",
     "2. List HM_EXIT path and paste its full contents",
     "3. List HM_LOG path (do not paste log unless there are errors)",
     "4. If any step failed or is missing, explain which steps and why",
-    "5. State whether guard file was updated (yes/no)",
+    "5. Quote the harness's `GUARD_WRITE` log line to state whether the guard file was updated (do not decide this yourself)",
   ].join("\n");
   return [preamble, orchestration].filter(Boolean).join("\n\n");
 }
