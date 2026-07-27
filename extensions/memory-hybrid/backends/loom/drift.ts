@@ -10,6 +10,7 @@ import type {
   DriftStatus,
   DriftType,
 } from "../../types/drift-types.js";
+import { toArrayFilter } from "../../utils/array-filter.js";
 import { nowIso } from "../../utils/dates.js";
 import { normalizedHash } from "../../utils/tags.js";
 import { parseJsonColumn } from "./json-helpers.js";
@@ -114,17 +115,23 @@ export function resolveDriftFinding(db: DatabaseSync, idOrPrefix: string): Drift
 export function listDriftFindings(db: DatabaseSync, filter?: DriftFindingFilter): DriftFinding[] {
   let query = "SELECT * FROM loom_drift_findings WHERE 1=1";
   const params: SQLInputValue[] = [];
-  if (filter?.status && filter.status.length > 0) {
-    query += ` AND status IN (${filter.status.map(() => "?").join(", ")})`;
-    params.push(...filter.status);
+  // toArrayFilter guards against a bare scalar (e.g. a non-tool caller passing one of these
+  // fields directly) the same way the tool layer does, so this store is safe on its own
+  // (issue #2185).
+  const status = toArrayFilter(filter?.status);
+  if (status && status.length > 0) {
+    query += ` AND status IN (${status.map(() => "?").join(", ")})`;
+    params.push(...status);
   }
-  if (filter?.driftType && filter.driftType.length > 0) {
-    query += ` AND drift_type IN (${filter.driftType.map(() => "?").join(", ")})`;
-    params.push(...filter.driftType);
+  const driftType = toArrayFilter(filter?.driftType);
+  if (driftType && driftType.length > 0) {
+    query += ` AND drift_type IN (${driftType.map(() => "?").join(", ")})`;
+    params.push(...driftType);
   }
-  if (filter?.severity && filter.severity.length > 0) {
-    query += ` AND severity IN (${filter.severity.map(() => "?").join(", ")})`;
-    params.push(...filter.severity);
+  const severity = toArrayFilter(filter?.severity);
+  if (severity && severity.length > 0) {
+    query += ` AND severity IN (${severity.map(() => "?").join(", ")})`;
+    params.push(...severity);
   }
   query += " ORDER BY detected_at DESC";
   const limit = filter?.limit && filter.limit > 0 ? filter.limit : 100;

@@ -24,6 +24,7 @@ import type {
   LearningEntryType,
 } from "../types/learnings-types.js";
 import { LEARNING_STATUS_TRANSITIONS } from "../types/learnings-types.js";
+import { toArrayFilter } from "../utils/array-filter.js";
 import { nowIso, cutoffIsoDaysAgo } from "../utils/dates.js";
 import { backfillLearningsTextTimestamps } from "../utils/timestamp-migration.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
@@ -182,13 +183,17 @@ export class LearningsDB extends BaseSqliteStore {
     let query = "SELECT * FROM learnings WHERE 1=1";
     const params: SQLInputValue[] = [];
 
-    if (filter?.type && filter.type.length > 0) {
-      query += ` AND type IN (${filter.type.map(() => "?").join(", ")})`;
-      params.push(...filter.type);
+    // toArrayFilter guards against a bare scalar (e.g. a non-tool caller passing type/status
+    // directly) the same way the tool layer does, so this store is safe on its own (issue #2185).
+    const type = toArrayFilter(filter?.type);
+    if (type && type.length > 0) {
+      query += ` AND type IN (${type.map(() => "?").join(", ")})`;
+      params.push(...type);
     }
-    if (filter?.status && filter.status.length > 0) {
-      query += ` AND status IN (${filter.status.map(() => "?").join(", ")})`;
-      params.push(...filter.status);
+    const status = toArrayFilter(filter?.status);
+    if (status && status.length > 0) {
+      query += ` AND status IN (${status.map(() => "?").join(", ")})`;
+      params.push(...status);
     }
     if (filter?.area) {
       query += " AND area = ?";

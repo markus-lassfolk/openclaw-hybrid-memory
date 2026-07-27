@@ -7,9 +7,14 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { cosineToVectorScore, runContradictionCandidates } from "../services/contradiction-candidates.js";
+
+vi.mock("../services/error-reporter.js", () => ({
+  capturePluginError: vi.fn(),
+}));
+import * as errorReporterMock from "../services/error-reporter.js";
 
 let dir: string;
 let db: FactsDB;
@@ -18,6 +23,7 @@ const logger = { info: () => {}, warn: () => {} };
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "hybrid-nli-"));
   db = new FactsDB(join(dir, "facts.db"));
+  vi.clearAllMocks();
 });
 
 afterEach(() => {
@@ -68,6 +74,29 @@ function fakeDeps(neighborScore: number, verdict: { verdict: string; confidence:
             calls?.push([JSON.stringify(req)]);
             return { choices: [{ message: { content: JSON.stringify({ ...verdict, reason: "test" }) } }] };
           },
+        },
+      },
+    },
+  } as never;
+}
+
+/** Fake vector stack whose NLI call fails instead of returning a verdict. */
+function fakeDepsWithFailingLlm(neighborScore: number, createImpl: () => Promise<unknown>) {
+  return {
+    factsDb: db,
+    vectorDb: {
+      search: async () => {
+        const rows = db.getRawDb().prepare("SELECT id FROM facts WHERE superseded_at IS NULL").all() as Array<{
+          id: string;
+        }>;
+        return rows.map((r) => ({ entry: db.getById(r.id), score: neighborScore, backend: "lancedb" }));
+      },
+    },
+    embeddings: { embed: async () => [0.1, 0.2] },
+    openai: {
+      chat: {
+        completions: {
+          create: createImpl,
         },
       },
     },
@@ -143,6 +172,10 @@ describe("free-text contradiction candidates", () => {
     );
     expect(neutral.recorded).toBe(0);
     expect(neutral.llmCalls).toBeGreaterThan(0);
+    // Distinguishes "the LLM said no" (rejectedByLlm) from "the LLM errored" (llmFailures) so
+    // recorded=0 isn't ambiguous after the fact (GlitchTip issue 25).
+    expect(neutral.rejectedByLlm).toBeGreaterThan(0);
+    expect(neutral.llmFailures).toBe(0);
 
     const lowConf = await runContradictionCandidates(
       fakeDeps(MID_SCORE, { verdict: "contradiction", confidence: 0.4 }),
@@ -151,6 +184,24 @@ describe("free-text contradiction candidates", () => {
       logger,
     );
     expect(lowConf.recorded).toBe(0);
+    expect(lowConf.rejectedByLlm).toBeGreaterThan(0);
+  });
+
+  it("logs the verdict and confidence for each rejected pair in verbose mode (GlitchTip issue 25)", async () => {
+    storeFact("The service listens on port 8080 in staging");
+    storeFact("Staging runs the service on port 8080");
+    const lines: string[] = [];
+    const verboseLogger = { info: (m: string) => lines.push(m), warn: () => {} };
+
+    const r = await runContradictionCandidates(
+      fakeDeps(MID_SCORE, { verdict: "neutral", confidence: 0.42 }),
+      cfg,
+      { verbose: true },
+      verboseLogger,
+    );
+
+    expect(r.rejectedByLlm).toBeGreaterThan(0);
+    expect(lines.some((l) => l.includes("rejected") && l.includes("verdict=neutral") && l.includes("0.42"))).toBe(true);
   });
 
   it("caps LLM calls at maxPairsPerRun and dryRun records nothing", async () => {
@@ -178,5 +229,49 @@ describe("free-text contradiction candidates", () => {
     const r = await runContradictionCandidates(fakeDeps(MID_SCORE, CONTRA), cfg, {}, logger);
     expect(r.scanned).toBe(0);
     expect(r.llmCalls).toBe(0);
+  });
+});
+
+describe("contradiction-candidates — LLM failure classification (GlitchTip issue 25)", () => {
+  it("tags a transport/provider NLI failure with llm_failure_class and stops after 3 failures", async () => {
+    storeFact("Fact A about deployment order in the pipeline");
+    storeFact("Fact B contradicting deployment order in the pipeline");
+    for (let i = 0; i < 6; i++) {
+      storeFact(`Distinct unrelated statement number ${i} about a different subsystem`);
+    }
+    // Non-retryable config error (401) — no backoff, keeps the test fast.
+    const deps = fakeDepsWithFailingLlm(MID_SCORE, async () => {
+      throw new Error("401 Unauthorized");
+    });
+
+    const r = await runContradictionCandidates(deps, cfg, {}, logger);
+
+    expect(r.semanticOutcome).toBe("partial");
+    expect(r.llmFailures).toBeGreaterThanOrEqual(3);
+    expect(errorReporterMock.capturePluginError).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        operation: "contradiction-nli",
+        tags: expect.objectContaining({ llm_failure_class: "provider_error" }),
+      }),
+    );
+  });
+
+  it("tags a malformed NLI JSON response with invalid_response_format", async () => {
+    storeFact("Fact A about deployment order in the pipeline");
+    storeFact("Fact B contradicting deployment order in the pipeline");
+    const deps = fakeDepsWithFailingLlm(MID_SCORE, async () => ({
+      choices: [{ message: { content: "not valid nli json" } }],
+    }));
+
+    await runContradictionCandidates(deps, cfg, {}, logger);
+
+    expect(errorReporterMock.capturePluginError).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        operation: "contradiction-nli",
+        tags: expect.objectContaining({ llm_failure_class: "invalid_response_format" }),
+      }),
+    );
   });
 });

@@ -1453,6 +1453,50 @@ describe("maintenance log analyzer", () => {
     persistSpy.mockRestore();
   });
 
+  it("threads finding titles (<step>:<classification>) into the summary line (GlitchTip issue 24)", async () => {
+    const root = tmpRoot();
+    const nowMs = Date.now() - 2 * 60 * 60 * 1000;
+    const dayStamp = formatTimestampUtcFromMs(nowMs).slice(0, 10).replace(/-/g, "");
+    const day = join(root, dayStamp);
+    mkdirSync(day, { recursive: true });
+    const iso1 = formatTimestampUtcFromMs(nowMs);
+    const exitPath = join(day, `nightly-distill-${dayStamp}T070000Z-124.exit.txt`);
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(exitPath, `${iso1} distill exit=1`);
+    writeFileSync(logPath, "TypeError: Cannot read properties of undefined\n");
+
+    const result = await runAnalyzeMaintenanceLogs({ root, since: "7d", format: "json", out: "-", noPersist: true }, {
+      cfg: { sqlitePath: "" },
+      factsDb: {} as never,
+    } as unknown as ManageBindings);
+
+    expect(result.summary).toContain("findings=1");
+    expect(result.summary).toContain("findingTitles=[distill:plugin-bug]");
+  });
+
+  it("omits findingTitles entirely when there are no findings", async () => {
+    // A non-empty, all-successful root (steps.length > 0) so the CLI never falls through to its
+    // stdin-piped-input fallback path (which would hang waiting on stdin in this test environment).
+    const root = tmpRoot();
+    const nowMs = Date.now() - 2 * 60 * 60 * 1000;
+    const dayStamp = formatTimestampUtcFromMs(nowMs).slice(0, 10).replace(/-/g, "");
+    const day = join(root, dayStamp);
+    mkdirSync(day, { recursive: true });
+    const iso1 = formatTimestampUtcFromMs(nowMs);
+    const exitPath = join(day, `nightly-distill-${dayStamp}T080000Z-125.exit.txt`);
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(exitPath, `${iso1} distill exit=0`);
+    writeFileSync(logPath, "distill completed normally\n");
+
+    const result = await runAnalyzeMaintenanceLogs({ root, since: "7d", format: "json", out: "-", noPersist: true }, {
+      cfg: { sqlitePath: "" },
+      factsDb: {} as never,
+    } as unknown as ManageBindings);
+
+    expect(result.summary).toContain("findings=0");
+    expect(result.summary).not.toContain("findingTitles=");
+  });
+
   it("rejects --auto-fix-all without --auto-fix instead of silently doing nothing", async () => {
     const root = tmpRoot();
     await expect(

@@ -14,6 +14,11 @@ export const DEPRECATED_HYBRID_MEM_CRON_TOKENS: readonly DeprecatedCronToken[] =
     note: "Flat `analyze-maintenance-logs` subcommand moved under `hybrid-mem maintenance analyze-logs`.",
   },
   {
+    token: "hybrid-mem validate-cron-exit",
+    replacement: "maintenance validate-exit",
+    note: "Flat `validate-cron-exit` subcommand moved under `hybrid-mem maintenance validate-exit`; the cron harness now invokes the grouped form directly.",
+  },
+  {
     token: "workshop remind-pending",
     replacement: "digest pending --since 7d",
     note: "Removed `hybrid-mem workshop` CLI subcommand; use `openclaw hybrid-mem digest pending`.",

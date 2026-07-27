@@ -185,6 +185,66 @@ describe("maintenance-failure-reporter", () => {
     expect(context?.contexts?.maintenance?.failure_category).toBe("semantic_failure");
   });
 
+  it("threads distill batch-failure counts into tags and contexts (GlitchTip issue 27)", async () => {
+    const errorReporterMock = await import("../services/error-reporter.js");
+    const capturePluginErrorSpy = vi.spyOn(errorReporterMock, "capturePluginError");
+    vi.spyOn(errorReporterMock, "initErrorReporter").mockResolvedValue();
+    vi.spyOn(errorReporterMock, "isErrorReporterActive").mockReturnValue(true);
+    vi.spyOn(errorReporterMock, "flushErrorReporter").mockResolvedValue(true);
+
+    const { reportMaintenanceFailureIssues } = await import("../services/maintenance-failure-reporter.js");
+
+    const issue = buildMockIssue({
+      jobName: "nightly-memory-sweep",
+      stepName: "distill",
+      failureCategory: "semantic_failure",
+      failureClass: "distill_partial_batch_failures",
+      batchFailures: 2,
+      hardBatchFailures: 1,
+      truncatedBatches: 1,
+    });
+
+    await reportMaintenanceFailureIssues([issue], {
+      cfg: buildConfig(),
+      pluginVersion: "test-version",
+    });
+
+    const context = capturePluginErrorSpy.mock.calls[0]?.[1];
+    expect(context?.tags?.batch_failures).toBe(2);
+    expect(context?.tags?.hard_batch_failures).toBe(1);
+    expect(context?.tags?.truncated_batches).toBe(1);
+    expect(context?.contexts?.maintenance?.batch_failures).toBe(2);
+    expect(context?.contexts?.maintenance?.hard_batch_failures).toBe(1);
+    expect(context?.contexts?.maintenance?.truncated_batches).toBe(1);
+  });
+
+  it("threads analyzer finding titles into tags and contexts (GlitchTip issue 24)", async () => {
+    const errorReporterMock = await import("../services/error-reporter.js");
+    const capturePluginErrorSpy = vi.spyOn(errorReporterMock, "capturePluginError");
+    vi.spyOn(errorReporterMock, "initErrorReporter").mockResolvedValue();
+    vi.spyOn(errorReporterMock, "isErrorReporterActive").mockReturnValue(true);
+    vi.spyOn(errorReporterMock, "flushErrorReporter").mockResolvedValue(true);
+
+    const { reportMaintenanceFailureIssues } = await import("../services/maintenance-failure-reporter.js");
+
+    const issue = buildMockIssue({
+      jobName: "maintenance-log-analyzer",
+      stepName: "analyze-maintenance-logs",
+      failureCategory: "semantic_failure",
+      failureClass: "analyze_maintenance_logs_strict_fail",
+      findingTitles: ["distill:plugin-bug", "reflect:transient-llm"],
+    });
+
+    await reportMaintenanceFailureIssues([issue], {
+      cfg: buildConfig(),
+      pluginVersion: "test-version",
+    });
+
+    const context = capturePluginErrorSpy.mock.calls[0]?.[1];
+    expect(context?.tags?.finding_titles).toBe("distill:plugin-bug, reflect:transient-llm");
+    expect(context?.contexts?.maintenance?.finding_titles).toEqual(["distill:plugin-bug", "reflect:transient-llm"]);
+  });
+
   it("does not mask original exit status on reporting failure", async () => {
     const errorReporterMock = await import("../services/error-reporter.js");
     vi.spyOn(errorReporterMock, "initErrorReporter").mockRejectedValue(new Error("Reporter init failed"));

@@ -14,6 +14,7 @@ import { contradictionPairExists, recordContradiction } from "../backends/facts-
 import type { MemoryLinkType } from "../backends/facts-db/types.js";
 import type { MemoryEntry, SearchResult } from "../types/memory.js";
 import { maintenanceRunDeadlineReached } from "../utils/maintenance-run-deadline.js";
+import { classifyLlmFailureClass } from "./chat.js";
 import { adjudicateNliContradiction } from "./contradiction-adjudicator.js";
 import { capturePluginError } from "./error-reporter.js";
 
@@ -46,6 +47,12 @@ export interface ContradictionCandidatesResult {
   recorded: number;
   skippedExisting: number;
   skippedStructured: number;
+  /** Pairs the LLM adjudicated as not a contradiction (or below minConfidence) — a healthy outcome,
+   *  not a failure. Distinguishing this from `llmFailures` lets operators tell "the LLM said these
+   *  aren't contradictions" from "the LLM was flaky/erroring" when `recorded` is 0. */
+  rejectedByLlm: number;
+  /** NLI calls that threw (transport/provider error or malformed-JSON parse failure). */
+  llmFailures: number;
   semanticOutcome: "success" | "partial" | "deferred";
 }
 
@@ -70,6 +77,8 @@ export async function runContradictionCandidates(
     recorded: 0,
     skippedExisting: 0,
     skippedStructured: 0,
+    rejectedByLlm: 0,
+    llmFailures: 0,
     semanticOutcome: "success",
   };
   if (maintenanceRunDeadlineReached()) {
@@ -163,7 +172,15 @@ export async function runContradictionCandidates(
           { newerText: newer.text, olderText: older.text },
           cfg.fallbackModels,
         );
-        if (verdict.verdict !== "contradiction" || verdict.confidence < cfg.minConfidence) continue;
+        if (verdict.verdict !== "contradiction" || verdict.confidence < cfg.minConfidence) {
+          result.rejectedByLlm++;
+          if (opts.verbose) {
+            logger.info(
+              `memory-hybrid: contradiction-candidates — rejected ${newer.id} vs ${older.id} (verdict=${verdict.verdict}, conf ${verdict.confidence.toFixed(2)})`,
+            );
+          }
+          continue;
+        }
         if (opts.dryRun) {
           result.recorded++;
           continue;
@@ -180,12 +197,16 @@ export async function runContradictionCandidates(
         }
       } catch (err) {
         llmFailures++;
+        result.llmFailures++;
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "contradiction-nli",
           subsystem: "openai",
+          tags: { llm_failure_class: classifyLlmFailureClass(err) },
         });
         if (llmFailures >= 3) {
-          logger.warn("memory-hybrid: contradiction-candidates — repeated NLI failures; stopping this run");
+          logger.warn(
+            `memory-hybrid: contradiction-candidates — repeated NLI failures; stopping this run (last failure class=${classifyLlmFailureClass(err)})`,
+          );
           return { ...result, semanticOutcome: "partial" };
         }
       }
