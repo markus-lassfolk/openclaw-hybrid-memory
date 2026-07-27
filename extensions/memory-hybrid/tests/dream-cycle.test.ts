@@ -1197,7 +1197,50 @@ describe("runDreamCycle", () => {
     );
 
     expect(result.success).toBe(false);
-    expect(result.failedStages).toContain("reflect-rules");
+    // The bare stage name alone isn't actionable — the failure *reason* (zeroRulesReason) must
+    // survive into failedStages/the digest so an operator doesn't have to dig through logs to
+    // learn why reflect-rules failed.
+    expect(result.failedStages).toContain("reflect-rules (model_empty)");
+    expect(result.failedStages).not.toContain("reflect-rules");
+    expect(result.digestSummary).toContain("reflect-rules (model_empty)");
+  });
+
+  it("marks reflect-rules as failed with a fixed reason marker when the stage throws", async () => {
+    for (let i = 0; i < 3; i++) {
+      factsDb.store({
+        text: `Pattern ${i}`,
+        category: "pattern",
+        importance: 0.7,
+        entity: null,
+        key: null,
+        value: null,
+        source: "test",
+        decayClass: "stable",
+      });
+    }
+    vi.spyOn(reflection, "runReflectionRules").mockRejectedValue(new Error("boom, with a comma"));
+
+    const openaiStub = {
+      chat: { completions: { create: vi.fn().mockRejectedValue(new Error("no key")) } },
+    } as never;
+    const embeddingsStub = { embed: vi.fn().mockRejectedValue(new Error("no key")) } as never;
+
+    const result = await runDreamCycle(
+      factsDb,
+      {} as never,
+      embeddingsStub,
+      openaiStub,
+      null,
+      baseConfig,
+      silentLogger,
+    );
+
+    expect(result.success).toBe(false);
+    // A fixed marker, not the raw (possibly comma-containing) error message — buildDigestSummary()
+    // joins failedStages with ", ", so an arbitrary thrown message could otherwise corrupt the
+    // rendered list.
+    expect(result.failedStages).toContain("reflect-rules (reflect_rules_threw)");
+    expect(result.digestSummary).toContain("reflect-rules (reflect_rules_threw)");
   });
 
   it("removes orphaned vectors and reports reconciliation in the digest", async () => {
