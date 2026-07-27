@@ -1,0 +1,69 @@
+name: Check GlitchTip Open Issues
+
+on:
+  workflow_dispatch:
+    inputs:
+      org_slug:
+        description: "GlitchTip organization slug"
+        required: false
+        default: "hybrid-memory"
+      project_slug:
+        description: "GlitchTip project slug"
+        required: false
+        default: "openclaw-hybrid-memory"
+      query:
+        description: "GlitchTip issue search query"
+        required: false
+        default: "is:unresolved"
+
+permissions:
+  contents: read
+
+jobs:
+  check-issues:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Query GlitchTip for open issues
+        env:
+          GLITCHTIP_TOKEN: ${{ secrets.GLITCHTIP_TOKEN }}
+          GLITCHTIP_BASE_URL: ${{ secrets.GLITCHTIP_BASE_URL }}
+          ORG_SLUG: ${{ inputs.org_slug || 'hybrid-memory' }}
+          PROJECT_SLUG: ${{ inputs.project_slug || 'openclaw-hybrid-memory' }}
+          QUERY: ${{ inputs.query || 'is:unresolved' }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GLITCHTIP_TOKEN:-}" ] || [ -z "${GLITCHTIP_BASE_URL:-}" ]; then
+            echo "::error::GLITCHTIP_TOKEN or GLITCHTIP_BASE_URL repository secret is not set"
+            exit 1
+          fi
+
+          http_code=$(curl -sS -G \
+            -o response.json -w "%{http_code}" \
+            -H "Authorization: Bearer ${GLITCHTIP_TOKEN}" \
+            --data-urlencode "query=${QUERY}" \
+            --data-urlencode "limit=100" \
+            "${GLITCHTIP_BASE_URL}/api/0/projects/${ORG_SLUG}/${PROJECT_SLUG}/issues/")
+
+          echo "HTTP status: ${http_code}"
+
+          if [ "${http_code}" != "200" ]; then
+            echo "::error::GlitchTip API returned HTTP ${http_code}"
+            cat response.json
+            exit 1
+          fi
+
+          count=$(jq 'length' response.json)
+          echo "Open issues: ${count}"
+
+          {
+            echo "## GlitchTip open issues — ${ORG_SLUG}/${PROJECT_SLUG}"
+            echo
+            echo "Query: \`${QUERY}\` — **${count} open**"
+            echo
+            if [ "${count}" -eq 0 ]; then
+              echo "_No open issues._"
+            else
+              jq -r '.[] | "- **#\(.id)** \(.title) _(level=\(.level), events=\(.count), lastSeen=\(.lastSeen))_"' response.json
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
