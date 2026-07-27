@@ -191,6 +191,22 @@ describe("LearningsDB — list & count", () => {
     expect(db.list({ limit: 2 }).length).toBe(2);
   });
 
+  it("does not throw when type/status filters are bare scalars instead of arrays (regression, issue #2185)", () => {
+    const typeAsArray = db.list({ type: ["error"] });
+    let typeAsScalar: ReturnType<typeof db.list> = [];
+    expect(() => {
+      typeAsScalar = db.list({ type: "error" as any });
+    }).not.toThrow();
+    expect(typeAsScalar.map((e) => e.id)).toEqual(typeAsArray.map((e) => e.id));
+
+    const statusAsArray = db.list({ status: ["open"] });
+    let statusAsScalar: ReturnType<typeof db.list> = [];
+    expect(() => {
+      statusAsScalar = db.list({ status: "open" as any });
+    }).not.toThrow();
+    expect(statusAsScalar.map((e) => e.id)).toEqual(statusAsArray.map((e) => e.id));
+  });
+
   it("count() returns total", () => {
     expect(db.count()).toBe(4);
     expect(db.count({ type: "error" })).toBe(2);

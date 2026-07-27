@@ -10,6 +10,7 @@ import type {
   LiveCheckStatus,
   SuggestedLiveCheck,
 } from "../../types/belief-types.js";
+import { toArrayFilter } from "../../utils/array-filter.js";
 import { nowIso } from "../../utils/dates.js";
 import { clamp01, parseJsonColumn } from "./json-helpers.js";
 
@@ -127,9 +128,12 @@ export function listClaims(db: DatabaseSync, filter?: ClaimFilter): Claim[] {
     query += " AND scope = ?";
     params.push(filter.scope);
   }
-  if (filter?.status && filter.status.length > 0) {
-    query += ` AND status IN (${filter.status.map(() => "?").join(", ")})`;
-    params.push(...filter.status);
+  // toArrayFilter guards against a bare scalar (e.g. a non-tool caller passing status directly)
+  // the same way the tool layer does, so this store is safe on its own (issue #2185).
+  const status = toArrayFilter(filter?.status);
+  if (status && status.length > 0) {
+    query += ` AND status IN (${status.map(() => "?").join(", ")})`;
+    params.push(...status);
   }
   if (filter?.liveCheckRequired !== undefined) {
     query += " AND live_check_required = ?";

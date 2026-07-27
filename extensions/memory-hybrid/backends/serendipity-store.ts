@@ -34,6 +34,7 @@ import {
   SERENDIPITY_BACKLOG_STATUSES,
   SERENDIPITY_TRANSITIONS,
 } from "../types/serendipity-types.js";
+import { toArrayFilter } from "../utils/array-filter.js";
 import { addDaysUtcIso, cutoffIsoDaysAgo, nowIso } from "../utils/dates.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
 import { normalizedHash } from "../utils/tags.js";
@@ -379,21 +380,28 @@ export class SerendipityStore extends BaseSqliteStore {
   list(filter?: ListFindingsFilter): SerendipityFinding[] {
     let query = "SELECT * FROM serendipity_findings WHERE 1=1";
     const params: SQLInputValue[] = [];
-    if (filter?.status && filter.status.length > 0) {
-      query += ` AND status IN (${filter.status.map(() => "?").join(", ")})`;
-      params.push(...filter.status);
+    // toArrayFilter guards against a bare scalar (e.g. a non-tool caller passing one of these
+    // fields directly) the same way the tool layer does, so this store is safe on its own
+    // (issue #2185).
+    const status = toArrayFilter(filter?.status);
+    if (status && status.length > 0) {
+      query += ` AND status IN (${status.map(() => "?").join(", ")})`;
+      params.push(...status);
     }
-    if (filter?.findingType && filter.findingType.length > 0) {
-      query += ` AND finding_type IN (${filter.findingType.map(() => "?").join(", ")})`;
-      params.push(...filter.findingType);
+    const findingType = toArrayFilter(filter?.findingType);
+    if (findingType && findingType.length > 0) {
+      query += ` AND finding_type IN (${findingType.map(() => "?").join(", ")})`;
+      params.push(...findingType);
     }
-    if (filter?.riskLevel && filter.riskLevel.length > 0) {
-      query += ` AND risk_level IN (${filter.riskLevel.map(() => "?").join(", ")})`;
-      params.push(...filter.riskLevel);
+    const riskLevel = toArrayFilter(filter?.riskLevel);
+    if (riskLevel && riskLevel.length > 0) {
+      query += ` AND risk_level IN (${riskLevel.map(() => "?").join(", ")})`;
+      params.push(...riskLevel);
     }
-    if (filter?.suggestedAction && filter.suggestedAction.length > 0) {
-      query += ` AND suggested_action IN (${filter.suggestedAction.map(() => "?").join(", ")})`;
-      params.push(...filter.suggestedAction);
+    const suggestedAction = toArrayFilter(filter?.suggestedAction);
+    if (suggestedAction && suggestedAction.length > 0) {
+      query += ` AND suggested_action IN (${suggestedAction.map(() => "?").join(", ")})`;
+      params.push(...suggestedAction);
     }
     if (filter?.repo) {
       query += " AND repo = ?";
