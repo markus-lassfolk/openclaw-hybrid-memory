@@ -41,8 +41,8 @@ describe("research-overnight cron job install", () => {
       const job = readJobs(openclawDir).find((j) => j.pluginJobId === RESEARCH_OVERNIGHT_JOB_ID);
       expect(job).toBeTruthy();
       expect(job?.enabled).toBe(true);
-      expect((job?.schedule as { expr: string }).expr).toBe("15 4 * * *");
-      expect((job?.delivery as { mode: string }).mode).toBe("none");
+      expect((job!.schedule as { expr: string }).expr).toBe("15 4 * * *");
+      expect((job!.delivery as { mode: string }).mode).toBe("none");
       const message = String(job?.message ?? "");
       expect(message).toContain("research pick --json");
       expect(message).toContain("research store --topic-id");
@@ -95,7 +95,8 @@ describe("research-overnight cron job install", () => {
         },
       });
       const job = readJobs(openclawDir).find((j) => j.pluginJobId === RESEARCH_OVERNIGHT_JOB_ID);
-      expect((job?.delivery as { mode: string }).mode).toBe("none");
+      expect(job).toBeTruthy();
+      expect((job!.delivery as { mode: string }).mode).toBe("none");
     } finally {
       rmSync(openclawDir, { recursive: true, force: true });
     }

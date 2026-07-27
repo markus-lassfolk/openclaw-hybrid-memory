@@ -227,13 +227,12 @@ describe("Comprehensive e2e — full plugin register()", () => {
     it("facts persist on disk and can be read from a new FactsDB connection", async () => {
       register();
       const text = "Persisted on disk for secondary connection read";
-      const id = (
-        (await api.getTool("memory_store")?.execute("c1", {
-          text,
-          category: "fact",
-          importance: 0.7,
-        })) as { details?: { id: string } }
-      ).details?.id;
+      const storeResult = (await api.getTool("memory_store")?.execute("c1", {
+        text,
+        category: "fact",
+        importance: 0.7,
+      })) as { details?: { id: string } };
+      const id = storeResult.details?.id;
 
       const sqlitePath = join(tmpDir, "facts.db");
       const reader = new FactsDB(sqlitePath, { fuzzyDedupe: false });
@@ -249,13 +248,12 @@ describe("Comprehensive e2e — full plugin register()", () => {
       register();
       const sqlitePath = join(tmpDir, "facts.db");
       const lancePath = join(tmpDir, "lancedb");
-      const stored = (
-        (await api.getTool("memory_store")?.execute("c1", {
-          text: "Verify reconcile in-sync fact",
-          category: "fact",
-          importance: 0.8,
-        })) as { details?: { id: string } }
-      ).details!;
+      const storeResult = (await api.getTool("memory_store")?.execute("c1", {
+        text: "Verify reconcile in-sync fact",
+        category: "fact",
+        importance: 0.8,
+      })) as { details?: { id: string } };
+      const stored = storeResult.details!;
 
       const vectorDb = new VectorDB(lancePath, E2E_EMBEDDING_DIM, false);
       try {

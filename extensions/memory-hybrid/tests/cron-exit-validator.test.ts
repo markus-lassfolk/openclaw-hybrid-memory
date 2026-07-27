@@ -501,36 +501,37 @@ error: unknown command 'bar'
       expect(result.error).toContain("continuous-verification (exit=2 errors_present)");
     });
 
-    it.each([
-      ["errors_present", 12] as const,
-    ])("fails dream-cycle validation when continuous verification reports degraded %s machine status", (reason, errors) => {
-      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
-      const exitPath = join(tmpDir, "test.exit.txt");
-      const logPath = join(tmpDir, "test.log");
-      writeFileSync(exitPath, "2024-05-08T03:00:00Z dream-cycle exit=0\n");
-      writeFileSync(
-        logPath,
-        [
-          "Continuous verification complete:",
-          "  Checked: 12",
-          "  Confirmed: 0",
-          "  Stale: 0",
-          "  Uncertain: 12",
-          `  Errors: ${errors}`,
-          `  Machine status: status=degraded reason=${reason} checked=12 confirmed=0 stale=0 uncertain=12 errors=${errors}`,
-        ].join("\n"),
-      );
+    it.each([["errors_present", 12] as const])(
+      "fails dream-cycle validation when continuous verification reports degraded %s machine status",
+      (reason, errors) => {
+        const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+        const exitPath = join(tmpDir, "test.exit.txt");
+        const logPath = join(tmpDir, "test.log");
+        writeFileSync(exitPath, "2024-05-08T03:00:00Z dream-cycle exit=0\n");
+        writeFileSync(
+          logPath,
+          [
+            "Continuous verification complete:",
+            "  Checked: 12",
+            "  Confirmed: 0",
+            "  Stale: 0",
+            "  Uncertain: 12",
+            `  Errors: ${errors}`,
+            `  Machine status: status=degraded reason=${reason} checked=12 confirmed=0 stale=0 uncertain=12 errors=${errors}`,
+          ].join("\n"),
+        );
 
-      const result = validateMaintenanceExecution(exitPath, logPath, ["dream-cycle"]);
+        const result = validateMaintenanceExecution(exitPath, logPath, ["dream-cycle"]);
 
-      expect(result.maintenanceStatus).toBe("failed");
-      expect(result.guardUpdated).toBe(false);
-      expect(result.failedSteps).toHaveLength(1);
-      expect(result.failedSteps[0].step).toBe("continuous-verification");
-      expect(result.failedSteps[0].timestamp).toBe("2024-05-08T03:00:00Z");
-      expect(result.failedSteps[0].failureReason).toBe(reason);
-      expect(result.error).toContain(`continuous-verification (exit=2 ${reason})`);
-    });
+        expect(result.maintenanceStatus).toBe("failed");
+        expect(result.guardUpdated).toBe(false);
+        expect(result.failedSteps).toHaveLength(1);
+        expect(result.failedSteps[0].step).toBe("continuous-verification");
+        expect(result.failedSteps[0].timestamp).toBe("2024-05-08T03:00:00Z");
+        expect(result.failedSteps[0].failureReason).toBe(reason);
+        expect(result.error).toContain(`continuous-verification (exit=2 ${reason})`);
+      },
+    );
 
     it("does not fail dream-cycle validation when continuous verification only reports all-uncertain outcomes", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));

@@ -151,6 +151,7 @@ function parseLinkDecayConfig(raw: unknown): GraphConfig["linkDecay"] {
 
 export function parseGraphRetrievalConfig(cfg: Record<string, unknown>): GraphRetrievalConfig {
   const graphRetrievalRaw = cfg.graphRetrieval as Record<string, unknown> | undefined;
+  const autoRecallExpandRaw = graphRetrievalRaw?.autoRecallExpand as Record<string, unknown> | undefined;
   return {
     enabled: graphRetrievalRaw?.enabled !== false,
     defaultExpand: graphRetrievalRaw?.defaultExpand === true,
@@ -163,11 +164,10 @@ export function parseGraphRetrievalConfig(cfg: Record<string, unknown>): GraphRe
         ? Math.min(50, Math.floor(graphRetrievalRaw.maxExpandedResults))
         : 20,
     autoRecallExpand: {
-      enabled: (graphRetrievalRaw?.autoRecallExpand as Record<string, unknown> | undefined)?.enabled !== false,
+      enabled: autoRecallExpandRaw?.enabled !== false,
       maxAdds:
-        typeof (graphRetrievalRaw?.autoRecallExpand as Record<string, unknown> | undefined)?.maxAdds === "number" &&
-        ((graphRetrievalRaw?.autoRecallExpand as Record<string, unknown>).maxAdds as number) > 0
-          ? Math.floor((graphRetrievalRaw?.autoRecallExpand as Record<string, unknown>).maxAdds as number)
+        typeof autoRecallExpandRaw?.maxAdds === "number" && autoRecallExpandRaw.maxAdds > 0
+          ? Math.floor(autoRecallExpandRaw.maxAdds)
           : 5,
     },
   };
@@ -1267,10 +1267,9 @@ export function parseLifecycleConfig(cfg: Record<string, unknown>): LifecycleAda
   const halfLifeRaw = raw?.contentTypeHalfLives as Record<string, unknown> | undefined;
   const validAction = (value: unknown): "expire-now" | "expire-soon" | "keep-stable" | undefined =>
     value === "expire-now" || value === "expire-soon" || value === "keep-stable" ? value : undefined;
-  const repos = Array.isArray(github?.repos)
-    ? (github?.repos as unknown[])
-        .filter((r): r is string => typeof r === "string" && r.trim().length > 0)
-        .map((r) => r.trim())
+  const githubReposRaw = github?.repos;
+  const repos = Array.isArray(githubReposRaw)
+    ? githubReposRaw.filter((r): r is string => typeof r === "string" && r.trim().length > 0).map((r) => r.trim())
     : undefined;
   return {
     adapters: {
