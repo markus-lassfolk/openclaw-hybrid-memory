@@ -43,7 +43,13 @@ export function shouldReportMaintenanceFailures(
   return cfg.errorReporting.enabled === true && cfg.errorReporting.consent === true;
 }
 
-function resolveErrorReportQueuePath(resolvedSqlitePath?: string): string | undefined {
+/**
+ * Exported so other one-shot CLI entry points that also call `initErrorReporter` directly (e.g.
+ * the maintenance orchestrator's `runTier`, register-maintenance-orchestrator.ts) can derive the
+ * same durable on-disk retry queue path from `resolvedSqlitePath` without duplicating the
+ * `:memory:`-aware join logic in a second place.
+ */
+export function resolveErrorReportQueuePath(resolvedSqlitePath?: string): string | undefined {
   if (!resolvedSqlitePath || resolvedSqlitePath === ":memory:") return undefined;
   return join(dirname(resolvedSqlitePath), ".error_reports.pending.jsonl");
 }
