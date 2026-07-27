@@ -337,12 +337,19 @@ export function readGuardTimestampMs(jobName: string, openclawDir?: string): num
  *
  * The persistent path (~/.openclaw/cron/guard/) survives system reboots,
  * unlike the old /tmp/ files used by issue #304.
+ *
+ * The WRITE side of this guard is intentionally NOT the agent's job (issue: cron harness
+ * guard-update contract was prose-only, with no bash-level code actually checking whether the
+ * run really succeeded). The generated bash harness (services/cron-job-bash-harness.ts,
+ * hm_validate()) now writes this same guard file itself, deterministically, only when the
+ * wrapped steps and `maintenance validate-exit` both succeeded — see the `GUARD_WRITE` line it
+ * tees into HM_LOG. This prefix therefore only covers the READ/skip-check side; the prose no
+ * longer asks the agent to perform the write itself.
  */
 export function buildGuardPrefix(jobName: string, minIntervalMs: number, openclawDir?: string): string {
   const hours = Math.round(minIntervalMs / (60 * 60 * 1000));
   const guardFile = getGuardFilePath(jobName, openclawDir);
-  const guardDir = getGuardDir(openclawDir);
-  return `GUARD CHECK (issue #305): Before running, read the last-run guard file: cat "${guardFile}" 2>/dev/null. If the file contains a number T (Unix epoch ms) where (current epoch ms − T) < ${minIntervalMs} (${hours}h guard window), reply ONLY 'Skipped: ${jobName} — ran within ${hours}h guard window' and stop. Otherwise proceed with the task below. AFTER successful completion: mkdir -p "${guardDir}" and write the current Unix epoch ms to "${guardFile}".\n\n`;
+  return `GUARD CHECK (issue #305): Before running, read the last-run guard file: cat "${guardFile}" 2>/dev/null. If the file contains a number T (Unix epoch ms) where (current epoch ms − T) < ${minIntervalMs} (${hours}h guard window), reply ONLY 'Skipped: ${jobName} — ran within ${hours}h guard window' and stop. Otherwise proceed with the task below. The bash harness itself writes "${guardFile}" (Unix epoch ms) automatically once it mechanically confirms the run succeeded — do NOT write this file yourself, even if you believe the run succeeded.\n\n`;
 }
 
 type Logger = { info: (s: string) => void; warn: (s: string) => void };

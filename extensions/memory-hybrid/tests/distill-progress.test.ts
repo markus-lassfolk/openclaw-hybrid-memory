@@ -39,6 +39,34 @@ describe("distill progress heartbeat (#2029)", () => {
     expect(doneLine).toContain("extracted=0");
     expect(doneLine).toContain("blocks=3/12");
     expect(doneLine).toContain("batchFailures=1");
+    // hardBatchFailures defaults to 0 when the caller doesn't track it separately (backward compat).
+    expect(doneLine).toContain("hardBatchFailures=0");
+  });
+
+  it("threads hardBatchFailures into the done line when provided (GlitchTip issue 27 diagnostics)", () => {
+    vi.useFakeTimers();
+    const lines: string[] = [];
+    const reporter = startDistillProgress({
+      verbose: true,
+      logger: { info: (m: string) => lines.push(m) },
+      sessions: 10,
+      totalBlocks: 4,
+      getState: () => ({ batch: 1, processedBlocks: 0, cursorBlock: 0 }),
+      intervalMs: 30_000,
+    });
+
+    reporter.done({
+      status: "partial",
+      extracted: 0,
+      processedBlocks: 2,
+      batchFailures: 2,
+      hardBatchFailures: 1,
+      truncatedBatches: 1,
+    });
+    const doneLine = lines.at(-1) ?? "";
+    expect(doneLine).toContain("batchFailures=2");
+    expect(doneLine).toContain("hardBatchFailures=1");
+    expect(doneLine).toContain("truncatedBatches=1");
   });
 
   it("stops the heartbeat after done so no further lines are emitted", () => {

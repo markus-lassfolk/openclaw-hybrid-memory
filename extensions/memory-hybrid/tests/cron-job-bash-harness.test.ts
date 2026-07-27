@@ -41,7 +41,7 @@ describe("cron-job-bash-harness", () => {
     expect(bash).toContain('timeout "$timeout_secs" "${cmd[@]}" 2>&1 | tee -a "$HM_LOG" "$step_output"');
     expect(bash).toContain("openclaw --version");
     expect(bash).toContain(
-      'openclaw hybrid-mem validate-cron-exit --exit-path "$HM_EXIT" --log-path "$HM_LOG" --summary-path "$HM_SUMMARY" --required-steps',
+      'openclaw hybrid-mem maintenance validate-exit --exit-path "$HM_EXIT" --log-path "$HM_LOG" --summary-path "$HM_SUMMARY" --required-steps',
     );
     expect(bash).toContain("trap 'ec=$?; trap - EXIT; hm_validate \"$ec\"; exit $?' EXIT");
     expect(bash).toContain("trap 'trap - TERM INT HUP QUIT; hm_validate 143; exit $?' TERM INT");
@@ -61,7 +61,7 @@ describe("cron-job-bash-harness", () => {
     expect(msg).toContain("EXECUTION (durable logs + per-step exits)");
     expect(msg).toContain("```bash");
     expect(msg).toContain('hm_step "t1" openclaw hybrid-mem sensor-sweep --tier 1');
-    expect(msg).toContain("The bash harness automatically runs `openclaw hybrid-mem validate-cron-exit`");
+    expect(msg).toContain("The bash harness automatically runs `openclaw hybrid-mem maintenance validate-exit`");
   });
 
   it("tells the agent what to do when no top-level exec tool is available (#1961 dead-end fix)", () => {
@@ -111,7 +111,7 @@ for ((_hm_i=0; _hm_i<\${#_hm_args[@]}; _hm_i++)); do
 done
 if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "prune" ]; then echo "pruned"; exit 0; fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then
   echo called > ${JSON.stringify(marker)}
   exit_path=""
   while [ "$#" -gt 0 ]; do
@@ -164,7 +164,7 @@ for ((_hm_i=0; _hm_i<\${#_hm_args[@]}; _hm_i++)); do
 done
 if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "prune" ]; then echo "pruned"; exit 0; fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"partial"}' | tee \${output_json:+"$output_json"}; exit 1; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then echo '{"maintenanceStatus":"partial"}' | tee \${output_json:+"$output_json"}; exit 1; fi
 echo "unexpected openclaw args: $*" >&2
 exit 2
 `,
@@ -213,7 +213,7 @@ if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "distill" ]; then
   echo "distill stored=5 sessions=3 batchFailures=2 semantic=partial"
   exit 0
 fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then
   echo '{"maintenanceStatus":"failed","semanticStatus":"degraded","recommendedExitCode":2}' | tee \${output_json:+"$output_json"}
   exit 2
 fi
@@ -263,7 +263,7 @@ if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "reflect-meta" ]; then
   echo "Implicit-feedback collapse summary: scanned 10387, collapsed 0, status=no_changes"
   exit 0
 fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then
   echo '{"maintenanceStatus":"failed"}' | tee \${output_json:+"$output_json"}
   exit 1
 fi
@@ -315,7 +315,7 @@ for ((_hm_i=0; _hm_i<\${#_hm_args[@]}; _hm_i++)); do
 done
 if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "prune" ]; then echo "pruned"; exit 0; fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}' | tee \${output_json:+"$output_json"}; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then echo '{"maintenanceStatus":"success"}' | tee \${output_json:+"$output_json"}; exit 0; fi
 echo "unexpected openclaw args: $*" >&2
 exit 2
 `,
@@ -363,7 +363,7 @@ if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "distill" ]; then
   echo ran > ${JSON.stringify(shouldNotRun)}
   exit 0
 fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then
   echo called > ${JSON.stringify(marker)}
   exit_path=""
   while [ "$#" -gt 0 ]; do
@@ -433,7 +433,7 @@ if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "resolve-contradictions" ]; the
   echo "downstream-ran" > ${JSON.stringify(marker)}
   exit 0
 fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then
   exit_path=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -505,7 +505,7 @@ if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "self-correction-run" ]; then
   echo "Skipping self-correction-run: cooldown active. status=skipped_cooldown"
   exit 0
 fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then
   exit_path=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -557,7 +557,7 @@ if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "self-correction-run" ]; then
   echo "Error: simulated first-batch LLM API failure status=failed"
   exit 1
 fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then
   echo '{"maintenanceStatus":"failed"}' | tee \${output_json:+"$output_json"}
   exit 1
 fi
@@ -606,7 +606,7 @@ if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "self-correction-run" ]; then
   echo "Error: simulated partial batch failure status=failed_partial"
   exit 1
 fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then
   echo '{"maintenanceStatus":"failed"}' | tee \${output_json:+"$output_json"}
   exit 1
 fi
@@ -654,7 +654,7 @@ for ((_hm_i=0; _hm_i<\${#_hm_args[@]}; _hm_i++)); do
 done
 if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "prune" ]; then echo "pruned"; exit 0; fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}' | tee \${output_json:+"$output_json"}; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then echo '{"maintenanceStatus":"success"}' | tee \${output_json:+"$output_json"}; exit 0; fi
 echo "unexpected openclaw args: $*" >&2
 exit 2
 `,
@@ -699,7 +699,7 @@ if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "extract-procedures" ]; then
   printf '%s\n' "$*" > ${JSON.stringify(marker)}
   exit 0
 fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}' | tee \${output_json:+"$output_json"}; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then echo '{"maintenanceStatus":"success"}' | tee \${output_json:+"$output_json"}; exit 0; fi
 echo "unexpected openclaw args: $*" >&2
 exit 2
 `,
@@ -745,7 +745,7 @@ if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "distill" ]; then
   printf '%s\n' "$*" > ${JSON.stringify(marker)}
   exit 0
 fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}' | tee \${output_json:+"$output_json"}; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then echo '{"maintenanceStatus":"success"}' | tee \${output_json:+"$output_json"}; exit 0; fi
 echo "unexpected openclaw args: $*" >&2
 exit 2
 `,
@@ -791,7 +791,7 @@ if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "extract-daily" ]; then
   printf '%s\n' "$*" > ${JSON.stringify(marker)}
   exit 0
 fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}' | tee \${output_json:+"$output_json"}; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then echo '{"maintenanceStatus":"success"}' | tee \${output_json:+"$output_json"}; exit 0; fi
 echo "unexpected openclaw args: $*" >&2
 exit 2
 `,
@@ -837,7 +837,7 @@ if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "reflect" ]; then
   printf '%s\n' "$*" > ${JSON.stringify(marker)}
   exit 0
 fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}' | tee \${output_json:+"$output_json"}; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then echo '{"maintenanceStatus":"success"}' | tee \${output_json:+"$output_json"}; exit 0; fi
 echo "unexpected openclaw args: $*" >&2
 exit 2
 `,
@@ -884,7 +884,7 @@ if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "extract-daily" ]; then
   printf '%s\n' "$*" > ${JSON.stringify(marker)}
   exit 0
 fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}' | tee \${output_json:+"$output_json"}; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then echo '{"maintenanceStatus":"success"}' | tee \${output_json:+"$output_json"}; exit 0; fi
 echo "unexpected openclaw args: $*" >&2
 exit 2
 `,
@@ -934,7 +934,7 @@ if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "resolve-contradictions" ]; the
   echo "resolve-contradictions ran" > ${JSON.stringify(secondStepMarker)}
   exit 0
 fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"partial"}' | tee \${output_json:+"$output_json"}; exit 1; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then echo '{"maintenanceStatus":"partial"}' | tee \${output_json:+"$output_json"}; exit 1; fi
 echo "unexpected openclaw args: $*" >&2
 exit 2
 `,
@@ -1031,7 +1031,7 @@ for ((_hm_i=0; _hm_i<\${#_hm_args[@]}; _hm_i++)); do
 done
 if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "prune" ]; then echo "pruned"; exit 0; fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then
   # Simulate host/plugin bootstrap logs landing on stdout ahead of the JSON payload — exactly the
   # pollution --output-json is meant to be immune to, since it writes the file directly.
   echo "[plugins] loading openclaw-hybrid-memory from /fake/dist/index.js"
@@ -1086,7 +1086,7 @@ exit 2
 set -euo pipefail
 if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "prune" ]; then echo "pruned"; exit 0; fi
-if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then
   # Simulate a crash before the command ever reaches its --output-json write — the file mktemp
   # created for validate_output stays empty (0 bytes).
   echo "fatal: simulated crash before --output-json write" >&2
@@ -1118,5 +1118,321 @@ exit 2
     expect(validationRaw.length).toBeGreaterThan(0);
     expect(() => JSON.parse(validationRaw)).not.toThrow();
     expect(JSON.parse(validationRaw)).toMatchObject({ maintenanceStatus: "unknown" });
+  });
+
+  // Issue: cron harness still emitted the deprecated flat `validate-cron-exit` command instead of
+  // the grouped `maintenance validate-exit` form (the grouped form has worked as a real registered
+  // command since the deprecated-alias map added it; only the harness generator lagged behind).
+  describe("invokes the grouped maintenance validate-exit command, not the deprecated flat alias", () => {
+    it("never emits the literal deprecated invocation `openclaw hybrid-mem validate-cron-exit `", () => {
+      const bash = buildHybridMemCronBashBody("nightly-memory-sweep", [
+        { name: "prune", cmd: "openclaw hybrid-mem prune --verbose" },
+      ]);
+      expect(bash).not.toContain("openclaw hybrid-mem validate-cron-exit ");
+      // Broader guard: the two literal tokens must never even be adjacent, in the bash body or in
+      // the full task message (preamble + orchestration prose), regardless of surrounding text.
+      expect(bash).not.toContain("hybrid-mem validate-cron-exit");
+      const msg = buildHybridMemCronTaskMessage("nightly-memory-sweep", {
+        steps: [{ name: "prune", cmd: "openclaw hybrid-mem prune --verbose" }],
+      });
+      expect(msg).not.toContain("hybrid-mem validate-cron-exit");
+    });
+
+    it("emits the grouped `openclaw hybrid-mem maintenance validate-exit` invocation", () => {
+      const bash = buildHybridMemCronBashBody("nightly-memory-sweep", [
+        { name: "prune", cmd: "openclaw hybrid-mem prune --verbose" },
+      ]);
+      expect(bash).toContain("openclaw hybrid-mem maintenance validate-exit");
+      const msg = buildHybridMemCronTaskMessage("nightly-memory-sweep", {
+        steps: [{ name: "prune", cmd: "openclaw hybrid-mem prune --verbose" }],
+      });
+      expect(msg).toContain("openclaw hybrid-mem maintenance validate-exit");
+    });
+
+    it("keeps the `--- validate-cron-exit ---` log header and `validate-cron-exit exit=` ledger row label unchanged (analyzer compatibility)", () => {
+      const bash = buildHybridMemCronBashBody("nightly-memory-sweep", [
+        { name: "prune", cmd: "openclaw hybrid-mem prune --verbose" },
+      ]);
+      expect(bash).toContain('echo "--- validate-cron-exit ---"');
+      expect(bash).toContain("validate-cron-exit exit=${validation_ec}");
+    });
+  });
+
+  // Issue: cron harness's guard-update contract was prose-only — the executing agent was simply
+  // instructed to write the guard file "after successful completion" with no bash-level code
+  // actually checking that. hm_validate() now writes ~/.openclaw/cron/guard/<job>.ms itself,
+  // mechanically, gated on the wrapped steps + validate-exit + its parsed JSON + a redundant
+  // raw-ledger recheck of every required step.
+  describe("mechanical guard-file write gate (hm_validate)", () => {
+    function writeFakeOpenclaw(bin: string, script: string): void {
+      const fakeOpenclaw = join(bin, "openclaw");
+      writeFileSync(fakeOpenclaw, script);
+      chmodSync(fakeOpenclaw, 0o755);
+    }
+
+    function guardFilePath(home: string, jobName: string): string {
+      return join(home, "cron", "guard", `${jobName}.ms`);
+    }
+
+    it("writes the guard file when validation reports guardUpdated=true and maintenanceStatus=success", () => {
+      const tmp = mkdtempSync(join(tmpdir(), "hm-guard-write-"));
+      const bin = join(tmp, "bin");
+      const home = join(tmp, "oc-home");
+      mkdirSync(bin, { recursive: true });
+      mkdirSync(home, { recursive: true });
+      writeFakeOpenclaw(
+        bin,
+        `#!/usr/bin/env bash
+set -euo pipefail
+output_json=""
+args=("$@")
+for ((i=0; i<\${#args[@]}; i++)); do
+  if [ "\${args[$i]}" = "--output-json" ]; then output_json="\${args[$((i+1))]}"; fi
+done
+if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "prune" ]; then echo pruned; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then
+  printf '{"maintenanceStatus":"success","guardUpdated":true}' > "$output_json"
+  exit 0
+fi
+echo "unexpected openclaw args: $*" >&2
+exit 2
+`,
+      );
+
+      const bash = buildHybridMemCronBashBody("nightly-memory-sweep", [
+        { name: "prune", cmd: "openclaw hybrid-mem prune --verbose" },
+      ]);
+      const result = spawnSync("bash", ["-c", bash], {
+        encoding: "utf-8",
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, OPENCLAW_HOME: home },
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout + result.stderr).toContain("GUARD_WRITE job=nightly-memory-sweep eligible=1 result=written");
+      const guardPath = guardFilePath(home, "nightly-memory-sweep");
+      const guardRaw = readFileSync(guardPath, "utf-8").trim();
+      expect(guardRaw).toMatch(/^\d{10,}$/);
+      expect(Number(guardRaw)).toBeGreaterThan(1_000_000_000_000);
+    });
+
+    it("does NOT write the guard file when a required step is missing from the exit ledger, even if validate-exit claims success (defense in depth)", () => {
+      const tmp = mkdtempSync(join(tmpdir(), "hm-guard-write-"));
+      const bin = join(tmp, "bin");
+      const home = join(tmp, "oc-home");
+      mkdirSync(bin, { recursive: true });
+      mkdirSync(home, { recursive: true });
+      writeFakeOpenclaw(
+        bin,
+        `#!/usr/bin/env bash
+set -euo pipefail
+output_json=""
+args=("$@")
+for ((i=0; i<\${#args[@]}; i++)); do
+  if [ "\${args[$i]}" = "--output-json" ]; then output_json="\${args[$((i+1))]}"; fi
+done
+if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "prune" ]; then echo pruned; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then
+  # Adversarial/buggy mock: claims success even though "distill" (a required step) never ran
+  # and is missing from the exit ledger entirely.
+  printf '{"maintenanceStatus":"success","guardUpdated":true}' > "$output_json"
+  exit 0
+fi
+echo "unexpected openclaw args: $*" >&2
+exit 2
+`,
+      );
+
+      // Only "prune" actually runs via hm_step; "distill" is required but never invoked.
+      const bash = buildHybridMemCronBashBody(
+        "nightly-memory-sweep",
+        [{ name: "prune", cmd: "openclaw hybrid-mem prune --verbose" }],
+        ["prune", "distill"],
+      );
+      const result = spawnSync("bash", ["-c", bash], {
+        encoding: "utf-8",
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, OPENCLAW_HOME: home },
+      });
+
+      expect(result.stdout + result.stderr).toContain(
+        "GUARD_WRITE job=nightly-memory-sweep eligible=0 result=skipped_missing_or_failed_required_step",
+      );
+      expect(() => readFileSync(guardFilePath(home, "nightly-memory-sweep"), "utf-8")).toThrow();
+    });
+
+    it("does NOT write the guard file when a required step failed (non-zero exit) in the ledger, even if validate-exit claims success (defense in depth)", () => {
+      const tmp = mkdtempSync(join(tmpdir(), "hm-guard-write-"));
+      const bin = join(tmp, "bin");
+      const home = join(tmp, "oc-home");
+      mkdirSync(bin, { recursive: true });
+      mkdirSync(home, { recursive: true });
+      writeFakeOpenclaw(
+        bin,
+        `#!/usr/bin/env bash
+set -euo pipefail
+output_json=""
+args=("$@")
+for ((i=0; i<\${#args[@]}; i++)); do
+  if [ "\${args[$i]}" = "--output-json" ]; then output_json="\${args[$((i+1))]}"; fi
+done
+if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "extract-daily" ]; then echo "extract-daily failure simulation"; exit 1; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "resolve-contradictions" ]; then echo ok; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then
+  # Adversarial/buggy mock: claims success even though "extract-daily" (a required step, here
+  # NOT the tolerated nightly-memory-sweep/extract-daily special case since HM_JOB differs)
+  # exited non-zero and is recorded as such in the ledger.
+  printf '{"maintenanceStatus":"success","guardUpdated":true}' > "$output_json"
+  exit 0
+fi
+echo "unexpected openclaw args: $*" >&2
+exit 2
+`,
+      );
+
+      // extract-daily is marked optional (chain continues past its failure via `|| true`) but is
+      // still declared as a REQUIRED step for validation purposes (matching how existing tests
+      // already pass a requiredSteps list independent of each step's `optional` flag) — this
+      // isolates "a required step failed but the wrapper's own exit code stayed 0" without
+      // relying on the nightly-memory-sweep/extract-daily special-case tolerance in hm_step().
+      // Use a distinct job name so that special case (scoped to HM_JOB=nightly-memory-sweep)
+      // cannot mask the raw non-zero exit in the ledger.
+      const bash = buildHybridMemCronBashBody(
+        "weekly-generic-job",
+        [
+          { name: "extract-daily", cmd: "openclaw hybrid-mem extract-daily --verbose", optional: true },
+          { name: "resolve-contradictions", cmd: "openclaw hybrid-mem resolve-contradictions --verbose" },
+        ],
+        ["extract-daily", "resolve-contradictions"],
+      );
+      const result = spawnSync("bash", ["-c", bash], {
+        encoding: "utf-8",
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, OPENCLAW_HOME: home },
+      });
+
+      expect(result.stdout + result.stderr).toContain(
+        "GUARD_WRITE job=weekly-generic-job eligible=0 result=skipped_missing_or_failed_required_step",
+      );
+      expect(() => readFileSync(guardFilePath(home, "weekly-generic-job"), "utf-8")).toThrow();
+    });
+
+    it("does NOT write the guard file when maintenanceStatus is partial", () => {
+      const tmp = mkdtempSync(join(tmpdir(), "hm-guard-write-"));
+      const bin = join(tmp, "bin");
+      const home = join(tmp, "oc-home");
+      mkdirSync(bin, { recursive: true });
+      mkdirSync(home, { recursive: true });
+      writeFakeOpenclaw(
+        bin,
+        `#!/usr/bin/env bash
+set -euo pipefail
+output_json=""
+args=("$@")
+for ((i=0; i<\${#args[@]}; i++)); do
+  if [ "\${args[$i]}" = "--output-json" ]; then output_json="\${args[$((i+1))]}"; fi
+done
+if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "prune" ]; then echo pruned; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then
+  printf '{"maintenanceStatus":"partial","guardUpdated":false}' > "$output_json"
+  exit 1
+fi
+echo "unexpected openclaw args: $*" >&2
+exit 2
+`,
+      );
+
+      const bash = buildHybridMemCronBashBody("nightly-memory-sweep", [
+        { name: "prune", cmd: "openclaw hybrid-mem prune --verbose" },
+      ]);
+      const result = spawnSync("bash", ["-c", bash], {
+        encoding: "utf-8",
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, OPENCLAW_HOME: home },
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stdout + result.stderr).toContain(
+        "GUARD_WRITE job=nightly-memory-sweep eligible=0 result=skipped_validate_exit_nonzero",
+      );
+      expect(() => readFileSync(guardFilePath(home, "nightly-memory-sweep"), "utf-8")).toThrow();
+    });
+
+    it("does NOT write the guard file when validate-exit's output is missing/unparseable (crash before --output-json write)", () => {
+      const tmp = mkdtempSync(join(tmpdir(), "hm-guard-write-"));
+      const bin = join(tmp, "bin");
+      const home = join(tmp, "oc-home");
+      mkdirSync(bin, { recursive: true });
+      mkdirSync(home, { recursive: true });
+      writeFakeOpenclaw(
+        bin,
+        `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "prune" ]; then echo pruned; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then
+  echo "fatal: simulated crash before --output-json write" >&2
+  exit 1
+fi
+echo "unexpected openclaw args: $*" >&2
+exit 2
+`,
+      );
+
+      const bash = buildHybridMemCronBashBody("nightly-memory-sweep", [
+        { name: "prune", cmd: "openclaw hybrid-mem prune --verbose" },
+      ]);
+      const result = spawnSync("bash", ["-c", bash], {
+        encoding: "utf-8",
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, OPENCLAW_HOME: home },
+      });
+
+      expect(result.stdout + result.stderr).toContain("GUARD_WRITE job=nightly-memory-sweep eligible=0");
+      expect(result.stdout + result.stderr).toMatch(
+        /GUARD_WRITE job=nightly-memory-sweep eligible=0 result=skipped_(validate_exit_nonzero|validation_output_unparseable)/,
+      );
+      expect(() => readFileSync(guardFilePath(home, "nightly-memory-sweep"), "utf-8")).toThrow();
+    });
+
+    it("does NOT write the guard file when the wrapped required step itself exits non-zero", () => {
+      const tmp = mkdtempSync(join(tmpdir(), "hm-guard-write-"));
+      const bin = join(tmp, "bin");
+      const home = join(tmp, "oc-home");
+      mkdirSync(bin, { recursive: true });
+      mkdirSync(home, { recursive: true });
+      writeFakeOpenclaw(
+        bin,
+        `#!/usr/bin/env bash
+set -euo pipefail
+output_json=""
+args=("$@")
+for ((i=0; i<\${#args[@]}; i++)); do
+  if [ "\${args[$i]}" = "--output-json" ]; then output_json="\${args[$((i+1))]}"; fi
+done
+if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "prune" ]; then echo "prune failed"; exit 17; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "maintenance" ] && [ "\${3:-}" = "validate-exit" ]; then
+  printf '{"maintenanceStatus":"failed","guardUpdated":false}' > "$output_json"
+  exit 1
+fi
+echo "unexpected openclaw args: $*" >&2
+exit 2
+`,
+      );
+
+      const bash = buildHybridMemCronBashBody("nightly-memory-sweep", [
+        { name: "prune", cmd: "openclaw hybrid-mem prune --verbose" },
+      ]);
+      const result = spawnSync("bash", ["-c", bash], {
+        encoding: "utf-8",
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, OPENCLAW_HOME: home },
+      });
+
+      expect(result.status).toBe(17);
+      expect(result.stdout + result.stderr).toContain(
+        "GUARD_WRITE job=nightly-memory-sweep eligible=0 result=skipped_wrapped_step_exit_nonzero",
+      );
+      expect(() => readFileSync(guardFilePath(home, "nightly-memory-sweep"), "utf-8")).toThrow();
+    });
   });
 });

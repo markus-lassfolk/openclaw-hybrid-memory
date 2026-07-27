@@ -354,6 +354,33 @@ describe("IssueStore.list", () => {
     expect(result).toHaveLength(0);
   });
 
+  it("does not throw when status/severity/tags filters are bare scalars instead of arrays (regression, issue #2185)", () => {
+    const a = store.create({ title: "A", symptoms: ["s"], severity: "critical", tags: ["api"] });
+    store.create({ title: "B", symptoms: ["s"] });
+    store.transition(a.id, "diagnosed");
+
+    const statusAsArray = store.list({ status: ["diagnosed"] });
+    let statusAsScalar: ReturnType<typeof store.list> = [];
+    expect(() => {
+      statusAsScalar = store.list({ status: "diagnosed" as any });
+    }).not.toThrow();
+    expect(statusAsScalar.map((i) => i.id)).toEqual(statusAsArray.map((i) => i.id));
+
+    const severityAsArray = store.list({ severity: ["critical"] });
+    let severityAsScalar: ReturnType<typeof store.list> = [];
+    expect(() => {
+      severityAsScalar = store.list({ severity: "critical" as any });
+    }).not.toThrow();
+    expect(severityAsScalar.map((i) => i.id)).toEqual(severityAsArray.map((i) => i.id));
+
+    const tagsAsArray = store.list({ tags: ["api"] });
+    let tagsAsScalar: ReturnType<typeof store.list> = [];
+    expect(() => {
+      tagsAsScalar = store.list({ tags: "api" as any });
+    }).not.toThrow();
+    expect(tagsAsScalar.map((i) => i.id)).toEqual(tagsAsArray.map((i) => i.id));
+  });
+
   it("ranks a severity-filtered list by severity before recency, so an older critical issue survives a capped limit against newer high-severity ones", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {

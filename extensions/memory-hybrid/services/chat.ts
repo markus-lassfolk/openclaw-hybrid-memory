@@ -730,6 +730,69 @@ export function isAbortOrTransientLlmError(err: unknown): boolean {
   return isConnectionErrorLike(err);
 }
 
+/** Coarse classification of *why* an LLM call/response failed, for `llm_failure_class` GlitchTip tags. */
+export type LlmFailureClass = "timeout" | "provider_error" | "invalid_response_format" | "empty_response" | "unknown";
+
+/**
+ * Classifies an LLM-call failure into a coarse bucket so GlitchTip alerts (maintenance telemetry,
+ * insight-synthesis, generate-proposals, contradiction-candidates) can be tagged with *why* the call
+ * failed instead of just the fact that it did. Reuses the transport/provider detectors already
+ * defined above rather than re-implementing 4xx/5xx/timeout sniffing a second time.
+ *
+ * `rawResponse` is optional and only meaningful when the chat call itself succeeded but the response
+ * body could not be used downstream (empty string, or non-empty but unparseable/malformed JSON) —
+ * pass the raw model text from call sites that parse the response themselves after
+ * `chatCompleteWithRetry`/`chatCompleteWithRetryDetailed` returns successfully.
+ *
+ * Buckets:
+ * - `timeout` — abort/timeout/connection-level failures (the call never completed).
+ * - `provider_error` — the provider responded with an error (401/403/404/429/5xx), a context-length
+ *   rejection, an unconfigured-provider error, or another recognized non-retryable provider condition.
+ * - `invalid_response_format` — the call completed but the response body was malformed/unparseable
+ *   (either a caller-thrown parse error whose message says so, or a non-empty `rawResponse` that
+ *   failed downstream parsing).
+ * - `empty_response` — the call completed but returned an empty response body.
+ * - `unknown` — none of the above matched.
+ */
+export function classifyLlmFailureClass(err: unknown, rawResponse?: string): LlmFailureClass {
+  if (err instanceof LLMRetryError) return classifyLlmFailureClass(err.cause, rawResponse);
+  if (err instanceof Error) {
+    if (/malformed|invalid\s+json|unparseable|not\s+valid\s+json|failed\s+to\s+parse/i.test(err.message)) {
+      return "invalid_response_format";
+    }
+    if (/\bempty\b[^\n]*\bresponse\b|\bno\s+content\s+returned\b/i.test(err.message)) {
+      return "empty_response";
+    }
+    if (
+      err.name === "AbortError" ||
+      isAbortOrTransientLlmError(err) ||
+      isConnectionErrorLike(err) ||
+      /timed out|timeout/i.test(err.message)
+    ) {
+      return "timeout";
+    }
+    if (
+      err instanceof UnconfiguredProviderError ||
+      is404Like(err) ||
+      is403Like(err) ||
+      is401OrWrapped(err) ||
+      is429OrWrapped(err) ||
+      is500OrWrapped(err) ||
+      isContextLengthError(err) ||
+      isOllamaOOM(err) ||
+      isResponsesReasoningSequenceError(err) ||
+      isByteStringOrWrapped(err)
+    ) {
+      return "provider_error";
+    }
+    return "unknown";
+  }
+  if (typeof rawResponse === "string") {
+    return rawResponse.trim().length === 0 ? "empty_response" : "invalid_response_format";
+  }
+  return "unknown";
+}
+
 /**
  * Retry wrapper for LLM calls with exponential backoff.
  * Retries on failure with increasing delays: 1s, 3s, 9s.

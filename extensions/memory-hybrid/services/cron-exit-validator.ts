@@ -131,6 +131,15 @@ export interface MaintenanceTelemetryIssue {
   guardStateBefore?: string;
   guardStateAfter?: string;
   lastSuccessAt?: string;
+  /** distill batch-failure count parsed from the step's `batchFailures=` log line (GlitchTip issue 27). */
+  batchFailures?: number;
+  /** distill genuine implementation/model batch failures (excludes deadline-only stops), when tracked separately. */
+  hardBatchFailures?: number;
+  /** distill batches whose output was truncated (finish=length), when tracked separately. */
+  truncatedBatches?: number;
+  /** Short human-readable analyzer finding titles (e.g. "distill:plugin-bug"), for analyze-maintenance-logs
+   *  strict-fail issues (GlitchTip issue 24) — so the alert shows what was found, not just a count. */
+  findingTitles?: string[];
 }
 
 export function normalizeExitStepName(rawStep: string): string {
@@ -520,6 +529,17 @@ function parseModel(logContent: string): string | undefined {
   return minimaxMatch?.[1];
 }
 
+/** Parse `findingTitles=[a, b, c]` emitted by analyze-maintenance-logs (GlitchTip issue 24). */
+function parseFindingTitles(logContent: string): string[] | undefined {
+  const match = logContent.match(/\bfindingTitles\s*=\s*\[([^\]]*)\]/i);
+  if (!match) return undefined;
+  const titles = match[1]
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return titles.length > 0 ? titles : undefined;
+}
+
 function buildMaintenanceIssue(params: Omit<MaintenanceTelemetryIssue, "fingerprint">): MaintenanceTelemetryIssue {
   return {
     ...params,
@@ -532,6 +552,92 @@ function addMaintenanceIssue(issues: Map<string, MaintenanceTelemetryIssue>, iss
   if (!issues.has(key)) {
     issues.set(key, issue);
   }
+}
+
+/**
+ * The generic, content-free "step exited non-zero" failure class. A single validation pass can
+ * legitimately produce this for a step AND, separately, a richer semantic issue for the exact same
+ * step (e.g. `distill_partial_batch_failures`) — every "despite a mechanically successful run" check
+ * in {@link collectMaintenanceTelemetryIssues} is keyed off log content, not off whether the step
+ * happened to also exit non-zero, so both fire independently (GlitchTip issues 22, 29, 23).
+ */
+const GENERIC_WRAPPER_FAILURE_CLASS = "nonzero_exit";
+
+/** Appends the exit code to a message when it doesn't already mention a non-zero exit. */
+function enrichMessageWithExitCode(message: string, exitCode: number | undefined): string {
+  if (exitCode === undefined) return message;
+  if (/\bexit(?:ed|\s*=|\s+code)\b/i.test(message) || /\bnon-zero\b/i.test(message)) return message;
+  return `${message} (also exited non-zero, exit=${exitCode})`;
+}
+
+/**
+ * Collapses redundant generic "exited non-zero" issues so GlitchTip stops firing a content-free
+ * wrapper alert alongside the detail issue that already explains the same failure (issues 4 and 5
+ * from the 2026-07 nightly-maintenance telemetry review: GlitchTip 22/23/26/29/30).
+ *
+ * Two suppressions, both conservative — they only remove an issue when a genuinely more informative
+ * sibling exists in THIS SAME validation pass, never based on issues from other runs:
+ *
+ * 1. Per-step: when a step has both a {@link GENERIC_WRAPPER_FAILURE_CLASS} issue and at least one
+ *    other (more specific) issue for the exact same `(jobName, stepName)`, the generic one is
+ *    dropped — its only content ("this step exited non-zero") is folded into the specific issue's
+ *    message so operators don't lose the fact that the step also failed mechanically. A step with
+ *    ONLY a bare non-zero exit (no richer detail available anywhere) always keeps its generic issue —
+ *    that is the only signal available for that step, and suppressing it would lose the failure
+ *    entirely.
+ *
+ * 2. Umbrella: a generic issue whose `stepName` equals its own `jobName` is the top-level wrapper/
+ *    consolidated-cron step (e.g. "maintenance-nightly:maintenance-nightly exited non-zero" — the
+ *    bash harness's own summary line, or the orchestrator's consolidated wrapper ledger entry). It
+ *    never carries more information than "something in this run failed". When this pass ALSO
+ *    produced at least one other issue (any step, any class), the umbrella is redundant — the other
+ *    issue(s) already explain what happened — so it is dropped entirely. It is kept ONLY when it is
+ *    the sole issue in the pass, since that is the only signal available (e.g. an orchestrator bug
+ *    outside every known step-level check).
+ */
+export function suppressRedundantGenericMaintenanceIssues(
+  issues: MaintenanceTelemetryIssue[],
+): MaintenanceTelemetryIssue[] {
+  if (issues.length <= 1) return issues;
+
+  const byStep = new Map<string, MaintenanceTelemetryIssue[]>();
+  for (const issue of issues) {
+    const key = `${issue.jobName} ${issue.stepName}`;
+    const list = byStep.get(key);
+    if (list) list.push(issue);
+    else byStep.set(key, [issue]);
+  }
+
+  const suppressed = new Set<MaintenanceTelemetryIssue>();
+  const enriched = new Map<MaintenanceTelemetryIssue, MaintenanceTelemetryIssue>();
+  for (const stepIssues of byStep.values()) {
+    if (stepIssues.length < 2) continue;
+    const generic = stepIssues.find((issue) => issue.failureClass === GENERIC_WRAPPER_FAILURE_CLASS);
+    if (!generic) continue;
+    const specifics = stepIssues.filter((issue) => issue.failureClass !== GENERIC_WRAPPER_FAILURE_CLASS);
+    if (specifics.length === 0) continue;
+    suppressed.add(generic);
+    for (const specific of specifics) {
+      const nextMessage = enrichMessageWithExitCode(specific.message, generic.exitCode);
+      const nextExitCode = specific.exitCode ?? generic.exitCode;
+      if (nextMessage !== specific.message || nextExitCode !== specific.exitCode) {
+        enriched.set(specific, { ...specific, message: nextMessage, exitCode: nextExitCode });
+      }
+    }
+  }
+
+  let result = issues.map((issue) => enriched.get(issue) ?? issue).filter((issue) => !suppressed.has(issue));
+
+  if (result.length > 1) {
+    const nonUmbrella = result.filter(
+      (issue) => !(issue.failureClass === GENERIC_WRAPPER_FAILURE_CLASS && issue.stepName === issue.jobName),
+    );
+    if (nonUmbrella.length > 0 && nonUmbrella.length < result.length) {
+      result = nonUmbrella;
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -1284,10 +1390,19 @@ function collectMaintenanceTelemetryIssues(params: {
   const distillDetected = isStepInValidationScope("distill", requiredSteps, ledgerSteps);
   const distillLog = distillDetected ? extractStepLog(logContent, "distill") : "";
   const distillBatchFailures = parsePositiveMetric(distillLog, "batchFailures");
+  const distillHardBatchFailures = parsePositiveMetric(distillLog, "hardBatchFailures");
+  const distillTruncatedBatches = parsePositiveMetric(distillLog, "truncatedBatches");
   const distillSemanticPartial =
     /\bdistill\b[\s\S]{0,160}\bsemantic=partial\b/i.test(distillLog) ||
     (typeof distillBatchFailures === "number" && distillBatchFailures > 0);
   if (distillDetected && distillSemanticPartial) {
+    const distillCountsSummary = [
+      typeof distillBatchFailures === "number" ? `batchFailures=${distillBatchFailures}` : undefined,
+      typeof distillHardBatchFailures === "number" ? `hardBatchFailures=${distillHardBatchFailures}` : undefined,
+      typeof distillTruncatedBatches === "number" ? `truncatedBatches=${distillTruncatedBatches}` : undefined,
+    ]
+      .filter(Boolean)
+      .join(", ");
     addMaintenanceIssue(
       issues,
       buildMaintenanceIssue({
@@ -1296,8 +1411,11 @@ function collectMaintenanceTelemetryIssues(params: {
         stepName: "distill",
         failureCategory: "semantic_failure",
         failureClass: "distill_partial_batch_failures",
-        message: `${jobName}:distill had partial batch failures despite a mechanically successful run`,
+        message: `${jobName}:distill had partial batch failures despite a mechanically successful run${distillCountsSummary ? ` (${distillCountsSummary})` : ""}`,
         semanticStatus: "degraded",
+        batchFailures: distillBatchFailures,
+        hardBatchFailures: distillHardBatchFailures,
+        truncatedBatches: distillTruncatedBatches,
       }),
     );
   }
@@ -1414,6 +1532,7 @@ function collectMaintenanceTelemetryIssues(params: {
   const analyzeLogsDetected = isStepInValidationScope("analyze-maintenance-logs", requiredSteps, ledgerSteps);
   const analyzeLogsLog = analyzeLogsDetected ? extractStepLog(logContent, "analyze-maintenance-logs") : "";
   if (analyzeLogsDetected && /\bstrict=fail\b/i.test(analyzeLogsLog)) {
+    const analyzeLogsFindingTitles = parseFindingTitles(analyzeLogsLog);
     addMaintenanceIssue(
       issues,
       buildMaintenanceIssue({
@@ -1422,8 +1541,9 @@ function collectMaintenanceTelemetryIssues(params: {
         stepName: "analyze-maintenance-logs",
         failureCategory: "semantic_failure",
         failureClass: "analyze_maintenance_logs_strict_fail",
-        message: `${jobName}:analyze-maintenance-logs reported strict findings despite a mechanically successful run`,
+        message: `${jobName}:analyze-maintenance-logs reported strict findings${analyzeLogsFindingTitles ? ` (${analyzeLogsFindingTitles.join("; ")})` : ""} despite a mechanically successful run`,
         semanticStatus: "degraded",
+        findingTitles: analyzeLogsFindingTitles,
       }),
     );
   }
@@ -1811,7 +1931,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  return [...issues.values()];
+  return suppressRedundantGenericMaintenanceIssues([...issues.values()]);
 }
 
 function deriveSemanticStatus(
@@ -2407,7 +2527,14 @@ function mergeSummaryWithLedgerChecks(
   for (const issue of telemetryIssues) {
     addMaintenanceIssue(issueMap, issue);
   }
-  reportableIssues = [...issueMap.values()];
+  // Merging the externally-built orchestrator_step_failed issues (from validateFromSummaryJson) with
+  // the freshly-computed telemetryIssues can reintroduce the same generic-vs-specific and umbrella
+  // duplication collectMaintenanceTelemetryIssues already suppressed internally — e.g. a step's own
+  // "nonzero_exit" (from the ledger-merged failedSteps below) alongside its richer
+  // "orchestrator_step_failed" summary-derived issue for the SAME step. Re-run suppression on the
+  // fully merged set so this consolidated-cron path (the real "maintenance-nightly" shape) gets the
+  // same dedup as the plain ledger-only path.
+  reportableIssues = suppressRedundantGenericMaintenanceIssues([...issueMap.values()]);
 
   if (maintenanceStatus === "success" && reportableIssues.some(isGuardBlockingSemanticIssue)) {
     maintenanceStatus = "failed";

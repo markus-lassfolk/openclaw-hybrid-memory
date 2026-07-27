@@ -14,6 +14,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { isCompactVerbosity } from "../config.js";
 import type { IssueSeverity, IssueStatus } from "../types/issue-types.js";
+import { toArrayFilter } from "../utils/array-filter.js";
 import { withErrorTracking } from "../utils/error-tracking.js";
 import { autoLinkIssueToFacts } from "../services/issue-fact-correlation.js";
 import type { BuildToolScopeFilterFn } from "../api/memory-plugin-api.js";
@@ -187,16 +188,22 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         const {
-          status,
-          severity,
-          tags,
+          status: statusRaw,
+          severity: severityRaw,
+          tags: tagsRaw,
           limit: limitRaw,
         } = params as {
-          status?: IssueStatus[];
-          severity?: string[];
-          tags?: string[];
+          status?: IssueStatus | IssueStatus[];
+          severity?: string | string[];
+          tags?: string | string[];
           limit?: number;
         };
+        // An LLM caller frequently passes a bare scalar (e.g. status: "open") for these
+        // array-typed filter fields despite the schema above declaring them as arrays; coerce
+        // before they reach the store's `.map()`-based query builder (issue #2185).
+        const status = toArrayFilter(statusRaw);
+        const severity = toArrayFilter(severityRaw);
+        const tags = toArrayFilter(tagsRaw);
         // IssueStore.list() only appends a SQL LIMIT clause when `limit > 0` -- omitting the
         // param (the documented default path) or passing 0/negative returns the entire issues
         // table unbounded instead of the documented "default: 50" cap, the same

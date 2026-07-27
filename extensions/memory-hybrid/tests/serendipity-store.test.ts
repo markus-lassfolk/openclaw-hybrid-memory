@@ -58,6 +58,40 @@ describe("SerendipityStore — CRUD", () => {
   });
 });
 
+describe("SerendipityStore — list filters", () => {
+  it("does not throw when status/findingType/riskLevel/suggestedAction filters are bare scalars instead of arrays (regression, issue #2185)", () => {
+    store.create(base({ title: "t1", suggestedAction: "fix_now" }));
+
+    const statusAsArray = store.list({ status: ["observed"] });
+    let statusAsScalar: ReturnType<typeof store.list> = [];
+    expect(() => {
+      statusAsScalar = store.list({ status: "observed" as any });
+    }).not.toThrow();
+    expect(statusAsScalar.map((f) => f.id)).toEqual(statusAsArray.map((f) => f.id));
+
+    const findingTypeAsArray = store.list({ findingType: ["packaging_defect"] });
+    let findingTypeAsScalar: ReturnType<typeof store.list> = [];
+    expect(() => {
+      findingTypeAsScalar = store.list({ findingType: "packaging_defect" as any });
+    }).not.toThrow();
+    expect(findingTypeAsScalar.map((f) => f.id)).toEqual(findingTypeAsArray.map((f) => f.id));
+
+    const riskLevelAsArray = store.list({ riskLevel: ["low"] });
+    let riskLevelAsScalar: ReturnType<typeof store.list> = [];
+    expect(() => {
+      riskLevelAsScalar = store.list({ riskLevel: "low" as any });
+    }).not.toThrow();
+    expect(riskLevelAsScalar.map((f) => f.id)).toEqual(riskLevelAsArray.map((f) => f.id));
+
+    const suggestedActionAsArray = store.list({ suggestedAction: ["fix_now"] });
+    let suggestedActionAsScalar: ReturnType<typeof store.list> = [];
+    expect(() => {
+      suggestedActionAsScalar = store.list({ suggestedAction: "fix_now" as any });
+    }).not.toThrow();
+    expect(suggestedActionAsScalar.map((f) => f.id)).toEqual(suggestedActionAsArray.map((f) => f.id));
+  });
+});
+
 describe("SerendipityStore — transitions", () => {
   it("allows a valid transition and rejects an invalid one", () => {
     const f = store.create(base());
