@@ -117,6 +117,36 @@ describe("serendipity_list", () => {
     const backlog = await api.call("serendipity_list", { backlog: true });
     expect(backlog.details.count).toBe(1);
   });
+
+  it("does not throw and matches the array-wrapped equivalent when status/finding_type/risk_level/suggested_action are bare strings (regression, issue #2185)", async () => {
+    await api.call("serendipity_record", {
+      title: "t1",
+      description: "d",
+      finding_type: "packaging_defect",
+      risk_level: "low",
+      suggested_action: "fix_now",
+      adjacency: "direct",
+    });
+
+    const arrayResult = await api.call("serendipity_list", {
+      status: ["observed"],
+      finding_type: ["packaging_defect"],
+      risk_level: ["low"],
+      suggested_action: ["fix_now"],
+    });
+
+    const scalarResult = await api.call("serendipity_list", {
+      status: "observed",
+      finding_type: "packaging_defect",
+      risk_level: "low",
+      suggested_action: "fix_now",
+    });
+
+    expect(scalarResult.details.findings.map((f: any) => f.id)).toEqual(
+      arrayResult.details.findings.map((f: any) => f.id),
+    );
+    expect(scalarResult.details.count).toBe(1);
+  });
 });
 
 describe("serendipity_decide", () => {

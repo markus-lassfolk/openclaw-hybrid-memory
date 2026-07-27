@@ -120,6 +120,16 @@ describe("LoomStore — belief graph / claim ledger (#2151)", () => {
     expect(changed).toBe(1);
     expect(store.getClaim(claim.id)?.status).toBe("stale");
   });
+
+  it("does not throw when status filter is a bare scalar instead of an array (regression, issue #2185)", () => {
+    store.assertClaim({ entity: "W", predicate: "k", value: "v" });
+    const asArray = store.listClaims({ status: ["unverified"] });
+    let asScalar: ReturnType<typeof store.listClaims> = [];
+    expect(() => {
+      asScalar = store.listClaims({ status: "unverified" as any });
+    }).not.toThrow();
+    expect(asScalar.map((c) => c.id)).toEqual(asArray.map((c) => c.id));
+  });
 });
 
 describe("LoomStore — live-check contracts (#2156)", () => {
@@ -209,6 +219,19 @@ describe("LoomStore — open-loop obligations ledger (#2152)", () => {
     const loop = store.createOpenLoop({ title: "x", loopType: "watch_condition" }, { defaultResurfaceDays: 7 });
     expect(loop.resurfaceAt).toBeTruthy();
   });
+
+  it("does not throw when status/loopType filters are bare scalars instead of arrays (regression, issue #2185)", () => {
+    store.createOpenLoop({ title: "loop A", loopType: "needs_verification" });
+    store.createOpenLoop({ title: "loop B", loopType: "watch_condition" });
+    const asArray = store.listOpenLoops({ status: ["open"], loopType: ["needs_verification"] });
+
+    let asScalar: ReturnType<typeof store.listOpenLoops> = [];
+    expect(() => {
+      asScalar = store.listOpenLoops({ status: "open" as any, loopType: "needs_verification" as any });
+    }).not.toThrow();
+    expect(asScalar.map((l) => l.id)).toEqual(asArray.map((l) => l.id));
+    expect(asScalar).toHaveLength(1);
+  });
 });
 
 describe("LoomStore — drift scout (#2146)", () => {
@@ -232,6 +255,18 @@ describe("LoomStore — drift scout (#2146)", () => {
     const snoozed = store.updateDriftStatus(finding.id, "snoozed", { snoozedUntil: "2027-01-01T00:00:00.000Z" });
     expect(snoozed.status).toBe("snoozed");
     expect(snoozed.snoozedUntil).toBe("2027-01-01T00:00:00.000Z");
+  });
+
+  it("does not throw when status filter is a bare scalar instead of an array (regression, issue #2185)", () => {
+    store.createDriftFinding({ driftType: "deprecated_command", oldText: "old-cmd" });
+    const asArray = store.listDriftFindings({ status: ["open"] });
+
+    let asScalar: ReturnType<typeof store.listDriftFindings> = [];
+    expect(() => {
+      asScalar = store.listDriftFindings({ status: "open" as any });
+    }).not.toThrow();
+    expect(asScalar.map((f) => f.id)).toEqual(asArray.map((f) => f.id));
+    expect(asScalar).toHaveLength(1);
   });
 });
 
