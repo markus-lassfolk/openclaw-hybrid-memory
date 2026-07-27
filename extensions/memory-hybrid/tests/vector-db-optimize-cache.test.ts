@@ -12,6 +12,9 @@ vi.mock("../services/error-reporter.js", () => ({
 }));
 
 import * as errorReporter from "../services/error-reporter.js";
+// Imported directly from the un-mocked submodule (not the mocked "../services/error-reporter.js")
+// so tests can assert on the real noisy-filter classification rather than the test's own stub.
+import { shouldDropNoisyError } from "../services/error-reporter/noisy-errors.js";
 
 import {
   CORRECT_DIM,
@@ -282,6 +285,154 @@ describe("VectorDB semantic query cache — suppress known schema errors", () =>
     ).resolves.toBeUndefined();
 
     await slowRepair;
+    await db.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GlitchTip issue #34 — semantic query cache LanceDB read-stream race.
+// rebuildSemanticQueryCacheTable() drops and recreates the cache table with zero
+// synchronization against concurrent readers/writers. A vectorSearch().toArray() call
+// racing that drop surfaces as "Failed to get next batch from stream: lance error: Not
+// found: .../semantic_query_cache.lance/data/....lance". This was (a) needlessly reported
+// to GlitchTip every time (fixed via services/error-reporter/noisy-errors.ts) and (b) an
+// actual race (fixed via acquireReader()/releaseReader()/waitForReadersToDrain() on the
+// cache table hot paths, mirroring the main table's optimize() fix for issue #768).
+// ---------------------------------------------------------------------------
+
+describe("VectorDB semantic query cache — GlitchTip issue #34 stream-read race", () => {
+  let tmpDir: string;
+  let lanceDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "vector-cache-issue-34-test-"));
+    lanceDir = join(tmpDir, "lance");
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("getSemanticQueryCacheMatch() resolves null (no throw) on a transient LanceDB stream-read error, and the error is classified as noisy so it never reaches GlitchTip", async () => {
+    const db = new VectorDB(lanceDir, CORRECT_DIM);
+
+    await db.storeSemanticQueryCache({
+      queryText: "warm query",
+      vector: [1, 0, 0],
+      factIds: ["fact-warm"],
+      filterKey: "test",
+    });
+
+    const streamReadErr = new Error(
+      "Failed to get next batch from stream: lance error: Not found: /home/user/.openclaw/memory/lance/" +
+        "semantic_query_cache.lance/data/12345678-abcd-4ef0-9abc-1234567890ab.lance, path not found",
+    );
+
+    (db as any).semanticQueryCacheTable = {
+      vectorSearch: () => {
+        throw streamReadErr;
+      },
+    };
+
+    const match = await db.getSemanticQueryCacheMatch([1, 0, 0], {
+      filterKey: "test",
+      minSimilarity: 0.95,
+      ttlMs: 60_000,
+    });
+
+    // Must degrade gracefully to a cache miss rather than throwing to the caller.
+    expect(match).toBeNull();
+
+    // capturePluginError() is still invoked by the generic catch branch (this message does
+    // not match isKnownVectorSchemaError), but the noisy-error fix means the REAL
+    // capturePluginError implementation would drop it before it ever reaches the reporter's
+    // captureException/fetch call. Assert that classification directly against the error
+    // that was actually captured, proving the fix covers this exact production message.
+    expect(mockCapturePluginError).toHaveBeenCalledOnce();
+    const [capturedErr] = mockCapturePluginError.mock.calls[0];
+    expect(shouldDropNoisyError(capturedErr)).toBe(true);
+
+    await db.close();
+  });
+
+  it("rebuildSemanticQueryCacheTable() waits for an in-flight getSemanticQueryCacheMatch() read to drain before dropping the table", async () => {
+    const db = new VectorDB(lanceDir, CORRECT_DIM);
+
+    await db.storeSemanticQueryCache({
+      queryText: "warm query",
+      vector: [1, 0, 0],
+      factIds: ["fact-warm"],
+      filterKey: "race",
+    });
+
+    const internal = db as unknown as {
+      getSemanticQueryCacheTable: () => { vectorSearch: (vector: number[]) => any } | null;
+      db: { dropTable: (name: string) => Promise<void> } | null;
+      rebuildSemanticQueryCacheTable: (reason: string) => Promise<void>;
+    };
+
+    const realCacheTable = internal.getSemanticQueryCacheTable();
+    expect(realCacheTable).toBeTruthy();
+    const originalVectorSearch = (realCacheTable as any).vectorSearch.bind(realCacheTable);
+
+    let vectorSearchEntered = false;
+    let releaseRead: (() => void) | undefined;
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+
+    // Wrap vectorSearch so the read's toArray() call blocks on a controllable gate — this
+    // simulates a slow/in-flight LanceDB stream read whose reader slot must be held for the
+    // whole call, matching how getSemanticQueryCacheMatch() actually calls it.
+    vi.spyOn(realCacheTable as any, "vectorSearch").mockImplementation((...args: unknown[]) => {
+      vectorSearchEntered = true;
+      const builder = originalVectorSearch(...args);
+      return {
+        limit: (limitN: number) => ({
+          toArray: async () => {
+            await readGate;
+            return builder.limit(limitN).toArray();
+          },
+        }),
+      };
+    });
+
+    const readPromise = db.getSemanticQueryCacheMatch([1, 0, 0], {
+      filterKey: "race",
+      minSimilarity: 0.95,
+      ttlMs: 60_000,
+    });
+
+    // Wait until the read has actually entered vectorSearch (and therefore holds a reader slot)
+    // before triggering the rebuild, so the drain has something real to wait for.
+    await vi.waitFor(() => expect(vectorSearchEntered).toBe(true));
+
+    let dropTableCalled = false;
+    const dbHandle = internal.db;
+    expect(dbHandle).toBeTruthy();
+    const originalDropTable = dbHandle!.dropTable.bind(dbHandle);
+    vi.spyOn(dbHandle as any, "dropTable").mockImplementation(async (...args: unknown[]) => {
+      dropTableCalled = true;
+      return originalDropTable(...(args as [string]));
+    });
+
+    const rebuildPromise = internal.rebuildSemanticQueryCacheTable("test: forced rebuild for race test");
+
+    // Give the rebuild a chance to reach (and block on) waitForReadersToDrain(). It must NOT
+    // have called dropTable yet, because the read above still holds its reader slot.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(dropTableCalled).toBe(false);
+
+    // Release the in-flight read — its reader slot is released in getSemanticQueryCacheMatch()'s
+    // finally block, which should let the drain complete and the rebuild proceed.
+    releaseRead?.();
+    const match = await readPromise;
+    expect(match?.factIds).toEqual(["fact-warm"]);
+
+    await rebuildPromise;
+    expect(dropTableCalled).toBe(true);
+
     await db.close();
   });
 });

@@ -5,6 +5,11 @@ const NOISY_NETWORK_ERROR_RE =
 const NOISY_AUTH_ERROR_RE =
   /\b(?:401\b|403\b|unauthorized|forbidden|incorrect api key|invalid api key|authentication failed|country,\s*region,\s*or\s*territory\s+not\s+supported|PERMISSION_DENIED)\b/i;
 const NOISY_CIRCUIT_BREAKER_RE = /\bcircuit\s+breaker\s+open\b/i;
+// Transient LanceDB read-stream races: a concurrent table rebuild/drop can delete the
+// fragment file a vectorSearch().toArray() stream is mid-read on. This is a known,
+// already-handled cache-miss/retry case (see vector-db-class.ts semantic query cache
+// hot paths) — never actionable on its own, so never send it to GlitchTip.
+const NOISY_LANCE_STREAM_ERROR_RE = /\b(?:failed to get next batch from stream|lance error:\s*not found)\b/i;
 
 function getErrorStatus(err: unknown): number | string | undefined {
   if (!err || typeof err !== "object") return undefined;
@@ -53,6 +58,7 @@ function isDirectNoisyError(err: unknown): boolean {
 
   if (NOISY_NETWORK_ERROR_RE.test(message)) return true;
   if (NOISY_CIRCUIT_BREAKER_RE.test(message)) return true;
+  if (NOISY_LANCE_STREAM_ERROR_RE.test(message)) return true;
   if (NOISY_AUTH_ERROR_RE.test(message) && !isFilePermissionMessage(message)) return true;
 
   return false;
@@ -61,7 +67,8 @@ function isDirectNoisyError(err: unknown): boolean {
 /**
  * Returns true for known noisy, non-actionable errors that should never be sent
  * to GlitchTip: transient transport failures, external-provider auth failures,
- * local Ollama circuit-breaker errors, and aggregates whose nested causes are all noisy.
+ * local Ollama circuit-breaker errors, transient LanceDB read-stream races during
+ * concurrent table rebuild, and aggregates whose nested causes are all noisy.
  */
 export function shouldDropNoisyError(err: unknown, seen = new Set<unknown>()): boolean {
   if (!err || (typeof err !== "object" && !(err instanceof Error))) return false;
