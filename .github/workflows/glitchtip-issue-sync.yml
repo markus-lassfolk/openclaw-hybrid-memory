@@ -1,9 +1,6 @@
 name: Sync GlitchTip Issues to GitHub
 
 on:
-  push:
-    branches:
-      - claude/glitchtip-issue-sync
   workflow_dispatch:
     inputs:
       org_slug:
