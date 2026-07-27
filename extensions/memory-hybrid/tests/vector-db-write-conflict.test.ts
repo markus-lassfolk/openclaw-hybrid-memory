@@ -1,6 +1,7 @@
 /**
  * write conflict retries
  */
+import { readFileSync } from "node:fs";
 import { vi } from "vitest";
 
 const { mockCapturePluginError } = vi.hoisted(() => ({
@@ -156,5 +157,18 @@ describe("VectorDB write conflict retries (#reembed-vectorless)", () => {
 
     expect(optimizeSpy).not.toHaveBeenCalled();
     expect(add).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("VectorDB withRetryableWriteConflictRetry import wiring (issue #2183 / GlitchTip issue 32 regression guard)", () => {
+  it("imports withEmbedWriteLock statically instead of via a runtime dynamic import()", () => {
+    // A dynamic import("../../services/embeddings/shared.js") inside withRetryableWriteConflictRetry
+    // could fail to resolve under OpenClaw's custom ESM plugin loader (relative dynamic imports resolve
+    // differently under ~/.openclaw/npm/projects/... install layouts than Node's native resolver), even
+    // though the file is genuinely present in the published package. A static top-level import resolves
+    // at module load time and sidesteps that loader-specific runtime resolution path entirely.
+    const source = readFileSync(new URL("../backends/vector-db/vector-db-class.ts", import.meta.url), "utf-8");
+    expect(source).not.toMatch(/await\s+import\(\s*["'][^"']*embeddings\/shared\.js["']\s*\)/);
+    expect(source).toMatch(/^import\s*\{\s*withEmbedWriteLock\s*\}\s*from\s*"\.\.\/\.\.\/services\/embeddings\/shared\.js";$/m);
   });
 });

@@ -8,6 +8,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve as pathResolve } from "node:path";
 import * as lancedb from "@lancedb/lancedb";
 import type { DecayClass, MemoryCategory } from "../../config.js";
+import { withEmbedWriteLock } from "../../services/embeddings/shared.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import type { SearchResult } from "../../types/memory.js";
 import {
@@ -1429,7 +1430,6 @@ export class VectorDB {
   }
 
   private async withRetryableWriteConflictRetry<T>(operation: string, fn: () => Promise<T>): Promise<T> {
-    const { withEmbedWriteLock } = await import("../../services/embeddings/shared.js");
     const maxAttempts = VECTORDB_WRITE_CONFLICT_MAX_RETRIES + 1;
     let lastErr: unknown;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
