@@ -46,9 +46,12 @@ When `normalizeExisting=true` (e.g., during `verify --fix`):
 
 ### 4. Validation CLI Command (`cli/commands/manage/register-validate-cron-exit.ts`)
 
-New internal command for validating cron execution:
+New internal command for validating cron execution, registered under the grouped
+`maintenance` command as `maintenance validate-exit` (the flat `validate-cron-exit` name is kept
+only as a deprecated alias — see `cli/commands/register-maintenance-group.ts`; the cron harness
+itself invokes the grouped form):
 ```bash
-openclaw hybrid-mem validate-cron-exit \
+openclaw hybrid-mem maintenance validate-exit \
   --exit-path ~/.openclaw/logs/cron-hybrid-mem/nightly-memory-sweep-*.exit.txt \
   --log-path ~/.openclaw/logs/cron-hybrid-mem/nightly-memory-sweep-*.log \
   --required-steps prune distill extract-daily resolve-contradictions enrich-entities \
@@ -56,6 +59,16 @@ openclaw hybrid-mem validate-cron-exit \
 ```
 
 Returns exit code 1 if validation fails.
+
+### Mechanical guard-file gate
+
+The persistent per-job guard file (`~/.openclaw/cron/guard/<job>.ms`, see `services/cron-guard.ts`)
+is written by the generated bash harness itself, in `hm_validate()`
+(`services/cron-job-bash-harness.ts`), not by the executing agent. The write is gated on: the
+wrapped steps exiting 0, `maintenance validate-exit` itself exiting 0, its `--output-json` payload
+parsing with `guardUpdated: true` and `maintenanceStatus: "success"`, and every required step
+independently showing `exit=0` (or an allowed `-skipped` variant) directly in the exit ledger. The
+outcome is logged as a `GUARD_WRITE ... result=...` line in HM_LOG.
 
 ### Semantic no-op strict mode for wrappers
 

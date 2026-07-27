@@ -72,6 +72,67 @@ describe("deprecated-cron-commands", () => {
     }
   });
 
+  it("detects deprecated validate-cron-exit flat CLI (cron harness now emits maintenance validate-exit)", () => {
+    const msg =
+      'openclaw hybrid-mem validate-cron-exit --exit-path "$HM_EXIT" --log-path "$HM_LOG" --required-steps "${HM_REQUIRED_STEPS[@]}" --allow-skip --json';
+    const hits = findDeprecatedHybridMemCronTokens(msg).map((h) => h.token);
+    expect(hits).toContain("hybrid-mem validate-cron-exit");
+  });
+
+  it("verify --fix path normalizes stale validate-cron-exit cron messages to maintenance validate-exit", () => {
+    const openclawDir = mkdtempSync(join(tmpdir(), "hm-test-openclaw-"));
+    try {
+      mkdirSync(join(openclawDir, "cron"), { recursive: true });
+      writeFileSync(join(openclawDir, "openclaw.json"), "{}", "utf-8");
+
+      const jobsPath = join(openclawDir, "cron", "jobs.json");
+      writeFileSync(
+        jobsPath,
+        JSON.stringify(
+          {
+            jobs: [
+              {
+                pluginJobId: "hybrid-mem:nightly-distill",
+                id: "hybrid-mem:nightly-distill",
+                name: "nightly-memory-sweep",
+                schedule: { kind: "cron", expr: "0 2 * * *" },
+                enabled: true,
+                sessionTarget: "isolated",
+                payload: {
+                  kind: "agentTurn",
+                  message:
+                    'EXECUTION\n```bash\nhm_step "prune" openclaw hybrid-mem prune --verbose\nopenclaw hybrid-mem validate-cron-exit --exit-path "$HM_EXIT" --log-path "$HM_LOG" --required-steps "${HM_REQUIRED_STEPS[@]}" --allow-skip --json\n```',
+                },
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      const result = ensureMaintenanceCronJobs(openclawDir, undefined, {
+        normalizeExisting: true,
+        reEnableDisabled: false,
+        consolidatedCronJobs: false,
+      });
+      expect(result.normalized).toContain("nightly-memory-sweep");
+
+      const next = JSON.parse(readFileSync(jobsPath, "utf-8")) as { jobs: Array<Record<string, unknown>> };
+      const job = next.jobs.find((j) => j.pluginJobId === "hybrid-mem:nightly-distill") as
+        | Record<string, unknown>
+        | undefined;
+      expect(job).toBeTruthy();
+      const payload = job?.payload as { message?: unknown } | undefined;
+      const msg = String(payload?.message ?? job?.message ?? "");
+      expect(msg).toContain("openclaw hybrid-mem maintenance validate-exit");
+      expect(msg).not.toContain("hybrid-mem validate-cron-exit");
+    } finally {
+      rmSync(openclawDir, { recursive: true, force: true });
+    }
+  });
+
   it("detects deprecated command tokens in cron message text", () => {
     const msg = "run: openclaw hybrid-mem consolidate-episodes --since 7d";
     const hits = findDeprecatedHybridMemCronTokens(msg).map((h) => h.token);

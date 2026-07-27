@@ -235,7 +235,7 @@ describe("active-task-checkpoint", () => {
     expect(schedule?.at).toBe(result.steps.schedule.scheduleAt);
     const payload = job?.payload as { kind?: string; message?: string } | undefined;
     expect(payload?.kind).toBe("agentTurn");
-    expect(String(payload?.message ?? "")).toContain("mkdir -p");
+    expect(String(payload?.message ?? "")).toContain("do NOT write this file yourself");
 
     factsDb.close();
   });
