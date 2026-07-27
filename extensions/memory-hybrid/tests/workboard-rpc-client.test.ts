@@ -110,7 +110,8 @@ describe("workboard-rpc-client (#1925)", () => {
     });
     expect(created?.id).toBe("new1");
     expect(created?.externalId).toBe("hm-task:x");
-    const params = JSON.parse((spawnMock.mock.calls[0]?.[1] as string[])[4]);
+    const callArgs = spawnMock.mock.calls[0]?.[1] as string[];
+    const params = JSON.parse(callArgs[4]);
     expect(params.status).toBe("backlog");
     expect(params.idempotencyKey).toBe("hm-task:x");
     expect(params.labels).toEqual(["hybrid-memory"]);

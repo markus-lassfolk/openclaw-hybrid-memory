@@ -620,27 +620,26 @@ describeCreateDashboardServer("createDashboardServer", () => {
     expect(parsed.data.createFact.scopeTarget).toBeNull();
   });
 
-  it.each([
-    "research-executor",
-    "conversation",
-    "cli",
-  ])("POST /graphql createFact ignores client-supplied source=%s", async (forgedSource) => {
-    if (!server) return;
-    const mutation = JSON.stringify({
-      query: `mutation { createFact(input: { text: "forged fact", source: "${forgedSource}" }) { id source } }`,
-    });
+  it.each(["research-executor", "conversation", "cli"])(
+    "POST /graphql createFact ignores client-supplied source=%s",
+    async (forgedSource) => {
+      if (!server) return;
+      const mutation = JSON.stringify({
+        query: `mutation { createFact(input: { text: "forged fact", source: "${forgedSource}" }) { id source } }`,
+      });
 
-    // Attacker with no special identity tries to mint a fact under a source value that gates a
-    // downstream trust decision: "research-executor" passes buildBriefingBlock's filter
-    // (briefing-delivery.ts) as a trusted overnight-research briefing; "conversation"/"cli" make
-    // isAutoResolvableContradiction (contradictions.ts) treat the fact as user-authored and
-    // eligible to auto-supersede a contradicting legitimate fact.
-    const { status, body } = await httpPost(port, "/graphql", mutation);
-    expect(status).toBe(200);
-    const parsed = JSON.parse(body);
-    expect(parsed.errors).toBeUndefined();
-    expect(parsed.data.createFact.source).toBe("graphql");
-  });
+      // Attacker with no special identity tries to mint a fact under a source value that gates a
+      // downstream trust decision: "research-executor" passes buildBriefingBlock's filter
+      // (briefing-delivery.ts) as a trusted overnight-research briefing; "conversation"/"cli" make
+      // isAutoResolvableContradiction (contradictions.ts) treat the fact as user-authored and
+      // eligible to auto-supersede a contradicting legitimate fact.
+      const { status, body } = await httpPost(port, "/graphql", mutation);
+      expect(status).toBe(200);
+      const parsed = JSON.parse(body);
+      expect(parsed.errors).toBeUndefined();
+      expect(parsed.data.createFact.source).toBe("graphql");
+    },
+  );
 
   it("POST /graphql updateFact/deleteFact cannot target a different tenant's scoped fact (#69)", async () => {
     if (!server) return;
@@ -1308,9 +1307,9 @@ describe("Memory Viewer API (Issue #1023)", () => {
       const b = ctx.factsDb.store({ text: "v2", category: "fact", source: "test" });
       const c = ctx.factsDb.store({ text: "v3", category: "fact", source: "test" });
 
-      await apiPost(port, `/api/viewer/facts/${a.id}/verify`, JSON.stringify({ verifiedBy: "agent" }));
-      await apiPost(port, `/api/viewer/facts/${b.id}/verify`, JSON.stringify({ verifiedBy: "agent" }));
-      await apiPost(port, `/api/viewer/facts/${c.id}/verify`, JSON.stringify({ verifiedBy: "agent" }));
+      const _verifyA = await apiPost(port, `/api/viewer/facts/${a.id}/verify`, JSON.stringify({ verifiedBy: "agent" }));
+      const _verifyB = await apiPost(port, `/api/viewer/facts/${b.id}/verify`, JSON.stringify({ verifiedBy: "agent" }));
+      const _verifyC = await apiPost(port, `/api/viewer/facts/${c.id}/verify`, JSON.stringify({ verifiedBy: "agent" }));
 
       const { status, body } = await apiGet(port, "/api/viewer/verified?limit=2");
       expect(status).toBe(200);

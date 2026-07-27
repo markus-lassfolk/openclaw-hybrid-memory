@@ -255,7 +255,8 @@ describe("openclaw-cron-store (#1923)", () => {
     expect(detectCronStoreBackend(openclawDir)).toBe("json");
     const snapshot = readOpenClawCronStore(openclawDir);
     expect(snapshot.backend).toBe("json");
-    expect((snapshot.store.jobs?.[0] as { name?: string }).name).toBe("maintenance-nightly");
+    const firstJob = snapshot.store.jobs?.[0] as { name?: string } | undefined;
+    expect(firstJob?.name).toBe("maintenance-nightly");
   });
 
   it("writes maintenance jobs to SQLite without creating jobs.json", () => {
