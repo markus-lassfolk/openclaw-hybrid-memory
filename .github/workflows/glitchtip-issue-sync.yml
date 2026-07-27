@@ -1,0 +1,42 @@
+name: Sync GlitchTip Issues to GitHub
+
+on:
+  workflow_dispatch:
+    inputs:
+      org_slug:
+        description: "GlitchTip organization slug"
+        required: false
+        default: "hybrid-memory"
+      project_slug:
+        description: "GlitchTip project slug"
+        required: false
+        default: "openclaw-hybrid-memory"
+      query:
+        description: "GlitchTip issue search query"
+        required: false
+        default: "is:unresolved"
+      dry_run:
+        description: "Preview only — do not create any GitHub issues"
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Sync GlitchTip issues
+        env:
+          GLITCHTIP_TOKEN: ${{ secrets.GLITCHTIP_TOKEN }}
+          GLITCHTIP_BASE_URL: ${{ secrets.GLITCHTIP_BASE_URL }}
+          ORG_SLUG: ${{ inputs.org_slug || 'hybrid-memory' }}
+          PROJECT_SLUG: ${{ inputs.project_slug || 'openclaw-hybrid-memory' }}
+          QUERY: ${{ inputs.query || 'is:unresolved' }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node .github/scripts/sync-glitchtip-issues.mjs
