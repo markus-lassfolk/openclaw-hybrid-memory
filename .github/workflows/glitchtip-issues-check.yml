@@ -1,6 +1,9 @@
 name: Check GlitchTip Open Issues
 
 on:
+  push:
+    branches:
+      - claude/hybrid-memory-open-issues-4d8bck
   workflow_dispatch:
     inputs:
       org_slug:
