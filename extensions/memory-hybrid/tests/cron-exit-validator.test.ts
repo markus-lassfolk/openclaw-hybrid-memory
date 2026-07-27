@@ -9,9 +9,11 @@ import { describe, expect, it } from "vitest";
 import {
   checkForUnknownCommands,
   parseExitLine,
+  suppressRedundantGenericMaintenanceIssues,
   validateFromSummaryJson,
   validateMaintenanceExecution,
 } from "../services/cron-exit-validator.js";
+import type { MaintenanceTelemetryIssue } from "../services/cron-exit-validator.js";
 
 describe("cron-exit-validator", () => {
   describe("parseExitLine", () => {
@@ -1174,6 +1176,28 @@ error: unknown command 'bar'
       );
     });
 
+    it("threads batchFailures/hardBatchFailures/truncatedBatches counts into the distill issue (GlitchTip issue 27)", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "distill.exit.txt");
+      const logPath = join(tmpDir, "distill.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z distill exit=0\n");
+      writeFileSync(
+        logPath,
+        "memory-hybrid: distill done — status=partial extracted=5 blocks=10/10 batchFailures=2 hardBatchFailures=1 truncatedBatches=1 duration=30s\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["distill"]);
+
+      const issue = result.reportableIssues.find((i) => i.failureClass === "distill_partial_batch_failures");
+      expect(issue?.batchFailures).toBe(2);
+      expect(issue?.hardBatchFailures).toBe(1);
+      expect(issue?.truncatedBatches).toBe(1);
+      // The structured counts also show up in the message, not just as invisible fields.
+      expect(issue?.message).toContain("batchFailures=2");
+      expect(issue?.message).toContain("hardBatchFailures=1");
+      expect(issue?.message).toContain("truncatedBatches=1");
+    });
+
     it("does not treat all-uncertain continuous-verification as a nightly failure on exit=0", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "continuous-verification.exit.txt");
@@ -1288,6 +1312,72 @@ error: unknown command 'bar'
       );
     });
 
+    it("suppresses the generic nonzero_exit issue when a more specific issue exists for the same step (GlitchTip 22/29/23)", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "nightly-memory-sweep.exit.txt");
+      const logPath = join(tmpDir, "nightly-memory-sweep.log");
+      writeFileSync(exitPath, "2026-07-23T02:15:30Z distill exit=1\n");
+      writeFileSync(logPath, "distill stored=5 sessions=3 batchFailures=2 semantic=partial\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["distill"]);
+
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({ stepName: "distill", failureClass: "distill_partial_batch_failures" }),
+      );
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({ stepName: "distill", failureClass: "nonzero_exit" }),
+      );
+      // The surviving issue still makes clear the step also exited non-zero.
+      const kept = result.reportableIssues.find((i) => i.failureClass === "distill_partial_batch_failures");
+      expect(kept?.message).toMatch(/exit=1/);
+      expect(kept?.exitCode).toBe(1);
+    });
+
+    it("keeps the generic nonzero_exit issue when no more specific issue exists for that step", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "some-job.exit.txt");
+      const logPath = join(tmpDir, "some-job.log");
+      writeFileSync(exitPath, "2026-07-23T02:15:30Z prune exit=1\n");
+      writeFileSync(logPath, "prune: something broke unexpectedly\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["prune"]);
+
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({ stepName: "prune", failureClass: "nonzero_exit" }),
+      );
+    });
+
+    it("suppresses the top-level umbrella nonzero_exit issue when a child step issue exists (GlitchTip issue 26)", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "maintenance-nightly.exit.txt");
+      const logPath = join(tmpDir, "maintenance-nightly.log");
+      writeFileSync(exitPath, "2026-07-23T02:15:30Z distill exit=1\n2026-07-23T02:16:00Z maintenance-nightly exit=1\n");
+      writeFileSync(logPath, "distill stored=5 sessions=3 batchFailures=2 semantic=partial\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["distill", "maintenance-nightly"]);
+
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({ stepName: "maintenance-nightly", failureClass: "nonzero_exit" }),
+      );
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({ stepName: "distill", failureClass: "distill_partial_batch_failures" }),
+      );
+    });
+
+    it("keeps the umbrella nonzero_exit issue when it is the only issue in the pass", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "maintenance-nightly.exit.txt");
+      const logPath = join(tmpDir, "maintenance-nightly.log");
+      writeFileSync(exitPath, "2026-07-23T02:15:30Z maintenance-nightly exit=1\n");
+      writeFileSync(logPath, "maintenance-nightly: unexpected crash outside every known step check\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["maintenance-nightly"]);
+
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({ stepName: "maintenance-nightly", failureClass: "nonzero_exit" }),
+      );
+    });
+
     it("classifies unknown commands with unknown_maintenance_command not missing_required_step", () => {
       const testDir = mkdtempSync(join(tmpdir(), "cron-exit-test-"));
       const exitPath = join(testDir, "test.exit");
@@ -1387,6 +1477,24 @@ error: unknown command 'bar'
           failureClass: "analyze_maintenance_logs_strict_fail",
         }),
       );
+    });
+
+    it("threads analyzer finding titles into the strict-fail issue message/tags (GlitchTip issue 24)", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "analyze-maintenance-logs.exit.txt");
+      const logPath = join(tmpDir, "analyze-maintenance-logs.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z analyze-maintenance-logs exit=0\n");
+      writeFileSync(
+        logPath,
+        "analyze-maintenance-logs steps=12 findings=2 strict=fail semantic=partial findingTitles=[distill:plugin-bug, reflect:transient-llm]\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["analyze-maintenance-logs"]);
+
+      const issue = result.reportableIssues.find((i) => i.failureClass === "analyze_maintenance_logs_strict_fail");
+      expect(issue?.findingTitles).toEqual(["distill:plugin-bug", "reflect:transient-llm"]);
+      expect(issue?.message).toContain("distill:plugin-bug");
+      expect(issue?.message).toContain("reflect:transient-llm");
     });
 
     it("detects passive-observer errors as semantic failure", () => {
@@ -2479,5 +2587,120 @@ error: unknown command 'bar'
       expect(result.maintenanceStatus).toBe("failed");
       expect(result.guardUpdated).toBe(false);
     });
+
+    it("suppresses the generic wrapper AND the umbrella issue in consolidated (summary.json) mode when a richer per-step issue already exists (GlitchTip 22/23/26/29/30)", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-dedup-"));
+      const summaryPath = join(tmpDir, "maintenance-nightly.summary.json");
+      const exitPath = join(tmpDir, "maintenance-nightly.exit.txt");
+      const logPath = join(tmpDir, "maintenance-nightly.log");
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: "orch-dedup",
+          tierLabel: "nightly",
+          startedAt: "2026-07-23T02:00:00.000Z",
+          finishedAt: "2026-07-23T02:30:00.000Z",
+          durationMs: 1000,
+          exitCode: 1,
+          summaryLine: "failed",
+          steps: [
+            { name: "distill", status: "failed", summary: "stored=0 sessions=3 semantic=failed", durationMs: 10 },
+          ],
+          counts: { ok: 0, skipped: 0, deferred: 0, failed: 1, rateLimited: 0 },
+        }),
+      );
+      writeFileSync(exitPath, "2026-07-23T02:30:00Z maintenance-nightly exit=1\n");
+      writeFileSync(logPath, "");
+
+      const result = validateFromSummaryJson(summaryPath, exitPath, logPath, ["maintenance-nightly"], true);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      // The rich per-step detail (orchestrator_step_failed, carrying the inner step's own summary)
+      // survives as the single reported issue...
+      expect(result.reportableIssues).toHaveLength(1);
+      expect(result.reportableIssues[0]).toMatchObject({
+        stepName: "distill",
+        failureClass: "orchestrator_step_failed",
+      });
+      // ...while both the plain "distill exited non-zero" duplicate AND the content-free
+      // "maintenance-nightly exited non-zero" umbrella are suppressed, since the child issue
+      // already explains what happened.
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({ stepName: "distill", failureClass: "nonzero_exit" }),
+      );
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({ stepName: "maintenance-nightly", failureClass: "nonzero_exit" }),
+      );
+    });
+  });
+});
+
+describe("suppressRedundantGenericMaintenanceIssues (dedup unit tests)", () => {
+  function makeIssue(overrides: Partial<MaintenanceTelemetryIssue>): MaintenanceTelemetryIssue {
+    return {
+      fingerprint: ["hybrid-memory-maintenance", "job", "step", "class"],
+      jobName: "job",
+      stepName: "step",
+      failureCategory: "mechanical_failure",
+      failureClass: "nonzero_exit",
+      message: "job:step exited non-zero",
+      semanticStatus: "unknown",
+      ...overrides,
+    };
+  }
+
+  it("passes through a single issue unchanged", () => {
+    const issue = makeIssue({});
+    expect(suppressRedundantGenericMaintenanceIssues([issue])).toEqual([issue]);
+  });
+
+  it("suppresses nonzero_exit for a step that also has a specific issue, enriching the specific message with the exit code", () => {
+    const generic = makeIssue({ stepName: "distill", exitCode: 1 });
+    const specific = makeIssue({
+      stepName: "distill",
+      failureClass: "distill_partial_batch_failures",
+      failureCategory: "semantic_failure",
+      message: "job:distill had partial batch failures despite a mechanically successful run",
+    });
+
+    const result = suppressRedundantGenericMaintenanceIssues([generic, specific]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].failureClass).toBe("distill_partial_batch_failures");
+    expect(result[0].exitCode).toBe(1);
+    expect(result[0].message).toContain("exit=1");
+  });
+
+  it("does not double-append when a specific issue's message already mentions the exit", () => {
+    const generic = makeIssue({ stepName: "consolidate", exitCode: 1 });
+    const specific = makeIssue({
+      stepName: "consolidate",
+      failureClass: "db_lock_timeout",
+      failureCategory: "concurrency_storage_failure",
+      message: "job:consolidate hit a database lock or timeout (exit=1)",
+    });
+
+    const result = suppressRedundantGenericMaintenanceIssues([generic, specific]);
+    expect(result).toHaveLength(1);
+    expect(result[0].message).toBe("job:consolidate hit a database lock or timeout (exit=1)");
+  });
+
+  it("keeps a bare nonzero_exit issue when no specific sibling exists for that step", () => {
+    const only = makeIssue({ stepName: "prune" });
+    expect(suppressRedundantGenericMaintenanceIssues([only])).toEqual([only]);
+  });
+
+  it("suppresses the umbrella (stepName === jobName) when any other issue exists", () => {
+    const umbrella = makeIssue({ jobName: "maintenance-nightly", stepName: "maintenance-nightly" });
+    const other = makeIssue({ jobName: "maintenance-nightly", stepName: "distill", failureClass: "some_other_class" });
+
+    const result = suppressRedundantGenericMaintenanceIssues([umbrella, other]);
+    expect(result).toEqual([other]);
+  });
+
+  it("keeps the umbrella when it is the only issue", () => {
+    const umbrella = makeIssue({ jobName: "maintenance-nightly", stepName: "maintenance-nightly" });
+    expect(suppressRedundantGenericMaintenanceIssues([umbrella])).toEqual([umbrella]);
   });
 });

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { hasAnyScopeFilter } from "../backends/scope-filter-sql.js";
 import { resolveReflectionModelAndFallbacks } from "../config.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-maintenance-llm.js";
+import { classifyLlmFailureClass } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { emitPipelinePersonaProposed } from "../services/change-feed-emit.js";
@@ -317,6 +318,7 @@ export async function runGenerateProposalsForCli(
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "cli",
         operation: "runGenerateProposalsForCli:llm",
+        tags: { llm_failure_class: classifyLlmFailureClass(err), model: tryModel },
       });
       continue;
     }
@@ -325,7 +327,7 @@ export async function runGenerateProposalsForCli(
       if (parsed === null) throw new SyntaxError("No valid proposal items parsed");
       items = parsed as typeof items;
       break;
-    } catch (_err) {
+    } catch (err) {
       const responseSnippet = rawResponse.slice(0, 200);
       lastFailReason = `model=${tryModel} failure_type=invalid_json`;
       if (modelIdx < allModels.length - 1) {
@@ -335,6 +337,11 @@ export async function runGenerateProposalsForCli(
       } else if (verbose) {
         ctx.logger.warn?.(`memory-hybrid: generate-proposals — LLM output was not valid JSON: ${responseSnippet}`);
       }
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "cli",
+        operation: "runGenerateProposalsForCli:invalid-json",
+        tags: { llm_failure_class: classifyLlmFailureClass(undefined, rawResponse), model: tryModel },
+      });
       continue;
     }
   }

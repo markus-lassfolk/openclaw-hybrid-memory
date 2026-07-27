@@ -882,6 +882,7 @@ export async function runDistillForCli(
       processedBlocks,
       batchFailures,
       truncatedBatches,
+      hardBatchFailures,
     });
     progress.done();
     if (truncatedBatches > 0) {

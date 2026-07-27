@@ -103,6 +103,11 @@ export async function reportMaintenanceFailureIssues(
           failure_class: issue.failureClass,
           exit_code: issue.exitCode === undefined ? undefined : String(issue.exitCode),
           semantic_status: issue.semanticStatus,
+          batch_failures: issue.batchFailures,
+          hard_batch_failures: issue.hardBatchFailures,
+          truncated_batches: issue.truncatedBatches,
+          finding_titles:
+            issue.findingTitles && issue.findingTitles.length > 0 ? issue.findingTitles.join(", ") : undefined,
         },
         contexts: {
           maintenance: {
@@ -124,6 +129,10 @@ export async function reportMaintenanceFailureIssues(
             collapsed_count: issue.collapsedCount,
             model: issue.model,
             fallbacks: issue.fallbacks,
+            batch_failures: issue.batchFailures,
+            hard_batch_failures: issue.hardBatchFailures,
+            truncated_batches: issue.truncatedBatches,
+            finding_titles: issue.findingTitles,
           },
         },
       });
