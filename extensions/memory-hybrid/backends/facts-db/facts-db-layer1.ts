@@ -376,6 +376,14 @@ export class FactsDBLayer1 extends BaseSqliteStore {
 
   /** Compaction — retier facts by structural shape, salience, and inactivity. */
   runCompaction(opts: TieringOptions): RetierReport {
+    // Generation-safety (issue #2184): capture's session-end compaction can race a reload/SIGUSR/
+    // shutdown teardown that already permanentClose()'d this store. No-op cleanly rather than
+    // letting `liveDb` throw "The database connection is not open" into the lifecycle hook —
+    // mirrors the isPermanentlyClosed() guard used elsewhere (e.g. ContextEngine#isFactsDbTornDown)
+    // for lifecycle callbacks that can fire after teardown.
+    if (this.isPermanentlyClosed()) {
+      return { apply: false, examined: 0, changed: 0, hot: 0, warm: 0, cold: 0, structural: 0 };
+    }
     return runCompactionImpl(this.liveDb, opts);
   }
 

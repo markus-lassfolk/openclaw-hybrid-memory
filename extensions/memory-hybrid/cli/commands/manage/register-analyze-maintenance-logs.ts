@@ -171,7 +171,13 @@ export async function runAnalyzeMaintenanceLogs(
   writeMaintenanceAnalysisOutput(report, format, outPath);
 
   const strictFailed = shouldMaintenanceStrictFail(reportFindings);
-  const summary = `steps=${steps.length} findings=${reportFindings.length} strict=${strictFailed ? "fail" : "ok"} semantic=${strictFailed ? "partial" : "success"}`;
+  // Short "<step>:<classification>" titles for the strict-fail semantic rule (GlitchTip issue 24) —
+  // threading these into the summary line (which flows into HM_LOG via
+  // assertAnalyzeMaintenanceLogsSummaryDoesNotBlock's thrown error) lets cron-exit-validator surface
+  // what was actually found, not just a bare count. Capped so the line stays readable.
+  const findingTitles = reportFindings.slice(0, 8).map((f) => `${f.step}:${f.classification}`);
+  const findingTitlesPart = findingTitles.length > 0 ? ` findingTitles=[${findingTitles.join(", ")}]` : "";
+  const summary = `steps=${steps.length} findings=${reportFindings.length} strict=${strictFailed ? "fail" : "ok"} semantic=${strictFailed ? "partial" : "success"}${findingTitlesPart}`;
   if (opts?.strict && strictFailed) process.exitCode = 2;
   return { summary, strictFailed };
 }

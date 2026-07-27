@@ -264,6 +264,33 @@ describe("memory_issue_list", () => {
     expect(result.details[0].title).toBe("Critical");
   });
 
+  it("does not throw and matches the array-wrapped equivalent when status/severity/tags are passed as bare strings (regression, issue #2185)", async () => {
+    const c1 = (await api.callTool("memory_issue_create", {
+      title: "Issue A",
+      symptoms: ["s"],
+      severity: "critical",
+      tags: ["api"],
+    })) as any;
+    await api.callTool("memory_issue_create", { title: "Issue B", symptoms: ["s"] });
+    await api.callTool("memory_issue_update", { id: c1.details.id, status: "diagnosed" });
+
+    const arrayResult = (await api.callTool("memory_issue_list", {
+      status: ["diagnosed"],
+      severity: ["critical"],
+      tags: ["api"],
+    })) as any;
+
+    const scalarResult = (await api.callTool("memory_issue_list", {
+      status: "diagnosed" as any,
+      severity: "critical" as any,
+      tags: "api" as any,
+    })) as any;
+
+    expect(scalarResult.details.map((i: any) => i.id)).toEqual(arrayResult.details.map((i: any) => i.id));
+    expect(scalarResult.details).toHaveLength(1);
+    expect(scalarResult.details[0].title).toBe("Issue A");
+  });
+
   it("filters by tags", async () => {
     await api.callTool("memory_issue_create", { title: "API issue", symptoms: ["s"], tags: ["api"] });
     await api.callTool("memory_issue_create", { title: "DB issue", symptoms: ["s"], tags: ["database"] });

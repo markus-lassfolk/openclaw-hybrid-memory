@@ -20,7 +20,12 @@ import {
   maintenanceRunDeadlineReached,
 } from "../utils/maintenance-run-deadline.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
-import { chatCompleteWithRetry, LLMRetryError, resolveMaintenanceChatTimeoutMs } from "./chat.js";
+import {
+  chatCompleteWithRetry,
+  classifyLlmFailureClass,
+  LLMRetryError,
+  resolveMaintenanceChatTimeoutMs,
+} from "./chat.js";
 import { CostFeature } from "./cost-feature-labels.js";
 import { capturePluginError } from "./error-reporter.js";
 import { listActiveGoals } from "./goal-registry.js";
@@ -346,6 +351,7 @@ export async function runInsightSynthesis(
       operation: "insight-synthesis-llm",
       subsystem: "openai",
       retryAttempt: err instanceof LLMRetryError ? err.attemptNumber : 1,
+      tags: { llm_failure_class: classifyLlmFailureClass(err) },
     });
     return { ...none, evidenceItems, semanticOutcome: "failed" };
   }
@@ -353,6 +359,11 @@ export async function runInsightSynthesis(
   const { insights, parseOk } = parseInsightResponse(rawResponse);
   if (!parseOk) {
     logger.warn("memory-hybrid: insight-synthesis — unparseable model response; storing nothing");
+    capturePluginError(new Error("memory-hybrid: insight-synthesis — LLM response was not valid JSON"), {
+      operation: "insight-synthesis-parse",
+      subsystem: "openai",
+      tags: { llm_failure_class: classifyLlmFailureClass(undefined, rawResponse) },
+    });
     return { ...none, evidenceItems, semanticOutcome: "failed" };
   }
 

@@ -5,7 +5,9 @@ import { OpenLoopEvidenceRequiredError } from "../backends/loom/open-loops.js";
 import type { LoomStore } from "../backends/loom-store.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import type { LoopOwner, LoopStatus, LoopType } from "../types/open-loop-types.js";
 import { LOOP_OWNERS, LOOP_STATUSES, LOOP_TYPES } from "../types/open-loop-types.js";
+import { toArrayFilter } from "../utils/array-filter.js";
 import { stringEnum } from "../utils/typebox.js";
 
 export interface OpenLoopToolsContext {
@@ -123,8 +125,27 @@ export function registerOpenLoopTools(ctx: OpenLoopToolsContext, api: ClawdbotPl
       async execute(_id: string, params: Record<string, unknown>) {
         if (gate()) return notEnabled();
         try {
-          const p = params as Parameters<typeof store.listOpenLoops>[0] & object;
-          const loops = store.listOpenLoops(p as never);
+          // An LLM caller frequently passes a bare scalar (e.g. status: "open") for these
+          // array-typed filter fields despite the schema above declaring them as arrays; coerce
+          // before they reach the store's `.map()`-based query builder (issue #2185).
+          const p = params as {
+            status?: LoopStatus | LoopStatus[];
+            loop_type?: LoopType | LoopType[];
+            scope?: string;
+            entity?: string;
+            repo?: string;
+            owner?: LoopOwner;
+            limit?: number;
+          };
+          const loops = store.listOpenLoops({
+            status: toArrayFilter(p.status),
+            loopType: toArrayFilter(p.loop_type),
+            scope: p.scope,
+            entity: p.entity,
+            repo: p.repo,
+            owner: p.owner,
+            limit: p.limit,
+          });
           return {
             content: [
               {

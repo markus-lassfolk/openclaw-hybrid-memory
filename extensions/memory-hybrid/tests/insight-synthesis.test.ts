@@ -7,13 +7,18 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IdentityReflectionStore } from "../backends/identity-reflection-store.js";
 import { FactsDB } from "../backends/facts-db.js";
 import { parseResearchConfig } from "../config/parsers/research.js";
 import { writeGoal } from "../services/goal-registry.js";
 import { runInsightSynthesis, slugifyInsight } from "../services/insight-synthesis.js";
 import { baseGoal } from "./helpers/goal-helpers.js";
+
+vi.mock("../services/error-reporter.js", () => ({
+  capturePluginError: vi.fn(),
+}));
+import * as errorReporterMock from "../services/error-reporter.js";
 
 let dir: string;
 let db: FactsDB;
@@ -22,6 +27,7 @@ const logger = { info: () => {}, warn: () => {} };
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "hybrid-insight-"));
   db = new FactsDB(join(dir, "facts.db"));
+  vi.clearAllMocks();
 });
 
 afterEach(() => {
@@ -36,6 +42,18 @@ function mockOpenai(content: string, onCall?: () => void) {
         create: async () => {
           onCall?.();
           return { choices: [{ message: { content } }] };
+        },
+      },
+    },
+  } as never;
+}
+
+function mockOpenaiThrows(err: Error) {
+  return {
+    chat: {
+      completions: {
+        create: async () => {
+          throw err;
         },
       },
     },
@@ -202,10 +220,52 @@ describe("insight synthesis", () => {
     const bad = await runInsightSynthesis(db, mockOpenai("not json at all"), cfg, { dryRun: false }, logger);
     expect(bad.semanticOutcome).toBe("failed");
     expect(bad.stored).toBe(0);
+    // GlitchTip issue 31: unparseable (but non-empty) model output is tagged invalid_response_format
+    // so operators can distinguish "the LLM never answered" from "it answered with garbage".
+    expect(errorReporterMock.capturePluginError).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        operation: "insight-synthesis-parse",
+        tags: expect.objectContaining({ llm_failure_class: "invalid_response_format" }),
+      }),
+    );
 
     const empty = await runInsightSynthesis(db, mockOpenai(insightJson([])), cfg, { dryRun: false }, logger);
     expect(empty.semanticOutcome).toBe("success");
     expect(empty.candidates).toBe(0);
+  });
+
+  it("tags an empty model response as empty_response, not invalid_response_format", async () => {
+    seedBaseline(Math.floor(Date.now() / 1000));
+    await runInsightSynthesis(db, mockOpenai(""), cfg, { dryRun: false }, logger);
+    expect(errorReporterMock.capturePluginError).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        operation: "insight-synthesis-parse",
+        tags: expect.objectContaining({ llm_failure_class: "empty_response" }),
+      }),
+    );
+  });
+
+  it("tags a provider-error LLM call failure (GlitchTip issue 31)", async () => {
+    seedBaseline(Math.floor(Date.now() / 1000));
+    // 401 is a non-retryable config error (withLLMRetry throws immediately, no backoff) — keeps the
+    // test fast while still exercising the provider_error bucket end to end.
+    const r = await runInsightSynthesis(
+      db,
+      mockOpenaiThrows(new Error("401 Unauthorized")),
+      cfg,
+      { dryRun: false },
+      logger,
+    );
+    expect(r.semanticOutcome).toBe("failed");
+    expect(errorReporterMock.capturePluginError).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        operation: "insight-synthesis-llm",
+        tags: expect.objectContaining({ llm_failure_class: "provider_error" }),
+      }),
+    );
   });
 
   it("excludes evidence outside the window", async () => {

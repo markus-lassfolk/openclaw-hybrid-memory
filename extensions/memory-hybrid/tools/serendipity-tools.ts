@@ -29,6 +29,7 @@ import {
   promoteFinding,
 } from "../services/serendipity-promotion.js";
 import type { IssueSeverity } from "../types/issue-types.js";
+import { toArrayFilter } from "../utils/array-filter.js";
 import {
   SERENDIPITY_ADJACENCIES,
   SERENDIPITY_FINDING_TYPES,
@@ -248,10 +249,10 @@ export function registerSerendipityTools(ctx: SerendipityToolsContext, api: Claw
         if (!sp.enabled || !store) return notEnabled();
         try {
           const p = params as {
-            status?: SerendipityStatus[];
-            finding_type?: SerendipityFindingType[];
-            risk_level?: SerendipityRiskLevel[];
-            suggested_action?: SerendipitySuggestedAction[];
+            status?: SerendipityStatus | SerendipityStatus[];
+            finding_type?: SerendipityFindingType | SerendipityFindingType[];
+            risk_level?: SerendipityRiskLevel | SerendipityRiskLevel[];
+            suggested_action?: SerendipitySuggestedAction | SerendipitySuggestedAction[];
             repo?: string;
             backlog?: boolean;
             limit?: number;
@@ -260,11 +261,14 @@ export function registerSerendipityTools(ctx: SerendipityToolsContext, api: Claw
           const limit = limitRaw > 0 ? Math.max(1, Math.min(500, limitRaw)) : 50;
           const findings = p.backlog
             ? store.listActionableDeferred({ level: resolveLevel(p.repo), repo: p.repo, limit })
-            : store.list({
-                status: p.status,
-                findingType: p.finding_type,
-                riskLevel: p.risk_level,
-                suggestedAction: p.suggested_action,
+            : // An LLM caller frequently passes a bare scalar (e.g. status: "open") for these
+              // array-typed filter fields despite the schema above declaring them as arrays;
+              // coerce before they reach the store's `.map()`-based query builder (issue #2185).
+              store.list({
+                status: toArrayFilter(p.status),
+                findingType: toArrayFilter(p.finding_type),
+                riskLevel: toArrayFilter(p.risk_level),
+                suggestedAction: toArrayFilter(p.suggested_action),
                 repo: p.repo,
                 limit,
               });

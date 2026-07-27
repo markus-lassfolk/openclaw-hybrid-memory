@@ -947,6 +947,32 @@ describe("FactsDB tiering", () => {
     expect(report.changed).toBeGreaterThanOrEqual(0);
   });
 
+  it("runCompaction no-ops without throwing when the store is permanently closed (issue #2184)", () => {
+    db.store({
+      text: "Fact stored before teardown",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const captureSpy = vi.spyOn(errorReporter, "capturePluginError");
+
+    // Simulate a lifecycle-hook race: session-end compaction (stage-capture) fires after
+    // a reload/SIGUSR/shutdown teardown already permanentClose()'d this store.
+    db.permanentClose();
+    expect(db.isPermanentlyClosed()).toBe(true);
+
+    let counts: ReturnType<typeof db.runCompaction> | undefined;
+    expect(() => {
+      counts = db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
+    }).not.toThrow();
+
+    expect(counts).toEqual({ apply: false, examined: 0, changed: 0, hot: 0, warm: 0, cold: 0, structural: 0 });
+    expect(captureSpy).not.toHaveBeenCalled();
+  });
+
   it("runCompaction no longer moves fresh decisions to COLD by category alone", () => {
     const task = db.store({
       text: "Decided to use SQLite",

@@ -19,6 +19,7 @@ import {
   isContextLengthError,
   isOllamaOOM,
   isResponsesReasoningSequenceError,
+  classifyLlmFailureClass,
   parseGoDurationToMs,
   parseRetryAfterMs,
   withLLMRetry,
@@ -2352,5 +2353,49 @@ describe("chatComplete with wireApi='responses'", () => {
     expect(result).toBe("Hello from Chat");
     expect(mockOpenaiWithResponses.chat.completions.create).toHaveBeenCalled();
     expect(mockResponsesCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("classifyLlmFailureClass", () => {
+  it('classifies aborts/timeouts/connection failures as "timeout"', () => {
+    expect(classifyLlmFailureClass(Object.assign(new Error("aborted"), { name: "AbortError" }))).toBe("timeout");
+    expect(classifyLlmFailureClass(new Error("Request was aborted."))).toBe("timeout");
+    expect(classifyLlmFailureClass(new Error("LLM request timeout after 45000ms (model: x)"))).toBe("timeout");
+    expect(classifyLlmFailureClass(new Error("ECONNREFUSED"))).toBe("timeout");
+  });
+
+  it('classifies 4xx/5xx/config provider failures as "provider_error"', () => {
+    expect(classifyLlmFailureClass(new Error("404 Model not found"))).toBe("provider_error");
+    expect(classifyLlmFailureClass(new Error("403 Forbidden"))).toBe("provider_error");
+    expect(classifyLlmFailureClass(new Error("401 Unauthorized"))).toBe("provider_error");
+    expect(classifyLlmFailureClass(new Error("429 Too Many Requests"))).toBe("provider_error");
+    expect(classifyLlmFailureClass(new Error("500 Internal Server Error"))).toBe("provider_error");
+    expect(classifyLlmFailureClass(new UnconfiguredProviderError("openai", "gpt-4o"))).toBe("provider_error");
+    expect(classifyLlmFailureClass(new Error("400 Invalid 'input': maximum context length is 8192 tokens."))).toBe(
+      "provider_error",
+    );
+  });
+
+  it('classifies caller-thrown malformed-JSON errors as "invalid_response_format"', () => {
+    expect(classifyLlmFailureClass(new Error("LLM returned malformed NLI contradiction JSON."))).toBe(
+      "invalid_response_format",
+    );
+    expect(classifyLlmFailureClass(new SyntaxError("No valid proposal items parsed"))).toBe("unknown");
+  });
+
+  it("unwraps LLMRetryError to classify the underlying cause", () => {
+    const cause = new Error("429 Too Many Requests");
+    expect(classifyLlmFailureClass(new LLMRetryError("wrap", cause, 3))).toBe("provider_error");
+  });
+
+  it("falls back to rawResponse-based classification when no thrown error is available", () => {
+    expect(classifyLlmFailureClass(undefined, "")).toBe("empty_response");
+    expect(classifyLlmFailureClass(undefined, "   ")).toBe("empty_response");
+    expect(classifyLlmFailureClass(undefined, "not json at all")).toBe("invalid_response_format");
+  });
+
+  it('returns "unknown" for an unrecognized error and no rawResponse', () => {
+    expect(classifyLlmFailureClass(new Error("something else entirely"))).toBe("unknown");
+    expect(classifyLlmFailureClass(undefined)).toBe("unknown");
   });
 });

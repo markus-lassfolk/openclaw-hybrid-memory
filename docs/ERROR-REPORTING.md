@@ -300,8 +300,8 @@ This ensures repeated runs of the same failure are deduplicated in GlitchTip/Sen
 ### Integration Points
 
 Maintenance failure reporting is integrated at:
-- **`validate-cron-exit` CLI command**: Validates exit ledgers and reports issues
-- **Cron job wrappers**: Shell wrappers call `validate-cron-exit` to check maintenance results
+- **`maintenance validate-exit` CLI command** (flat `validate-cron-exit` is a deprecated alias): Validates exit ledgers and reports issues
+- **Cron job wrappers**: The generated bash harness calls `maintenance validate-exit` to check maintenance results
 
 ### Example: Viewing Maintenance Issues in GlitchTip
 
