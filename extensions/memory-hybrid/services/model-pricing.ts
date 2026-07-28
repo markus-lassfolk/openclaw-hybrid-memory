@@ -42,8 +42,34 @@ const MODEL_PRICING_LOWER: Record<string, ModelPricing> = Object.fromEntries(
 );
 
 /**
- * Look up pricing for a model. Returns null if the model is not in the table.
- * Model name is matched case-insensitively.
+ * Tier-family fallback for model IDs not in MODEL_PRICING. Exact-match-only lookup silently
+ * excludes every call from cost totals whenever a provider ships a new model version before
+ * this static table is updated (observed: ~99% of calls unpriced after an untracked model
+ * bump) — understating spend rather than overstating it, which is the worse failure mode for
+ * a cost report. Matched most-specific-pattern-first against a known tier anchor already in
+ * MODEL_PRICING, so a later version in the same price tier still gets an approximate estimate
+ * instead of being dropped. Still just an estimate — see the disclaimer above.
+ */
+const TIER_FALLBACKS: ReadonlyArray<{ pattern: RegExp; anchor: string }> = [
+  { pattern: /nano/i, anchor: "openai/gpt-4.1-nano" },
+  { pattern: /4o-mini/i, anchor: "openai/gpt-4o-mini" },
+  { pattern: /\bmini\b/i, anchor: "openai/gpt-4.1-mini" },
+  { pattern: /\b4o\b/i, anchor: "openai/gpt-4o" },
+  { pattern: /o3-mini/i, anchor: "openai/o3-mini" },
+  { pattern: /\bo3\b/i, anchor: "openai/o3" },
+  { pattern: /gpt-5/i, anchor: "openai/gpt-5.4" },
+  { pattern: /flash-lite/i, anchor: "google/gemini-2.5-flash-lite" },
+  { pattern: /flash/i, anchor: "google/gemini-2.0-flash" },
+  { pattern: /gemini.*pro|pro.*gemini/i, anchor: "google/gemini-3.1-pro-preview" },
+  { pattern: /haiku/i, anchor: "anthropic/claude-haiku-3.5" },
+  { pattern: /opus/i, anchor: "anthropic/claude-opus-4-6" },
+  { pattern: /sonnet|fable/i, anchor: "anthropic/claude-sonnet-4-6" },
+  { pattern: /minimax/i, anchor: "minimax/MiniMax-M2.5" },
+];
+
+/**
+ * Look up pricing for a model. Returns null only when neither an exact match nor a
+ * recognizable tier family is found. Model name is matched case-insensitively.
  * Local Ollama models always return $0 (no API cost).
  */
 export function getModelPricing(model: string): ModelPricing | null {
@@ -52,7 +78,14 @@ export function getModelPricing(model: string): ModelPricing | null {
   // Direct match first (fastest path)
   if (model in MODEL_PRICING) return MODEL_PRICING[model]!;
   // O(1) case-insensitive lookup via pre-built lowercase index
-  return MODEL_PRICING_LOWER[model.toLowerCase()] ?? null;
+  const exact = MODEL_PRICING_LOWER[model.toLowerCase()];
+  if (exact) return exact;
+  // Fall back to the same-tier anchor so an unrecognized model version still gets an
+  // approximate estimate rather than silently dropping out of cost totals.
+  for (const { pattern, anchor } of TIER_FALLBACKS) {
+    if (pattern.test(model)) return MODEL_PRICING[anchor]!;
+  }
+  return null;
 }
 
 /**
