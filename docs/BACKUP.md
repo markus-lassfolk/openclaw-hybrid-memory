@@ -18,7 +18,7 @@ The hybrid memory solution uses **files on disk**. Back up the following.
 
 | What | Default path | Notes |
 |------|--------------|-------|
-| **SQLite database** | `~/.openclaw/memory/facts.db` | All facts, FTS index, metadata, optional credential pointers. Single file. |
+| **SQLite database** | `~/.openclaw/memory/facts.db` | All facts, FTS index, metadata. Single file. Credentials are stored separately (see below), not in this file. |
 | **LanceDB directory** | `~/.openclaw/memory/lancedb/` | Vector index (directory with internal files). Copy the whole directory. |
 
 If you changed paths in config, use your `sqlitePath` and `lanceDbPath` instead.
@@ -37,6 +37,8 @@ If you changed paths in config, use your `sqlitePath` and `lanceDbPath` instead.
 |------|--------------|-------|
 | **Credentials vault** | `~/.openclaw/memory/credentials.db` | Encrypted credential store. Back up if you use the vault. |
 | **Persona proposals** | `~/.openclaw/memory/proposals.db` | Pending/approved proposals. Back up if you use persona proposals. |
+| **Crystallization proposals** | `~/.openclaw/memory/crystallization-proposals.db` | Pending workflow-crystallization skill proposals. Back up if `crystallization.enabled`. |
+| **Tool proposals** | `~/.openclaw/memory/tool-proposals.db` | Pending self-extension/tool proposals. |
 
 ### Workspace memory files (separate from plugin DBs)
 

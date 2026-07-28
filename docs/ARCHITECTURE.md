@@ -16,7 +16,7 @@ Four components work together:
 
 | Component | What it handles | Agent action | Technology |
 |-----------|------------------|--------------|------------|
-| **1a. Structured facts** | "What's X's Y?" — precise lookups | None (auto); or `lookup` / tools | memory-hybrid: **SQLite + FTS5** |
+| **1a. Structured facts** | "What's X's Y?" — precise lookups | None (auto); or `memory_recall` (entity filter) / tools | memory-hybrid: **SQLite + FTS5** |
 | **1b. Vector recall** | "What was that thing?" — fuzzy semantic | None (auto); or `memory_store` / `memory_recall` | memory-hybrid: **LanceDB** + configurable embeddings (OpenAI, Ollama, ONNX, or Google) |
 | **2. Semantic file search** | "Where did I write about X?" | None (automatic) | **memorySearch**: SQLite + BM25/vector over `memory/**/*.md` |
 | **3. Hierarchical files** | "Where are we on this project?" | Manual read/write | **memory/** directory + **MEMORY.md** index |

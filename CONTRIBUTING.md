@@ -4,7 +4,7 @@ Thanks for helping improve Hybrid Memory.
 
 ## Quick start for contributors
 
-**Node.js:** This repo requires **Node.js ≥ 22.16.0** (see `.nvmrc`). The plugin uses `node:sqlite`, which is unavailable on Node 20. CI runs on Node 22.16+.
+**Node.js:** This repo requires **Node.js ≥ 22.16.0** (see `.nvmrc`). The plugin uses `node:sqlite`, which is unavailable on Node 20. CI runs on Node 22.16 and Node 24.
 
 If you use **Cursor on WSL**, the integrated agent may prepend Cursor’s bundled Node 20 to `PATH`. This repo mitigates that automatically:
 
@@ -17,11 +17,11 @@ If you use **Cursor on WSL**, the integrated agent may prepend Cursor’s bundle
    cd extensions/memory-hybrid
    npm ci
    ```
-3. Validate locally before opening a PR:
+3. Validate locally before opening a PR — the required trio from the PR template checklist:
    ```bash
+   npx tsc --noEmit
    npm run lint
-   npm run build
-   npm run test
+   npm test
    ```
 
 ## What to work on first

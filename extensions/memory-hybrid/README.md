@@ -75,8 +75,6 @@ All tools use **underscore** names (`memory_store`, `memory_recall`, …). Dotte
 | Graph / contacts | [GRAPH-MEMORY.md](../../docs/GRAPH-MEMORY.md) |
 | ONNX embeddings | [README](#local-onnx-embeddings-optional) below |
 
-### Local ONNX embeddings (optional)
-
 ## Entity layer (contacts, organizations, NER)
 
 When **`graph.enabled`** is true, new facts are enriched asynchronously with typed entity mentions (e.g. **PERSON**, **ORG**, **SERVICE**, **TOOL**, **MODEL**, **PROJECT**, **AGENT**, **ROLE**) using **franc** + LLM with quality gating/canonicalization. Before mention rows are written to SQLite (`organizations`, `contacts`, `fact_entity_mentions`, `org_fact_links`), they are normalized, deduplicated per fact/label, and filtered for short or generic noise. The **`memory_directory`** tool exposes **`list_contacts`** and **`org_view`** for structured lists—use **`memory_recall`** for ranked semantic search. Backfill older facts with **`openclaw hybrid-mem enrich-entities`**, and audit/repair existing rows with **`openclaw hybrid-mem entity-mentions audit|cleanup`**. See [GRAPH-MEMORY.md](../../docs/GRAPH-MEMORY.md#person-and-organization-enrichment-entity-layer) and [MULTILINGUAL-SUPPORT.md](../../docs/MULTILINGUAL-SUPPORT.md).
@@ -160,7 +158,7 @@ All responses include `Cache-Control: no-cache`. POST endpoints accept JSON body
 
 Routes use the same `health.authenticated` setting to keep auth behavior consistent per prefix.
 
-See `docs/PUBLIC-API-SURFACE.md` for demo flows and payload shape details.
+See [PUBLIC-API-SURFACE.md](../../docs/PUBLIC-API-SURFACE.md) for demo flows and payload shape details.
 
 
 ```json
@@ -191,9 +189,9 @@ The `EventBus` additionally enters a terminal `closed` state after `close()` is 
 ## Dependencies
 
 - Built-in `node:sqlite` (ships with supported Node.js versions)
-- `@lancedb/lancedb` ^0.26.2
-- `@sinclair/typebox` 0.34.48
-- `openai` ^6.16.0 — **peer dependency (must be directly provided by the host)**. The `openai` package is not bundled with this plugin. Your host environment must directly declare and install `openai ^6.16.0` — a transitive copy (e.g. one pulled in via a sub-dependency of OpenClaw) is **not** sufficient under pnpm, Yarn PnP, or other strict package managers. Install it explicitly alongside this plugin: `npm i openai`.
+- `@lancedb/lancedb` ^0.31.0
+- `@sinclair/typebox` ^0.34.52
+- `openai` ^6.46.0 — **peer dependency (must be directly provided by the host)**. The `openai` package is not bundled with this plugin. Your host environment must directly declare and install `openai ^6.46.0` — a transitive copy (e.g. one pulled in via a sub-dependency of OpenClaw) is **not** sufficient under pnpm, Yarn PnP, or other strict package managers. Install it explicitly alongside this plugin: `npm i openai`.
 
 Build tools required for `@lancedb/lancedb`: C++ toolchain (e.g. `build-essential` on Linux, Visual Studio Build Tools on Windows), Python 3.
 
@@ -202,7 +200,7 @@ Build tools required for `@lancedb/lancedb`: C++ toolchain (e.g. `build-essentia
 For local embedding inference without an API key, install `onnxruntime-node` into the **OpenClaw extensions folder** (`~/.openclaw/extensions`) — one level above the plugin package — so that it survives `openclaw hybrid-mem upgrade`:
 
 ```bash
-npm install --prefix ~/.openclaw/extensions onnxruntime-node@^1.18.0
+npm install --prefix ~/.openclaw/extensions onnxruntime-node@^1.20.0
 ```
 
 Then set `embedding.provider: "onnx"` in plugin config. See repository [TROUBLESHOOTING.md](../../docs/TROUBLESHOOTING.md) if loading fails.
