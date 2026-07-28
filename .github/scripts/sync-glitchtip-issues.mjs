@@ -1,10 +1,16 @@
 #!/usr/bin/env node
 /**
- * Mirror unresolved GlitchTip issues into GitHub issues, deduped by GlitchTip issue ID.
+ * Bidirectional sync between GlitchTip issues and GitHub issues:
  *
- * This repo is public, so the body is built from an explicit field allowlist rather than
- * dumping the raw GlitchTip event — see ALLOWED_TAG_KEYS / DENY_KEY_PATTERN below. Breadcrumbs,
- * user/request/extra contexts, and the GlitchTip host itself are never included.
+ *   1. GlitchTip -> GitHub: mirror unresolved GlitchTip issues into GitHub issues, deduped by
+ *      GlitchTip issue ID.
+ *   2. GitHub -> GlitchTip: for previously-synced GitHub issues that have been closed, push the
+ *      resolution back onto the GlitchTip issue (`completed` -> resolved; `not_planned` or
+ *      `duplicate` -> ignored). Issues still open on GitHub are left alone on the GlitchTip side.
+ *
+ * This repo is public, so the GitHub issue body is built from an explicit field allowlist rather
+ * than dumping the raw GlitchTip event — see ALLOWED_TAG_KEYS / DENY_KEY_PATTERN below.
+ * Breadcrumbs, user/request/extra contexts, and the GlitchTip host itself are never included.
  *
  * Env: GLITCHTIP_TOKEN, GLITCHTIP_BASE_URL, ORG_SLUG, PROJECT_SLUG, QUERY, DRY_RUN ("true"/"false"),
  *      GITHUB_REPOSITORY (owner/repo, provided by Actions).
@@ -68,6 +74,36 @@ async function glitchtipGet(path, params) {
     throw new Error(`GlitchTip API ${url.pathname} returned HTTP ${res.status}`);
   }
   return res.json();
+}
+
+async function glitchtipSetStatus(issueId, status) {
+  // The flat /api/0/issues/{id}/ route is read/delete only (confirmed via OPTIONS: "Allow: DELETE,
+  // GET"). Status mutation lives on the org-scoped route instead ("Allow: PUT, DELETE, GET").
+  const url = new URL(`${GLITCHTIP_BASE_URL}/api/0/organizations/${ORG_SLUG}/issues/${issueId}/`);
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${GLITCHTIP_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ status }),
+  });
+  if (!res.ok) {
+    throw new Error(`GlitchTip API PUT ${url.pathname} returned HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+// Only closed GitHub issues drive a GlitchTip status change; open issues are left alone so that
+// manual triage done directly in GlitchTip (snoozing, etc.) isn't clobbered every run.
+const IGNORED_CLOSE_REASONS = new Set(["not_planned", "duplicate"]);
+
+function resolveTargetGlitchTipStatus(ghIssue) {
+  if ((ghIssue.state ?? "").toLowerCase() !== "closed") return null;
+  const reason = (ghIssue.stateReason ?? "").toLowerCase();
+  // "not_planned" (won't fix) and "duplicate" (tracked elsewhere, not separately fixed) both mean
+  // the underlying error isn't confirmed fixed, so they map to "ignored" rather than "resolved".
+  return IGNORED_CLOSE_REASONS.has(reason) ? "ignored" : "resolved";
 }
 
 function gh(args, input) {
@@ -167,7 +203,7 @@ async function main() {
     "--state",
     "all",
     "--json",
-    "number,body",
+    "number,body,state,stateReason",
     "--limit",
     "200",
   ]);
@@ -231,6 +267,44 @@ async function main() {
   }
 
   summaryLines.push("", `**${created} ${DRY_RUN ? "would be created" : "created"}, ${skipped} already synced (skipped).**`);
+
+  summaryLines.push("", `## GlitchTip status sync (GitHub → GlitchTip)${DRY_RUN ? " (dry run)" : ""}`, "");
+  let statusUpdated = 0;
+  let statusSkipped = 0;
+
+  for (const ghIssue of existing) {
+    const glitchtipId = /<!-- glitchtip-id: (\d+) -->/.exec(ghIssue.body ?? "")?.[1];
+    if (!glitchtipId) continue;
+
+    const targetStatus = resolveTargetGlitchTipStatus(ghIssue);
+    if (!targetStatus) continue; // still open on GitHub — leave GlitchTip status alone
+
+    const current = await glitchtipGet(`/api/0/issues/${glitchtipId}/`);
+    if (current.status === targetStatus) {
+      statusSkipped++;
+      continue;
+    }
+
+    if (DRY_RUN) {
+      summaryLines.push(
+        `- would set GlitchTip #${glitchtipId} \`${current.status}\` → \`${targetStatus}\` ` +
+          `(GitHub #${ghIssue.number} closed as ${ghIssue.stateReason ?? "completed"})`,
+      );
+      statusUpdated++;
+      continue;
+    }
+
+    await glitchtipSetStatus(glitchtipId, targetStatus);
+    summaryLines.push(
+      `- set GlitchTip #${glitchtipId} \`${current.status}\` → \`${targetStatus}\` (GitHub #${ghIssue.number})`,
+    );
+    statusUpdated++;
+  }
+
+  summaryLines.push(
+    "",
+    `**${statusUpdated} ${DRY_RUN ? "would be updated" : "updated"}, ${statusSkipped} already in sync.**`,
+  );
 
   const summaryPath = process.env.GITHUB_STEP_SUMMARY;
   if (summaryPath) {
