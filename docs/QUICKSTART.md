@@ -6,7 +6,7 @@ nav_order: 1
 ---
 # Quick Start - Hybrid Memory Plugin
 
-Get an agent that **remembers you** and **gets better at giving the right context** over time - in about 10 minutes. For full configuration options see [CONFIGURATION.md](CONFIGURATION.md); for architecture background see [ARCHITECTURE.md](ARCHITECTURE.md). For low-cost production rollout, see [COST-OPTIMIZATION-PLAYBOOK.md](COST-OPTIMIZATION-PLAYBOOK.md). After install, see [release notes 2026.6.252](../release-notes/release-notes-2026.6.252.md) for recent hotfix and maintenance notes.
+Get an agent that **remembers you** and **gets better at giving the right context** over time - in about 10 minutes. For full configuration options see [CONFIGURATION.md](CONFIGURATION.md); for architecture background see [ARCHITECTURE.md](ARCHITECTURE.md). For low-cost production rollout, see [COST-OPTIMIZATION-PLAYBOOK.md](COST-OPTIMIZATION-PLAYBOOK.md). After install, see [release notes 2026.7.227](../release-notes/release-notes-2026.7.227.md) for recent hotfix and maintenance notes (check the `release-notes/` directory for anything newer).
 
 ---
 

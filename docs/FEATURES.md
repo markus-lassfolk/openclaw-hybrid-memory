@@ -6,7 +6,7 @@ nav_order: 1
 ---
 # Features — Categories, Decay, Tags, and Auto-Classify
 
-The plugin makes your agent **more personal and tuned** by classifying what it stores, decaying old content, and improving recall over time. This page is the technical reference for how that works: categories, decay, tagging, and LLM auto-classify. For the big-picture “why” and benefits, see the [README](../README.md#why-youll-want-this--in-plain-english).
+The plugin makes your agent **more personal and tuned** by classifying what it stores, decaying old content, and improving recall over time. This page is the technical reference for how that works: categories, decay, tagging, and LLM auto-classify. For the big-picture “why” and benefits, see the [README](../README.md#the-problem).
 
 Detailed reference for the memory-hybrid plugin's classification, decay, tagging, and LLM auto-classify features.
 
@@ -38,7 +38,7 @@ Detailed reference for the memory-hybrid plugin's classification, decay, tagging
 | **Future-date decay protection** | [CONFIGURATION.md](CONFIGURATION.md#future-date-decay-protection-144) | Facts with future dates have their decay frozen until the date passes. Default: enabled. (#144) |
 | **Episodic event log (Layer 1)** | [event-log.md](../extensions/memory-hybrid/docs/event-log.md) | Append-only session event journal; raw capture layer for Dream Cycle consolidation. (#150) |
 | **Local embeddings (Ollama/ONNX)** | [CONFIGURATION.md](CONFIGURATION.md#local-embedding-providers-153) | Run embeddings locally without an API key using Ollama or ONNX providers. (#153) |
-| **Local LLM pre-filtering (Ollama)** | [CONFIGURATION.md](CONFIGURATION.md#local-llm-session-pre-filtering) | Two-tier session triage: uses a local model (e.g. qwen3) to filter out uninteresting sessions before sending to the cloud LLM. (#290) |
+| **Local LLM pre-filtering (Ollama)** | [CONFIGURATION.md](CONFIGURATION.md#local-llm-session-pre-filtering-290) | Two-tier session triage: uses a local model (e.g. qwen3) to filter out uninteresting sessions before sending to the cloud LLM. (#290) |
 | **Sensor Sweep (Event Bus)** | [CONFIGURATION.md](CONFIGURATION.md#sensor-sweep-sensorsweep-236) | Cron-based background data collection (Garmin, GitHub, Session History, System Health, HA anomalies, Weather, Yarbo) without LLM overhead. Events stored in `event-bus.db`. (#236) |
 | **Multi-model embedding registry** | [CONFIGURATION.md](CONFIGURATION.md#multi-model-embedding-registry-158) | Embed each fact with multiple models in parallel; merge results via RRF at recall. (#158) |
 | **Contextual variants at index time** | [CONFIGURATION.md](CONFIGURATION.md#contextual-variants-at-index-time-159) | LLM-generated alternative phrasings embedded alongside facts to improve recall. (#159) |
@@ -56,7 +56,7 @@ Detailed reference for the memory-hybrid plugin's classification, decay, tagging
 
 ### Default categories
 
-Seven categories are built in and always available:
+Seven of these are the core, user-facing categories and are always available (the plugin ships 17 built-in categories in total — the remaining ten are internal/operational, e.g. `edict`, `forge`, `ops_summary`, `routine`, `insight`; see `config/utils.ts` `DEFAULT_MEMORY_CATEGORIES`):
 
 | Category | Typical content | Examples |
 |----------|----------------|----------|
@@ -144,10 +144,10 @@ After category detection, `extractStructuredFields()` extracts **entity / key / 
 
 ### Adding heuristic patterns for custom categories
 
-The built-in `detectCategory()` only recognizes a subset of the default categories (not `pattern` or `rule`, which are assigned by the reflection layer). To add a heuristic for a custom category, edit `detectCategory()` in `index.ts`:
+The built-in `detectCategory()` (in `services/capture-utils.ts`) only recognizes a subset of the default categories — `decision`, `preference`, `entity`, `fact` (not `pattern` or `rule`, which are assigned by the reflection layer). Its regex word lists are sourced from `utils/language-keywords.ts` (`ENGLISH_KEYWORDS`, mergeable with a generated `.language-keywords.json`) — extend those lists to widen an existing branch. To recognize a wholly new category (e.g. `research`), add a branch directly to `detectCategory()` in `services/capture-utils.ts`:
 
 ```typescript
-// Before the final return:
+// Before the final `return "other"`:
 if (/research|paper|study|journal|arxiv/i.test(lower)) return "research";
 return "other";
 ```
@@ -170,9 +170,9 @@ Without this, custom categories are only assigned via explicit `memory_store` ca
 ### LLM prompt
 
 > You are a memory classifier. Categorize each fact into exactly one category.
-> Available categories: preference, fact, decision, entity *(plus custom categories, minus "other")*
+> Available categories: *(the full configured category list, minus "other")*
 > Use "other" ONLY if no category fits at all.
-> Respond with ONLY a JSON array of category strings.
+> Respond with ONLY a JSON array of objects, one per fact, each with the fact's number (`"n"`) and its `"category"` — e.g. `[{"n":1,"category":"fact"},{"n":2,"category":"entity"}]`.
 
 ### CLI commands
 
@@ -188,7 +188,7 @@ Without this, custom categories are only assigned via explicit `memory_store` ca
 
 ## Decay and Pruning
 
-**No cron or external jobs are required.** The plugin handles decay automatically: on gateway start (hard-delete expired) and every 60 minutes (hard prune + soft-decay confidence). Decay classes: permanent, durable (~3mo), normal (2w), short (2d), ephemeral (4h), and legacy classes (stable, active, session, checkpoint). Durable, normal, stable, and active facts get their expiry refreshed when recalled.
+**No cron or external jobs are required.** The plugin handles decay automatically: on gateway start (hard-delete expired) and via the unified maintenance tick's `prune` step, guarded to roughly once per hour (hard prune + soft-decay confidence). Decay classes: permanent, durable (~6mo), normal (~90d), short (2d), ephemeral (4h), and legacy classes (stable ~90d, active ~14d, session, checkpoint) (`config/types/core.ts` `TTL_DEFAULTS`). Durable, normal, stable, and active facts get their expiry refreshed when recalled.
 
 **Manual controls:** `openclaw hybrid-mem prune` (options: `--soft`, `--dry-run`), `openclaw hybrid-mem backfill-decay` to re-classify existing facts.
 

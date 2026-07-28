@@ -15,7 +15,7 @@ For cost-first rollout guidance (cheap-first tier lists, distill/recall guardrai
 
 For **chat/completion**, you can use either **API keys** (in plugin or gateway config) or **OAuth** (recommended for many users — no paid keys, sign in once via `openclaw configure`). When OAuth is configured for a provider, the plugin sends LLM requests through the OpenClaw gateway; the gateway resolves your OAuth token and forwards to the provider. Embeddings still go directly to whichever embedding provider you configure (OpenAI, Ollama, ONNX, or Google).
 
-**Azure / Microsoft Foundry:** Gateway model catalog vs hybrid-memory `llm` (two layers), `api-key` header, and links — see [Azure Foundry and OpenClaw](AZURE-FOUNDRY-AND-OPENCLAW.md).
+**Azure / Microsoft Foundry:** For the gateway model catalog vs hybrid-memory's own `llm` config (two separate layers), the `api-key` header, and Responses-API vs Chat-Completions routing, see [Azure Foundry — Responses API models](#azure-foundry--responses-api-models) and [Azure vs OpenAI keys](#provider-api-keys) below.
 
 ---
 

@@ -31,7 +31,7 @@ Full bootstrap (DB init, vault open, doctor/config checks) logs a lot of `info`-
 | **Maintenance** | `run-all`, `compact`, `prune`, `checkpoint`, `backfill-decay`, `backfill`, `dream-cycle`, `resolve-contradictions` |
 | **Stats & query** | `stats [--efficiency]`, `test`, `context-audit`, `search <query>`, `lookup <id>`, `forget <id> [--yes]`, `list [--limit, --category, --tier]`, `show <id>`, `categories` |
 | **Proposals & corrections** | `proposals list|show|approve|reject <id>`, `corrections list`, `corrections approve-all`, `review` |
-| **Store & ingestion** | `store <text>`, `ingest-files`, `distill`, `distill-window`, `record-distill`, `extract-daily`, `extract-procedures`, `extract-directives`, `extract-reinforcement`, `generate-auto-skills`, `skills-suggest`, `generate-proposals` |
+| **Store & ingestion** | `store <text>`, `ingest-files`, `distill`, `distill-window`, `record-distill`, `extract-daily`, `extract-procedures`, `extract-directives`, `extract-reinforcement`, `generate-auto-skills`, `skills suggest`, `generate-proposals` |
 | **Reflection & classification** | `reflect`, `reflect-rules`, `reflect-meta`, `classify`, `build-languages`, `enrich-entities` |
 | **Dedup & consolidation** | `find-duplicates`, `consolidate` |
 | **Self-correction** | `self-correction-extract`, `self-correction-run` |
@@ -86,13 +86,13 @@ Full bootstrap (DB init, vault open, doctor/config checks) logs a lot of `info`-
 | `classify [--dry-run] [--limit N] [--model M]` | Auto-classify "other" facts using LLM. Progress bar in TTY. |
 | `categories` | List all configured categories with per-category fact counts. |
 | `categories discovered [list\|approve <label>\|reject <label>] [--json]` | Review labels proposed by category discovery (see [AUTOMATIC-CATEGORIES.md](AUTOMATIC-CATEGORIES.md)) before they're promoted into config. `list` (default) shows pending + previously-rejected labels; `approve`/`reject` remove a label from the pending queue — `approve` prints the manual promotion steps (discovery is advisory-only, it never auto-applies), `reject` also records the label so future discovery runs never re-propose it (#2100). |
-| `list <type> [--limit N] [--status s]` | List items by type: **patterns**, **rules**, **directives**, **procedures**, **proposals**, or **corrections**. `--limit` caps output (default 50). For proposals/corrections, `--status` filters (e.g. pending). See [List, show, and review](#list-show-and-review-issue-56) below. |
-| `show <id>` | Show full details of a fact, procedure, or persona proposal by ID. |
+| `list [--limit N] [--category c] [--entity e] [--key k] [--source s] [--tier hot\|warm\|cold\|structural]` | List recent facts (default limit 10), filterable by category/entity/key/source/tier. **Not** a per-type browser — patterns/rules are just categories (`list --category pattern`), procedures need `procedure list`, and persona proposals / self-correction items have their own `proposals list` / `corrections list` commands. See [List, show, and review](#list-show-and-review) below. |
+| `show <id>` | Show full detail for a fact by ID (JSON). For a persona proposal id it prints a pointer to `proposals show <id>` rather than the proposal itself; procedures are not covered — use `procedure show <id>`. |
 | `proposals list [--status s]` | List persona proposals (pending, approved, rejected, applied). |
 | `proposals approve <id>` | Approve a persona proposal. Then use `openclaw proposals apply <id>` to apply to file. |
 | `proposals reject <id> [--reason text]` | Reject a persona proposal. |
 | `corrections list [--workspace path]` | List proposed corrections from the latest self-correction report (`memory/reports/self-correction-*.md`). |
-| `corrections approve [--all] [--workspace path]` | Apply all suggested TOOLS rules from the latest report to TOOLS.md. Requires `--all`. |
+| `corrections approve-all [--workspace path]` | Apply all suggested TOOLS rules from the latest report to TOOLS.md. |
 | `review [--workspace path]` | Interactive review: step through pending proposals and corrections (a=approve, r=reject, s=skip). |
 | `find-duplicates [--threshold 0.92] [--include-structured] [--limit 300]` | Report pairs of facts with embedding similarity ≥ threshold. Report-only; no merge. |
 | `consolidate [--threshold 0.92] [--include-structured] [--dry-run] [--limit 300] [--model M]` | Merge near-duplicate facts: cluster by embedding similarity, LLM-merge each cluster. |
@@ -100,7 +100,7 @@ Full bootstrap (DB init, vault open, doctor/config checks) logs a lot of `info`-
 | `reflect-rules [--dry-run] [--model M] [--force\|--full]` | Synthesize patterns into actionable rules. |
 | `reflect-meta [--dry-run] [--model M] [--force\|--full]` | Synthesize higher-level meta-patterns. |
 | `install [--dry-run]` | Guided first-run setup. Applies recommended config, auto-detects a sensible embedding default, creates starter workspace files/directories, refreshes the workspace skill + TOOLS.md block, and prints what is done vs left. Alias: `setup`. |
-| `config-mode <preset>` | Set preset: **local** (offline), **minimal** (cheap cloud help), **enhanced** (balanced), **complete** (enhanced + verbose). Writes to openclaw.json. Restart gateway after. See [CONFIGURATION-MODES.md](CONFIGURATION-MODES.md). Aliases: `mode`, `set-mode`. |
+| `config-mode <preset>` | Set preset: **local** (offline), **minimal** (cheap cloud help), **enhanced** (balanced), **complete** (enhanced + verbose). Writes to openclaw.json. Restart gateway after. See [CONFIGURATION-MODES.md](CONFIGURATION-MODES.md). Alias: `mode`. |
 | `help config-set <key>` | Show current value and a short description (tweet-length) for a config key. Example: `help config-set autoCapture`. |
 | `config` | Show current configuration and feature toggles (mode, core and optional features on/off), plus a plain-English mode summary. Alias: `settings`. |
 | `config-set <key> [value]` | Set a plugin config key (use **true** / **false** for booleans). **Omit value** to show current value and description (same as `help config-set <key>`). Alias: `set`. |
@@ -253,24 +253,15 @@ openclaw hybrid-mem store --text <text> [--category <cat>] [--entity <e>] [--key
 The `sensor-sweep` CLI executes cron-based background data collection without relying on the LLM. It queries configured sensors (Tier 1 and Tier 2) and writes structured events to the Event Bus (`event-bus.db`).
 
 ```bash
-openclaw hybrid-mem sensor-sweep [--tier 1|2|all] [--source <names>] [--dry-run] [--json]
+openclaw hybrid-mem sensor-sweep [--tier 1|2|all] [--dry-run] [-v|--verbose]
 ```
 
 **Options:**
-- `--tier <n>`: Sensor tier to run (1 for Tier 1 only, 2 for Tier 2, all for both). Defaults to 1.
-- `--source <names>`: Comma-separated list of sensors (e.g. `garmin,github,weather`).
-- `--dry-run`: Preview what would be collected without writing events.
+- `--tier <n>`: Sensor tier to run (1, 2, or all). Defaults to `all`.
+- `--dry-run`: Preview without writing events.
+- `-v, --verbose`: Log progress before each sensor.
 
-You can inspect the collected events using the `sensor-events` command:
-
-```bash
-openclaw hybrid-mem sensor-events [--type <type>] [--status <status>] [--limit 20] [--json]
-```
-
-**Options:**
-- `--type <type>`: Filter by event type (e.g., `sensor.garmin`).
-- `--status <status>`: Filter by event status (`raw`, `processed`, `surfaced`, `pushed`, `archived`). Defaults to `raw`.
-- `--limit <n>`: Max events to return.
+There is currently no dedicated CLI command to browse individual Event Bus rows (no `sensor-events`) — the bus is an internal decoupling mechanism between sensor producers and maintenance/Dream consumers (`backends/event-bus.ts`, status lifecycle `raw → processed → surfaced → pushed → archived`). Use `openclaw hybrid-mem audit health` / `stats` for aggregate storage state, or query `event-bus.db` directly for row-level inspection.
 
 ---
 
@@ -554,19 +545,20 @@ After running the maintenance pipeline (`distill`, `extract-*`, `reflect`, `self
 
 ### List by type
 
+`list` has no `<type>` argument — it lists recent facts filtered by `--category`/`--entity`/`--key`/`--source`/`--tier`. Patterns, rules, and directives are not separate item kinds; procedures, proposals, and corrections each have their own dedicated command:
+
 ```bash
-openclaw hybrid-mem list patterns [--limit 10]
-openclaw hybrid-mem list rules [--limit 10]
-openclaw hybrid-mem list directives [--limit 10]
-openclaw hybrid-mem list procedures [--limit 10]
-openclaw hybrid-mem list proposals [--status pending]
-openclaw hybrid-mem list corrections [--workspace path]
+openclaw hybrid-mem list --category pattern [--limit 10]
+openclaw hybrid-mem list --category rule [--limit 10]
+openclaw hybrid-mem procedure list [--limit 10]
+openclaw hybrid-mem proposals list [--status pending]
+openclaw hybrid-mem corrections list [--workspace path]
 ```
 
-- **patterns** / **rules** / **directives** — From the facts table (category or source). Non-superseded only.
-- **procedures** — From the procedures table (task patterns, positive/negative).
-- **proposals** — Persona proposals (requires persona proposals enabled). Filter by `--status pending|approved|rejected|applied`.
-- **corrections** — Parses the latest `memory/reports/self-correction-YYYY-MM-DD.md` and shows the "Suggested TOOLS.md rules" and "Proposed (review before applying)" sections.
+- **patterns** / **rules** — Facts stored with `category: "pattern"` / `"rule"` (written by `reflect` / `reflect-rules`). Non-superseded only. "Directives" extracted by `extract-directives` are similarly filed under an existing category (`preference`, `rule`, `pattern`, `decision`, or `fact`) rather than their own type — there's no single clean filter for them.
+- **procedures** — `procedure list` reads the procedures table (task patterns, positive/negative) — a different table from `list`.
+- **proposals** — `proposals list` (persona proposals; requires persona proposals enabled). Filter by `--status pending|approved|rejected|applied`.
+- **corrections** — `corrections list` parses the latest `memory/reports/self-correction-YYYY-MM-DD.md` and shows the "Suggested TOOLS.md rules" and "Proposed (review before applying)" sections.
 
 ### Show one item
 
@@ -574,7 +566,7 @@ openclaw hybrid-mem list corrections [--workspace path]
 openclaw hybrid-mem show <fact-id-or-proposal-id>
 ```
 
-Resolves the ID as a fact, procedure, or persona proposal and prints JSON details.
+Resolves the ID as a fact or persona proposal and prints JSON details (a proposal id just prints a pointer to `proposals show <id>`). Procedures aren't resolved here — use `procedure show <id>`.
 
 ### Proposals (persona)
 
@@ -585,7 +577,7 @@ Resolves the ID as a fact, procedure, or persona proposal and prints JSON detail
 ### Corrections (self-correction)
 
 - **corrections list** — Show proposed TOOLS rules and other suggestions from the latest report.
-- **corrections approve --all** — Insert all suggested TOOLS rules from that report into `TOOLS.md` under the configured self-correction section (e.g. "Self-correction rules"). Uses workspace root (default `OPENCLAW_WORKSPACE` or `~/.openclaw/workspace`).
+- **corrections approve-all** — Insert all suggested TOOLS rules from that report into `TOOLS.md` under the configured self-correction section (e.g. "Self-correction rules"). Uses workspace root (default `OPENCLAW_WORKSPACE` or `~/.openclaw/workspace`).
 
 ### Interactive review
 
@@ -610,7 +602,7 @@ store (see [PROACTIVE-RESEARCH.md](PROACTIVE-RESEARCH.md)):
 
 ## Maintenance cron jobs
 
-**Install** and **verify --fix** create or repair maintenance cron jobs in `~/.openclaw/cron/jobs.json`. The canonical list is **11 jobs** (see table). **Install/verify** also creates `~/.openclaw/logs/cron-hybrid-mem/` for first-run log paths.
+**Install** and **verify --fix** create or repair maintenance cron jobs in `~/.openclaw/cron/jobs.json`. **By default** (`maintenance.orchestrator.consolidatedCronJobs` unset or `true`), this installs a **single consolidated job**, `hybrid-mem:maintenance-nightly` (daily 02:00, runs `openclaw hybrid-mem maintenance nightly --verbose` — the orchestrator resolves due nightly/weekly/monthly steps itself), plus a handful of jobs that stay standalone even under consolidation (`nightly-doctor-repair`, `maintenance-log-analyzer`, `weekly-pending-digest`, `weekly-pending-digest-autopilot`, `research-overnight`, and feature-gated ones like `sensor-sweep`). Set `maintenance.orchestrator.consolidatedCronJobs: false` to install the **legacy per-task layout** instead — the table below documents that legacy layout (it predates consolidation and is no longer what a fresh install creates by default). See [MAINTENANCE-TASKS-MATRIX.md](MAINTENANCE-TASKS-MATRIX.md) for the authoritative current breakdown. **Install/verify** also creates `~/.openclaw/logs/cron-hybrid-mem/` for first-run log paths.
 
 Default job **messages** embed a **bash harness**: one foreground shell (`set -euo pipefail`, `set -x`), per-step `hm_step` that **tees** to `HM_LOG` and appends `exit=<code>` lines to `HM_EXIT`, plus log headers (`HM_JOB`, `RUN_ID`, `openclaw --version`). Logs default to `~/.openclaw/logs/cron-hybrid-mem/` (fallback: `/tmp/openclaw-cron-hybrid-mem-$USER` if that directory is not writable). The message instructs the agent **not** to update the guard file after a failed step and to paste `HM_EXIT` in the reply.
 

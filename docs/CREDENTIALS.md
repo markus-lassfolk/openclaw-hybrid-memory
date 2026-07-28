@@ -4,13 +4,13 @@ title: Credential Vault
 parent: Features
 nav_order: 2
 ---
-# Credential Management (Opt-in)
+# Credential Management
 
-The hybrid-memory plugin supports an **opt-in credential store** for structured storage of API keys, tokens, passwords, and other authentication data. **Encryption is optional:** you can use the vault with or without an encryption key; without a key, values are stored in plaintext and you may secure the data by other means (e.g. filesystem permissions, full-disk encryption).
+The hybrid-memory plugin includes a **credential store** for structured storage of API keys, tokens, passwords, and other authentication data. It's **on by default** under the `local` and `minimal` config presets (`local` is the plugin's own default mode, so most installs have it on out of the box) and **opt-in** under `enhanced`/`complete` (enable it explicitly with `credentials.enabled: true`, or set a valid `credentials.encryptionKey`). **Encryption is optional:** you can use the vault with or without an encryption key; without a key, values are stored in plaintext and you may secure the data by other means (e.g. filesystem permissions, full-disk encryption).
 
 ## Dual-mode: Vault vs memory
 
-- **Vault disabled/unavailable (default):** Credential-like content is **blocked** from ordinary memory storage. `memory_store`, `openclaw hybrid-mem store`, session distillation, and extract-daily will skip credential-like inputs and instruct operators to enable the credential vault.
+- **Vault disabled/unavailable** (e.g. `enhanced`/`complete` presets with no encryption key and `credentials.enabled` not explicitly set to `true`): Credential-like content is **blocked** from ordinary memory storage. `memory_store`, `openclaw hybrid-mem store`, session distillation, and extract-daily will skip credential-like inputs and instruct operators to enable the credential vault.
 - **Vault enabled:** When the secure credential vault is enabled (see below), credential-like content is **not** written into memory or the database. Instead:
   - The secret is stored only in the encrypted vault.
   - A **pointer** fact is stored in memory (e.g. “Credential for home-assistant (token) — stored in secure vault. Use credential_get(service=\"home-assistant\") to retrieve.”) so the agent knows the credential exists and how to retrieve it.
@@ -37,7 +37,7 @@ So when vault is enabled, **all** stored credentials end up only in the vault, w
 
 ## Enable
 
-Set `"enabled": true` in your memory-hybrid config to use the credential vault. Optionally set **encryptionKey** to encrypt values at rest; if omitted, the vault stores values in plaintext (you may secure the file by other means).
+The vault is already on by default under the `local` and `minimal` config presets — no action needed there. Under `enhanced`/`complete`, set `"enabled": true` in your memory-hybrid config to use the credential vault. Optionally set **encryptionKey** to encrypt values at rest; if omitted, the vault stores values in plaintext (you may secure the file by other means).
 
 **With encryption (recommended when storing secrets):**
 
