@@ -45,6 +45,29 @@ describe("getModelPricing", () => {
     const p = getModelPricing("OpenAI/GPT-4.1-NANO");
     expect(p).not.toBeNull();
   });
+
+  describe("tier fallback for unrecognized model versions", () => {
+    it("matches a newer Claude generation to the same-tier anchor instead of returning null", () => {
+      expect(getModelPricing("anthropic/claude-sonnet-5")).toEqual(getModelPricing("anthropic/claude-sonnet-4-6"));
+      expect(getModelPricing("anthropic/claude-opus-5")).toEqual(getModelPricing("anthropic/claude-opus-4-6"));
+      expect(getModelPricing("anthropic/claude-haiku-4-5-20251001")).toEqual(
+        getModelPricing("anthropic/claude-haiku-3.5"),
+      );
+    });
+
+    it("matches a newer OpenAI nano/mini generation to the same-tier anchor", () => {
+      expect(getModelPricing("openai/gpt-6.1-nano")).toEqual(getModelPricing("openai/gpt-4.1-nano"));
+      expect(getModelPricing("openai/gpt-6-mini")).toEqual(getModelPricing("openai/gpt-4.1-mini"));
+    });
+
+    it("still returns null when no tier keyword is recognizable at all", () => {
+      expect(getModelPricing("unknown/some-model-v9")).toBeNull();
+    });
+
+    it("checks more specific patterns before generic ones (4o-mini before bare mini/4o)", () => {
+      expect(getModelPricing("openai/gpt-4o-mini-2027")).toEqual(getModelPricing("openai/gpt-4o-mini"));
+    });
+  });
 });
 
 describe("estimateCost", () => {
