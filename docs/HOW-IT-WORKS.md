@@ -24,7 +24,7 @@ You send a message
       |
       v
  2. AGENT PROCESSES your message
-    Has access to memory tools (memory_store, memory_recall, lookup, etc.)
+    Has access to memory tools (memory_store, memory_recall, etc.)
     Can explicitly store/search if needed
       |
       v
@@ -48,7 +48,7 @@ When you send a message, **before the agent sees it**, the plugin:
 2. **Searches both backends in parallel:**
    - **SQLite FTS5** — full-text search over all stored facts (free, instant).
    - **LanceDB** — vector similarity search over embeddings (finds fuzzy/semantic matches).
-3. **Merges and deduplicates** — combines results from both backends, removes duplicates, filters superseded facts.
+3. **Merges via Reciprocal Rank Fusion (RRF)** — combines results from both backends by rank (`score = Σ 1/(k + rank)`, k=60 by default), removes duplicates, filters superseded facts.
 4. **Scores and ranks** — factors in: vector similarity, text relevance, importance, recency, decay class (optionally boosting permanent/stable facts).
 5. **Applies token budget** — trims to `maxTokens` (default 800) to avoid overwhelming the context.
 6. **Injects into context** — adds a `<memory-context>` block before the agent's system prompt with the top matches.
@@ -67,7 +67,7 @@ When you send a message, **before the agent sees it**, the plugin:
 - **Entity lookup** — if your prompt mentions a known entity (e.g. "user"), lookup facts for that entity are merged in.
 - **Retrieval directives** — targeted recall when the prompt mentions an entity, matches keywords, or matches a task type; optional one-time recall at session start. Results are merged with semantic recall. Agent-scoped memory and scope filters apply so specialists see only relevant facts.
 - **Summary injection** — long facts are injected as short summaries to save tokens.
-- **Graph traversal** — if graph memory is enabled, related facts are discovered via typed links (zero LLM cost).
+- **Graph traversal** — related facts discovered via typed links through spreading activation (zero LLM cost). This is the third RRF retrieval strategy alongside `fts5` and `semantic`; it's off by default (default `retrieval.strategies` is `["semantic", "fts5"]`) — enable it by adding `"graph"` to `retrieval.strategies`.
 - **Query expansion** — when `queryExpansion.enabled` is true, the plugin asks the LLM for a short hypothetical answer or expanded query, then embeds that for vector search. The expanded text often sits closer in embedding space to stored facts. Uses the **nano tier** model. (Legacy: `search.hydeEnabled` is deprecated; use `queryExpansion.enabled`.) See [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md).
 
 **Cost per turn:** One embedding call per turn (~$0.00002 for OpenAI `text-embedding-3-small`; **free** with local providers such as Ollama or ONNX). One nano-tier LLM call if query expansion is enabled (~$0.0001 for nano-tier models). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md#embedding-providers) for local provider options.
@@ -81,11 +81,10 @@ The agent processes your message with the injected memories in context. It also 
 | Tool | What it does | When the agent uses it |
 |------|-------------|----------------------|
 | `memory_store` | Store a new fact | When it learns something important |
-| `memory_recall` | Search memories by query | When auto-recall missed something |
+| `memory_recall` | Search memories by query (also supports `entity=` for exact entity lookup, e.g. "What's User's email?") | When auto-recall missed something |
 | `memory_forget` | Remove a stored fact | When a fact is outdated or wrong |
 | `memory_checkpoint` | Create a snapshot | Before major operations |
 | `memory_prune` | Clean up expired facts | Maintenance |
-| `lookup` | Exact entity/key lookup | "What's User's email?" |
 | `memory_link` | Create a relationship between facts | Connect related facts |
 | `memory_reflect` | Run pattern synthesis | Extract behavioral patterns |
 
@@ -119,14 +118,16 @@ After the agent responds, the plugin scans the assistant's reply:
 
 ## Background jobs (automatic)
 
-These run inside the gateway process — no cron needed:
+These run inside the gateway process on a single unified maintenance tick — no separate cron needed for the gateway-native ("cycle" tier) jobs. The tick itself fires every 60 minutes (plus once, 5 minutes after startup); each step below only actually runs once its own guard interval has elapsed:
 
-| Job | Interval | What it does |
+| Job | Guard interval | What it does |
 |-----|----------|-------------|
-| **Prune** | Every 60 minutes | Hard-deletes expired facts; soft-decays confidence for aging facts |
-| **Auto-classify** | Every 24 hours (+ 5 min after startup) | Reclassifies "other" facts into proper categories via nano-tier LLM |
-| **Proposal prune** | Every 60 minutes | Removes expired persona proposals (if enabled) |
+| **Prune** | 1 hour | Hard-deletes expired facts; soft-decays confidence for aging facts |
+| **Auto-classify** | ~20 hours | Reclassifies "other" facts into proper categories via nano-tier LLM |
+| **Proposal prune** | ~20 hours | Removes expired persona proposals (if enabled) |
 | **WAL recovery** | On startup | Replays any uncommitted operations from the write-ahead log |
+
+(`services/maintenance-orchestrator.ts` `MAINTENANCE_STEPS`/`MAINTENANCE_GUARD_INTERVALS`; `setup/plugin-service.ts` `runMaintenanceCycleTick`. A separate "nightly" tier handles heavier jobs like distillation and dream-cycle consolidation.)
 
 ---
 
@@ -138,8 +139,8 @@ When the gateway starts (or restarts):
 2. **Database init** — opens SQLite (runs migrations if needed), connects to LanceDB.
 3. **WAL recovery** — replays any pending operations from the write-ahead log.
 4. **Startup prune** — deletes any expired facts immediately.
-5. **Auto-classify** (if enabled) — schedules a classify run 5 minutes after startup.
-6. **Timer setup** — starts the hourly prune timer and daily classify timer.
+5. **Maintenance tick armed** — schedules one maintenance-cycle run 5 minutes after startup.
+6. **Timer setup** — starts the unified 60-minute maintenance-tick interval; individual steps (prune, auto-classify, proposal prune, …) run within it once their own guard interval has elapsed.
 7. **Tool registration** — registers all memory tools with the agent.
 8. **Event hooks** — registers `before_agent_start` (auto-recall) and `agent_end` (auto-capture).
 
@@ -149,7 +150,7 @@ When the gateway starts (or restarts):
 
 When the gateway stops:
 
-1. **Timers cleared** — prune, classify, and proposal timers are cancelled.
+1. **Timers cleared** — the unified maintenance tick, its startup timeout, and other runtime timers are cancelled.
 2. **Databases closed** — SQLite, LanceDB, and credentials vault (if enabled) are closed cleanly.
 
 ---
@@ -167,7 +168,7 @@ When the gateway stops:
                     │  Embed prompt       │
                     │  Search SQLite FTS5 │──── Free, instant
                     │  Search LanceDB    │──── ~$0.00002
-                    │  Merge & rank      │
+                    │  Merge (RRF) & rank│
                     │  Inject top N      │
                     └──────────┬──────────┘
                                │
@@ -191,11 +192,11 @@ When the gateway stops:
                     │  Cleanup WAL       │
                     └─────────────────────┘
 
-Background (automatic):
+Background (automatic — unified maintenance tick, every 60 min, each step gated by its own guard interval):
   ┌─────────────────────────────────────────┐
-  │  Every 60 min: Prune expired facts      │
-  │  Every 24h:    Auto-classify "other"    │──── ~$0.001/batch
-  │  On startup:   WAL recovery + prune     │
+  │  Guard ~1h:   Prune expired facts       │
+  │  Guard ~20h:  Auto-classify "other"     │──── ~$0.001/batch
+  │  On startup:  WAL recovery + prune      │
   └─────────────────────────────────────────┘
 ```
 
@@ -209,7 +210,7 @@ Background (automatic):
 | Query expansion (per turn, if enabled) | ~$0.0001 | Every turn | **nano** |
 | Auto-capture (per captured fact) | ~$0.00002 | When a fact is captured | embedding only |
 | ClassifyBeforeWrite (per write, if enabled) | ~$0.0001 | On every memory write | **nano** |
-| Auto-classify batch (20 facts) | ~$0.0002–0.001 | Once per 24h | **nano** |
+| Auto-classify batch (20 facts) | ~$0.0002–0.001 | Roughly every 20h (maintenance-tick guard interval) | **nano** |
 | Reflection (per run) | ~$0.002 | On-demand (CLI) | default |
 | Consolidation (per cluster) | ~$0.002 | On-demand (CLI) | default |
 | Session distillation (per session) | ~$0.01–0.05 | On-demand / nightly cron | **maintenance** by default (`distill.modelTier`; legacy `heavy` clamps to maintenance) |

@@ -14,15 +14,17 @@ For a cost-first rollout and operator checklist, see [COST-OPTIMIZATION-PLAYBOOK
 
 ## Automatic background jobs (no setup needed)
 
-These run inside the gateway process. No cron, no external scheduler.
+These run inside the gateway process. No cron, no external scheduler. `prune`, `auto-classify`, and `proposals-prune` (along with several other steps) are now individual steps of one unified **"maintenance tick"** — the gateway checks every 60 minutes (plus once ~5 minutes after startup), but each step is separately gated by its own guard interval, so not every step actually runs on every tick.
 
-| Job | Interval | What it does | Log signature |
-|-----|----------|-------------|---------------|
-| **Prune** | Every 60 minutes | Hard-deletes expired facts; soft-decays confidence for facts past ~75% of TTL | `memory-hybrid: periodic prune — N expired, M decayed` |
-| **Auto-classify** | Every 24 hours + once at startup (5 min delay) | Reclassifies "other" facts into proper categories via LLM. Only runs if `autoClassify.enabled` is `true` | `memory-hybrid: auto-classify done — reclassified N/M facts` |
-| **Proposal prune** | Every 60 minutes | Removes expired persona proposals. Only runs if `personaProposals.enabled` is `true` | `memory-hybrid: pruned N expired proposal(s)` |
-| **WAL recovery** | Once at startup | Replays uncommitted write-ahead log entries from a crash | `memory-hybrid: WAL recovery completed — recovered N` |
-| **Startup prune** | Once at startup | Deletes any expired facts immediately | (included in periodic prune log) |
+| Job | Effective interval | What it does | Feature gate |
+|-----|--------------------|-------------|--------------|
+| **Prune** | ~Every 60 minutes | Hard-deletes expired facts; soft-decays confidence for facts past ~75% of TTL | Always on |
+| **Auto-classify** | ~Every 20 hours (staggered guard interval; first run is eligible at startup) | Reclassifies "other" facts into proper categories via LLM | `autoClassify.enabled: true` |
+| **Proposal prune** | ~Every 20 hours (same staggered guard interval as auto-classify — not every 60 minutes) | Removes expired persona proposals | Runs unless `personaProposals.enabled` is explicitly `false` |
+| **WAL recovery** | Once at startup | Replays uncommitted write-ahead log entries from a crash | Always on |
+| **Startup prune** | Once at startup | Deletes any expired facts immediately (same `prune` step, first tick) | Always on |
+
+The gateway logs one aggregate line per tick, e.g. `memory-hybrid: maintenance tick (interval) ok durationMs=1234 stepsRun=14: Maintenance cycle — 14 steps (12 ok, 2 skipped, 0 deferred, 0 failed)`. Successful WAL replay on startup logs `memory-hybrid: WAL recovery completed — committed N, skipped M`. Per-step detail (e.g. how many facts were pruned or reclassified) is not printed to the gateway log directly — inspect it via `openclaw hybrid-mem maintenance run list` / `explain <id>` (see [maintenance-job-runs.md](maintenance-job-runs.md)).
 
 **All timers are cleaned up on gateway stop.** No orphaned processes.
 
@@ -51,7 +53,7 @@ These are **not** required for core functionality but enhance the system for lon
 
 **How to enable when "not defined":**
 
-1. **Recommended:** Run **`openclaw hybrid-mem verify --fix`**. This adds any missing maintenance jobs (10 canonical jobs) when they are missing (without overwriting existing jobs) to `~/.openclaw/cron/jobs.json` (and, if present, the `jobs` array in `~/.openclaw/openclaw.json`), and ensures `~/.openclaw/logs/cron-hybrid-mem/` exists. See [CLI-REFERENCE.md § Maintenance cron jobs](CLI-REFERENCE.md#maintenance-cron-jobs) for the full table (nightly-memory-sweep, self-correction-analysis, nightly-dream-cycle, weekly-reflection, weekly-extract-procedures, weekly-deep-maintenance, weekly-persona-proposals, monthly-consolidation, sensor-sweep, research-overnight — the last is the proactive research agent, [PROACTIVE-RESEARCH.md](PROACTIVE-RESEARCH.md)).
+1. **Recommended:** Run **`openclaw hybrid-mem verify --fix`**. This adds any missing maintenance jobs (10 canonical jobs) when they are missing (without overwriting existing jobs) to `~/.openclaw/cron/jobs.json` (and, if present, the `jobs` array in `~/.openclaw/openclaw.json`), and ensures `~/.openclaw/logs/cron-hybrid-mem/` exists. See [CLI-REFERENCE.md § Maintenance cron jobs](CLI-REFERENCE.md#maintenance-cron-jobs) for the full table (nightly-memory-sweep, self-correction-analysis, nightly-dream-cycle, weekly-reflection, weekly-extract-procedures, weekly-deep-maintenance, weekly-persona-proposals, monthly-consolidation, sensor-sweep, research-overnight — the last is the proactive research agent, [PROACTIVE-RESEARCH.md](PROACTIVE-RESEARCH.md)). Note: **nightly-dream-cycle** is feature-gated on `nightlyCycle.enabled`, which is `false` in every config preset — set it to `true` first (see [CONFIGURATION.md § Nightly dream cycle](CONFIGURATION.md#nightly-dream-cycle-nightlycycle)) or the job stays a no-op.
 2. **Or** add the job definitions manually to `~/.openclaw/openclaw.json` (under a top-level `jobs` array if your OpenClaw version uses it) or to `~/.openclaw/cron/jobs.json` (see snippets below).
 3. **Or** run the standalone install script from the repo: `node scripts/install-hybrid-config.mjs` (merges full defaults including jobs into openclaw.json).
 
@@ -72,7 +74,7 @@ There is no default weekly job for this path yet. To run it on a schedule, add a
 
 Extracts durable facts from old conversation logs. Recommended if you want to capture knowledge from sessions where auto-capture missed things.
 
-**OpenClaw jobs (recommended):** The `openclaw hybrid-mem install` command adds the nightly distillation and weekly reflection jobs to your config. When you run **`openclaw hybrid-mem verify --fix`**, missing jobs are added with a **model chosen from your config** (`llm.default` / `llm.heavy` when set, else legacy: Gemini → distill, Claude → claude, else OpenAI → reflection). See [CONFIGURATION.md § LLM routing and model preference](CONFIGURATION.md#llm-routing-and-model-preference) and [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md).
+**OpenClaw jobs (recommended):** The `openclaw hybrid-mem install` command adds the nightly distillation and weekly reflection jobs to your config. When you run **`openclaw hybrid-mem verify --fix`**, missing jobs are added with a **model chosen from your config** (`llm.default` / `llm.heavy` when set, else legacy: Gemini → distill, Claude → claude, else OpenAI → reflection). See [CONFIGURATION.md § Default model selection](CONFIGURATION.md#default-model-selection-when-llm-is-not-set) and [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md).
 
 Example structure (actual `model` value is filled from your provider at install/verify time):
 
@@ -130,7 +132,7 @@ Synthesizes behavioral patterns from recent facts. The `openclaw hybrid-mem inst
 }
 ```
 
-Runs at 3 AM Sundays. The `model` value is resolved from your config (see [CONFIGURATION.md § Default model selection](CONFIGURATION.md#default-model-selection-maintenance-and-self-correction)). Requires `reflection.enabled: true` in plugin config. See [REFLECTION.md](REFLECTION.md).
+Runs at 3 AM Sundays. The `model` value is resolved from your config (see [CONFIGURATION.md § Default model selection](CONFIGURATION.md#default-model-selection-when-llm-is-not-set)). Requires `reflection.enabled: true` in plugin config. See [REFLECTION.md](REFLECTION.md).
 
 ### What the two jobs cover (and what they don’t)
 

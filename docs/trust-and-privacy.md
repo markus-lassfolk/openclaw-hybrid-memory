@@ -10,6 +10,7 @@ Hybrid Memory is designed so memory feels like a system you can trust, not a bla
 - Core persistence uses local SQLite and local vector storage.
 - Feature depth depends on your configured providers and mode.
 - Hosted services can still be part of your setup, but the default trust model is local-first.
+- The Mission Control dashboard binds to `127.0.0.1` only — it is not exposed on your network by default.
 
 ## What gets remembered
 
@@ -35,10 +36,10 @@ The important point is not only that memory exists — it is that you have proof
 
 ## Control, backup, and deletion
 
-Use documented CLI paths to remove plugin state and memory artifacts:
+Use documented CLI paths to remove plugin state and memory artifacts. Plain `uninstall` only disables the plugin (config entry) and leaves your SQLite/LanceDB data on disk untouched; add `--clean-all` to actually delete the SQLite database and LanceDB directory:
 
 ```bash
-openclaw hybrid-mem uninstall
+openclaw hybrid-mem uninstall --clean-all
 ```
 
 Before deletion, consider backup/export:

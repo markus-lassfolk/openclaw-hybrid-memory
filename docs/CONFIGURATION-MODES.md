@@ -33,9 +33,9 @@ The table below is the **intent** of each preset in code (`PRESET_OVERRIDES` in 
 
 | Mode | Best for | Description |
 |------|----------|-------------|
-| **Complete** | Rich defaults, verbose logging | Same **preset toggles** as Enhanced (see matrix), plus **`verbosity`: `verbose`**. Does **not** turn on query expansion, workflow tracking, dream-cycle, documents, etc. by default — those stay off in the preset; enable them explicitly in config if you want them. |
-| **Enhanced** | Step up from Minimal | Adds entity lookup on recall, credential auto-capture hooks (when vault is configured), **`store.classifyBeforeWrite`**, **`graph.autoLink`**, reflection, self-correction. Advanced opt-ins (workflow tracking, nightly cycle, documents, reranking, …) remain **off** in the preset unless you enable them. |
-| **Minimal** | Low cost, nano/flash only | Balanced: capture, recall, auto-classify, graph, procedures, ingest paths; no reflection; **`entityLookup`** off; **`authFailure`** recall on. **All LLM use (distill, auto-classify, ingest) is restricted to nano or flash-tier models** to keep cost very low. Credentials vault off unless you set an encryption key. |
+| **Complete** | Rich defaults, verbose logging | Mostly the same **preset toggles** as Enhanced (see matrix), plus **`verbosity`: `verbose`**, but **not** identical: Complete raises **`distill.extractionModelTier`** to **`maintenance`** (Enhanced stays on **`nano`**) and leaves **`verification`**/**`provenance`** **off** (Enhanced turns both **on**). Does **not** turn on query expansion, workflow tracking, dream-cycle, documents, etc. by default — those stay off in the preset; enable them explicitly in config if you want them. |
+| **Enhanced** | Step up from Minimal | Adds entity lookup on recall, credential auto-capture hooks (when vault is configured), **`store.classifyBeforeWrite`**, **`graphRetrieval`** (expand-on-recall), reflection, self-correction, and turns **`verification`**/**`provenance`** **on** (graph auto-linking is already on since Minimal). Advanced opt-ins (workflow tracking, nightly cycle, documents, reranking, …) remain **off** in the preset unless you enable them. |
+| **Minimal** | Low cost, nano/flash only | Balanced: capture, recall, auto-classify, graph, procedures, ingest paths; no reflection; **`entityLookup`** off; **`authFailure`** recall on. **All LLM use (distill, auto-classify, ingest) is restricted to nano or flash-tier models** to keep cost very low. Credentials vault **on** by default (same as Local); add `credentials.encryptionKey` for encryption at rest. |
 | **Local** | No external LLM | Auto-capture and auto-recall with **`retrieval.strategies`: `["fts5"]` only**. **`autoClassify`**, graph, procedures, reflection off. **`verbosity`: `quiet`**. Ideal for offline / Pi-style setups. |
 | **Custom** | Your own mix | Reported when your config does not match any preset (you changed at least one preset-controlled toggle). Your explicit settings are used. |
 
@@ -102,8 +102,8 @@ Below, **✓** = enabled by preset, **—** = disabled by preset, **opt** = opti
 | credentials.autoCapture.toolCalls | — | — | ✓ | ✓ |
 | **Graph** |
 | graph | — | ✓ | ✓ | ✓ |
-| graph.autoLink | — | — | ✓ | ✓ |
-| graph.useInRecall | — | ✓ | ✓ | ✓ |
+| graph.autoLink | — | ✓ | ✓ | ✓ |
+| graph.useInRecall | — | ✓ | — | — |
 | **Procedures** |
 | procedures | — | ✓ | ✓ | ✓ |
 | procedures.requireApprovalForPromote | — | ✓ | ✓ | ✓ |
@@ -137,8 +137,8 @@ Below, **✓** = enabled by preset, **—** = disabled by preset, **opt** = opti
 | selfExtension (tool proposals) | — | — | — | — |
 | crystallization (skill proposals) | — | — | — | — |
 | **Verification / provenance / retrieval** |
-| verification | — | — | — | — |
-| provenance | — | — | — | — |
+| verification | — | — | ✓ | — |
+| provenance | — | — | ✓ | — |
 | documents | — | — | — | — |
 | aliases | — | — | — | — |
 | crossAgentLearning | — | — | — | — |
@@ -152,7 +152,7 @@ Below, **✓** = enabled by preset, **—** = disabled by preset, **opt** = opti
 - **personaProposals.autoApply**: Never set by any preset (always **—**). When enabled, approved persona proposals are applied to identity files without human review. **Opt-in only** — no mode turns this on by default.
 - **Minimal** uses only nano/flash-tier models for distill, auto-classify, and ingest to keep cost very low. **Local** uses no external LLM (FTS-only recall).
 - **autoRecall.entityLookup** (Enhanced/Complete): With `entityLookup.enabled` true, if **`entities` is empty or omitted** and **`autoFromFacts`** is true (default), names come from distinct non-null `entity` values on active facts (`FactsDb.getKnownEntities()`), sorted deterministically and capped by **`maxAutoEntities`** (default 500, hard max 2000). Set **`autoFromFacts`** to `false` for the legacy behavior: no entity-centric merge or `entityMentioned` directives until you set an explicit **`entities`** list. If **`entities`** is non-empty, only that list is used. Run `openclaw hybrid-mem config` to see whether the resolved source is `auto from facts (cap N)` or `N configured name(s)`.
-- **Advanced / opt-in:** In **`PRESET_OVERRIDES`**, workflow tracking, dream-cycle, passive observer, verification, provenance, documents, aliases, cross-agent learning, reranking, contextual variants, self-extension, and crystallization are **`enabled: false`** for **Enhanced** and **Complete** (opt-in only). **`extraction.extractionPasses`** is `true` in those presets (multi-pass extraction flags). **Phase 1** (see above) keeps the same “off unless you opt in” behavior for the disabled keys. Users can enable any feature explicitly via config.
+- **Advanced / opt-in:** In **`PRESET_OVERRIDES`**, workflow tracking, dream-cycle, passive observer, documents, aliases, cross-agent learning, reranking, contextual variants, self-extension, and crystallization are **`enabled: false`** for both **Enhanced** and **Complete** (opt-in only). **Verification** and **provenance** are the exception: **Enhanced** sets both **`enabled: true`**, while **Complete** sets both **`enabled: false`** — enable them explicitly in Complete if you want them. **`extraction.extractionPasses`** is `true` in those presets (multi-pass extraction flags). **Phase 1** (see above) keeps the same “off unless you opt in” behavior for the disabled keys. Users can enable any feature explicitly via config.
 - **personaProposals.autoApply** is `false` in **all** presets — it is never set automatically. Enable it only if you want the agent to modify identity files without human review. See [PERSONA-PROPOSALS.md](PERSONA-PROPOSALS.md) for risks and the audit trail.
 
 ---

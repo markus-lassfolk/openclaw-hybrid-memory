@@ -23,7 +23,7 @@ Quick answers to common questions. For **why** you’d want this plugin and what
 
 Set `embedding.provider` to select a provider. Use `embedding.preferredProviders` (ordered list) to enable automatic failover, e.g. `["ollama", "openai"]` tries Ollama first and falls back to OpenAI if Ollama is unavailable. See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md#embedding-providers) for full config examples.
 
-**LLM features** (auto-classify, consolidate, summarize): These also use the OpenAI API with a chat model (default `gpt-4o-mini`). Same key, different model.
+**LLM features** (auto-classify, consolidate, summarize): These use whichever chat provider you configure — not just OpenAI. Set ordered `llm.nano` / `llm.default` / `llm.heavy` model-tier lists (e.g. `google/gemini-2.5-flash-lite`, `anthropic/claude-haiku-4-5`, `openai/gpt-4.1-nano`) so the plugin tries each in turn; with only an OpenAI key configured, the built-in defaults are `openai/gpt-4.1-nano` (nano tier) and `openai/gpt-4.1-mini` (default tier). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md) for the full tier/fallback model list.
 
 **Session distillation:** The distillation pipeline is model-agnostic — it uses `openclaw sessions spawn --model <any>`. Gemini is recommended for its 1M+ token context window, but Claude or GPT work too (with smaller batch sizes).
 
@@ -127,7 +127,7 @@ This is normal initially. The heuristic classifier only catches common patterns.
 }
 ```
 
-Restart the gateway. It will run 5 minutes after startup and then every 24 hours. Or run manually:
+Restart the gateway. Auto-classify runs as part of the plugin's unified maintenance cycle, which is checked 5 minutes after startup and then hourly; the auto-classify step itself is guarded to actually run at most about once every 20 hours. Or run manually:
 
 ```bash
 openclaw hybrid-mem classify
@@ -260,7 +260,7 @@ Back up `facts.db` and the `lancedb/` directory. SQLite can be safely copied whi
 1. **Embeddings**: Set `embedding.provider: "ollama"` and use models like `nomic-embed-text` (see [CONFIGURATION.md](CONFIGURATION.md#local-embedding-providers-153)).
 2. **Bulk Session Pre-filtering**: Set `extraction.preFilter.enabled: true` and `extraction.preFilter.model: "qwen3:8b"` to use a local LLM as a gatekeeper before sending bulk sessions to a cloud LLM (see [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) and [CONFIGURATION.md](CONFIGURATION.md)).
 
-For main conversational tasks (classification, consolidation, chat), local LLMs often lack the instruction-following consistency required, though any provider supported by the OpenClaw gateway can technically be configured via `llm.heavy` / `llm.fast` (see [MODEL-AGNOSTIC-ANALYSIS.md](MODEL-AGNOSTIC-ANALYSIS.md)).
+For main conversational tasks (classification, consolidation, chat), local LLMs often lack the instruction-following consistency required, though any provider supported by the OpenClaw gateway can technically be configured via `llm.heavy` / `llm.nano` (see [MODEL-AGNOSTIC-ANALYSIS.md](MODEL-AGNOSTIC-ANALYSIS.md)).
 
 ---
 
