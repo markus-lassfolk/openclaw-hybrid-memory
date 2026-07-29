@@ -16,6 +16,7 @@
  *      GITHUB_REPOSITORY (owner/repo, provided by Actions).
  */
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 const GLITCHTIP_TOKEN = requireEnv("GLITCHTIP_TOKEN");
 const GLITCHTIP_BASE_URL = requireEnv("GLITCHTIP_BASE_URL");
@@ -24,6 +25,15 @@ const PROJECT_SLUG = process.env.PROJECT_SLUG || "openclaw-hybrid-memory";
 const QUERY = process.env.QUERY || "is:unresolved";
 const DRY_RUN = (process.env.DRY_RUN ?? "true") !== "false";
 const SYNC_LABEL = "glitchtip-sync";
+
+// "Resolved in release <tag>" instead of a bare "resolved" lets GlitchTip's own regression
+// detection do the version-awareness for us: a later event tagged with this release (or newer)
+// flips the issue back to unresolved as a genuine regression, while an event from an older
+// release (a client that hasn't upgraded yet) does not — see the release tag format already
+// emitted by capturePluginError(), e.g. "openclaw-hybrid-memory@2026.7.226".
+const PACKAGE_JSON_PATH = new URL("../../extensions/memory-hybrid/package.json", import.meta.url);
+const { name: PACKAGE_NAME, version: PACKAGE_VERSION } = JSON.parse(readFileSync(PACKAGE_JSON_PATH, "utf8"));
+const RELEASE_TAG = `${PACKAGE_NAME}@${PACKAGE_VERSION}`;
 
 const ALLOWED_TAG_KEYS = new Set([
   "job_name",
@@ -76,9 +86,12 @@ async function glitchtipGet(path, params) {
   return res.json();
 }
 
-async function glitchtipSetStatus(issueId, status) {
+async function glitchtipSetStatus(issueId, status, statusDetails) {
   // The flat /api/0/issues/{id}/ route is read/delete only (confirmed via OPTIONS: "Allow: DELETE,
-  // GET"). Status mutation lives on the org-scoped route instead ("Allow: PUT, DELETE, GET").
+  // GET"). Status mutation lives on the org-scoped route instead ("Allow: PUT, DELETE, GET") —
+  // this also matters for statusDetails specifically: Sentry's older per-issue endpoint is known to
+  // silently ignore statusDetails and just resolve in the current release, while the org-scoped
+  // endpoint we already use here honors it.
   const url = new URL(`${GLITCHTIP_BASE_URL}/api/0/organizations/${ORG_SLUG}/issues/${issueId}/`);
   const res = await fetch(url, {
     method: "PUT",
@@ -86,7 +99,7 @@ async function glitchtipSetStatus(issueId, status) {
       Authorization: `Bearer ${GLITCHTIP_TOKEN}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ status }),
+    body: JSON.stringify(statusDetails ? { status, statusDetails } : { status }),
   });
   if (!res.ok) {
     throw new Error(`GlitchTip API PUT ${url.pathname} returned HTTP ${res.status}`);
@@ -278,6 +291,9 @@ async function main() {
 
     const targetStatus = resolveTargetGlitchTipStatus(ghIssue);
     if (!targetStatus) continue; // still open on GitHub — leave GlitchTip status alone
+    // Only "resolved" has a meaningful fix version; "ignored" (won't-fix/duplicate) has no
+    // release to be regression-checked against.
+    const statusDetails = targetStatus === "resolved" ? { inRelease: RELEASE_TAG } : undefined;
 
     const current = await glitchtipGet(`/api/0/issues/${glitchtipId}/`);
     if (current.status === targetStatus) {
@@ -287,14 +303,15 @@ async function main() {
 
     if (DRY_RUN) {
       summaryLines.push(
-        `- would set GlitchTip #${glitchtipId} \`${current.status}\` → \`${targetStatus}\` ` +
+        `- would set GlitchTip #${glitchtipId} \`${current.status}\` → \`${targetStatus}\`` +
+          `${statusDetails ? ` (inRelease: \`${statusDetails.inRelease}\`)` : ""} ` +
           `(GitHub #${ghIssue.number} closed as ${ghIssue.stateReason ?? "completed"})`,
       );
       statusUpdated++;
       continue;
     }
 
-    await glitchtipSetStatus(glitchtipId, targetStatus);
+    await glitchtipSetStatus(glitchtipId, targetStatus, statusDetails);
     summaryLines.push(
       `- set GlitchTip #${glitchtipId} \`${current.status}\` → \`${targetStatus}\` (GitHub #${ghIssue.number})`,
     );
