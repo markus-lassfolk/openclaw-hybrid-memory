@@ -1,0 +1,18 @@
+name: TEMP Probe GlitchTip Issue 33 Event Tags
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Probe issue 33 event tags
+        env:
+          GLITCHTIP_TOKEN: ${{ secrets.GLITCHTIP_TOKEN }}
+          GLITCHTIP_BASE_URL: ${{ secrets.GLITCHTIP_BASE_URL }}
+        run: node .github/scripts/probe-issue-33-tags.mjs
