@@ -36,6 +36,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.7.228] - 2026-07-29
+
+### Fixed
+
+- Database bootstrap (`initializeDatabases`) no longer crashes with `TypeError: The "path" argument must be of type string. Received undefined` when `api.resolvePath()` — implemented by the plugin host, outside this repo — returns something other than a non-empty string during the deferred/hot-reload activation path. #2203 and #2216 already guarded every known caller's *input* to `resolvePath()`; this closes the same gap on its *output*, falling back to the unresolved path (with a warning) instead. GlitchTip #33 had recurred after both prior fixes shipped, tracing back to this residual gap.
+
+### Changed
+
+- `.github/scripts/sync-glitchtip-issues.mjs` now resolves synced GlitchTip issues with release-scoped `statusDetails.inRelease` instead of a bare `resolved` status, so GlitchTip's own regression detection can distinguish a genuine regression on the current release from a stale, not-yet-upgraded client repeating an already-fixed error.
+
 ## [2026.7.227] - 2026-07-27
 
 ### Fixed
