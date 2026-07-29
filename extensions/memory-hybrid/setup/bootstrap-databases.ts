@@ -18,39 +18,40 @@ import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
-import type { CredentialType, HybridMemoryConfig } from "../config.js";
 import { DEFAULT_LANCE_PATH, DEFAULT_SQLITE_PATH, normalizeResolvedSecretValue } from "../config/parsers/core.js";
+import type { CredentialType, HybridMemoryConfig } from "../config.js";
 import { is403QuotaOrRateLimitLike, is429OrWrapped } from "../services/chat.js";
 import { CREDENTIAL_REDACTION_MIGRATION_FLAG, migrateCredentialsToVault } from "../services/credential-migration.js";
 import { runEmbeddingMaintenance } from "../services/embedding-migration.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
-import type { EmbeddingProvider } from "../services/embeddings.js";
 import { formatOpenAiEmbeddingDisplayLabel, shouldSuppressEmbeddingError } from "../services/embeddings/shared.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { installCoreBootstrapServices, installOptionalBootstrapServices } from "../services/index.js";
 import type { ProvenanceService } from "../services/provenance.js";
 import type { AliasDB } from "../services/retrieval-aliases.js";
-import { recordStartupMemoryCheckpoint } from "../services/startup-memory-attribution.js";
 import { invalidateClusterCache } from "../services/retrieval-orchestrator.js";
+import { recordStartupMemoryCheckpoint } from "../services/startup-memory-attribution.js";
 import type { VerificationStore } from "../services/verification-store.js";
 import { hasOAuthProfiles } from "../utils/auth.js";
 import { getEnv } from "../utils/env-manager.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
+import { isHeavyModel, isLightModel, isNanoModel } from "../utils/model-tier.js";
 import { spawn } from "../utils/process-runner.js";
 import { isDbClosedError, isRegistrationSuperseded } from "../utils/registration-superseded.js";
-import { isHeavyModel, isLightModel, isNanoModel } from "../utils/model-tier.js";
 import {
-  OLLAMA_DEFAULT_BASE_URL,
-  ROUTABLE_BUILTIN_PROVIDERS,
   buildMultiProviderOpenAI,
   clearOllamaHealthCacheEntry,
   extractGatewayConfig,
   gatewayLogInfoOnce,
   getGatewayModelsProviders,
   mergeGatewayProviderCredentialsIntoLlmProvidersMap,
+  OLLAMA_DEFAULT_BASE_URL,
   patchEmbeddingEndpointFromGatewayProviders,
   probeOllamaEndpoint,
+  ROUTABLE_BUILTIN_PROVIDERS,
 } from "./provider-router.js";
+
 interface HealthStatus {
   embeddingsOk: boolean;
   credentialsVaultOk: boolean;
@@ -409,6 +410,25 @@ function normalizeDatabasePath(
 }
 
 /**
+ * Resolves a (already-normalized, guaranteed non-empty) path through `api.resolvePath()` and
+ * guards its return value before anything downstream calls `dirname()`/`join()` on it. GlitchTip
+ * #33 recurred multiple times (post-2026.7.226 and post-2026.7.227) despite #2203 and #2216
+ * already guarding every known caller's *input* to `resolvePath()` — the plugin host's
+ * `resolvePath` is an external boundary this repo doesn't control, so a value it returns is not
+ * more trustworthy than the value fed into it. If it ever hands back something other than a
+ * non-empty string, fall back to the pre-resolve path (still usable, just possibly relative)
+ * instead of letting a native `node:path` TypeError crash the registration.
+ */
+function resolveDatabasePath(rawPath: string, field: "lanceDbPath" | "sqlitePath", api: ClawdbotPluginApi): string {
+  const resolved: unknown = api.resolvePath(rawPath);
+  if (typeof resolved === "string" && resolved.trim()) return resolved;
+  api.logger.warn?.(
+    `memory-hybrid: api.resolvePath() returned an invalid value for ${field} (${JSON.stringify(resolved)}); falling back to the unresolved path "${rawPath}".`,
+  );
+  return rawPath;
+}
+
+/**
  * Initializes all databases and services for the plugin.
  *
  * This includes:
@@ -433,8 +453,8 @@ export function initializeDatabases(
   // deferred activation handoffs that may carry an older or partially reconstructed config.
   const lanceDbPath = normalizeDatabasePath(cfg.lanceDbPath, DEFAULT_LANCE_PATH, "lanceDbPath", api);
   const sqlitePath = normalizeDatabasePath(cfg.sqlitePath, DEFAULT_SQLITE_PATH, "sqlitePath", api);
-  const resolvedLancePath = api.resolvePath(lanceDbPath);
-  const resolvedSqlitePath = api.resolvePath(sqlitePath);
+  const resolvedLancePath = resolveDatabasePath(lanceDbPath, "lanceDbPath", api);
+  const resolvedSqlitePath = resolveDatabasePath(sqlitePath, "sqlitePath", api);
   setKeywordsPath(dirname(resolvedSqlitePath));
 
   recordStartupMemoryCheckpoint({
