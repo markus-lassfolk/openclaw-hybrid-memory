@@ -48,7 +48,10 @@ export class HybridMemoryGoalDispatchPolicyAdapter implements CoreDispatchAuthor
       budget: context.requestedBudget,
       policyRef: `goal:${context.goalId}:v${policy?.version ?? "none"}`,
     };
-    if (this.grants && !(await this.grants.reserve({ id: grant.id, goalId: context.goalId, expiresAt, budget: grant.budget }))) {
+    if (
+      this.grants &&
+      !(await this.grants.reserve({ id: grant.id, goalId: context.goalId, expiresAt, budget: grant.budget }))
+    ) {
       return { kind: "deny", reason: "dispatch reservation exhausted" };
     }
     return { kind: "allow", grant };

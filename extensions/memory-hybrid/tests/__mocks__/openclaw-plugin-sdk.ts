@@ -20,8 +20,16 @@ export type ClawdbotPluginApi = {
     warn: (msg: string) => void;
     error: (msg: string) => void;
   };
-  registerGatewayMethod?: (method: string, handler: (opts: any) => void | Promise<void>, options?: { scope?: string }) => void;
-  registerService?: (service: { id: string; start: () => void | Promise<void>; stop?: () => void | Promise<void> }) => void;
+  registerGatewayMethod?: (
+    method: string,
+    handler: (opts: any) => void | Promise<void>,
+    options?: { scope?: string },
+  ) => void;
+  registerService?: (service: {
+    id: string;
+    start: () => void | Promise<void>;
+    stop?: () => void | Promise<void>;
+  }) => void;
   registerCli: (fn: (opts: { program: CliProgram }) => void, options?: { commands?: string[] }) => void;
   on: (event: string, handler: (ev: unknown) => void | Promise<void> | Promise<unknown>) => void;
   /** Register an HTTP route with the OpenClaw gateway (2026.5+ object API). */

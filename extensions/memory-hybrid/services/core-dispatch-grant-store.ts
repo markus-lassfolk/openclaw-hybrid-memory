@@ -22,10 +22,19 @@ type Ledger = { grants: Record<string, DispatchGrantRecord> };
  * distributed lock. Network/weakly-consistent filesystems are unsupported.
  */
 export class CoreDispatchGrantStore {
-  constructor(private readonly goalsDir: string, private readonly now: () => Date = () => new Date()) {}
-  private get dir() { return join(this.goalsDir, "core-dispatch-grants"); }
-  private get lock() { return join(this.dir, ".ledger.lock"); }
-  private get ledgerPath() { return join(this.dir, "ledger.json"); }
+  constructor(
+    private readonly goalsDir: string,
+    private readonly now: () => Date = () => new Date(),
+  ) {}
+  private get dir() {
+    return join(this.goalsDir, "core-dispatch-grants");
+  }
+  private get lock() {
+    return join(this.dir, ".ledger.lock");
+  }
+  private get ledgerPath() {
+    return join(this.dir, "ledger.json");
+  }
 
   async reserve(record: Omit<DispatchGrantRecord, "status" | "createdAt" | "updatedAt">): Promise<boolean> {
     return this.withLedger(async (ledger) => {
@@ -72,7 +81,10 @@ export class CoreDispatchGrantStore {
   private async withLedger<T>(fn: (ledger: Ledger) => Promise<T> | T): Promise<T> {
     await mkdir(this.dir, { recursive: true });
     for (let i = 0; i < 200; i++) {
-      try { await mkdir(this.lock); break; } catch (err: any) {
+      try {
+        await mkdir(this.lock);
+        break;
+      } catch (err: any) {
         if (err?.code !== "EEXIST") throw err;
         await new Promise((r) => setTimeout(r, 10));
         if (i === 199) throw new Error("core dispatch grant ledger lock timeout");
@@ -81,13 +93,19 @@ export class CoreDispatchGrantStore {
     try {
       let ledger: Ledger = { grants: {} };
       if (existsSync(this.ledgerPath)) {
-        try { ledger = JSON.parse(await readFile(this.ledgerPath, "utf8")) as Ledger; } catch { throw new Error("core dispatch grant ledger is unreadable"); }
+        try {
+          ledger = JSON.parse(await readFile(this.ledgerPath, "utf8")) as Ledger;
+        } catch {
+          throw new Error("core dispatch grant ledger is unreadable");
+        }
       }
       const value = await fn(ledger);
       const tmp = `${this.ledgerPath}.${process.pid}.tmp`;
       await writeFile(tmp, JSON.stringify(ledger), "utf8");
       await rename(tmp, this.ledgerPath);
       return value;
-    } finally { await rm(this.lock, { recursive: true, force: true }); }
+    } finally {
+      await rm(this.lock, { recursive: true, force: true });
+    }
   }
 }
