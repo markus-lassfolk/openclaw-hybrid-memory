@@ -33,10 +33,20 @@ export function registerGoalDispatchAuthorization(
     // A missing/malformed declaration cannot establish read-only intent. sessions_spawn is
     // otherwise capable of writes, so fail closed rather than inferring a safe class.
     if (!request) return denied("explicit goal_dispatch declaration with readOnly is required");
+    // Even the compatible no-policy read-only path must bind the declared recipient
+    // to the host-controlled agentId; otherwise a caller could audit one identity
+    // while dispatching another.
+    if (request.requestedAgent !== request.actualAgent)
+      return denied("requested agent must exactly match the host agentId");
     const goal = await readGoal(goalsDir, goalId);
     if (!goal) return denied("goal not found");
     if (!goal.dispatchPolicy && request.readOnly === true) {
-      const result = { allowed: true, reason: "explicit read-only goal dispatch without policy", at: new Date().toISOString(), request };
+      const result = {
+        allowed: true,
+        reason: "explicit read-only goal dispatch without policy",
+        at: new Date().toISOString(),
+        request,
+      };
       await recordGoalDispatchPreflight(goalsDir, goalId, result);
       return undefined;
     }

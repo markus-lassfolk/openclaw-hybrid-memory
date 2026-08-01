@@ -81,10 +81,12 @@ export function evaluateGoalDispatch(
   if (!classPolicy) return fail(request, "task class is not defined by goal policy");
   if (!request.requestedAgent || request.requestedAgent !== request.actualAgent)
     return fail(request, "requested agent must exactly match the host agentId");
-  if (!classPolicy.allowedAgents.includes(request.actualAgent)) return fail(request, "agent is not allowed for task class");
+  if (!classPolicy.allowedAgents.includes(request.actualAgent))
+    return fail(request, "agent is not allowed for task class");
   if (typeof request.readOnly !== "boolean" || request.readOnly !== classPolicy.readOnly)
     return fail(request, "readOnly declaration must match task class policy");
-  if (request.readOnly) return { allowed: true, reason: "authorized read-only dispatch", at: new Date().toISOString(), request };
+  if (request.readOnly)
+    return { allowed: true, reason: "authorized read-only dispatch", at: new Date().toISOString(), request };
 
   const canonical = classPolicy.canonical!;
   if (request.prNumber !== canonical.prNumber || request.branch !== canonical.branch)
@@ -108,7 +110,7 @@ export async function recordGoalDispatchPreflight(
 ): Promise<void> {
   const dir = join(goalsDir, "dispatch-audit");
   await mkdir(dir, { recursive: true });
-  await appendFile(join(dir, `${goalId}.jsonl`), `${JSON.stringify(result)}\n`, "utf8");
+  await appendFile(join(dir, `${encodeURIComponent(goalId)}.jsonl`), `${JSON.stringify(result)}\n`, "utf8");
 }
 
 /** Extract a declaration from the standard spawn tool payload. No declaration means no request. */
