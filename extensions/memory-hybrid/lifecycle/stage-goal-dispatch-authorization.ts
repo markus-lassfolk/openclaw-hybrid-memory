@@ -20,9 +20,18 @@ export function registerGoalDispatchAuthorization(
     const { goalId, request } = dispatchRequestFromToolParams(e.params ?? {});
     // Authorization is opt-in and only applies to explicitly goal-linked work.
     if (!goalId) {
-      await recordGoalDispatchPreflight(goalsDir, "unmanaged", { allowed: false, reason: "direct managed sessions_spawn has no broker provenance", at: new Date().toISOString(), request: { taskClass: "", requestedAgent: "", actualAgent: "" } });
+      await recordGoalDispatchPreflight(goalsDir, "unmanaged", {
+        allowed: false,
+        reason: "direct managed sessions_spawn has no broker provenance",
+        at: new Date().toISOString(),
+        request: { taskClass: "", requestedAgent: "", actualAgent: "" },
+      });
       if (ctx.cfg.goalStewardship.dispatchAuthorization.mode === "audit") return undefined;
-      return { block: true, blockReason: "Managed sessions_spawn must use goal_dispatch broker; direct calls have no trusted broker provenance." };
+      return {
+        block: true,
+        blockReason:
+          "Managed sessions_spawn must use goal_dispatch broker; direct calls have no trusted broker provenance.",
+      };
     }
     const auditRequest = request ?? { taskClass: "", requestedAgent: "", actualAgent: "" };
     const denied = async (reason: string) => {

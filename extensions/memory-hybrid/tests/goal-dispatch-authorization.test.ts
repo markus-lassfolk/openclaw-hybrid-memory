@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { parseGoalStewardshipConfig } from "../config/parsers/core.js";
 import {
   evaluateGoalDispatch,
   type GoalDispatchPolicy,
@@ -42,6 +43,24 @@ const write = (changes: Partial<GoalDispatchRequest> = {}): GoalDispatchRequest 
 });
 
 describe("goal dispatch authorization", () => {
+  it("defaults omitted or disabled configuration to a disabled authorization gate", () => {
+    expect(parseGoalStewardshipConfig({}).dispatchAuthorization).toEqual({ enabled: false });
+    expect(
+      parseGoalStewardshipConfig({ goalStewardship: { dispatchAuthorization: { enabled: false } } })
+        .dispatchAuthorization,
+    ).toEqual({ enabled: false });
+  });
+  it("requires explicit opt-in and a valid active mode", () => {
+    expect(
+      parseGoalStewardshipConfig({ goalStewardship: { dispatchAuthorization: { enabled: true } } })
+        .dispatchAuthorization,
+    ).toEqual({ enabled: false });
+    expect(
+      parseGoalStewardshipConfig({
+        goalStewardship: { dispatchAuthorization: { enabled: true, mode: "audit" } },
+      }).dispatchAuthorization,
+    ).toEqual({ enabled: true, mode: "audit" });
+  });
   it("supports custom mappings and multiple independently named classes", () => {
     expect(evaluateGoalDispatch(policy, write()).allowed).toBe(true);
     expect(

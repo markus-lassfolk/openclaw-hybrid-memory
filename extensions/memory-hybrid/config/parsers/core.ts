@@ -436,6 +436,12 @@ export function parseActiveTaskConfig(cfg: Record<string, unknown>): ActiveTaskC
 
 export function parseGoalStewardshipConfig(cfg: Record<string, unknown>): GoalStewardshipConfig {
   const raw = cfg.goalStewardship as Record<string, unknown> | undefined;
+  const dispatchAuthorization = raw?.dispatchAuthorization as Record<string, unknown> | undefined;
+  const dispatchAuthorizationMode =
+    dispatchAuthorization?.enabled === true &&
+    (dispatchAuthorization.mode === "audit" || dispatchAuthorization.mode === "enforce")
+      ? dispatchAuthorization.mode
+      : "disabled";
   const defaults = raw?.defaults as Record<string, unknown> | undefined;
   const limits = raw?.globalLimits as Record<string, unknown> | undefined;
   const goalsDir =
@@ -564,11 +570,11 @@ export function parseGoalStewardshipConfig(cfg: Record<string, unknown>): GoalSt
     },
     allowCommandVerification: raw?.allowCommandVerification === true,
     allowPrVerification: raw?.allowPrVerification === true,
-    // Opt-in deployment gate: after enabling, undeclared legacy goal dispatches fail closed.
-    dispatchAuthorization: {
-      enabled: (raw?.dispatchAuthorization as Record<string, unknown> | undefined)?.enabled === true,
-      mode: ((raw?.dispatchAuthorization as Record<string, unknown> | undefined)?.mode === "audit" || (raw?.dispatchAuthorization as Record<string, unknown> | undefined)?.mode === "enforce") ? (raw?.dispatchAuthorization as Record<string, unknown>).mode as "audit" | "enforce" : "disabled",
-    },
+    // Opt-in deployment gate: disabled is the backwards-compatible default.
+    dispatchAuthorization:
+      dispatchAuthorizationMode === "disabled"
+        ? { enabled: false }
+        : { enabled: true, mode: dispatchAuthorizationMode },
   };
 }
 

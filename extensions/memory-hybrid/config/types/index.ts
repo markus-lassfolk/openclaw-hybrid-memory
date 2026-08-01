@@ -444,7 +444,13 @@ export type GoalStewardshipConfirmationPolicy = {
   requireRegisterAckForPriorities: Array<"critical" | "high" | "normal" | "low">;
 };
 
-export type GoalDispatchAuthorizationConfig = { enabled: boolean; mode: "disabled" | "audit" | "enforce" };
+/**
+ * Dispatch authorization defaults to disabled. Keeping `mode` optional in the
+ * disabled shape preserves existing `{ enabled: false }` configuration.
+ */
+export type GoalDispatchAuthorizationConfig =
+  | { enabled: false; mode?: "disabled" }
+  | { enabled: true; mode: "audit" | "enforce" };
 
 export type GoalStewardshipConfig = {
   enabled: boolean;

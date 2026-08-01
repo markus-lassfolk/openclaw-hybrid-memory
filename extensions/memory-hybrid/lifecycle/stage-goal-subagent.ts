@@ -123,7 +123,8 @@ export function registerGoalSubagentHandlers(api: ClawdbotPluginApi, ctx: Lifecy
       if (!label && !targetKey) return;
       const success = subagentEndedIsSuccess(ev);
       const outcome = ev.outcome ?? ev.error ?? ev.reason ?? null;
-      if (typeof ev.runId === "string") await new GoalDispatchBroker(goalsDir).settleRun(ev.runId, success ? "completed" : "failed").catch(() => {});
+      if (typeof ev.runId === "string")
+        await new GoalDispatchBroker(goalsDir).settleRun(ev.runId, success ? "completed" : "failed").catch(() => {});
       await updateGoalOnSubagentEnd(goalsDir, {
         label: label || (targetKey as string),
         sessionKey: targetKey ?? null,
