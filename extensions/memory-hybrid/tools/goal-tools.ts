@@ -226,7 +226,12 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
         ),
         related_session: Type.Optional(Type.String({ description: "Session key for linked task checkpoint." })),
         initial_next: Type.Optional(Type.String({ description: "Initial next action for linked task row." })),
-        dispatch_policy: Type.Optional(Type.Any({ description: "Machine-readable dispatch policy; required before goal-linked write dispatch when authorization is enabled." })),
+        dispatch_policy: Type.Optional(
+          Type.Any({
+            description:
+              "Machine-readable dispatch policy; required before goal-linked write dispatch when authorization is enabled.",
+          }),
+        ),
       }),
       async execute(_id: string, params: Record<string, unknown>) {
         if (!gs.enabled) return notEnabled();

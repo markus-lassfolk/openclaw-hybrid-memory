@@ -565,7 +565,9 @@ export function parseGoalStewardshipConfig(cfg: Record<string, unknown>): GoalSt
     allowCommandVerification: raw?.allowCommandVerification === true,
     allowPrVerification: raw?.allowPrVerification === true,
     // Opt-in deployment gate: after enabling, undeclared legacy goal dispatches fail closed.
-    dispatchAuthorization: { enabled: (raw?.dispatchAuthorization as Record<string, unknown> | undefined)?.enabled === true },
+    dispatchAuthorization: {
+      enabled: (raw?.dispatchAuthorization as Record<string, unknown> | undefined)?.enabled === true,
+    },
   };
 }
 

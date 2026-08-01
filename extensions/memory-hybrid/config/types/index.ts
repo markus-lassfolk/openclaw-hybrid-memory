@@ -444,7 +444,7 @@ export type GoalStewardshipConfirmationPolicy = {
   requireRegisterAckForPriorities: Array<"critical" | "high" | "normal" | "low">;
 };
 
-export type GoalDispatchAuthorizationConfig = { enabled: boolean; };
+export type GoalDispatchAuthorizationConfig = { enabled: boolean };
 
 export type GoalStewardshipConfig = {
   enabled: boolean;

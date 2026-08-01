@@ -52,6 +52,7 @@ function gs(partial: Partial<GoalStewardshipConfig>): GoalStewardshipConfig {
     escalationPolicy: { taskHygieneOnBlockedGoals: true },
     allowCommandVerification: false,
     allowPrVerification: false,
+    dispatchAuthorization: { enabled: false },
     ...partial,
   };
 }
