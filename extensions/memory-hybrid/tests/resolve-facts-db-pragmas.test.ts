@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resolveFactsDbPragmas } from "../backends/facts-db/resolve-facts-db-pragmas.js";
 import { getEnv, setEnv } from "../utils/env-manager.js";
 
@@ -9,6 +9,12 @@ describe("resolveFactsDbPragmas", () => {
   let tmp: string;
   const prevCache = getEnv("OPENCLAW_FACTS_CACHE_SIZE_KB");
   const prevMmap = getEnv("OPENCLAW_FACTS_MMAP_SIZE");
+
+  beforeEach(() => {
+    // Host-level production sizing overrides must not affect default assertions.
+    setEnv("OPENCLAW_FACTS_CACHE_SIZE_KB", undefined);
+    setEnv("OPENCLAW_FACTS_MMAP_SIZE", undefined);
+  });
 
   afterEach(() => {
     rmSync(tmp, { recursive: true, force: true });
