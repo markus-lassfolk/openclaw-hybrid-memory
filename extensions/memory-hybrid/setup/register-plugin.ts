@@ -84,6 +84,8 @@ import {
   recordSuccessfulExtensionLoad,
 } from "./plugin-load-preflight.js";
 import { createPluginService } from "./plugin-service.js";
+import { registerCoreDispatchPolicyBridge } from "../services/core-dispatch-policy-bridge.js";
+import { resolveOpenClawWorkspaceRoot } from "../utils/openclaw-workspace.js";
 import { registerContextEngineBestEffort } from "./register-context-engine.js";
 import { registerLifecycleHooks } from "./register-hooks.js";
 import {
@@ -1179,6 +1181,9 @@ function finishHybridMemoryRegistration(params: FinishRegistrationParams): void 
     resolveAllVaults: runtime.resolveAllVaults,
     resolveVaultWal: runtime.resolveVaultWal,
   };
+
+  // Core-only policy bridge is discoverable via registered gateway methods. It is inert unless explicitly enabled.
+  registerCoreDispatchPolicyBridge(logApi, runtime.cfg, resolveOpenClawWorkspaceRoot());
 
   // ========================================================================
   // Tools

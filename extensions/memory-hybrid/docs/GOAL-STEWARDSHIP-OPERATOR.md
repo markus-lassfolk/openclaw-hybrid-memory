@@ -23,3 +23,9 @@ usage and release reservations on completion/failure. Lifecycle events are
 strictly audit/reconciliation signals, never the enforcement point.
 
 `dispatchAuthorization.enabled` remains disabled in production configuration.
+
+### Core dispatch authorization bridge (ABI v1)
+
+`goalStewardship.dispatchAuthorization.enabled` defaults to `false`. Installing this plugin never enables core dispatch enforcement. When enabled, the plugin registers three authenticated, operator-admin gateway methods: `memory-hybrid.core-dispatch.v1.authorize`, `.reconcile`, and `.health`. Core must make the authorization call with its closed, host-derived context (`trustedByCore: true`), persist and validate the returned opaque grant before launch, and call reconcile with `completed`, `failed`, or `cancelled` to release reservations.
+
+This bridge is a provider-side prerequisite, not enforcement by itself: a **separate authorized local OpenClaw core patch** must discover/invoke these methods at every native, ACP, cron, and direct-dispatch lifecycle boundary. The provider rejects goal/task labels and arbitrary tool metadata as authority. Grant accounting is atomic only among processes sharing a local POSIX filesystem (`mkdir` lock plus atomic rename); NFS/distributed/weakly-consistent stores are unsupported and must not be represented as cross-host guarantees. The ledger records only grant ids, goal ids, budgets, timestamps, and terminal outcomes—no prompt/tool payloads.

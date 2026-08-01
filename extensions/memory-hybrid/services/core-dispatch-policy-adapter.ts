@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { CoreDispatchGrantStore } from "./core-dispatch-grant-store.js";
 import type {
   CoreDispatchAuthorizationProvider,
   CoreDispatchContext,
@@ -26,7 +27,12 @@ export class HybridMemoryGoalDispatchPolicyAdapter implements CoreDispatchAuthor
     private readonly resolvePolicy: GoalDispatchPolicyResolver,
     private readonly now: () => Date = () => new Date(),
     private readonly makeGrantId: () => string = randomUUID,
+    private readonly grants?: CoreDispatchGrantStore,
   ) {}
+
+  async authorizeCoreDispatch(context: CoreDispatchContext): Promise<DispatchAuthorizationDecision> {
+    return this.authorize(context);
+  }
 
   async authorize(context: CoreDispatchContext): Promise<DispatchAuthorizationDecision> {
     if (!context.goalId) return { kind: "abstain", reason: "no explicit goal id" };
@@ -36,15 +42,16 @@ export class HybridMemoryGoalDispatchPolicyAdapter implements CoreDispatchAuthor
     const result = evaluateGoalDispatch(policy, request);
     if (!result.allowed) return { kind: "deny", reason: result.reason };
     const expiresAt = new Date(this.now().getTime() + 5 * 60_000).toISOString();
-    return {
-      kind: "allow",
-      grant: {
-        id: this.makeGrantId(),
-        expiresAt,
-        budget: context.requestedBudget,
-        policyRef: `goal:${context.goalId}:v${policy?.version ?? "none"}`,
-      },
+    const grant = {
+      id: this.makeGrantId(),
+      expiresAt,
+      budget: context.requestedBudget,
+      policyRef: `goal:${context.goalId}:v${policy?.version ?? "none"}`,
     };
+    if (this.grants && !(await this.grants.reserve({ id: grant.id, goalId: context.goalId, expiresAt, budget: grant.budget }))) {
+      return { kind: "deny", reason: "dispatch reservation exhausted" };
+    }
+    return { kind: "allow", grant };
   }
 }
 
