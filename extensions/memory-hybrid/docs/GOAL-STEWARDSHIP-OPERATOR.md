@@ -1,31 +1,19 @@
+# Goal stewardship operator notes
 
-### Dispatch authorization (fail-closed deployment)
+## Managed dispatch broker
 
-Set `goalStewardship.dispatchAuthorization.enabled: true` to gate goal-linked `sessions_spawn` work; unrelated sessions remain unaffected. A goal-linked spawn needs a `goal_dispatch` declaration and that goal needs a version-1 `dispatch_policy`. The policy is generic: `classes` maps caller-defined class names to `{ allowedAgents, readOnly, canonical?, writeScope?, forbidNewPr?, forbidNewBranch? }`. No agent names, roles, or built-in class taxonomy are implied. The declared `requestedAgent` must exactly equal the host `agentId`, and the selected class must allow it. Read-only work must explicitly declare `readOnly: true` and select a read-only class. Write classes require a canonical PR/branch/remote SHA, non-empty allowed and requested scopes, and explicit `createsPr`/`createsBranch` declarations. Missing, malformed, or stale policies default-deny; every decision is recorded in `state/goals/dispatch-audit/<goal-id>.jsonl`. The gate does not create PRs, merge, or change product code.
+`goal_dispatch` is a supported plugin integration, disabled unless goal stewardship is enabled. It requires the **canonical goal UUID**: labels and task text never establish authority. The goal policy must contain a `managed` class with an explicit `allowedAgents` list. The broker creates an opaque, expiring grant and atomically reserves the requested budget before work is started.
 
-## Core dispatch-authorization companion required
+The broker uses a JSON ledger protected by `mkdir` locking and atomic rename. Its guarantees are limited to processes sharing a strongly consistent local POSIX filesystem. It is neither a distributed transaction nor a safe guarantee on NFS/other weakly consistent filesystems. The ledger records identifiers, target/runtime, budget, lifecycle state and redacted reasons—not prompts or grant secrets.
 
-This plugin PR supplies the Hybrid Memory goal-policy adapter and the versioned
-`contracts/core-dispatch-authorization.ts` ABI. It **does not itself provide
-system-wide enforcement**: plugin `before_tool_call` hooks cannot be the
-irreversible boundary for all native, ACP, cron-created, and direct gateway
-child dispatch paths, nor can they persist grants or atomically reserve actual
-usage.
+For **native** work, `goal_dispatch` launches through the public `api.runtime.subagent.run` SDK. A launch failure releases the reservation. The public `subagent_ended` hook settles native launches where a run id is provided; expiry releases abandoned reservations. The currently public plugin runtime exposes no ACP launcher. ACP requests are reserved but returned as a redacted `dispatch_request` for a trusted host launcher to validate, launch and reconcile. The plugin does not claim a tool-only ACP launch.
 
-A required upstream OpenClaw core companion must invoke registered providers at
-that common pre-child-run boundary for `sessions_spawn` (native and ACP), cron
-agent-turn child work, and direct gateway dispatch. With no provider configured
-it must preserve today’s behavior. With enforcement enabled it must: build the
-immutable ABI context from host state; atomically reserve goal, per-dispatch,
-and per-agent/runtime budget before child allocation; persist the opaque,
-short-lived grant on child metadata; verify it at launch; reconcile measured
-usage and release reservations on completion/failure. Lifecycle events are
-strictly audit/reconciliation signals, never the enforcement point.
+## Direct-spawn migration and enforcement
 
-`dispatchAuthorization.enabled` remains disabled in production configuration.
+`goalStewardship.dispatchAuthorization.mode` is `disabled` by default, preserving existing behavior.
 
-### Core dispatch authorization bridge (ABI v1)
+* `disabled`: no model-tool interception.
+* `audit`: permits model-visible `sessions_spawn` (native and ACP) and records direct attempts/would-be denials in `state/goals/dispatch-audit/` for inventory and migration.
+* `enforce`: blocks direct model-visible `sessions_spawn` (native and ACP). The public hook has no trusted provenance channel to attach a broker grant to a subsequent model tool call, so there is deliberately **no model-supplied grant exception**.
 
-`goalStewardship.dispatchAuthorization.enabled` defaults to `false`. Installing this plugin never enables core dispatch enforcement. When enabled, the plugin registers three authenticated, operator-admin gateway methods: `memory-hybrid.core-dispatch.v1.authorize`, `.reconcile`, and `.health`. Core must make the authorization call with its closed, host-derived context (`trustedByCore: true`), persist and validate the returned opaque grant before launch, and call reconcile with `completed`, `failed`, or `cancelled` to release reservations.
-
-This bridge is a provider-side prerequisite, not enforcement by itself: a **separate authorized local OpenClaw core patch** must discover/invoke these methods at every native, ACP, cron, and direct-dispatch lifecycle boundary. The provider rejects goal/task labels and arbitrary tool metadata as authority. Grant accounting is atomic only among processes sharing a local POSIX filesystem (`mkdir` lock plus atomic rename); NFS/distributed/weakly-consistent stores are unsupported and must not be represented as cross-host guarantees. The ledger records only grant ids, goal ids, budgets, timestamps, and terminal outcomes—no prompt/tool payloads.
+Migrate managed cron work by having a trusted host launcher call/consume a `goal_dispatch` request, retain the returned dispatch id externally, then reconcile it after the child ends. Administrative/direct Gateway, cron control-plane and other runtime routes outside model-visible `sessions_spawn` do not traverse this hook. Treat them as break-glass/unmanaged until moved to the launcher and write a redacted event shaped as `{route, actor, goalId:null, reason, timestamp}`. This operational boundary is intentional; plugin hooks are not system-wide control-plane enforcement.

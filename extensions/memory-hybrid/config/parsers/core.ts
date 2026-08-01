@@ -567,6 +567,7 @@ export function parseGoalStewardshipConfig(cfg: Record<string, unknown>): GoalSt
     // Opt-in deployment gate: after enabling, undeclared legacy goal dispatches fail closed.
     dispatchAuthorization: {
       enabled: (raw?.dispatchAuthorization as Record<string, unknown> | undefined)?.enabled === true,
+      mode: ((raw?.dispatchAuthorization as Record<string, unknown> | undefined)?.mode === "audit" || (raw?.dispatchAuthorization as Record<string, unknown> | undefined)?.mode === "enforce") ? (raw?.dispatchAuthorization as Record<string, unknown>).mode as "audit" | "enforce" : "disabled",
     },
   };
 }

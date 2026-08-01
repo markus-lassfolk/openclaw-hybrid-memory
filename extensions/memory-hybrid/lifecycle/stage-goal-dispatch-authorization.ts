@@ -13,13 +13,17 @@ export function registerGoalDispatchAuthorization(
   ctx: LifecycleContext,
   goalsDir: string,
 ): void {
-  if (!ctx.cfg.goalStewardship.dispatchAuthorization.enabled) return;
+  if (ctx.cfg.goalStewardship.dispatchAuthorization.mode === "disabled") return;
   api.on("before_tool_call", async (event: unknown) => {
     const e = event as { toolName?: string; params?: Record<string, unknown> };
     if (e.toolName !== "sessions_spawn") return undefined;
     const { goalId, request } = dispatchRequestFromToolParams(e.params ?? {});
     // Authorization is opt-in and only applies to explicitly goal-linked work.
-    if (!goalId) return undefined;
+    if (!goalId) {
+      await recordGoalDispatchPreflight(goalsDir, "unmanaged", { allowed: false, reason: "direct managed sessions_spawn has no broker provenance", at: new Date().toISOString(), request: { taskClass: "", requestedAgent: "", actualAgent: "" } });
+      if (ctx.cfg.goalStewardship.dispatchAuthorization.mode === "audit") return undefined;
+      return { block: true, blockReason: "Managed sessions_spawn must use goal_dispatch broker; direct calls have no trusted broker provenance." };
+    }
     const auditRequest = request ?? { taskClass: "", requestedAgent: "", actualAgent: "" };
     const denied = async (reason: string) => {
       await recordGoalDispatchPreflight(goalsDir, goalId, {
@@ -28,6 +32,7 @@ export function registerGoalDispatchAuthorization(
         at: new Date().toISOString(),
         request: auditRequest,
       });
+      if (ctx.cfg.goalStewardship.dispatchAuthorization.mode === "audit") return undefined;
       return { block: true, blockReason: `Goal dispatch denied: ${reason}` };
     };
     // A missing/malformed declaration cannot establish read-only intent. sessions_spawn is
@@ -52,6 +57,7 @@ export function registerGoalDispatchAuthorization(
     }
     const result = evaluateGoalDispatch(goal.dispatchPolicy, request);
     await recordGoalDispatchPreflight(goalsDir, goalId, result);
-    return result.allowed ? undefined : { block: true, blockReason: `Goal dispatch denied: ${result.reason}` };
+    if (result.allowed || ctx.cfg.goalStewardship.dispatchAuthorization.mode === "audit") return undefined;
+    return { block: true, blockReason: `Goal dispatch denied: ${result.reason}` };
   });
 }
