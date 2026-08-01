@@ -444,6 +444,8 @@ export type GoalStewardshipConfirmationPolicy = {
   requireRegisterAckForPriorities: Array<"critical" | "high" | "normal" | "low">;
 };
 
+export type GoalDispatchAuthorizationConfig = { enabled: boolean; };
+
 export type GoalStewardshipConfig = {
   enabled: boolean;
   /**
@@ -492,6 +494,8 @@ export type GoalStewardshipConfig = {
   allowCommandVerification: boolean;
   /** Allow pr_merged verification (GitHub API). Default: false — network + token required. */
   allowPrVerification: boolean;
+  /** Gate goal-linked sessions_spawn calls on an explicit, auditable policy declaration. */
+  dispatchAuthorization: GoalDispatchAuthorizationConfig;
 };
 
 /**

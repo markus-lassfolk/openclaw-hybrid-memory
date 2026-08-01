@@ -45,6 +45,7 @@ import { registerGoalContextInjection } from "./stage-goal-context.js";
 import { registerSerendipityPolicyInjection } from "./stage-serendipity-policy.js";
 import { registerGoalStewardshipInjection, resolvedGoalsDirForLifecycle } from "./stage-goal-stewardship.js";
 import { registerGoalSubagentHandlers } from "./stage-goal-subagent.js";
+import { registerGoalDispatchAuthorization } from "./stage-goal-dispatch-authorization.js";
 import { runInjectionStage } from "./stage-injection.js";
 import { registerMemoryNudgeInjection } from "./stage-memory-nudge.js";
 import { buildDegradedFtsHotRecallStage } from "./stage-recall/degraded-recall.js";
@@ -241,6 +242,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     registerMemoryNudgeInjection(api, ctx);
     registerDirectiveStoreNudge(api, ctx);
     registerGoalSubagentHandlers(api, ctx, resolvedGoalsDir);
+    registerGoalDispatchAuthorization(api, ctx, resolvedGoalsDir);
     registerCleanupHandlers(api, ctx, sessionState, resolvedActiveTaskPath, workspaceRoot);
     // Guard experimental/optional features at the registration point — avoids registering
     // event listeners whose bodies immediately return when disabled (#581).

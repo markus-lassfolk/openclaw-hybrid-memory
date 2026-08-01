@@ -17,6 +17,7 @@ import {
   evaluateCircuitBreakerTrip,
 } from "../services/goal-circuit-breaker.js";
 import type { Goal, GoalHistoryEntry } from "../services/goal-stewardship-types.js";
+import type { GoalDispatchPolicy } from "../services/goal-dispatch-authorization.js";
 import {
   type GoalUpdatePatch,
   type GoalVerification,
@@ -225,6 +226,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
         ),
         related_session: Type.Optional(Type.String({ description: "Session key for linked task checkpoint." })),
         initial_next: Type.Optional(Type.String({ description: "Initial next action for linked task row." })),
+        dispatch_policy: Type.Optional(Type.Any({ description: "Machine-readable dispatch policy; required before goal-linked write dispatch when authorization is enabled." })),
       }),
       async execute(_id: string, params: Record<string, unknown>) {
         if (!gs.enabled) return notEnabled();
@@ -252,6 +254,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             task_entity?: string;
             related_session?: string;
             initial_next?: string;
+            dispatch_policy?: GoalDispatchPolicy;
           };
           const effectivePriority = p.priority ?? defaults.priority;
           const clarity = validateGoalRegisterClarity({
@@ -301,6 +304,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
               maxDispatches: p.max_dispatches,
               maxAssessments: p.max_assessments,
               cooldownMinutes: p.cooldown_minutes,
+              dispatchPolicy: p.dispatch_policy,
             },
             defaults,
             gs.globalLimits.maxActiveGoals,

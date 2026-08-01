@@ -45,6 +45,8 @@ export interface GoalHistoryEntry {
 }
 
 export interface Goal {
+  /** Optional machine-enforced subagent dispatch authorization. Missing means no write dispatch. */
+  dispatchPolicy?: import("./goal-dispatch-authorization.js").GoalDispatchPolicy;
   id: string;
   label: string;
   description: string;
@@ -97,6 +99,7 @@ export interface CreateGoalInput {
   maxAssessments?: number;
   cooldownMinutes?: number;
   escalateAfterFailures?: number;
+  dispatchPolicy?: import("./goal-dispatch-authorization.js").GoalDispatchPolicy;
 }
 
 export interface GoalIndex {
