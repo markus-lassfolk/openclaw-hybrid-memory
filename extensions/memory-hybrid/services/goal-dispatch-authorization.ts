@@ -2,20 +2,26 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
-export type GoalDispatchTaskClass = "implementation" | "repair" | "research" | "rca" | "escalation" | "verification";
-export type GoalDispatchRole = "furnace" | "scholar" | "forge";
+export type GoalDispatchCanonical = { prNumber: number; branch: string; remoteHead: string };
+export type GoalDispatchClassPolicy = {
+  /** Exact agent ids allowed to receive this class of work. */
+  allowedAgents: string[];
+  /** Whether this class is strictly read-only. */
+  readOnly: boolean;
+  /** Required for write classes; pins work to one existing PR branch and head. */
+  canonical?: GoalDispatchCanonical;
+  /** Required, non-empty allow-list for write classes. */
+  writeScope?: string[];
+  forbidNewPr?: boolean;
+  forbidNewBranch?: boolean;
+};
 export type GoalDispatchPolicy = {
   version: 1;
-  taskClass: GoalDispatchTaskClass;
-  canonical: { prNumber: number; branch: string; remoteHead: string };
-  writeScope: string[];
-  forbidNewPr: boolean;
-  forbidNewBranch: boolean;
-  /** Explicitly authorize read-only work; it never implies write authority. */
-  allowReadOnlyVerification?: boolean;
+  /** Caller-defined class names; no built-in taxonomy or role mapping exists. */
+  classes: Record<string, GoalDispatchClassPolicy>;
 };
 export type GoalDispatchRequest = {
-  taskClass: GoalDispatchTaskClass;
+  taskClass: string;
   requestedAgent: string;
   actualAgent: string;
   prNumber?: number;
@@ -24,77 +30,75 @@ export type GoalDispatchRequest = {
   writeScope?: string[];
   createsPr?: boolean;
   createsBranch?: boolean;
+  /** Required and must exactly match the selected class policy. */
   readOnly?: boolean;
 };
 export type GoalDispatchPreflight = { allowed: boolean; reason: string; at: string; request: GoalDispatchRequest };
 
-const ROLE_FOR_CLASS: Record<GoalDispatchTaskClass, GoalDispatchRole> = {
-  implementation: "furnace",
-  repair: "furnace",
-  research: "scholar",
-  rca: "scholar",
-  escalation: "forge",
-  verification: "scholar",
-};
-function role(agent: string): GoalDispatchRole | null {
-  const normalized = agent
-    .trim()
-    .toLowerCase()
-    .replace(/^agent:/, "")
-    .split(":")[0];
-  return normalized === "furnace" || normalized === "scholar" || normalized === "forge" ? normalized : null;
-}
 function fail(request: GoalDispatchRequest, reason: string): GoalDispatchPreflight {
   return { allowed: false, reason, at: new Date().toISOString(), request };
+}
+const nonEmptyStrings = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.length > 0 && value.every((item) => typeof item === "string" && item.trim().length > 0);
+function validCanonical(value: unknown): value is GoalDispatchCanonical {
+  if (!value || typeof value !== "object") return false;
+  const canonical = value as Record<string, unknown>;
+  return (
+    Number.isSafeInteger(canonical.prNumber) &&
+    (canonical.prNumber as number) > 0 &&
+    typeof canonical.branch === "string" &&
+    canonical.branch.trim().length > 0 &&
+    typeof canonical.remoteHead === "string" &&
+    canonical.remoteHead.trim().length > 0
+  );
+}
+function validClassPolicy(value: unknown): value is GoalDispatchClassPolicy {
+  if (!value || typeof value !== "object") return false;
+  const entry = value as Record<string, unknown>;
+  if (!nonEmptyStrings(entry.allowedAgents) || typeof entry.readOnly !== "boolean") return false;
+  if (entry.readOnly) return true;
+  return (
+    validCanonical(entry.canonical) &&
+    nonEmptyStrings(entry.writeScope) &&
+    typeof entry.forbidNewPr === "boolean" &&
+    typeof entry.forbidNewBranch === "boolean"
+  );
 }
 
 /** Pure validator: callers must persist its result before spawning. */
 function isValidPolicy(policy: GoalDispatchPolicy | undefined): policy is GoalDispatchPolicy {
-  if (!policy || policy.version !== 1 || !Object.hasOwn(ROLE_FOR_CLASS, policy.taskClass)) return false;
-  const canonical = policy.canonical;
-  return (
-    !!canonical &&
-    Number.isSafeInteger(canonical.prNumber) &&
-    canonical.prNumber > 0 &&
-    typeof canonical.branch === "string" &&
-    canonical.branch.trim().length > 0 &&
-    typeof canonical.remoteHead === "string" &&
-    canonical.remoteHead.trim().length > 0 &&
-    Array.isArray(policy.writeScope) &&
-    policy.writeScope.every((p) => typeof p === "string" && p.length > 0) &&
-    typeof policy.forbidNewPr === "boolean" &&
-    typeof policy.forbidNewBranch === "boolean"
-  );
+  if (!policy || policy.version !== 1 || !policy.classes || typeof policy.classes !== "object") return false;
+  const classes = Object.entries(policy.classes);
+  return classes.length > 0 && classes.every(([name, entry]) => name.trim().length > 0 && validClassPolicy(entry));
 }
 
 export function evaluateGoalDispatch(
   policy: GoalDispatchPolicy | undefined,
   request: GoalDispatchRequest,
 ): GoalDispatchPreflight {
-  if (!isValidPolicy(policy))
-    return fail(request, "dispatch policy missing or invalid (write dispatches default-deny)");
-  if (request.taskClass !== policy.taskClass) return fail(request, "task class does not match goal policy");
-  const expected = ROLE_FOR_CLASS[request.taskClass];
-  if (role(request.requestedAgent) !== expected || role(request.actualAgent) !== expected)
-    return fail(request, `task class ${request.taskClass} requires ${expected}`);
-  if (request.readOnly) {
-    if (!policy.allowReadOnlyVerification || request.taskClass !== "verification")
-      return fail(request, "read-only verification not explicitly authorized");
-    return { allowed: true, reason: "authorized read-only verification", at: new Date().toISOString(), request };
-  }
-  if (request.prNumber !== policy.canonical.prNumber || request.branch !== policy.canonical.branch)
+  if (!isValidPolicy(policy)) return fail(request, "dispatch policy missing or invalid");
+  const classPolicy = policy.classes[request.taskClass];
+  if (!classPolicy) return fail(request, "task class is not defined by goal policy");
+  if (!request.requestedAgent || request.requestedAgent !== request.actualAgent)
+    return fail(request, "requested agent must exactly match the host agentId");
+  if (!classPolicy.allowedAgents.includes(request.actualAgent)) return fail(request, "agent is not allowed for task class");
+  if (typeof request.readOnly !== "boolean" || request.readOnly !== classPolicy.readOnly)
+    return fail(request, "readOnly declaration must match task class policy");
+  if (request.readOnly) return { allowed: true, reason: "authorized read-only dispatch", at: new Date().toISOString(), request };
+
+  const canonical = classPolicy.canonical!;
+  if (request.prNumber !== canonical.prNumber || request.branch !== canonical.branch)
     return fail(request, "non-canonical PR or branch");
-  if (!request.writeScope || request.writeScope.length === 0)
-    return fail(request, "explicit non-empty write scope required");
+  if (!request.liveRemoteHead || request.liveRemoteHead !== canonical.remoteHead)
+    return fail(request, "canonical remote head is absent or stale");
+  if (!nonEmptyStrings(request.writeScope)) return fail(request, "explicit non-empty write scope required");
   if (typeof request.createsPr !== "boolean" || typeof request.createsBranch !== "boolean")
     return fail(request, "explicit PR and branch creation declarations required");
-  if (!request.liveRemoteHead || request.liveRemoteHead !== policy.canonical.remoteHead)
-    return fail(request, "canonical remote head is absent or stale");
-  if (policy.forbidNewPr && request.createsPr) return fail(request, "new PR forbidden by goal policy");
-  if (policy.forbidNewBranch && request.createsBranch) return fail(request, "new branch forbidden by goal policy");
-  const scope = request.writeScope ?? [];
-  if (scope.some((p) => !policy.writeScope.includes(p))) return fail(request, "requested write scope exceeds policy");
-  return { allowed: true, reason: "authorized canonical dispatch", at: new Date().toISOString(), request };
+  if (classPolicy.forbidNewPr && request.createsPr) return fail(request, "new PR forbidden by goal policy");
+  if (classPolicy.forbidNewBranch && request.createsBranch) return fail(request, "new branch forbidden by goal policy");
+  if (request.writeScope.some((path) => !classPolicy.writeScope!.includes(path)))
+    return fail(request, "requested write scope exceeds policy");
+  return { allowed: true, reason: "authorized canonical write dispatch", at: new Date().toISOString(), request };
 }
 
 export async function recordGoalDispatchPreflight(
@@ -107,22 +111,27 @@ export async function recordGoalDispatchPreflight(
   await appendFile(join(dir, `${goalId}.jsonl`), `${JSON.stringify(result)}\n`, "utf8");
 }
 
-/** Extract a declaration from the standard spawn tool payload. No declaration means deny. */
+/** Extract a declaration from the standard spawn tool payload. No declaration means no request. */
 export function dispatchRequestFromToolParams(params: Record<string, unknown>): {
   goalId: string | null;
   request: GoalDispatchRequest | null;
 } {
-  const obj = (k: string) => (params[k] && typeof params[k] === "object" ? (params[k] as Record<string, unknown>) : {});
-  const d = obj("goal_dispatch");
-  const str = (k: string) => (typeof d[k] === "string" ? d[k] : undefined);
-  const bool = (k: string) => (typeof d[k] === "boolean" ? d[k] : undefined);
-  const strings = (k: string) =>
-    Array.isArray(d[k]) && d[k].every((v) => typeof v === "string") ? (d[k] as string[]) : undefined;
-  // `agentId` is the host tool payload that controls the child; never trust a declaration to override it.
-  const requestedAgent = str("requestedAgent");
+  const obj = (key: string) =>
+    params[key] && typeof params[key] === "object" ? (params[key] as Record<string, unknown>) : undefined;
+  const declaration = obj("goal_dispatch");
+  const declaredGoalId = declaration && typeof declaration.goalId === "string" ? declaration.goalId : undefined;
+  const goalId = declaredGoalId ?? (typeof params.goal_id === "string" ? params.goal_id : null);
+  if (!declaration) return { goalId, request: null };
+  const str = (key: string) => (typeof declaration[key] === "string" ? declaration[key] : undefined);
+  const bool = (key: string) => (typeof declaration[key] === "boolean" ? declaration[key] : undefined);
+  const strings = (key: string) =>
+    Array.isArray(declaration[key]) && declaration[key].every((item) => typeof item === "string")
+      ? (declaration[key] as string[])
+      : undefined;
+  // agentId is the host tool payload that controls the child; never trust a declaration to override it.
   const actualAgent = typeof params.agentId === "string" ? params.agentId : undefined;
-  const taskClass = str("taskClass") as GoalDispatchTaskClass | undefined;
-  const goalId = str("goalId") ?? (typeof params.goal_id === "string" ? params.goal_id : null);
+  const taskClass = str("taskClass");
+  const requestedAgent = str("requestedAgent");
   if (!goalId || !taskClass || !requestedAgent || !actualAgent) return { goalId, request: null };
   return {
     goalId,
@@ -130,7 +139,7 @@ export function dispatchRequestFromToolParams(params: Record<string, unknown>): 
       taskClass,
       requestedAgent,
       actualAgent,
-      prNumber: typeof d.prNumber === "number" ? d.prNumber : undefined,
+      prNumber: typeof declaration.prNumber === "number" ? declaration.prNumber : undefined,
       branch: str("branch"),
       liveRemoteHead: str("liveRemoteHead"),
       writeScope: strings("writeScope"),

@@ -229,7 +229,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
         dispatch_policy: Type.Optional(
           Type.Any({
             description:
-              "Machine-readable dispatch policy; required before goal-linked write dispatch when authorization is enabled.",
+              "Machine-readable generic dispatch policy. When authorization is enabled, goal-linked dispatches must select a policy class; write classes require canonical and scope constraints.",
           }),
         ),
       }),
