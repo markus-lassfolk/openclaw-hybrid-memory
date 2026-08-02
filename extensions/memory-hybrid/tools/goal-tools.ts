@@ -203,9 +203,21 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
         const broker = new GoalDispatchBroker(goalsDir);
         const canonical = goal.dispatchPolicy?.classes[taskClass]?.canonical;
         const record = await broker.reserve({
-          goalId, targetAgent: agent, runtime, budget, ttlMs: 5 * 60_000,
-          owner: agent, sessionId: p.session_key,
-          target: canonical ? { repository: canonical.repository, prNumber: canonical.prNumber, branch: canonical.branch, remoteHead: canonical.remoteHead } : undefined,
+          goalId,
+          targetAgent: agent,
+          runtime,
+          budget,
+          ttlMs: 5 * 60_000,
+          owner: agent,
+          sessionId: p.session_key,
+          target: canonical
+            ? {
+                repository: canonical.repository,
+                prNumber: canonical.prNumber,
+                branch: canonical.branch,
+                remoteHead: canonical.remoteHead,
+              }
+            : undefined,
         });
         if (!record)
           return {

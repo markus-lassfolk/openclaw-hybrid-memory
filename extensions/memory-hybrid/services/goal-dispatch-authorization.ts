@@ -94,7 +94,11 @@ export function evaluateGoalDispatch(
     return { allowed: true, reason: "authorized read-only dispatch", at: new Date().toISOString(), request };
 
   const canonical = classPolicy.canonical!;
-  if (request.repository !== canonical.repository || request.prNumber !== canonical.prNumber || request.branch !== canonical.branch)
+  if (
+    request.repository !== canonical.repository ||
+    request.prNumber !== canonical.prNumber ||
+    request.branch !== canonical.branch
+  )
     return fail(request, "non-canonical repository, PR, or branch");
   if (!request.liveRemoteHead || request.liveRemoteHead !== canonical.remoteHead)
     return fail(request, "canonical remote head is absent or stale");
@@ -176,19 +180,17 @@ export function reconcileTargetProgress(
   scope: DiffScopeSanity = {},
 ): { allowed: boolean; reason: string } {
   if (!evidence.sourceTasksReference?.trim()) return { allowed: false, reason: "source TASKS reference required" };
-  if (!evidence.implementationEvidence?.some((x) => x.trim())) return { allowed: false, reason: "direct implementation evidence required" };
-  if (!evidence.verificationEvidence?.some((x) => x.trim())) return { allowed: false, reason: "direct verification evidence required" };
+  if (!evidence.implementationEvidence?.some((x) => x.trim()))
+    return { allowed: false, reason: "direct implementation evidence required" };
+  if (!evidence.verificationEvidence?.some((x) => x.trim()))
+    return { allowed: false, reason: "direct verification evidence required" };
   const paths = evidence.changedPaths ?? [];
-  if (scope.maxFiles !== undefined && paths.length > scope.maxFiles) return { allowed: false, reason: "diff scope exceeds maxFiles" };
+  if (scope.maxFiles !== undefined && paths.length > scope.maxFiles)
+    return { allowed: false, reason: "diff scope exceeds maxFiles" };
   if (scope.deny?.some((prefix) => paths.some((path) => path === prefix || path.startsWith(`${prefix}/`))))
     return { allowed: false, reason: "diff scope contains denied path" };
-  if (scope.allow && paths.some((path) => !scope.allow.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))))
+  const allow = scope.allow;
+  if (allow && paths.some((path) => !allow.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))))
     return { allowed: false, reason: "diff scope contains non-allowlisted path" };
   return { allowed: true, reason: "manifest evidence reconciled" };
 }
-
-/**
- * Evidence required before a target manifest may advance. This is deliberately a
- * pure, caller-configured check: the plugin never embeds another repository's
- * identity as a production default.
- */

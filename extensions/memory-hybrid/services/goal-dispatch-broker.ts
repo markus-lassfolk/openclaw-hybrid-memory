@@ -109,7 +109,8 @@ export class GoalDispatchBroker {
     return this.withLedger((l) => {
       this.expire(l);
       const r = l.dispatches[id];
-      if (!r || !["reserved", "launched"].includes(r.status) || r.owner !== owner || (r.runId && r.runId !== runId)) return false;
+      if (!r || !["reserved", "launched"].includes(r.status) || r.owner !== owner || (r.runId && r.runId !== runId))
+        return false;
       r.runId = runId;
       r.expiresAt = new Date(this.now().getTime() + ttlMs).toISOString();
       r.updatedAt = this.now().toISOString();
@@ -121,8 +122,23 @@ export class GoalDispatchBroker {
     return this.withLedger((l) => {
       this.expire(l);
       const r = l.dispatches[id];
-      if (!r || r.status !== "launched" || r.owner !== receipt.owner || r.runId !== receipt.runId || r.sessionId !== receipt.sessionId) return false;
-      if (!receipt.modelApplied || !receipt.requestedModel || !receipt.resolvedModel || !receipt.startingHead || !receipt.endingHead || receipt.evidence.length === 0) return false;
+      if (
+        !r ||
+        r.status !== "launched" ||
+        r.owner !== receipt.owner ||
+        r.runId !== receipt.runId ||
+        r.sessionId !== receipt.sessionId
+      )
+        return false;
+      if (
+        !receipt.modelApplied ||
+        !receipt.requestedModel ||
+        !receipt.resolvedModel ||
+        !receipt.startingHead ||
+        !receipt.endingHead ||
+        receipt.evidence.length === 0
+      )
+        return false;
       r.receipt = { ...receipt, recordedAt: this.now().toISOString() };
       r.updatedAt = this.now().toISOString();
       return true;
