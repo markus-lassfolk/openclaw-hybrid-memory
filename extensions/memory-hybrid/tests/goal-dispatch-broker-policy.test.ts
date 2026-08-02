@@ -28,7 +28,7 @@ const policy: GoalDispatchPolicy = {
     canonical_write: {
       allowedAgents: ["writer"],
       readOnly: false,
-      canonical: { prNumber: 77, branch: "fix/dispatch", remoteHead: "sha77" },
+      canonical: { repository: "example/repo", prNumber: 77, branch: "fix/dispatch", remoteHead: "sha77" },
       writeScope: ["extensions/memory-hybrid"],
       forbidNewPr: true,
       forbidNewBranch: true,
@@ -139,6 +139,7 @@ describe("goal_dispatch broker policy selection", () => {
         ...base(g.id, "writer"),
         task_class: "canonical_write",
         read_only: false,
+        repository: "example/repo",
         pr_number: 77,
         branch: "fix/dispatch",
         live_remote_head: "sha77",

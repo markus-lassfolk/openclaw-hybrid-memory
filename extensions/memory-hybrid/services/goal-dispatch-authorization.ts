@@ -2,7 +2,7 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
-export type GoalDispatchCanonical = { prNumber: number; branch: string; remoteHead: string };
+export type GoalDispatchCanonical = { repository: string; prNumber: number; branch: string; remoteHead: string };
 export type GoalDispatchClassPolicy = {
   /** Exact agent ids allowed to receive this class of work. */
   allowedAgents: string[];
@@ -24,6 +24,7 @@ export type GoalDispatchRequest = {
   taskClass: string;
   requestedAgent: string;
   actualAgent: string;
+  repository?: string;
   prNumber?: number;
   branch?: string;
   liveRemoteHead?: string;
@@ -44,6 +45,8 @@ function validCanonical(value: unknown): value is GoalDispatchCanonical {
   if (!value || typeof value !== "object") return false;
   const canonical = value as Record<string, unknown>;
   return (
+    typeof canonical.repository === "string" &&
+    /^[^/\s]+\/[^/\s]+$/.test(canonical.repository) &&
     Number.isSafeInteger(canonical.prNumber) &&
     (canonical.prNumber as number) > 0 &&
     typeof canonical.branch === "string" &&
@@ -91,8 +94,8 @@ export function evaluateGoalDispatch(
     return { allowed: true, reason: "authorized read-only dispatch", at: new Date().toISOString(), request };
 
   const canonical = classPolicy.canonical!;
-  if (request.prNumber !== canonical.prNumber || request.branch !== canonical.branch)
-    return fail(request, "non-canonical PR or branch");
+  if (request.repository !== canonical.repository || request.prNumber !== canonical.prNumber || request.branch !== canonical.branch)
+    return fail(request, "non-canonical repository, PR, or branch");
   if (!request.liveRemoteHead || request.liveRemoteHead !== canonical.remoteHead)
     return fail(request, "canonical remote head is absent or stale");
   if (!nonEmptyStrings(request.writeScope)) return fail(request, "explicit non-empty write scope required");
@@ -143,6 +146,7 @@ export function dispatchRequestFromToolParams(params: Record<string, unknown>): 
       taskClass,
       requestedAgent,
       actualAgent,
+      repository: str("repository"),
       prNumber: typeof declaration.prNumber === "number" ? declaration.prNumber : undefined,
       branch: str("branch"),
       liveRemoteHead: str("liveRemoteHead"),
@@ -153,3 +157,38 @@ export function dispatchRequestFromToolParams(params: Record<string, unknown>): 
     },
   };
 }
+
+/**
+ * Evidence required before a target manifest may advance. This is deliberately a
+ * pure, caller-configured check: the plugin never embeds another repository's
+ * identity as a production default.
+ */
+export type TargetProgressEvidence = {
+  sourceTasksReference?: string;
+  implementationEvidence?: string[];
+  verificationEvidence?: string[];
+  changedPaths?: string[];
+};
+export type DiffScopeSanity = { allow?: string[]; deny?: string[]; maxFiles?: number };
+
+export function reconcileTargetProgress(
+  evidence: TargetProgressEvidence,
+  scope: DiffScopeSanity = {},
+): { allowed: boolean; reason: string } {
+  if (!evidence.sourceTasksReference?.trim()) return { allowed: false, reason: "source TASKS reference required" };
+  if (!evidence.implementationEvidence?.some((x) => x.trim())) return { allowed: false, reason: "direct implementation evidence required" };
+  if (!evidence.verificationEvidence?.some((x) => x.trim())) return { allowed: false, reason: "direct verification evidence required" };
+  const paths = evidence.changedPaths ?? [];
+  if (scope.maxFiles !== undefined && paths.length > scope.maxFiles) return { allowed: false, reason: "diff scope exceeds maxFiles" };
+  if (scope.deny?.some((prefix) => paths.some((path) => path === prefix || path.startsWith(`${prefix}/`))))
+    return { allowed: false, reason: "diff scope contains denied path" };
+  if (scope.allow && paths.some((path) => !scope.allow.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))))
+    return { allowed: false, reason: "diff scope contains non-allowlisted path" };
+  return { allowed: true, reason: "manifest evidence reconciled" };
+}
+
+/**
+ * Evidence required before a target manifest may advance. This is deliberately a
+ * pure, caller-configured check: the plugin never embeds another repository's
+ * identity as a production default.
+ */
