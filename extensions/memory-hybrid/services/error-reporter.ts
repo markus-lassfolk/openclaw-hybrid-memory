@@ -19,7 +19,7 @@ import type {
   ReportStacktrace,
 } from "./error-reporter/types.js";
 
-export { shouldDropNoisyError } from "./error-reporter/noisy-errors.js";
+export { isLanceMissingFragmentError, shouldDropNoisyError } from "./error-reporter/noisy-errors.js";
 export { compareVersions, extractVersion, sanitizeEvent, sanitizePath, scrubString, shouldDropForResolvedIssue };
 
 /**

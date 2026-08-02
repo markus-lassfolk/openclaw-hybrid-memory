@@ -20,6 +20,7 @@ import {
   rebuildGoalIndex,
   resolveGoalsDir,
 } from "../../../services/goal-registry.js";
+import { reportSemanticQueryCacheIntegrityIssue } from "../../../services/vector-backend-observability.js";
 import { atomicWriteFile } from "../../../utils/atomic-write.js";
 import { PLUGIN_ID } from "../../../utils/constants.js";
 import {
@@ -417,6 +418,25 @@ export async function runVerifyInfrastructureSection(state: VerifyRunState): Pro
       );
       state.warnings.push(
         `LanceDB degraded mode active${degradedState.reason ? ` (${degradedState.reason})` : ""}; vector retrieval may be unavailable`,
+      );
+    }
+
+    // GlitchTip #34 / issue #2213, recurred as #2227: the semantic query cache's per-call
+    // "missing fragment" read errors are intentionally dropped as noisy (never reach GlitchTip on
+    // their own) so VectorDB can self-heal without spamming — this is the health-check surface
+    // that reports it instead, once, if self-heal has had to run at all this session.
+    const cacheIntegrity = reportSemanticQueryCacheIntegrityIssue(vectorDb);
+    if (cacheIntegrity.occurrences > 0) {
+      const WARN = noEmoji ? "[WARN]" : "⚠️";
+      log(
+        `${WARN} Semantic query cache: hit the LanceDB missing-fragment read error ${cacheIntegrity.occurrences} ` +
+          `time(s) this session (self-heal action=${cacheIntegrity.lastRecoveryAction ?? "none"}, ` +
+          `succeeded=${cacheIntegrity.lastRecoverySucceeded ?? "unknown"}).`,
+      );
+      state.warnings.push(
+        `Semantic query cache self-heal triggered ${cacheIntegrity.occurrences} time(s) after a LanceDB ` +
+          "missing-fragment read error; cache lookups fall back to direct search meanwhile (no data loss). " +
+          `See GlitchTip subsystem=vector operation=semantic-query-cache-integrity.`,
       );
     }
   } catch (e) {

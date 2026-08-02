@@ -65,6 +65,24 @@ function isDirectNoisyError(err: unknown): boolean {
 }
 
 /**
+ * True for the specific LanceDB "missing fragment" read-stream failure (GlitchTip #34 / issue
+ * #2213, recurred as #2227): `Failed to get next batch from stream: lance error: Not found:
+ * .../<fragment>.lance`. A stale version manifest still references a fragment file that is
+ * absent from the data directory.
+ *
+ * `shouldDropNoisyError` below treats this message as non-actionable and never forwards it to
+ * GlitchTip per call — but #2227 showed that alone just makes 14 repeated failures silent instead
+ * of fixing them. This predicate is exported separately so a caller can *react* to the error
+ * (trigger a self-heal / count it for a health check) rather than only ever swallowing it. See
+ * `VectorDB`'s semantic query cache lookup/store paths (backends/vector-db/vector-db-class.ts).
+ */
+export function isLanceMissingFragmentError(err: unknown): boolean {
+  const message = getErrorMessage(err);
+  if (!message) return false;
+  return NOISY_LANCE_STREAM_ERROR_RE.test(message);
+}
+
+/**
  * Returns true for known noisy, non-actionable errors that should never be sent
  * to GlitchTip: transient transport failures, external-provider auth failures,
  * local Ollama circuit-breaker errors, transient LanceDB read-stream races during

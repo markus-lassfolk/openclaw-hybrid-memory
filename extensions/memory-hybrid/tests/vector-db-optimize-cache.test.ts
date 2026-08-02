@@ -290,17 +290,25 @@ describe("VectorDB semantic query cache — suppress known schema errors", () =>
 });
 
 // ---------------------------------------------------------------------------
-// GlitchTip issue #34 — semantic query cache LanceDB read-stream race.
+// GlitchTip issue #34 — semantic query cache LanceDB read-stream race, recurred as issue #2227.
+//
 // rebuildSemanticQueryCacheTable() drops and recreates the cache table with zero
 // synchronization against concurrent readers/writers. A vectorSearch().toArray() call
 // racing that drop surfaces as "Failed to get next batch from stream: lance error: Not
-// found: .../semantic_query_cache.lance/data/....lance". This was (a) needlessly reported
-// to GlitchTip every time (fixed via services/error-reporter/noisy-errors.ts) and (b) an
-// actual race (fixed via acquireReader()/releaseReader()/waitForReadersToDrain() on the
-// cache table hot paths, mirroring the main table's optimize() fix for issue #768).
+// found: .../semantic_query_cache.lance/data/....lance". Issue #2213's fix addressed (a)
+// needless GlitchTip reporting (services/error-reporter/noisy-errors.ts) and (b) that
+// specific concurrent-drop race (acquireReader()/releaseReader()/waitForReadersToDrain(),
+// mirroring the main table's optimize() fix for issue #768) — but #2227 showed the same
+// message can also mean the *current* table handle is durably stuck on a stale version
+// manifest that references a fragment no longer on disk, independent of any in-process
+// race: every call fails identically, forever, just silently (per (a) above). The fix here
+// is attemptSemanticCacheFragmentRecovery(): checkoutLatest() first (cheap, re-resolves to
+// the latest manifest, which #2227's own diagnosis says doesn't reference the missing
+// fragment), falling back to the existing drop+recreate rebuild if that itself fails —
+// rate-limited so a persistently broken manifest doesn't get hammered on every call.
 // ---------------------------------------------------------------------------
 
-describe("VectorDB semantic query cache — GlitchTip issue #34 stream-read race", () => {
+describe("VectorDB semantic query cache — GlitchTip issue #34 / #2213 / #2227 missing-fragment self-heal", () => {
   let tmpDir: string;
   let lanceDir: string;
 
@@ -314,7 +322,14 @@ describe("VectorDB semantic query cache — GlitchTip issue #34 stream-read race
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("getSemanticQueryCacheMatch() resolves null (no throw) on a transient LanceDB stream-read error, and the error is classified as noisy so it never reaches GlitchTip", async () => {
+  function makeStreamReadErr(): Error {
+    return new Error(
+      "Failed to get next batch from stream: lance error: Not found: /home/user/.openclaw/memory/lance/" +
+        "semantic_query_cache.lance/data/12345678-abcd-4ef0-9abc-1234567890ab.lance, path not found",
+    );
+  }
+
+  it("getSemanticQueryCacheMatch() resolves null (no throw) on a missing-fragment error and never reports it to GlitchTip directly (self-heal handles it instead)", async () => {
     const db = new VectorDB(lanceDir, CORRECT_DIM);
 
     await db.storeSemanticQueryCache({
@@ -324,15 +339,13 @@ describe("VectorDB semantic query cache — GlitchTip issue #34 stream-read race
       filterKey: "test",
     });
 
-    const streamReadErr = new Error(
-      "Failed to get next batch from stream: lance error: Not found: /home/user/.openclaw/memory/lance/" +
-        "semantic_query_cache.lance/data/12345678-abcd-4ef0-9abc-1234567890ab.lance, path not found",
-    );
-
+    const streamReadErr = makeStreamReadErr();
+    const checkoutLatest = vi.fn(async () => {});
     (db as any).semanticQueryCacheTable = {
       vectorSearch: () => {
         throw streamReadErr;
       },
+      checkoutLatest,
     };
 
     const match = await db.getSemanticQueryCacheMatch([1, 0, 0], {
@@ -344,14 +357,136 @@ describe("VectorDB semantic query cache — GlitchTip issue #34 stream-read race
     // Must degrade gracefully to a cache miss rather than throwing to the caller.
     expect(match).toBeNull();
 
-    // capturePluginError() is still invoked by the generic catch branch (this message does
-    // not match isKnownVectorSchemaError), but the noisy-error fix means the REAL
-    // capturePluginError implementation would drop it before it ever reaches the reporter's
-    // captureException/fetch call. Assert that classification directly against the error
-    // that was actually captured, proving the fix covers this exact production message.
-    expect(mockCapturePluginError).toHaveBeenCalledOnce();
-    const [capturedErr] = mockCapturePluginError.mock.calls[0];
-    expect(shouldDropNoisyError(capturedErr)).toBe(true);
+    // Unlike the generic (unclassified) branch, this specific error class is never handed to
+    // capturePluginError at all — it is intentionally noisy-filtered (shouldDropNoisyError), so
+    // reporting per call would just be a silent no-op that duplicates the health-check surface
+    // (services/vector-backend-observability.ts's reportSemanticQueryCacheIntegrityIssue).
+    expect(mockCapturePluginError).not.toHaveBeenCalled();
+    expect(shouldDropNoisyError(streamReadErr)).toBe(true);
+
+    // Self-heal attempted the cheap, non-destructive path first.
+    expect(checkoutLatest).toHaveBeenCalledOnce();
+
+    const telemetry = db.getSemanticCacheFragmentErrorTelemetry();
+    expect(telemetry.occurrences).toBe(1);
+    expect(telemetry.lastRecoveryAction).toBe("checkout");
+    expect(telemetry.lastRecoverySucceeded).toBe(true);
+
+    await db.close();
+  });
+
+  it("storeSemanticQueryCache() also self-heals on a missing-fragment error instead of throwing or reporting to GlitchTip", async () => {
+    const db = new VectorDB(lanceDir, CORRECT_DIM);
+    await db.storeSemanticQueryCache({
+      queryText: "warm",
+      vector: [1, 0, 0],
+      factIds: ["warm"],
+      filterKey: "test",
+    });
+
+    const streamReadErr = makeStreamReadErr();
+    const checkoutLatest = vi.fn(async () => {});
+    (db as any).semanticQueryCacheTable = {
+      add: () => {
+        throw streamReadErr;
+      },
+      checkoutLatest,
+    };
+
+    await expect(
+      db.storeSemanticQueryCache({
+        queryText: "new query",
+        vector: [0, 1, 0],
+        factIds: ["fact-new"],
+        filterKey: "test",
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(mockCapturePluginError).not.toHaveBeenCalled();
+    expect(checkoutLatest).toHaveBeenCalledOnce();
+    expect(db.getSemanticCacheFragmentErrorTelemetry().occurrences).toBe(1);
+
+    await db.close();
+  });
+
+  it("falls back to a full table rebuild when checkoutLatest() itself fails, and the cache is usable again afterward", async () => {
+    const db = new VectorDB(lanceDir, CORRECT_DIM);
+    await db.storeSemanticQueryCache({
+      queryText: "warm query",
+      vector: [1, 0, 0],
+      factIds: ["fact-warm"],
+      filterKey: "test",
+    });
+
+    const streamReadErr = makeStreamReadErr();
+    const checkoutLatest = vi.fn(async () => {
+      throw new Error("checkout failed: no readable manifest");
+    });
+    (db as any).semanticQueryCacheTable = {
+      vectorSearch: () => {
+        throw streamReadErr;
+      },
+      checkoutLatest,
+    };
+
+    const match = await db.getSemanticQueryCacheMatch([1, 0, 0], {
+      filterKey: "test",
+      minSimilarity: 0.95,
+      ttlMs: 60_000,
+    });
+    expect(match).toBeNull();
+    expect(checkoutLatest).toHaveBeenCalledOnce();
+
+    const telemetry = db.getSemanticCacheFragmentErrorTelemetry();
+    expect(telemetry.lastRecoveryAction).toBe("rebuild");
+    expect(telemetry.lastRecoverySucceeded).toBe(true);
+
+    // The rebuild replaced the broken stub with a fresh, real, empty table — the cache must be
+    // fully usable again (self-heal, not just a graceful-degrade fallback).
+    await db.storeSemanticQueryCache({
+      queryText: "post-heal query",
+      vector: [0, 0, 1],
+      factIds: ["fact-post-heal"],
+      filterKey: "test",
+    });
+    const healedMatch = await db.getSemanticQueryCacheMatch([0, 0, 1], {
+      filterKey: "test",
+      minSimilarity: 0.95,
+      ttlMs: 60_000,
+    });
+    expect(healedMatch?.factIds).toEqual(["fact-post-heal"]);
+    expect(mockCapturePluginError).not.toHaveBeenCalled();
+
+    await db.close();
+  });
+
+  it("rate-limits repeated self-heal attempts within the cooldown window instead of hammering checkoutLatest() on every call", async () => {
+    const db = new VectorDB(lanceDir, CORRECT_DIM);
+    await db.storeSemanticQueryCache({
+      queryText: "warm query",
+      vector: [1, 0, 0],
+      factIds: ["fact-warm"],
+      filterKey: "test",
+    });
+
+    const streamReadErr = makeStreamReadErr();
+    const checkoutLatest = vi.fn(async () => {});
+    (db as any).semanticQueryCacheTable = {
+      vectorSearch: () => {
+        throw streamReadErr;
+      },
+      checkoutLatest,
+    };
+
+    // Three calls in quick succession while the table is (still) broken — checkoutLatest() must
+    // only run once; the other two occurrences are still tallied for telemetry/health-check
+    // purposes but skip the actual repair attempt (cooldown not yet elapsed).
+    for (let i = 0; i < 3; i++) {
+      await db.getSemanticQueryCacheMatch([1, 0, 0], { filterKey: "test", minSimilarity: 0.95, ttlMs: 60_000 });
+    }
+
+    expect(checkoutLatest).toHaveBeenCalledOnce();
+    expect(db.getSemanticCacheFragmentErrorTelemetry().occurrences).toBe(3);
 
     await db.close();
   });
