@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parseGoalStewardshipConfig } from "../config/parsers/core.js";
 import {
@@ -43,6 +46,21 @@ const write = (changes: Partial<GoalDispatchRequest> = {}): GoalDispatchRequest 
 });
 
 describe("goal dispatch authorization", () => {
+  it("declares dispatchAuthorization in the plugin configuration schema", () => {
+    const hybridRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+    const manifest = JSON.parse(readFileSync(join(hybridRoot, "openclaw.plugin.json"), "utf8")) as {
+      configSchema?: { properties?: { goalStewardship?: { properties?: Record<string, unknown> } } };
+    };
+    expect(manifest.configSchema?.properties?.goalStewardship?.properties?.dispatchAuthorization).toEqual({
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        enabled: expect.objectContaining({ type: "boolean" }),
+        mode: expect.objectContaining({ type: "string", enum: ["audit", "enforce"] }),
+      },
+      description: expect.any(String),
+    });
+  });
   it("defaults omitted or disabled configuration to a disabled authorization gate", () => {
     expect(parseGoalStewardshipConfig({}).dispatchAuthorization).toEqual({ enabled: false });
     expect(
