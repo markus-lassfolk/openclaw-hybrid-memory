@@ -973,6 +973,67 @@ describe("FactsDB tiering", () => {
     expect(captureSpy).not.toHaveBeenCalled();
   });
 
+  it("runCompaction reopens and completes after a plain (non-permanent) close (issue #2233)", () => {
+    db.store({
+      text: "Fact stored before a plain close/reopen cycle",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    // Simulate a background-maintenance close (not permanentClose) racing session-end
+    // compaction — e.g. the SIGUSR1/SIGUSR2 reconnect cycle base-sqlite-store.ts supports.
+    db.close();
+    expect(db.isPermanentlyClosed()).toBe(false);
+
+    let report: ReturnType<typeof db.runCompaction> | undefined;
+    expect(() => {
+      report = db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
+    }).not.toThrow();
+
+    // Unlike the permanently-closed case, this should transparently reopen and actually run —
+    // not silently no-op — since the store was only ever soft-closed.
+    expect(report?.examined).toBeGreaterThanOrEqual(1);
+    expect(db.isOpen()).toBe(true);
+  });
+
+  it("runCompaction self-heals when the native handle closes out from under the store (issue #2233)", () => {
+    db.store({
+      text: "Fact stored before a raw handle desync",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const captureSpy = vi.spyOn(errorReporter, "capturePluginError");
+
+    // Simulate the exact GlitchTip race (#2233): the store's own bookkeeping (`_dbOpen`) still
+    // thinks the connection is live, but the native handle underneath it has already been
+    // closed (e.g. by a concurrent maintenance/reload path that bypassed close()/permanentClose()
+    // and closed the raw node:sqlite handle directly). This desync is what makes `liveDb` skip
+    // its own reopen branch and hand a dead handle to the compaction queries.
+    db.getRawDb().close();
+
+    let report: ReturnType<typeof db.runCompaction> | undefined;
+    expect(() => {
+      report = db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
+    }).not.toThrow();
+
+    // runSqliteOp's reconnect-and-retry recovers instead of surfacing "database connection is
+    // not open" into the lifecycle hook — compaction actually completes on the retry.
+    expect(report?.examined).toBeGreaterThanOrEqual(1);
+    expect(db.isOpen()).toBe(true);
+    expect(captureSpy).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ subsystem: "facts-db", operation: "runCompaction", phase: "sqlite-reconnect" }),
+    );
+  });
+
   it("runCompaction no longer moves fresh decisions to COLD by category alone", () => {
     const task = db.store({
       text: "Decided to use SQLite",
