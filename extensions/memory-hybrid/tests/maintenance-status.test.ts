@@ -112,6 +112,77 @@ describe("config maintenance.cronReliability parsing", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Config: maintenance.backup parsing (Issues #2229, #2230)
+// ---------------------------------------------------------------------------
+
+describe("config maintenance.backup parsing", () => {
+  const baseConfig = {
+    embedding: {
+      provider: "openai" as const,
+      model: "text-embedding-3-small",
+      apiKey: "sk-test-key-that-is-long-enough",
+    },
+    lanceDbPath: "/tmp/test-lance",
+    sqlitePath: "/tmp/test.db",
+  };
+
+  it("defaults: retentionCount=7, retentionAgeDays=30, alerting enabled with staleAfterHours=192, dedupeWindowHours=24", () => {
+    const cfg = hybridConfigSchema.parse(baseConfig);
+    const backup = cfg.maintenance.backup;
+    expect(backup.retentionCount).toBe(7);
+    expect(backup.retentionAgeDays).toBe(30);
+    expect(backup.alerting.enabled).toBe(true);
+    expect(backup.alerting.staleAfterHours).toBe(192);
+    expect(backup.alerting.dedupeWindowHours).toBe(24);
+  });
+
+  it("accepts custom retentionCount and retentionAgeDays", () => {
+    const cfg = hybridConfigSchema.parse({
+      ...baseConfig,
+      maintenance: { backup: { retentionCount: 3, retentionAgeDays: 14 } },
+    });
+    expect(cfg.maintenance.backup.retentionCount).toBe(3);
+    expect(cfg.maintenance.backup.retentionAgeDays).toBe(14);
+  });
+
+  it("accepts 0 to disable count/age-based pruning", () => {
+    const cfg = hybridConfigSchema.parse({
+      ...baseConfig,
+      maintenance: { backup: { retentionCount: 0, retentionAgeDays: 0 } },
+    });
+    expect(cfg.maintenance.backup.retentionCount).toBe(0);
+    expect(cfg.maintenance.backup.retentionAgeDays).toBe(0);
+  });
+
+  it("rejects negative retention values by falling back to the default", () => {
+    const cfg = hybridConfigSchema.parse({
+      ...baseConfig,
+      maintenance: { backup: { retentionCount: -1, retentionAgeDays: -1 } },
+    });
+    expect(cfg.maintenance.backup.retentionCount).toBe(7);
+    expect(cfg.maintenance.backup.retentionAgeDays).toBe(30);
+  });
+
+  it("accepts custom alerting policy and allows disabling alerting", () => {
+    const cfg = hybridConfigSchema.parse({
+      ...baseConfig,
+      maintenance: { backup: { alerting: { enabled: false, staleAfterHours: 48, dedupeWindowHours: 6 } } },
+    });
+    expect(cfg.maintenance.backup.alerting.enabled).toBe(false);
+    expect(cfg.maintenance.backup.alerting.staleAfterHours).toBe(48);
+    expect(cfg.maintenance.backup.alerting.dedupeWindowHours).toBe(6);
+  });
+
+  it("backup config is present in all presets", () => {
+    for (const mode of ["local", "minimal", "enhanced", "complete"] as const) {
+      const cfg = hybridConfigSchema.parse({ ...baseConfig, mode });
+      expect(cfg.maintenance.backup).toBeDefined();
+      expect(cfg.maintenance.backup.retentionCount).toBe(7);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // MaintenanceConfig shape: both new sub-configs co-exist
 // ---------------------------------------------------------------------------
 

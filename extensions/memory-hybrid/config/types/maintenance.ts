@@ -191,6 +191,8 @@ export type MaintenanceConfig = {
   monthlyReview: MonthlyReviewConfig;
   /** Cron reliability settings for memory maintenance jobs (Issue #281). */
   cronReliability: CronReliabilityConfig;
+  /** Backup artifact retention + health alerting (Issues #2229, #2230). */
+  backup: BackupMaintenanceConfig;
   /** Grouped GlitchTip/Sentry-compatible reporting for maintenance failures (Issue #1836). */
   failureReporting: MaintenanceFailureReportingConfig;
   /** Redaction of emails/paths/private-IPs from maintenance-extracted fact text (Issue #2055). */
@@ -280,4 +282,39 @@ export type CronReliabilityConfig = {
    * Applies only to daily/nightly jobs; weekly jobs use 7 days.
    */
   staleThresholdHours: number;
+};
+
+/**
+ * Backup health alerting policy (Issue #2230): when a failed/stale backup should escalate
+ * to a deduplicated operator alert via the error reporter.
+ */
+export type BackupAlertingConfig = {
+  /** Emit a deduplicated alert when backup health degrades (default: true). */
+  enabled: boolean;
+  /**
+   * Hours since the last verified successful backup after which the backup is considered
+   * stale even without an explicit failed run (default: 192 = 8 days — one day of grace past
+   * the default weekly cron cadence).
+   */
+  staleAfterHours: number;
+  /**
+   * Minimum hours between repeated alerts for the same persisting failure/staleness
+   * fingerprint (default: 24) — mirrors the bounded-window dedup pattern in
+   * services/error-reporter.ts so a stuck failure doesn't spam on every heartbeat/cron tick.
+   */
+  dedupeWindowHours: number;
+};
+
+/**
+ * Bounded retention + safe cleanup for hybrid-memory backup artifacts (Issue #2229).
+ * Applied after every successful `hybrid-mem backup` run and available on demand via
+ * `hybrid-mem backup prune` / `hybrid-mem backup status`.
+ */
+export type BackupMaintenanceConfig = {
+  /** Max number of completed backup snapshots to retain (default: 7). 0 disables count-based pruning. */
+  retentionCount: number;
+  /** Max age in days a completed snapshot may reach before it's eligible for pruning (default: 30). 0 disables age-based pruning. */
+  retentionAgeDays: number;
+  /** Backup health/heartbeat alerting policy (Issue #2230). */
+  alerting: BackupAlertingConfig;
 };

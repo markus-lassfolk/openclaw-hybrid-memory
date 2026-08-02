@@ -375,6 +375,11 @@ Error: LanceDB commit conflict detected
             enabled: false,
             dayOfMonth: 1,
           },
+          backup: {
+            retentionCount: 7,
+            retentionAgeDays: 30,
+            alerting: { enabled: true, staleAfterHours: 192, dedupeWindowHours: 24 },
+          },
           cronReliability: {
             nightlyCron: "0 3 * * *",
             weeklyBackupCron: "0 4 * * 0",

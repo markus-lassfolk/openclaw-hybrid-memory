@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { runBackup, runBackupVerify } from "../cli/backup.js";
+import { getBackupStatus, pruneBackups, runBackup, runBackupVerify } from "../cli/backup.js";
 
 describe("backup", () => {
   let testDir: string;
@@ -433,6 +433,190 @@ describe("backup", () => {
         expect(result.factCount).toBe(0);
         expect(result.message).toContain("0 active facts");
       }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Atomicity (#2229): a crash/kill mid-backup must never look like a completed snapshot.
+  // ---------------------------------------------------------------------------
+  describe("atomic promotion (#2229)", () => {
+    it("leaves no .backup-tmp-* working directory behind after a successful run", async () => {
+      const backupDir = join(testDir, "backups");
+      const result = await runBackup({ resolvedSqlitePath: sqlitePath, resolvedLancePath: lancePath, backupDir });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const entries = readdirSync(backupDir);
+      expect(entries).toEqual([basename(result.backupDir)]);
+      expect(entries.some((name) => name.startsWith(".backup-tmp-"))).toBe(false);
+    });
+
+    it("never leaves a directory behind (partial or completed-looking) after a failed run", async () => {
+      const backupDir = join(testDir, "backups");
+      const brokenLancePath = join(testDir, "broken-lance-source-atomic");
+      writeFileSync(brokenLancePath, "not a directory");
+
+      const result = await runBackup({ resolvedSqlitePath: sqlitePath, resolvedLancePath: brokenLancePath, backupDir });
+      expect(result.ok).toBe(false);
+
+      const entries = existsSync(backupDir) ? readdirSync(backupDir) : [];
+      expect(entries.length).toBe(0);
+    });
+
+    it("does not accumulate stale working directories across repeated failed runs", async () => {
+      const backupDir = join(testDir, "backups");
+      const brokenLancePath = join(testDir, "broken-lance-source-repeat");
+      writeFileSync(brokenLancePath, "not a directory");
+
+      for (let i = 0; i < 3; i++) {
+        const result = await runBackup({
+          resolvedSqlitePath: sqlitePath,
+          resolvedLancePath: brokenLancePath,
+          backupDir,
+        });
+        expect(result.ok).toBe(false);
+      }
+      const entries = existsSync(backupDir) ? readdirSync(backupDir) : [];
+      expect(entries.length).toBe(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Retention / pruning (#2229)
+  // ---------------------------------------------------------------------------
+  describe("pruneBackups / getBackupStatus (#2229)", () => {
+    let backupRoot: string;
+
+    beforeEach(() => {
+      backupRoot = join(testDir, "backups-retention");
+      mkdirSync(backupRoot, { recursive: true });
+    });
+
+    /** Create a fake completed backup snapshot directory with a controllable mtime. */
+    function makeCompletedBackup(name: string, ageDays: number): string {
+      const dir = join(backupRoot, name);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "backup-manifest.json"), "{}");
+      const past = new Date(Date.now() - ageDays * 24 * 60 * 60 * 1000);
+      utimesSync(dir, past, past);
+      return dir;
+    }
+
+    /** Create a fake abandoned working directory (or loose orphaned file) with a controllable mtime. */
+    function makeStaleArtifact(name: string, ageHours: number, opts: { asFile?: boolean } = {}): string {
+      const path = join(backupRoot, name);
+      if (opts.asFile) {
+        writeFileSync(path, "stray");
+      } else {
+        mkdirSync(path, { recursive: true });
+      }
+      const past = new Date(Date.now() - ageHours * 60 * 60 * 1000);
+      utimesSync(path, past, past);
+      return path;
+    }
+
+    it("retention count keeps only the newest N completed snapshots", () => {
+      const names = Array.from({ length: 10 }, (_, i) => `2026-01-${String(i + 1).padStart(2, "0")}T00-00-00-000Z`);
+      for (const [i, name] of names.entries()) makeCompletedBackup(name, 10 - i); // higher index = newer (smaller ageDays)
+
+      const report = pruneBackups(backupRoot, { retentionCount: 3, retentionAgeDays: 0 });
+      expect(report.retainedCompleted.length).toBe(3);
+      expect(report.prunedCompleted.length).toBe(7);
+      // The 3 newest (last 3 in `names`) must be the ones retained.
+      expect(new Set(report.retainedCompleted)).toEqual(new Set(names.slice(-3)));
+    });
+
+    it("never deletes the newest completed snapshot even when it's the only one and older than retentionAgeDays", () => {
+      makeCompletedBackup("2020-01-01T00-00-00-000Z", 400);
+
+      const report = pruneBackups(backupRoot, { retentionCount: 7, retentionAgeDays: 30 });
+      expect(report.prunedCompleted.length).toBe(0);
+      expect(report.retainedCompleted.length).toBe(1);
+      expect(existsSync(join(backupRoot, "2020-01-01T00-00-00-000Z"))).toBe(true);
+    });
+
+    it("prunes completed snapshots older than retentionAgeDays while keeping recent ones and the newest", () => {
+      makeCompletedBackup("2020-01-01T00-00-00-000Z", 400); // very old — pruned
+      makeCompletedBackup("2026-01-01T00-00-00-000Z", 5); // recent — retained
+      makeCompletedBackup("2026-01-02T00-00-00-000Z", 1); // newest — always retained
+
+      const report = pruneBackups(backupRoot, { retentionCount: 0, retentionAgeDays: 30 });
+      expect(report.prunedCompleted).toEqual(["2020-01-01T00-00-00-000Z"]);
+      expect(new Set(report.retainedCompleted)).toEqual(
+        new Set(["2026-01-01T00-00-00-000Z", "2026-01-02T00-00-00-000Z"]),
+      );
+    });
+
+    it("removes abandoned .backup-tmp-* working directories older than the grace period but leaves fresh ones alone", () => {
+      makeStaleArtifact(".backup-tmp-12345-oldrun", 5); // 5h old — abandoned
+      makeStaleArtifact(".backup-tmp-99999-freshrun", 0.01); // ~36s old — may still be an active run
+
+      const report = pruneBackups(backupRoot, { partialGraceMs: 60 * 60 * 1000 });
+      expect(report.prunedPartial).toEqual([".backup-tmp-12345-oldrun"]);
+      expect(existsSync(join(backupRoot, ".backup-tmp-99999-freshrun"))).toBe(true);
+    });
+
+    it("surfaces and removes stale orphaned artifacts sitting directly under the backup root", () => {
+      makeStaleArtifact("legacy-pre-sync-snapshot.db", 5, { asFile: true });
+
+      const statusBefore = getBackupStatus(backupRoot);
+      expect(statusBefore.orphanedCount).toBe(1);
+      expect(statusBefore.stalePartialCount).toBe(1);
+
+      const report = pruneBackups(backupRoot, { partialGraceMs: 60 * 60 * 1000 });
+      expect(report.prunedOrphaned).toEqual(["legacy-pre-sync-snapshot.db"]);
+      expect(existsSync(join(backupRoot, "legacy-pre-sync-snapshot.db"))).toBe(false);
+    });
+
+    it("getBackupStatus never mutates the filesystem", () => {
+      makeCompletedBackup("2020-01-01T00-00-00-000Z", 400);
+      makeStaleArtifact(".backup-tmp-abc-def", 5);
+      makeStaleArtifact("stray.db", 5, { asFile: true });
+
+      const status = getBackupStatus(backupRoot, { retentionCount: 0, retentionAgeDays: 1 });
+      expect(status.completedCount).toBe(1);
+      expect(status.retainedCount).toBe(1); // newest-guard keeps it even though it's over-age
+      expect(status.partialCount).toBe(1);
+      expect(status.orphanedCount).toBe(1);
+      expect(existsSync(join(backupRoot, "2020-01-01T00-00-00-000Z"))).toBe(true);
+      expect(existsSync(join(backupRoot, ".backup-tmp-abc-def"))).toBe(true);
+      expect(existsSync(join(backupRoot, "stray.db"))).toBe(true);
+    });
+  });
+
+  describe("runBackup with ctx.retention (#2229)", () => {
+    it("prunes older completed snapshots automatically after a successful run when retention is configured", async () => {
+      const backupDir = join(testDir, "backups-auto-prune");
+      mkdirSync(backupDir, { recursive: true });
+      const oldDir = join(backupDir, "2020-01-01T00-00-00-000Z");
+      mkdirSync(oldDir, { recursive: true });
+      writeFileSync(join(oldDir, "backup-manifest.json"), "{}");
+      const past = new Date(Date.now() - 400 * 24 * 60 * 60 * 1000);
+      utimesSync(oldDir, past, past);
+
+      const result = await runBackup({
+        resolvedSqlitePath: sqlitePath,
+        resolvedLancePath: lancePath,
+        backupDir,
+        retention: { retentionCount: 1, retentionAgeDays: 0 },
+      });
+      expect(result.ok).toBe(true);
+      expect(existsSync(oldDir)).toBe(false);
+      if (result.ok) expect(existsSync(result.backupDir)).toBe(true);
+    });
+
+    it("does not prune when ctx.retention is omitted (existing default behaviour preserved)", async () => {
+      const backupDir = join(testDir, "backups-no-prune");
+      mkdirSync(backupDir, { recursive: true });
+      const oldDir = join(backupDir, "2020-01-01T00-00-00-000Z");
+      mkdirSync(oldDir, { recursive: true });
+      writeFileSync(join(oldDir, "backup-manifest.json"), "{}");
+      const past = new Date(Date.now() - 400 * 24 * 60 * 60 * 1000);
+      utimesSync(oldDir, past, past);
+
+      const result = await runBackup({ resolvedSqlitePath: sqlitePath, resolvedLancePath: lancePath, backupDir });
+      expect(result.ok).toBe(true);
+      expect(existsSync(oldDir)).toBe(true);
     });
   });
 });

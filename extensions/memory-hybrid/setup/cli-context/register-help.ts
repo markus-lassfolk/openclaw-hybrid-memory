@@ -561,12 +561,17 @@ export function createHybridMemCliContext(
     resolvedSqlitePath: handlerCtx.resolvedSqlitePath,
     resolvedLancePath: handlerCtx.resolvedLancePath,
     resolvePath: (file: string) => api.resolvePath(file),
-    // Issue #276 — Backup CLI
+    // Issue #276 — Backup CLI. Retention (#2229) is applied after every successful run using the
+    // configured maintenance.backup policy (retentionCount/retentionAgeDays, default 7/30).
     runBackup: (opts) =>
       runBackupFn({
         resolvedSqlitePath: handlerCtx.resolvedSqlitePath,
         resolvedLancePath: handlerCtx.resolvedLancePath,
         backupDir: opts?.backupDir,
+        retention: {
+          retentionCount: handlerCtx.cfg.maintenance?.backup?.retentionCount ?? 7,
+          retentionAgeDays: handlerCtx.cfg.maintenance?.backup?.retentionAgeDays ?? 30,
+        },
       }),
     runBackupVerify: () => runBackupVerifyFn({ resolvedSqlitePath: handlerCtx.resolvedSqlitePath }),
     runGenerateProposals: (opts) => handlers.runGenerateProposalsForCli(handlerCtx, opts, api),

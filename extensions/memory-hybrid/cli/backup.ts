@@ -21,6 +21,7 @@
  * Cron automation for scheduled backups should be managed via openclaw.yaml.
  */
 
+import { randomBytes } from "node:crypto";
 import {
   copyFileSync,
   cpSync,
@@ -28,9 +29,11 @@ import {
   mkdirSync,
   readdirSync,
   readlinkSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -84,6 +87,57 @@ export type BackupVerifyResult =
   | { ok: false; error: string };
 
 // ---------------------------------------------------------------------------
+// Retention / pruning (Issue #2229)
+// ---------------------------------------------------------------------------
+
+/** Bounded retention policy applied to completed backup snapshots. */
+export type BackupRetentionOptions = {
+  /** Max number of completed snapshots to retain. 0 or negative disables count-based pruning. Default 7. */
+  retentionCount?: number;
+  /** Max age in days a completed snapshot may reach before it's prune-eligible. 0 or negative disables age-based pruning. Default 30. */
+  retentionAgeDays?: number;
+  /**
+   * Grace period (ms) a `.backup-tmp-*` working directory or unrecognized root artifact must sit
+   * untouched before it's treated as abandoned and safe to remove — protects a concurrently
+   * running backup's in-progress temp dir from being pruned out from under it. Default 1 hour.
+   */
+  partialGraceMs?: number;
+};
+
+export const DEFAULT_BACKUP_RETENTION_COUNT = 7;
+export const DEFAULT_BACKUP_RETENTION_AGE_DAYS = 30;
+const DEFAULT_PARTIAL_GRACE_MS = 60 * 60 * 1000;
+
+export type BackupPruneReport = {
+  root: string;
+  retainedCompleted: string[];
+  prunedCompleted: string[];
+  prunedPartial: string[];
+  prunedOrphaned: string[];
+  errors: string[];
+};
+
+export type BackupStatusEntry = { name: string; createdAt: string; bytes: number };
+
+export type BackupStatusReport = {
+  root: string;
+  /** Completed snapshots currently on disk. */
+  completedCount: number;
+  /** Completed snapshots that satisfy the retention policy right now (i.e. would survive a prune). */
+  retainedCount: number;
+  /** In-progress (`.backup-tmp-*`) working directories currently on disk. */
+  partialCount: number;
+  /** Unrecognized files/directories sitting directly under the backup root (e.g. legacy orphaned artifacts). */
+  orphanedCount: number;
+  /** partialCount + orphanedCount — artifacts that are neither a completed snapshot nor prunable safely yet. */
+  stalePartialCount: number;
+  /** Total bytes across all completed snapshots. */
+  totalBytes: number;
+  newest: BackupStatusEntry | null;
+  oldest: BackupStatusEntry | null;
+};
+
+// ---------------------------------------------------------------------------
 // Context
 // ---------------------------------------------------------------------------
 
@@ -92,11 +146,26 @@ interface BackupContext {
   resolvedLancePath: string;
   /** Override default backup destination (~/.openclaw/backups/memory/). */
   backupDir?: string;
+  /** Bounded retention applied after a successful backup (Issue #2229). Omit to skip pruning. */
+  retention?: BackupRetentionOptions;
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Prefix for the hidden working directory a backup writes into before it's promoted (renamed) into place. */
+const TEMP_BACKUP_PREFIX = ".backup-tmp-";
+/** Name pattern for a completed, atomically-promoted backup snapshot directory. */
+const COMPLETED_BACKUP_DIR_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
+
+function isCompletedBackupDirName(name: string): boolean {
+  return COMPLETED_BACKUP_DIR_PATTERN.test(name);
+}
+
+function isPartialBackupDirName(name: string): boolean {
+  return name.startsWith(TEMP_BACKUP_PREFIX);
+}
 
 function defaultBackupRoot(): string {
   return join(homedir(), ".openclaw", "backups", "memory");
@@ -168,6 +237,171 @@ function copyDirSync(src: string, dest: string): void {
   }
 }
 
+/** Hidden sibling working directory a backup writes into before being promoted (renamed) into place. */
+function tempBackupDir(root: string): string {
+  return join(root, `${TEMP_BACKUP_PREFIX}${process.pid}-${randomBytes(6).toString("hex")}`);
+}
+
+// ---------------------------------------------------------------------------
+// Retention / pruning (Issue #2229)
+// ---------------------------------------------------------------------------
+
+type ClassifiedEntry = { name: string; path: string; mtimeMs: number };
+
+type BackupRootClassification = {
+  completed: Array<ClassifiedEntry & { bytes: number }>;
+  partial: ClassifiedEntry[];
+  orphaned: ClassifiedEntry[];
+};
+
+/** List and classify everything directly under the backup root. Never mutates the filesystem. */
+function classifyBackupRoot(root: string): BackupRootClassification {
+  const result: BackupRootClassification = { completed: [], partial: [], orphaned: [] };
+  if (!existsSync(root)) return result;
+
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = readdirSync(root, { withFileTypes: true });
+  } catch {
+    return result;
+  }
+
+  for (const entry of entries) {
+    const fullPath = join(root, entry.name);
+    let mtimeMs = 0;
+    try {
+      mtimeMs = statSync(fullPath).mtimeMs;
+    } catch {
+      continue; // vanished between readdir and stat; skip
+    }
+    if (entry.isDirectory() && isCompletedBackupDirName(entry.name)) {
+      result.completed.push({ name: entry.name, path: fullPath, mtimeMs, bytes: dirSizeSync(fullPath) });
+    } else if (entry.isDirectory() && isPartialBackupDirName(entry.name)) {
+      result.partial.push({ name: entry.name, path: fullPath, mtimeMs });
+    } else {
+      // Anything else directly under the root — loose files or unrecognized directories (e.g. the
+      // orphaned pre-sync SQLite snapshots reported in #2229) — is neither a completed snapshot
+      // nor an in-progress working dir.
+      result.orphaned.push({ name: entry.name, path: fullPath, mtimeMs });
+    }
+  }
+  return result;
+}
+
+/**
+ * Decide which completed snapshots survive retention. The newest snapshot is always retained,
+ * even if it exceeds retentionAgeDays and even when it's the only one on disk — deleting the
+ * sole valid backup because it aged out would defeat the purpose of having one (#2229).
+ */
+function planRetention(
+  completed: BackupRootClassification["completed"],
+  opts: BackupRetentionOptions,
+): { retain: Set<string>; prune: Set<string> } {
+  const retentionCount = opts.retentionCount ?? DEFAULT_BACKUP_RETENTION_COUNT;
+  const retentionAgeDays = opts.retentionAgeDays ?? DEFAULT_BACKUP_RETENTION_AGE_DAYS;
+  const ageCutoffMs = retentionAgeDays > 0 ? Date.now() - retentionAgeDays * 24 * 60 * 60 * 1000 : null;
+  const sorted = [...completed].sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+  const retain = new Set<string>();
+  const prune = new Set<string>();
+  sorted.forEach((backup, index) => {
+    const isNewest = index === 0;
+    const overCount = retentionCount > 0 && index >= retentionCount;
+    const overAge = ageCutoffMs !== null && backup.mtimeMs < ageCutoffMs;
+    if (!isNewest && (overCount || overAge)) {
+      prune.add(backup.name);
+    } else {
+      retain.add(backup.name);
+    }
+  });
+  return { retain, prune };
+}
+
+/**
+ * Apply bounded retention to a backup root: prunes old completed snapshots per policy, removes
+ * abandoned `.backup-tmp-*` working directories left by a crashed/killed run, and removes stale
+ * orphaned artifacts sitting directly under the root (e.g. legacy loose SQLite files). Only
+ * artifacts older than `partialGraceMs` are ever touched for partial/orphaned cleanup, so a
+ * concurrently running backup's in-progress temp dir is never disturbed.
+ */
+export function pruneBackups(root: string, opts: BackupRetentionOptions = {}): BackupPruneReport {
+  const partialGraceMs = opts.partialGraceMs ?? DEFAULT_PARTIAL_GRACE_MS;
+  const report: BackupPruneReport = {
+    root,
+    retainedCompleted: [],
+    prunedCompleted: [],
+    prunedPartial: [],
+    prunedOrphaned: [],
+    errors: [],
+  };
+  const classified = classifyBackupRoot(root);
+  const now = Date.now();
+
+  const { retain, prune } = planRetention(classified.completed, opts);
+  for (const backup of classified.completed) {
+    if (prune.has(backup.name)) {
+      try {
+        rmSync(backup.path, { recursive: true, force: true });
+        report.prunedCompleted.push(backup.name);
+      } catch (err) {
+        report.errors.push(`Failed to prune old backup ${backup.name}: ${err}`);
+      }
+    } else if (retain.has(backup.name)) {
+      report.retainedCompleted.push(backup.name);
+    }
+  }
+
+  for (const entry of classified.partial) {
+    if (now - entry.mtimeMs < partialGraceMs) continue; // may still be an active run — leave alone
+    try {
+      rmSync(entry.path, { recursive: true, force: true });
+      report.prunedPartial.push(entry.name);
+    } catch (err) {
+      report.errors.push(`Failed to remove stale partial backup ${entry.name}: ${err}`);
+    }
+  }
+
+  for (const entry of classified.orphaned) {
+    if (now - entry.mtimeMs < partialGraceMs) continue;
+    try {
+      const st = statSync(entry.path);
+      if (st.isDirectory()) {
+        rmSync(entry.path, { recursive: true, force: true });
+      } else {
+        unlinkSync(entry.path);
+      }
+      report.prunedOrphaned.push(entry.name);
+    } catch (err) {
+      report.errors.push(`Failed to remove orphaned backup artifact ${entry.name}: ${err}`);
+    }
+  }
+
+  return report;
+}
+
+/** Read-only status/audit summary of a backup root: no filesystem mutation (Issue #2229). */
+export function getBackupStatus(root: string, opts: BackupRetentionOptions = {}): BackupStatusReport {
+  const classified = classifyBackupRoot(root);
+  const { retain } = planRetention(classified.completed, opts);
+  const sorted = [...classified.completed].sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const toEntry = (e: (typeof sorted)[number]): BackupStatusEntry => ({
+    name: e.name,
+    createdAt: new Date(e.mtimeMs).toISOString(),
+    bytes: e.bytes,
+  });
+  return {
+    root,
+    completedCount: classified.completed.length,
+    retainedCount: retain.size,
+    partialCount: classified.partial.length,
+    orphanedCount: classified.orphaned.length,
+    stalePartialCount: classified.partial.length + classified.orphaned.length,
+    totalBytes: classified.completed.reduce((sum, e) => sum + e.bytes, 0),
+    newest: sorted.length > 0 ? toEntry(sorted[0]) : null,
+    oldest: sorted.length > 0 ? toEntry(sorted[sorted.length - 1]) : null,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Main backup function
 // ---------------------------------------------------------------------------
@@ -175,21 +409,29 @@ function copyDirSync(src: string, dest: string): void {
 /**
  * Create a point-in-time backup of the hybrid-memory data stores.
  * Uses VACUUM INTO for a consistent SQLite copy and recursive copy for LanceDB.
+ *
+ * Atomicity (#2229): all copying happens inside a hidden `.backup-tmp-*` working directory. Only
+ * once every step (SQLite, LanceDB, manifest) has succeeded is that directory atomically renamed
+ * to the final timestamped name. A crash or kill at any point before that rename leaves only the
+ * hidden temp dir behind — never a directory that looks like a completed snapshot — so pruning
+ * and status tooling can never mistake a partial backup for a verified one.
  */
 export async function runBackup(ctx: BackupContext): Promise<BackupCliResult> {
   const start = Date.now();
   const root = ctx.backupDir ?? defaultBackupRoot();
-  const dest = timestampedDir(root);
+  const finalDest = timestampedDir(root);
+  const dest = tempBackupDir(root);
 
   try {
     mkdirSync(dest, { recursive: true });
   } catch (err) {
-    return { ok: false, error: `Failed to create backup directory ${dest}: ${err}` };
+    return { ok: false, error: `Failed to create backup directory ${finalDest}: ${err}` };
   }
 
-  /** Remove the half-written backup directory before reporting a failure — otherwise a stale,
-   * incomplete backup (e.g. valid memory.db but missing/partial lancedb) is left on disk looking
-   * like a legitimate timestamped backup, with no marker that it's incomplete. */
+  /** Remove the half-written working directory before reporting a failure — otherwise a stale,
+   * incomplete backup (e.g. valid memory.db but missing/partial lancedb) is left on disk. Because
+   * this directory never reached its final (non-`.backup-tmp-*`) name, it can never be mistaken
+   * for a legitimate completed snapshot even if this best-effort cleanup itself fails. */
   const cleanupAndFail = (error: string): { ok: false; error: string } => {
     try {
       rmSync(dest, { recursive: true, force: true });
@@ -283,10 +525,35 @@ export async function runBackup(ctx: BackupContext): Promise<BackupCliResult> {
     });
   }
 
+  // Atomic promotion (#2229): only after every step above succeeded does the working directory
+  // become a real, discoverable snapshot. If this rename itself fails (e.g. disk full), the
+  // backup did not complete — clean up and report failure rather than leaving a dangling temp dir.
+  try {
+    renameSync(dest, finalDest);
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "backup",
+      operation: "finalize-backup",
+    });
+    return cleanupAndFail(`Failed to finalize backup directory: ${err}`);
+  }
+
+  // Bounded retention (#2229): best-effort, never blocks reporting success even if pruning fails.
+  if (ctx.retention) {
+    const pruneReport = pruneBackups(root, ctx.retention);
+    if (pruneReport.errors.length > 0) {
+      capturePluginError(new Error(pruneReport.errors.join("; ")), {
+        subsystem: "backup",
+        operation: "prune-backups",
+        severity: "warning",
+      });
+    }
+  }
+
   const durationMs = Date.now() - start;
   return {
     ok: true,
-    backupDir: dest,
+    backupDir: finalDest,
     sqliteSize,
     lancedbSize,
     durationMs,

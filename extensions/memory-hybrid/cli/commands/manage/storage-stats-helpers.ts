@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import type { GraphSchemaSnapshot } from "../../../backends/facts-db/housekeeping.js";
 import type { GraphConnectedStats } from "../../../backends/facts-db/links.js";
 import type { ProcedurePromotionBlockReason } from "../../../backends/facts-db/procedures.js";
+import type { BackupHealthStatus } from "../../../services/backup-health.js";
 import { expandGraph, type GraphExpansionStats, resolveGraphHubDegreeCap } from "../../../services/graph-retrieval.js";
 import type { MemoryEntry, ScopeFilter } from "../../../types/memory.js";
 import { nowIso } from "../../../utils/dates.js";
@@ -568,6 +569,8 @@ export type AuditHealthReport = {
     entryCount: number;
     migrationRequired: boolean;
   } | null;
+  /** Backup health summary (Issue #2230). Null when no backup state file has ever been written. */
+  backupHealth: BackupHealthStatus | null;
   /** Optional operator budget used for audit-health command execution. */
   timeoutMs?: number;
   /** Elapsed wall-clock time spent building the report. */
@@ -605,6 +608,8 @@ export function buildAuditHealthReport(
       migrationRequired: boolean;
     } | null;
     lastReembedProgress?: ReembedVectorlessLastRunMetrics | null;
+    /** Backup health summary (Issue #2230), pre-computed by the caller (read-only, non-mutating). */
+    backupHealth?: BackupHealthStatus | null;
   },
 ): AuditHealthReport {
   const startedAtMs = options?.startedAtMs ?? Date.now();
@@ -1076,6 +1081,19 @@ export function buildAuditHealthReport(
     );
   }
 
+  // Backup health (Issue #2230): surface a failed/stale backup directly in the audit-health report.
+  const backupHealth = options?.backupHealth ?? null;
+  if (backupHealth && (backupHealth.status === "failed" || backupHealth.status === "stale")) {
+    const ageNote =
+      backupHealth.ageSinceLastSuccessHours !== null
+        ? ` (last verified success ${backupHealth.ageSinceLastSuccessHours.toFixed(1)}h ago)`
+        : " (no verified success on record)";
+    warnings.push(
+      `Backup health is ${backupHealth.status}${backupHealth.reasonCategory ? ` (${backupHealth.reasonCategory})` : ""}${ageNote}.`,
+    );
+    remediation.push(...backupHealth.remediation);
+  }
+
   // #1806: entity enrichment backlog — warn when eta_runs exceeds threshold.
   const ENTITY_ENRICHMENT_DEFAULT_LIMIT = 200;
   const ENTITY_ENRICHMENT_ETA_WARN_THRESHOLD = 100;
@@ -1199,6 +1217,7 @@ export function buildAuditHealthReport(
     remediation,
     errors,
     credentials: options?.credentialsStatus ?? null,
+    backupHealth,
     timeoutMs: options?.timeoutMs,
     elapsedMs: Date.now() - startedAtMs,
   };
@@ -1320,6 +1339,13 @@ export function printAuditHealthMarkdown(report: AuditHealthReport): void {
       ? `encrypted (kdf_version=${c.kdfVersion})`
       : `plaintext (kdf_version=${c.kdfVersion})`;
     console.log(`Credentials vault: ${encLabel}, entries=${c.entryCount}, migration_required=${c.migrationRequired}`);
+  }
+  if (report.backupHealth != null) {
+    const bh = report.backupHealth;
+    const age = bh.ageSinceLastSuccessHours !== null ? `${bh.ageSinceLastSuccessHours.toFixed(1)}h ago` : "never";
+    console.log(
+      `Backup health: ${bh.status}${bh.reasonCategory ? ` (${bh.reasonCategory})` : ""}, last success=${age}, consecutive_failures=${bh.consecutiveFailures}`,
+    );
   }
   console.log("");
   if (report.errors.length > 0) {

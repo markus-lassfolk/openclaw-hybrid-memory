@@ -185,7 +185,21 @@ openclaw hybrid-mem backup
 
 # Verify database integrity
 openclaw hybrid-mem backup verify
+
+# Backup retention + health audit: completed/retained/stale counts, bytes, last success/failure
+openclaw hybrid-mem backup status
+
+# Deterministically clean up stale/partial artifacts and enforce retention
+openclaw hybrid-mem backup prune
 ```
+
+Every successful `backup` run automatically prunes older completed snapshots per
+`maintenance.backup.retentionCount` / `retentionAgeDays` (default: keep the 7 newest, or any
+snapshot newer than 30 days — the single newest snapshot is always kept even if it's the only
+one and has aged out). Backups are written atomically: a crash mid-backup never leaves a
+half-written directory that looks like a completed snapshot. See
+[`../../../docs/OPERATIONS.md`](../../../docs/OPERATIONS.md) for the full retention/health-alerting
+reference.
 
 ---
 

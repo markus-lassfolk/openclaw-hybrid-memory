@@ -8,6 +8,12 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig } from "../config.js";
+import {
+  DEFAULT_BACKUP_HEALTH_ALERT_POLICY,
+  defaultBackupStateFilePath,
+  evaluateBackupHealth,
+  readBackupStateFile,
+} from "../services/backup-health.js";
 import { getWalCircuitBreakerState } from "../services/wal-helpers.js";
 import { detectAvailableProviders } from "../utils/provider-detection.js";
 import { formatBytes, WAL_SIZE_WARN_BYTES } from "../utils/format.js";
@@ -274,6 +280,32 @@ export function registerHealthCommand(
           status: "warn",
           detail: "Could not inspect vector bounds",
         });
+      }
+
+      // Backup health (Issue #2230): surface a failed/stale backup as a traffic-light indicator.
+      try {
+        const backupHealth = evaluateBackupHealth(
+          readBackupStateFile(defaultBackupStateFilePath()),
+          Date.now(),
+          cfg.maintenance?.backup?.alerting ?? DEFAULT_BACKUP_HEALTH_ALERT_POLICY,
+        );
+        if (backupHealth.status === "ok") {
+          indicators.push({
+            name: "Backup",
+            status: "good",
+            detail: backupHealth.lastSuccessAt ? `last success ${backupHealth.lastSuccessAt}` : "ok",
+          });
+        } else if (backupHealth.status === "unknown") {
+          indicators.push({ name: "Backup", status: "warn", detail: "no backup has run yet" });
+        } else {
+          indicators.push({
+            name: "Backup",
+            status: backupHealth.status === "failed" ? "error" : "warn",
+            detail: `${backupHealth.status}${backupHealth.reasonCategory ? ` (${backupHealth.reasonCategory})` : ""}, last success ${backupHealth.lastSuccessAt ?? "never"}`,
+          });
+        }
+      } catch (_error) {
+        indicators.push({ name: "Backup", status: "warn", detail: "Could not read backup state" });
       }
 
       // Overall status — computed once so --json reflects the same exit code as human-readable output.
