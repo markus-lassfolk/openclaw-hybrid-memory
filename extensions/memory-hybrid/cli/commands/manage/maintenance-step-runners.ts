@@ -13,6 +13,11 @@ import { getCronModelConfig, getDefaultCronModel } from "../../../config.js";
 import { runAffectStamp } from "../../../services/affect-stamping.js";
 import { runAutoClassify } from "../../../services/auto-classifier.js";
 import {
+  DEFAULT_BACKUP_HEALTH_ALERT_POLICY,
+  defaultBackupStateFilePath,
+  evaluateAndMaybeAlertBackupHealth,
+} from "../../../services/backup-health.js";
+import {
   DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD,
   ORCHESTRATOR_CONTRADICTION_DEGRADED_CONSECUTIVE_THRESHOLD,
   runContradictionMaintenanceAutoStep,
@@ -887,17 +892,27 @@ export function buildCliMaintenanceRunners(
   });
 
   set("audit-health", async () => {
+    // Heartbeat/maintenance backup health alert (Issue #2230): this weekly cron step is the
+    // actual "heartbeat" tick, so it's the one place that fires the deduplicated alert (dedup
+    // window from maintenance.backup.alerting.dedupeWindowHours) — the one-shot `audit health`
+    // CLI stays read-only and only surfaces the current status.
+    const backupAlert = evaluateAndMaybeAlertBackupHealth(
+      defaultBackupStateFilePath(),
+      b.cfg.maintenance?.backup?.alerting ?? DEFAULT_BACKUP_HEALTH_ALERT_POLICY,
+    );
     const report = buildAuditHealthReport(
       b.factsDb,
       b.getMemoryCategories,
       b.cfg.entityExtraction?.stopWords ?? [],
       b.cfg.graph?.hubDegreeCap,
+      { backupHealth: backupAlert.health },
     );
     if (report.errorCount > 0) {
       throw new Error(`${report.errorCount} error(s) present`);
     }
     const semantic = report.warningCount > 0 ? "monitoring" : "success";
-    return `warnings=${report.warningCount} errors=${report.errorCount} semantic=${semantic}`;
+    const backupNote = backupAlert.alerted ? ` backupAlert=${backupAlert.health.status}` : "";
+    return `warnings=${report.warningCount} errors=${report.errorCount} semantic=${semantic}${backupNote}`;
   });
 
   set("crystallization-rescan", async () => {

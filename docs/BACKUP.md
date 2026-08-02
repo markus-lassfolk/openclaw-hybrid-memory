@@ -56,6 +56,85 @@ Bootstrap files (AGENTS.md, SOUL.md, USER.md, TOOLS.md, MEMORY.md, etc.) are als
 
 ---
 
+## Automated snapshot backups (`hybrid-mem backup`)
+
+The plugin also ships a self-managed snapshot backup command that captures SQLite (via
+`VACUUM INTO`, safe on a live WAL-mode database) and the LanceDB directory into a timestamped
+folder — no need to stop the gateway.
+
+```bash
+# Create a snapshot: ~/.openclaw/backups/memory/<timestamp>/
+openclaw hybrid-mem backup
+
+# Verify SQLite integrity without creating a new backup
+openclaw hybrid-mem backup verify
+
+# Retention + health audit: completed/retained/stale-partial counts, bytes, last success/failure
+openclaw hybrid-mem backup status
+
+# Deterministically clean up stale/partial artifacts and enforce retention on demand
+openclaw hybrid-mem backup prune
+
+# Install a weekly cron entry (defaults to Sunday 04:00; configurable via
+# maintenance.cronReliability.weeklyBackupCron)
+openclaw hybrid-mem backup schedule
+```
+
+### Bounded retention (Issue #2229)
+
+Every successful `backup` run atomically promotes a hidden `.backup-tmp-*` working directory to
+its final timestamped name only once SQLite, LanceDB, and the manifest have all been written
+successfully — a crash or `kill -9` mid-backup can never leave a directory that looks like a
+completed snapshot, and any abandoned working directory or stray artifact is cleaned up on the
+next run (or on demand via `backup prune`).
+
+After a successful run, older completed snapshots are pruned per `maintenance.backup` config:
+
+```yaml
+maintenance:
+  backup:
+    retentionCount: 7      # keep the 7 newest completed snapshots (0 disables count-based pruning)
+    retentionAgeDays: 30   # prune snapshots older than 30 days (0 disables age-based pruning)
+```
+
+The newest completed snapshot is **never** pruned, even if it's the only one on disk and older
+than `retentionAgeDays` — losing the sole valid backup because it aged out would defeat the
+purpose of having one. `openclaw hybrid-mem backup status` reports completed/retained/stale
+counts, total bytes, and the newest/oldest snapshot; `openclaw hybrid-mem backup prune` applies
+the policy deterministically without creating a new backup.
+
+### Health alerting (Issue #2230)
+
+Each run records its outcome to `~/.openclaw/state/memory-backup-last.json` (`ok`, timestamp,
+error, failure reason category, consecutive-failure count, last verified success). This state
+feeds three surfaces:
+
+- `openclaw hybrid-mem health` — a `Backup` traffic-light indicator.
+- `openclaw hybrid-mem audit health` / `graph health` — a `backupHealth` field with status,
+  reason category, and age since last verified success (read-only; never fires an alert itself).
+- The weekly `audit-health` maintenance cron step — the actual heartbeat tick, which fires a
+  **deduplicated** alert (via the same error-reporter pipeline used for other plugin errors) when
+  the backup has failed or when the last verified success is older than
+  `maintenance.backup.alerting.staleAfterHours` (default 192h / 8 days — one day of grace past the
+  default weekly cadence). Repeated failures only re-alert after
+  `maintenance.backup.alerting.dedupeWindowHours` (default 24h) elapses; a later successful backup
+  immediately clears the stale failure state from all three surfaces.
+
+```yaml
+maintenance:
+  backup:
+    alerting:
+      enabled: true          # set false to disable backup health alerting entirely
+      staleAfterHours: 192   # alert if no verified success in this many hours
+      dedupeWindowHours: 24  # minimum time between repeated alerts for the same persisting issue
+```
+
+Failure reason categories (`disk_full`, `permission_denied`, `path_not_found`,
+`integrity_check_failed`, `unknown`) are derived from the error message and come with
+non-sensitive remediation guidance (e.g. "free disk space on the backup volume").
+
+---
+
 ## Simple backup (tar)
 
 **Stop the gateway first** so SQLite and LanceDB are not in use:

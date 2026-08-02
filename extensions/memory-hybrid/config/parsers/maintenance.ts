@@ -1,6 +1,7 @@
 import { pluginLogger } from "../../utils/logger.js";
 
 import type {
+  BackupMaintenanceConfig,
   CouncilConfig,
   CouncilProvenanceMode,
   CronReliabilityConfig,
@@ -186,6 +187,34 @@ function parseCronReliabilityConfig(cfg: Record<string, unknown>): CronReliabili
   };
 }
 
+/** Backup artifact retention + health alerting (Issues #2229, #2230). */
+function parseBackupMaintenanceConfig(cfg: Record<string, unknown>): BackupMaintenanceConfig {
+  const maintenanceRaw = cfg.maintenance as Record<string, unknown> | undefined;
+  const backupRaw = maintenanceRaw?.backup as Record<string, unknown> | undefined;
+  const alertingRaw = backupRaw?.alerting as Record<string, unknown> | undefined;
+  return {
+    retentionCount:
+      typeof backupRaw?.retentionCount === "number" && backupRaw.retentionCount >= 0
+        ? Math.floor(backupRaw.retentionCount)
+        : 7,
+    retentionAgeDays:
+      typeof backupRaw?.retentionAgeDays === "number" && backupRaw.retentionAgeDays >= 0
+        ? Math.floor(backupRaw.retentionAgeDays)
+        : 30,
+    alerting: {
+      enabled: alertingRaw?.enabled !== false,
+      staleAfterHours:
+        typeof alertingRaw?.staleAfterHours === "number" && alertingRaw.staleAfterHours > 0
+          ? Math.floor(alertingRaw.staleAfterHours)
+          : 192,
+      dedupeWindowHours:
+        typeof alertingRaw?.dedupeWindowHours === "number" && alertingRaw.dedupeWindowHours >= 0
+          ? Math.floor(alertingRaw.dedupeWindowHours)
+          : 24,
+    },
+  };
+}
+
 function parseMaintenanceFailureReportingConfig(cfg: Record<string, unknown>): MaintenanceFailureReportingConfig {
   const maintenanceRaw = cfg.maintenance as Record<string, unknown> | undefined;
   const failureReportingRaw = maintenanceRaw?.failureReporting as Record<string, unknown> | undefined;
@@ -299,6 +328,7 @@ export function parseMaintenanceConfig(cfg: Record<string, unknown>): Maintenanc
   return {
     monthlyReview,
     cronReliability: parseCronReliabilityConfig(cfg),
+    backup: parseBackupMaintenanceConfig(cfg),
     failureReporting: parseMaintenanceFailureReportingConfig(cfg),
     privacyRedaction: parseMaintenancePrivacyRedactionConfig(cfg),
     council: parseCouncilConfig(cfg),

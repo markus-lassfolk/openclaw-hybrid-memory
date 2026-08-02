@@ -9,6 +9,22 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { LoomStore } from "../../../backends/loom-store.js";
+import type { HybridMemoryConfig } from "../../../config.js";
+import { formatBytes } from "../../../utils/format.js";
+import {
+  DEFAULT_BACKUP_RETENTION_AGE_DAYS,
+  DEFAULT_BACKUP_RETENTION_COUNT,
+  getBackupStatus,
+  pruneBackups,
+  type BackupRetentionOptions,
+} from "../../backup.js";
+import {
+  type BackupHealthAlertPolicy,
+  DEFAULT_BACKUP_HEALTH_ALERT_POLICY,
+  defaultBackupStateFilePath,
+  evaluateAndMaybeAlertBackupHealth,
+  recordBackupOutcome,
+} from "../../../services/backup-health.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import {
   createProcedurePromotionItem,
@@ -33,6 +49,23 @@ import type { ManageBindings } from "./bindings.js";
 function shellQuotePathForCron(path: string): string {
   if (/^[\w@%+./:-]+$/.test(path)) return path;
   return `'${path.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Resolve backup retention options from config, tolerating a partial/mocked `cfg.maintenance`
+ * (e.g. narrow test harnesses that only stub the bindings a given test exercises) by falling
+ * back to the same defaults the config parser applies.
+ */
+function resolveBackupRetentionOptions(cfg: Pick<HybridMemoryConfig, "maintenance">): BackupRetentionOptions {
+  return {
+    retentionCount: cfg.maintenance?.backup?.retentionCount ?? DEFAULT_BACKUP_RETENTION_COUNT,
+    retentionAgeDays: cfg.maintenance?.backup?.retentionAgeDays ?? DEFAULT_BACKUP_RETENTION_AGE_DAYS,
+  };
+}
+
+/** Resolve the backup health alerting policy from config, with the same partial-config tolerance. */
+function resolveBackupAlertPolicy(cfg: Pick<HybridMemoryConfig, "maintenance">): BackupHealthAlertPolicy {
+  return cfg.maintenance?.backup?.alerting ?? DEFAULT_BACKUP_HEALTH_ALERT_POLICY;
 }
 
 /** Ranked procedure triage (#2147) persists decisions in the Loom store. */
@@ -525,9 +558,9 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
         console.log("Creating memory backup…");
         const res = await runBackup({ backupDir: opts?.dest });
 
-        // State file path for heartbeat monitoring (Issue #276, Gap 5)
-        const stateDir = join(homedir(), ".openclaw", "state");
-        const backupStateFile = join(stateDir, "memory-backup-last.json");
+        // State file for heartbeat monitoring + health alerting (Issue #276 Gap 5; #2229/#2230).
+        const backupStateFile = defaultBackupStateFilePath();
+        const alertPolicy = resolveBackupAlertPolicy(cfg);
 
         if (res.ok) {
           const sqliteKb = (res.sqliteSize / 1024).toFixed(1);
@@ -547,52 +580,102 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
               `⚠ SQLite and LanceDB snapshots were taken ${res.snapshotSkewMs}ms apart; a write during that window may not be reflected consistently in both halves.`,
             );
           }
-          // Record successful backup state for heartbeat monitoring
-          try {
-            mkdirSync(stateDir, { recursive: true });
-            writeFileSync(
-              backupStateFile,
-              `${JSON.stringify(
-                {
-                  ok: true,
-                  timestamp: nowIso(),
-                  backupDir: res.backupDir,
-                  sqliteSize: res.sqliteSize,
-                  lancedbSize: res.lancedbSize,
-                  durationMs: res.durationMs,
-                  integrityOk: res.integrityOk,
-                  snapshotSkewMs: res.snapshotSkewMs,
-                },
-                null,
-                2,
-              )}\n`,
-            );
-          } catch {
-            // Non-fatal — state file is advisory only
-          }
+          recordBackupOutcome(backupStateFile, {
+            ok: true,
+            timestamp: nowIso(),
+            backupDir: res.backupDir,
+            sqliteSize: res.sqliteSize,
+            lancedbSize: res.lancedbSize,
+            durationMs: res.durationMs,
+            integrityOk: res.integrityOk,
+            snapshotSkewMs: res.snapshotSkewMs,
+          });
+          // A fresh success supersedes any stale failure/alert state (#2230) — nothing further to do.
         } else {
           console.error(`✗ Backup failed: ${res.error}`);
-          // Write failure state so heartbeat monitoring can detect and alert (Issue #276, Gap 5)
-          try {
-            mkdirSync(stateDir, { recursive: true });
-            writeFileSync(
-              backupStateFile,
-              `${JSON.stringify(
-                {
-                  ok: false,
-                  timestamp: nowIso(),
-                  error: res.error,
-                },
-                null,
-                2,
-              )}\n`,
-            );
-            console.error(`  ⚠ Backup failure recorded to: ${backupStateFile}`);
-            console.error("  Add to HEARTBEAT.md to get alerted:");
-            console.error("    Check ~/.openclaw/state/memory-backup-last.json — if ok=false, alert Markus.");
-          } catch {
-            // Non-fatal
+          recordBackupOutcome(backupStateFile, { ok: false, timestamp: nowIso(), error: res.error });
+          console.error(`  ⚠ Backup failure recorded to: ${backupStateFile}`);
+          const { alerted, alertMessage } = evaluateAndMaybeAlertBackupHealth(backupStateFile, alertPolicy);
+          if (alerted && alertMessage) {
+            console.error("");
+            console.error(alertMessage);
           }
+          process.exitCode = 1;
+        }
+      }),
+    );
+
+  backup
+    .command("status")
+    .description(
+      "Backup retention + health audit: completed/retained/stale-partial snapshot counts, bytes, and last success/failure (Issues #2229, #2230).",
+    )
+    .option("--dest <dir>", "Backup root to inspect (default: ~/.openclaw/backups/memory/)")
+    .option("--json", "Emit JSON")
+    .action(
+      withExit(async (opts?: { dest?: string; json?: boolean }) => {
+        const root = opts?.dest ?? join(homedir(), ".openclaw", "backups", "memory");
+        const retentionOpts = resolveBackupRetentionOptions(cfg);
+        const status = getBackupStatus(root, retentionOpts);
+        const stateFile = defaultBackupStateFilePath();
+        const health = evaluateAndMaybeAlertBackupHealth(stateFile, {
+          ...resolveBackupAlertPolicy(cfg),
+          enabled: false, // status is a read-only audit view — never fire an alert as a side effect
+        }).health;
+
+        if (opts?.json) {
+          console.log(JSON.stringify({ retention: retentionOpts, status, health }, null, 2));
+          return;
+        }
+
+        console.log(`# Backup status (${root})`);
+        console.log("");
+        console.log(`Completed snapshots: ${status.completedCount} (retained by policy: ${status.retainedCount})`);
+        console.log(`Stale/partial artifacts: ${status.stalePartialCount} (partial=${status.partialCount}, orphaned=${status.orphanedCount})`);
+        console.log(`Total bytes (completed): ${formatBytes(status.totalBytes)}`);
+        if (status.newest) console.log(`Newest: ${status.newest.name} (${formatBytes(status.newest.bytes)})`);
+        if (status.oldest) console.log(`Oldest: ${status.oldest.name} (${formatBytes(status.oldest.bytes)})`);
+        console.log("");
+        console.log(`Health: ${health.status}${health.reasonCategory ? ` (${health.reasonCategory})` : ""}`);
+        console.log(`Last verified success: ${health.lastSuccessAt ?? "never"}`);
+        if (health.lastFailureAt) console.log(`Last failure: ${health.lastFailureAt} (consecutive: ${health.consecutiveFailures})`);
+        if (health.ageSinceLastSuccessHours !== null) {
+          console.log(`Age since last success: ${health.ageSinceLastSuccessHours.toFixed(1)}h`);
+        }
+        if (health.remediation.length > 0) {
+          console.log("Next remediation:");
+          for (const r of health.remediation) console.log(`  - ${r}`);
+        }
+        if (status.stalePartialCount > 0) {
+          console.log(`Run \`openclaw hybrid-mem backup prune --dest ${root}\` to clean up stale/partial artifacts.`);
+        }
+        if (health.status === "failed" || health.status === "stale") process.exitCode = 1;
+      }),
+    );
+
+  backup
+    .command("prune")
+    .description(
+      "Deterministically clean up stale/partial backup artifacts and enforce retention (Issue #2229). Never deletes the newest completed snapshot.",
+    )
+    .option("--dest <dir>", "Backup root to prune (default: ~/.openclaw/backups/memory/)")
+    .option("--json", "Emit JSON")
+    .action(
+      withExit(async (opts?: { dest?: string; json?: boolean }) => {
+        const root = opts?.dest ?? join(homedir(), ".openclaw", "backups", "memory");
+        const report = pruneBackups(root, resolveBackupRetentionOptions(cfg));
+        if (opts?.json) {
+          console.log(JSON.stringify(report, null, 2));
+          if (report.errors.length > 0) process.exitCode = 1;
+          return;
+        }
+        console.log(`Retained: ${report.retainedCompleted.length}`);
+        console.log(`Pruned completed (retention): ${report.prunedCompleted.length}`);
+        console.log(`Pruned partial (abandoned runs): ${report.prunedPartial.length}`);
+        console.log(`Pruned orphaned artifacts: ${report.prunedOrphaned.length}`);
+        if (report.errors.length > 0) {
+          console.log("Errors:");
+          for (const e of report.errors) console.log(`  - ${e}`);
           process.exitCode = 1;
         }
       }),
@@ -683,8 +766,13 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
           console.log(`  Log: ${logFile}`);
           console.log(`  State: ${join(homedir(), ".openclaw", "state", "memory-backup-last.json")}`);
           console.log("");
-          console.log("Add to HEARTBEAT.md to get alerted on failure:");
-          console.log("  Check ~/.openclaw/state/memory-backup-last.json — if ok=false, alert Markus.");
+          console.log(
+            "Backup health is monitored automatically: `openclaw hybrid-mem health` and `audit health`\n" +
+              "surface a failed/stale backup, and the weekly audit-health maintenance job fires a\n" +
+              "deduplicated alert (see maintenance.backup.alerting in config; docs/BACKUP.md). You can also\n" +
+              "add a manual HEARTBEAT.md check as a belt-and-suspenders fallback:\n" +
+              "  Check ~/.openclaw/state/memory-backup-last.json — if ok=false, alert Markus.",
+          );
         } catch (err) {
           console.error(`✗ Failed to install crontab: ${err}`);
           console.log("");

@@ -11,6 +11,12 @@ import { DASHBOARD_TIER_FILTER } from "../../../backends/facts-db/stats.js";
 import { hasAnyScopeFilter } from "../../../backends/scope-filter-sql.js";
 import { isValidCategory } from "../../../config.js";
 import { buildAuditFailureArtifact, buildAuditHealthExitInfo } from "../../../services/audit-health-exit-info.js";
+import {
+  DEFAULT_BACKUP_HEALTH_ALERT_POLICY,
+  defaultBackupStateFilePath,
+  evaluateBackupHealth,
+  readBackupStateFile,
+} from "../../../services/backup-health.js";
 import { listDumpTypeAliases, runSqliteTableDump } from "../../../services/cli-sql-dump.js";
 import {
   decideDiscoveredCategory,
@@ -236,6 +242,14 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
       const lastReembedProgress = ctx.resolvedSqlitePath
         ? readReembedVectorlessMetrics(defaultReembedVectorlessMetricsPath(ctx.resolvedSqlitePath))
         : null;
+      // Read-only backup health snapshot (Issue #2230) — `audit health` is documented as
+      // one-shot/non-destructive, so this never fires the deduplicated alert itself (that's the
+      // weekly `audit-health` maintenance cron step's job); it only surfaces current status.
+      const backupHealth = evaluateBackupHealth(
+        readBackupStateFile(defaultBackupStateFilePath()),
+        Date.now(),
+        cfg.maintenance?.backup?.alerting ?? DEFAULT_BACKUP_HEALTH_ALERT_POLICY,
+      );
       const report = buildAuditHealthReport(
         factsDb,
         getMemoryCategories,
@@ -265,6 +279,7 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
                 ).getDegradedState()
               : { active: false, reason: null },
           lastReembedProgress,
+          backupHealth,
         },
       );
       // #2226: a false/degraded graph-schema check previously never reached GlitchTip or a
