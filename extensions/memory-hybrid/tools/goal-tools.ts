@@ -18,7 +18,11 @@ import {
   evaluateCircuitBreakerTrip,
 } from "../services/goal-circuit-breaker.js";
 import type { Goal, GoalHistoryEntry } from "../services/goal-stewardship-types.js";
-import type { GoalDispatchPolicy } from "../services/goal-dispatch-authorization.js";
+import {
+  evaluateGoalDispatch,
+  type GoalDispatchPolicy,
+  type GoalDispatchRequest,
+} from "../services/goal-dispatch-authorization.js";
 import {
   type GoalUpdatePatch,
   type GoalVerification,
@@ -114,6 +118,15 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
         runtime: Type.Union([Type.Literal("subagent"), Type.Literal("acp")]),
         task: Type.String(),
         session_key: Type.String(),
+        /** Explicit policy declaration. Omitting task_class only selects legacy `managed`; it never bypasses validation. */
+        task_class: Type.Optional(Type.String()),
+        read_only: Type.Optional(Type.Boolean()),
+        pr_number: Type.Optional(Type.Number()),
+        branch: Type.Optional(Type.String()),
+        live_remote_head: Type.Optional(Type.String()),
+        write_scope: Type.Optional(Type.Array(Type.String())),
+        creates_pr: Type.Optional(Type.Boolean()),
+        creates_branch: Type.Optional(Type.Boolean()),
         budget: Type.Optional(
           Type.Object({
             max_dispatches: Type.Optional(Type.Number()),
@@ -152,17 +165,30 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             content: [{ type: "text" as const, text: "agent_id, runtime, task, and session_key are required." }],
             details: { error: "invalid_dispatch_request" },
           };
-        const policy = goal.dispatchPolicy;
-        const classPolicy = policy?.classes?.managed;
-        if (!classPolicy || !classPolicy.allowedAgents.includes(agent))
+        // `managed` remains the only compatibility default. Every dispatch, including
+        // that legacy class, is evaluated against its full declared class policy.
+        const taskClass = typeof p.task_class === "string" && p.task_class.trim() ? p.task_class.trim() : "managed";
+        const request: GoalDispatchRequest = {
+          taskClass,
+          // The broker launches exactly `agent_id`; do not accept a second, caller-controlled identity.
+          requestedAgent: agent,
+          actualAgent: agent,
+          readOnly: typeof p.read_only === "boolean" ? p.read_only : undefined,
+          prNumber: typeof p.pr_number === "number" ? p.pr_number : undefined,
+          branch: typeof p.branch === "string" ? p.branch : undefined,
+          liveRemoteHead: typeof p.live_remote_head === "string" ? p.live_remote_head : undefined,
+          writeScope:
+            Array.isArray(p.write_scope) && p.write_scope.every((value: unknown) => typeof value === "string")
+              ? p.write_scope
+              : undefined,
+          createsPr: typeof p.creates_pr === "boolean" ? p.creates_pr : undefined,
+          createsBranch: typeof p.creates_branch === "boolean" ? p.creates_branch : undefined,
+        };
+        const preflight = evaluateGoalDispatch(goal.dispatchPolicy, request);
+        if (!preflight.allowed)
           return {
-            content: [
-              {
-                type: "text" as const,
-                text: "Dispatch denied by goal policy (requires managed class and allowed agent).",
-              },
-            ],
-            details: { error: "unauthorized_target" },
+            content: [{ type: "text" as const, text: `Dispatch denied by goal policy: ${preflight.reason}.` }],
+            details: { error: "dispatch_policy_denied", policy_reason: preflight.reason, task_class: taskClass },
           };
         const budget = {
           maxDispatches: typeof p.budget?.max_dispatches === "number" ? p.budget.max_dispatches : undefined,
