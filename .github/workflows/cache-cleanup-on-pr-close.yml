@@ -1,0 +1,48 @@
+# Deletes GitHub Actions caches scoped to a PR once it closes (merged or not).
+# Caches keyed to a PR's branch (refs/pull/<n>/merge, and refs/heads/<branch> for the
+# push-triggered branch prefixes CI also runs on — see ci.yml) are never reused again
+# once the branch is gone, so leaving them just eats into the repo's 10 GB Actions
+# cache budget until GitHub's LRU eviction gets around to them. Purging on close keeps
+# that budget available for caches that are actually still in use.
+# See: https://docs.github.com/en/actions/using-workflows/caching-dependencies-to-speed-up-workflows#force-deleting-cache-entries
+name: Cache Cleanup on PR Close
+
+on:
+  pull_request:
+    types: [closed]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cleanup:
+    name: Purge caches for closed PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Delete caches scoped to this PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_MERGE_REF: refs/pull/${{ github.event.pull_request.number }}/merge
+          PR_HEAD_REF: refs/heads/${{ github.event.pull_request.head.ref }}
+        run: |
+          set +e  # a ref with no caches, or a race with LRU eviction, must not fail the job
+          for ref in "$PR_MERGE_REF" "$PR_HEAD_REF"; do
+            echo "Fetching caches for $ref"
+            cacheIds=$(gh cache list --repo "$REPO" --ref "$ref" --limit 100 --json id --jq '.[].id')
+            if [ -z "$cacheIds" ]; then
+              echo "No caches found for $ref"
+              continue
+            fi
+            echo "Deleting caches for $ref..."
+            for cacheId in $cacheIds; do
+              gh cache delete "$cacheId" --repo "$REPO"
+            done
+          done
+          echo "Done"

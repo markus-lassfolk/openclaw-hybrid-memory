@@ -1,0 +1,132 @@
+# Reclaims billed GitHub Actions storage (workflow run logs + artifacts) by deleting
+# completed runs past a retention window. Deleting a run removes its logs *and* any
+# artifacts it uploaded in one call, which is the most reliable way to shrink account
+# storage — it doesn't depend on the repo's (UI-only, non-scriptable) log retention
+# setting, and it also sweeps up any artifact that predates a per-upload retention-days
+# value.
+#
+# Safety: for every workflow, the single most recent run on each branch is always kept
+# (it may back a currently open PR's required status check), and the N most recent
+# completed runs workflow-wide are always kept regardless of age (recent history for
+# debugging). Only runs outside both of those sets and older than retention_days are
+# deleted.
+name: Actions Storage Cleanup
+
+on:
+  schedule:
+    # Daily, off-peak — after most of the day's CI activity has settled.
+    - cron: '15 3 * * *'
+  workflow_dispatch:
+    inputs:
+      retention_days:
+        description: 'Delete eligible completed runs older than this many days'
+        required: false
+        default: '14'
+      keep_minimum_runs:
+        description: 'Always keep at least this many recent completed runs per workflow'
+        required: false
+        default: '5'
+      dry_run:
+        description: 'List what would be deleted without deleting anything'
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cleanup:
+    name: Delete old workflow runs (logs + artifacts)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Purge completed runs past retention
+        uses: actions/github-script@v9
+        env:
+          RETENTION_DAYS: ${{ inputs.retention_days || '14' }}
+          KEEP_MINIMUM_RUNS: ${{ inputs.keep_minimum_runs || '5' }}
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const retentionDays = Number(process.env.RETENTION_DAYS);
+            const keepMinimumRuns = Number(process.env.KEEP_MINIMUM_RUNS);
+            const dryRun = process.env.DRY_RUN === 'true';
+            const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+
+            const workflows = await github.paginate(github.rest.actions.listRepoWorkflows, {
+              owner, repo, per_page: 100,
+            });
+
+            let deleted = 0;
+            let kept = 0;
+            let failed = 0;
+            const summaryRows = [];
+
+            for (const workflow of workflows) {
+              const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+                owner, repo, workflow_id: workflow.id, per_page: 100,
+              });
+              if (runs.length === 0) continue;
+
+              // Always protect the latest run per branch — it may back a live PR's required status check.
+              const latestByBranch = new Map();
+              for (const run of runs) {
+                const key = run.head_branch || `sha:${run.head_sha}`;
+                const current = latestByBranch.get(key);
+                if (!current || new Date(run.created_at) > new Date(current.created_at)) {
+                  latestByBranch.set(key, run);
+                }
+              }
+              const protectedIds = new Set([...latestByBranch.values()].map((r) => r.id));
+
+              // Always protect the N most recent completed runs workflow-wide, regardless of branch.
+              runs
+                .filter((r) => r.status === 'completed')
+                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+                .slice(0, keepMinimumRuns)
+                .forEach((r) => protectedIds.add(r.id));
+
+              let workflowDeleted = 0;
+              for (const run of runs) {
+                if (run.status !== 'completed' || protectedIds.has(run.id) || new Date(run.created_at).getTime() >= cutoff) {
+                  kept++;
+                  continue;
+                }
+
+                if (dryRun) {
+                  console.log(`[dry-run] would delete run ${run.id} (${workflow.name}, ${run.head_branch}, ${run.created_at})`);
+                  deleted++;
+                  workflowDeleted++;
+                  continue;
+                }
+
+                try {
+                  await github.rest.actions.deleteWorkflowRun({ owner, repo, run_id: run.id });
+                  deleted++;
+                  workflowDeleted++;
+                } catch (err) {
+                  console.log(`Failed to delete run ${run.id} (${workflow.name}): ${err.message}`);
+                  failed++;
+                }
+              }
+              if (workflowDeleted > 0) summaryRows.push([workflow.name, String(workflowDeleted)]);
+            }
+
+            const summary = core.summary
+              .addHeading('Actions Storage Cleanup', 2)
+              .addRaw(`Mode: ${dryRun ? 'dry run' : 'live'} — retention ${retentionDays}d, keep-minimum ${keepMinimumRuns}/workflow\n\n`)
+              .addRaw(`Deleted: ${deleted}  Kept: ${kept}  Failed: ${failed}\n\n`);
+            if (summaryRows.length > 0) {
+              summary.addTable([[{ data: 'Workflow', header: true }, { data: 'Runs deleted', header: true }], ...summaryRows]);
+            }
+            await summary.write();
+
+            console.log(`Done. Deleted ${deleted}, kept ${kept}, failed ${failed}.`);
