@@ -444,6 +444,14 @@ export type GoalStewardshipConfirmationPolicy = {
   requireRegisterAckForPriorities: Array<"critical" | "high" | "normal" | "low">;
 };
 
+/**
+ * Dispatch authorization defaults to disabled. Keeping `mode` optional in the
+ * disabled shape preserves existing `{ enabled: false }` configuration.
+ */
+export type GoalDispatchAuthorizationConfig =
+  | { enabled: false; mode?: "disabled" }
+  | { enabled: true; mode: "audit" | "enforce" };
+
 export type GoalStewardshipConfig = {
   enabled: boolean;
   /**
@@ -492,6 +500,8 @@ export type GoalStewardshipConfig = {
   allowCommandVerification: boolean;
   /** Allow pr_merged verification (GitHub API). Default: false — network + token required. */
   allowPrVerification: boolean;
+  /** Gate goal-linked sessions_spawn calls on an explicit, auditable policy declaration. */
+  dispatchAuthorization: GoalDispatchAuthorizationConfig;
 };
 
 /**

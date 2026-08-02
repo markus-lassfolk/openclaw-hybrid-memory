@@ -13,6 +13,7 @@ import {
 } from "../services/goal-stewardship.js";
 import { loadTaskLedgerFromFacts, syncActiveTaskEntryToFacts } from "../services/task-ledger-facts.js";
 import { nowIso } from "../utils/dates.js";
+import { GoalDispatchBroker } from "../services/goal-dispatch-broker.js";
 import { buildToolScopeFilter } from "../utils/scope-filter.js";
 import { type SubagentEndedEvent, subagentEndedIsSuccess, taskLabelsMatch } from "../utils/subagent-ended-utils.js";
 import type { LifecycleContext } from "./types.js";
@@ -122,6 +123,8 @@ export function registerGoalSubagentHandlers(api: ClawdbotPluginApi, ctx: Lifecy
       if (!label && !targetKey) return;
       const success = subagentEndedIsSuccess(ev);
       const outcome = ev.outcome ?? ev.error ?? ev.reason ?? null;
+      if (typeof ev.runId === "string")
+        await new GoalDispatchBroker(goalsDir).settleRun(ev.runId, success ? "completed" : "failed").catch(() => {});
       await updateGoalOnSubagentEnd(goalsDir, {
         label: label || (targetKey as string),
         sessionKey: targetKey ?? null,

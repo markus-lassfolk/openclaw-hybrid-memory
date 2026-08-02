@@ -25,6 +25,7 @@ export const AGENT_TOOL_CONTRACT_NAMES = [
   "goal_abandon",
   "goal_assess",
   "goal_complete",
+  "goal_dispatch",
   "goal_get",
   "goal_list",
   "goal_register",

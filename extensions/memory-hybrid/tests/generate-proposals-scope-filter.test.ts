@@ -7,7 +7,11 @@
  * - requireScopeFilter=true: does not throw when all facts are global scope
  * - audit-health: preReportWarnings surfaces scopeFilter absence
  */
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { runGenerateProposalsForCli } from "../cli/cmd-extract-proposals.js";
 import { buildAuditHealthReport } from "../cli/commands/manage/register-storage-and-stats.js";
@@ -16,8 +20,24 @@ import type { HybridMemoryConfig } from "../config/types/index.js";
 import { _testing } from "../index.js";
 import * as chatService from "../services/chat.js";
 import * as errorReporterService from "../services/error-reporter.js";
+import { getEnv, setEnv } from "../utils/env-manager.js";
 
 const { FactsDB, ProposalsDB } = _testing;
+
+const previousWorkspace = getEnv("OPENCLAW_WORKSPACE");
+let workspace: string;
+
+beforeEach(() => {
+  // Identity-gap scoring reads OPENCLAW_WORKSPACE directly. Isolate it so
+  // host identity files cannot change whether the deterministic fallback runs.
+  workspace = mkdtempSync(join(tmpdir(), "generate-proposals-workspace-"));
+  setEnv("OPENCLAW_WORKSPACE", workspace);
+});
+
+afterEach(() => {
+  rmSync(workspace, { recursive: true, force: true });
+  setEnv("OPENCLAW_WORKSPACE", previousWorkspace);
+});
 
 /** Insert a pattern fact with a specific scope into the given db. */
 function insertScopedPattern(

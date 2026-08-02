@@ -26,6 +26,7 @@
       "goal_abandon",
       "goal_assess",
       "goal_complete",
+      "goal_dispatch",
       "goal_get",
       "goal_list",
       "goal_register",
@@ -2862,6 +2863,22 @@
           "allowPrVerification": {
             "type": "boolean",
             "description": "Allow pr_merged goal verification via GitHub API (requires GITHUB_TOKEN or GH_TOKEN). Default: false — network access must be explicitly opted in."
+          },
+          "dispatchAuthorization": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Enable the goal-linked dispatch authorization gate (default: false). Requires an explicit mode."
+              },
+              "mode": {
+                "type": "string",
+                "enum": ["audit", "enforce"],
+                "description": "audit records policy preflights without blocking; enforce fails closed on unauthorized goal-linked dispatches."
+              }
+            },
+            "description": "Explicit, versioned authorization gate for goal-linked subagent dispatch. Disabled by default for migration safety."
           },
           "escalationPolicy": {
             "type": "object",

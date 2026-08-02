@@ -52,6 +52,7 @@ export function baseGoalStewardshipConfig(over: Partial<GoalStewardshipConfig> =
     circuitBreaker: { ...defaultCB },
     allowCommandVerification: false,
     allowPrVerification: false,
+    dispatchAuthorization: { enabled: false },
     ...over,
   };
 }

@@ -620,6 +620,7 @@ export async function createGoal(
       description: input.description.trim(),
       acceptanceCriteria: input.acceptanceCriteria.map((c) => c.trim()).filter(Boolean),
       verification: input.verification,
+      dispatchPolicy: input.dispatchPolicy,
       status: "active",
       priority: input.priority ?? defaults.priority,
       createdAt: ts,

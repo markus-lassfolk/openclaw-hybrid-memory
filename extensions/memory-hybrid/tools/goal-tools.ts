@@ -1,4 +1,5 @@
 import { appendFile, mkdir } from "node:fs/promises";
+import { GoalDispatchBroker } from "../services/goal-dispatch-broker.js";
 import { join } from "node:path";
 /**
  * Goal stewardship tools — see docs/GOAL-STEWARDSHIP-DESIGN.md
@@ -17,6 +18,11 @@ import {
   evaluateCircuitBreakerTrip,
 } from "../services/goal-circuit-breaker.js";
 import type { Goal, GoalHistoryEntry } from "../services/goal-stewardship-types.js";
+import {
+  evaluateGoalDispatch,
+  type GoalDispatchPolicy,
+  type GoalDispatchRequest,
+} from "../services/goal-dispatch-authorization.js";
 import {
   type GoalUpdatePatch,
   type GoalVerification,
@@ -99,6 +105,153 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
 
   const guardArgs = (toolName: string, params: Record<string, unknown>) =>
     guardAgainstWrapperArgsDropped(toolName, params, api.logger);
+
+  api.registerTool(
+    {
+      name: "goal_dispatch",
+      label: "Dispatch Goal Work",
+      description:
+        "Reserve and launch managed native goal work through the supported plugin runtime. Requires canonical goal_id; ACP returns a trusted-host launch request because the public plugin runtime exposes native subagent.run only.",
+      parameters: Type.Object({
+        goal_id: Type.String({ description: "Canonical goal UUID; labels are not accepted." }),
+        agent_id: Type.String(),
+        runtime: Type.Union([Type.Literal("subagent"), Type.Literal("acp")]),
+        task: Type.String(),
+        session_key: Type.String(),
+        /** Explicit policy declaration. Omitting task_class only selects legacy `managed`; it never bypasses validation. */
+        task_class: Type.Optional(Type.String()),
+        read_only: Type.Optional(Type.Boolean()),
+        pr_number: Type.Optional(Type.Number()),
+        branch: Type.Optional(Type.String()),
+        live_remote_head: Type.Optional(Type.String()),
+        write_scope: Type.Optional(Type.Array(Type.String())),
+        creates_pr: Type.Optional(Type.Boolean()),
+        creates_branch: Type.Optional(Type.Boolean()),
+        budget: Type.Optional(
+          Type.Object({
+            max_dispatches: Type.Optional(Type.Number()),
+            max_total_tokens: Type.Optional(Type.Number()),
+            max_dispatch_tokens: Type.Optional(Type.Number()),
+            max_wall_time_ms: Type.Optional(Type.Number()),
+          }),
+        ),
+      }),
+      async execute(_id: string, params: Record<string, unknown>) {
+        if (!gs.enabled) return notEnabled();
+        const p = params as any;
+        const goalId = typeof p.goal_id === "string" ? p.goal_id.trim() : "";
+        if (!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(goalId))
+          return {
+            content: [
+              { type: "text" as const, text: "goal_id must be the canonical goal UUID; labels are not authority." },
+            ],
+            details: { error: "canonical_goal_id_required" },
+          };
+        const goal = await resolveGoalId(goalsDir, goalId);
+        if (!goal || goal.id !== goalId || isTerminalStatus(goal.status))
+          return {
+            content: [{ type: "text" as const, text: "Active canonical goal not found." }],
+            details: { error: "goal_not_found" },
+          };
+        const agent = typeof p.agent_id === "string" ? p.agent_id.trim() : "";
+        const runtime = p.runtime;
+        if (
+          !agent ||
+          (runtime !== "subagent" && runtime !== "acp") ||
+          typeof p.task !== "string" ||
+          typeof p.session_key !== "string"
+        )
+          return {
+            content: [{ type: "text" as const, text: "agent_id, runtime, task, and session_key are required." }],
+            details: { error: "invalid_dispatch_request" },
+          };
+        // `managed` remains the only compatibility default. Every dispatch, including
+        // that legacy class, is evaluated against its full declared class policy.
+        const taskClass = typeof p.task_class === "string" && p.task_class.trim() ? p.task_class.trim() : "managed";
+        const request: GoalDispatchRequest = {
+          taskClass,
+          // The broker launches exactly `agent_id`; do not accept a second, caller-controlled identity.
+          requestedAgent: agent,
+          actualAgent: agent,
+          readOnly: typeof p.read_only === "boolean" ? p.read_only : undefined,
+          prNumber: typeof p.pr_number === "number" ? p.pr_number : undefined,
+          branch: typeof p.branch === "string" ? p.branch : undefined,
+          liveRemoteHead: typeof p.live_remote_head === "string" ? p.live_remote_head : undefined,
+          writeScope:
+            Array.isArray(p.write_scope) && p.write_scope.every((value: unknown) => typeof value === "string")
+              ? p.write_scope
+              : undefined,
+          createsPr: typeof p.creates_pr === "boolean" ? p.creates_pr : undefined,
+          createsBranch: typeof p.creates_branch === "boolean" ? p.creates_branch : undefined,
+        };
+        const preflight = evaluateGoalDispatch(goal.dispatchPolicy, request);
+        if (!preflight.allowed)
+          return {
+            content: [{ type: "text" as const, text: `Dispatch denied by goal policy: ${preflight.reason}.` }],
+            details: { error: "dispatch_policy_denied", policy_reason: preflight.reason, task_class: taskClass },
+          };
+        const budget = {
+          maxDispatches: typeof p.budget?.max_dispatches === "number" ? p.budget.max_dispatches : undefined,
+          maxTotalTokens: typeof p.budget?.max_total_tokens === "number" ? p.budget.max_total_tokens : undefined,
+          maxDispatchTokens:
+            typeof p.budget?.max_dispatch_tokens === "number" ? p.budget.max_dispatch_tokens : undefined,
+          maxWallTimeMs: typeof p.budget?.max_wall_time_ms === "number" ? p.budget.max_wall_time_ms : undefined,
+        };
+        const broker = new GoalDispatchBroker(goalsDir);
+        const record = await broker.reserve({ goalId, targetAgent: agent, runtime, budget, ttlMs: 5 * 60_000 });
+        if (!record)
+          return {
+            content: [{ type: "text" as const, text: "Dispatch budget exhausted." }],
+            details: { error: "budget_exhausted" },
+          };
+        const grant = broker.token(record);
+        if (runtime === "acp")
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: "ACP dispatch reserved. A trusted host launcher must consume the dispatch request; this plugin cannot launch ACP through the public runtime.",
+              },
+            ],
+            details: {
+              ok: true,
+              launched: false,
+              dispatch_request: {
+                dispatch_id: record.id,
+                goal_id: goalId,
+                target_agent: agent,
+                runtime,
+                session_key: p.session_key,
+                task: p.task,
+                grant,
+                expires_at: record.expiresAt,
+                budget,
+              },
+            },
+          };
+        try {
+          const run = await api.runtime.subagent.run({
+            sessionKey: p.session_key,
+            message: p.task,
+            idempotencyKey: record.id,
+            deliver: false,
+          });
+          await broker.launch(record.id, run.runId);
+          return {
+            content: [{ type: "text" as const, text: `Managed goal dispatch launched (${run.runId}).` }],
+            details: { ok: true, dispatch_id: record.id, run_id: run.runId, grant_expires_at: record.expiresAt },
+          };
+        } catch (err) {
+          await broker.release(record.id, "launch_failed");
+          return {
+            content: [{ type: "text" as const, text: "Managed dispatch launch failed; reservation released." }],
+            details: { error: "launch_failed" },
+          };
+        }
+      },
+    },
+    { name: "goal_dispatch" },
+  );
 
   api.registerTool(
     {
@@ -225,6 +378,12 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
         ),
         related_session: Type.Optional(Type.String({ description: "Session key for linked task checkpoint." })),
         initial_next: Type.Optional(Type.String({ description: "Initial next action for linked task row." })),
+        dispatch_policy: Type.Optional(
+          Type.Any({
+            description:
+              "Machine-readable generic dispatch policy. When authorization is enabled, goal-linked dispatches must select a policy class; write classes require canonical and scope constraints.",
+          }),
+        ),
       }),
       async execute(_id: string, params: Record<string, unknown>) {
         if (!gs.enabled) return notEnabled();
@@ -252,6 +411,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             task_entity?: string;
             related_session?: string;
             initial_next?: string;
+            dispatch_policy?: GoalDispatchPolicy;
           };
           const effectivePriority = p.priority ?? defaults.priority;
           const clarity = validateGoalRegisterClarity({
@@ -301,6 +461,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
               maxDispatches: p.max_dispatches,
               maxAssessments: p.max_assessments,
               cooldownMinutes: p.cooldown_minutes,
+              dispatchPolicy: p.dispatch_policy,
             },
             defaults,
             gs.globalLimits.maxActiveGoals,

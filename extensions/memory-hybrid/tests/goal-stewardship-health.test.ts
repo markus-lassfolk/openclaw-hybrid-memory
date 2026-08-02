@@ -51,6 +51,7 @@ function baseCfg(over: Partial<GoalStewardshipConfig> = {}): GoalStewardshipConf
     escalationPolicy: { taskHygieneOnBlockedGoals: true },
     allowCommandVerification: false,
     allowPrVerification: false,
+    dispatchAuthorization: { enabled: false },
     ...over,
   };
 }
