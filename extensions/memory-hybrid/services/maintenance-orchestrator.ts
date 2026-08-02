@@ -6,6 +6,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { HybridMemoryConfig } from "../config.js";
 import { nowIso } from "../utils/dates.js";
+import { getEnv } from "../utils/env-manager.js";
 import {
   clearMaintenanceRunDeadline,
   maintenanceRunDeadlineReached,
@@ -24,6 +25,8 @@ import {
   stepGuardEligible,
   writeStepGuardTimestampMs,
 } from "./cron-guard.js";
+import { nightlyStepsOwnedByDream } from "./dream-run.js";
+import { capturePluginError } from "./error-reporter.js";
 import { recordMaintenanceStepRun } from "./maintenance-audit-journal.js";
 import { generateOrchestratorRunId } from "./maintenance-job-run/orchestrator-summary.js";
 import {
@@ -31,7 +34,69 @@ import {
   reflectRulesStepSummaryIndicatesFailure,
   semanticOutcomeBlocksOrchestratorGuard,
 } from "./maintenance-job-run/semantic-outcome.js";
-import { nightlyStepsOwnedByDream } from "./dream-run.js";
+
+/**
+ * Mirrors MAINTENANCE_FAILURE_REPORTING_DISABLE_ENV in maintenance-failure-reporter.ts (kept as a
+ * literal here rather than imported, to avoid a module cycle: that file's cron-exit-validator.js
+ * import itself imports MAINTENANCE_STEPS from this file).
+ */
+const MAINTENANCE_FAILURE_REPORTING_DISABLE_ENV = "HYBRID_MEMORY_DISABLE_MAINTENANCE_ERROR_REPORTING";
+
+/** Same gate services/maintenance-failure-reporter.ts's shouldReportMaintenanceFailures applies,
+ *  reimplemented with defensive optional chaining so a loosely-typed test/partial config can never
+ *  throw here (see reportMaintenanceStepException below). */
+function maintenanceStepExceptionReportingEnabled(cfg: HybridMemoryConfig): boolean {
+  const envValue = getEnv(MAINTENANCE_FAILURE_REPORTING_DISABLE_ENV);
+  if (typeof envValue === "string" && /^(1|true|yes|on)$/i.test(envValue.trim())) return false;
+  if (cfg.maintenance?.failureReporting?.enabled === false) return false;
+  return cfg.errorReporting?.enabled === true && cfg.errorReporting?.consent === true;
+}
+
+/**
+ * Safety-net capture for a maintenance step exception raised while it was actually executing
+ * inside this orchestrator process (issue #2231's "nested cron lanes": distill/dream-run/etc.
+ * inside a single `maintenance-nightly` cron invocation, or doctor's own repair pipeline inside
+ * `nightly-doctor-repair`). This complements the post-hoc, log-pattern-matching capture in
+ * services/maintenance-failure-reporter.ts's reportMaintenanceFailureIssues, which only runs in a
+ * SEPARATE process/invocation against the bash wrapper's HM_LOG/HM_EXIT files after the cron job
+ * has already exited — this fires immediately with the real Error object, so a step failure whose
+ * message the post-hoc regex heuristics in cron-exit-validator.ts don't recognize (e.g. a
+ * provider-specific rejection like an Azure Foundry tools-array-length error) is still reliably
+ * captured, tagged with which cron job and which nested step failed.
+ *
+ * Deliberately uses capturePluginError's DEFAULT (message-derived) fingerprint rather than a
+ * custom one, so this naturally deduplicates (60s window) against a deeper capturePluginError call
+ * the failing step's own code may already have made for the SAME underlying error (e.g.
+ * services/chat.ts's "fallback-exhausted" capture) instead of doubling up on one real failure.
+ */
+function reportMaintenanceStepException(
+  cfg: HybridMemoryConfig,
+  error: Error,
+  info: { jobName?: string; stepName: string; runId: string; tier: StepTier },
+): void {
+  if (!maintenanceStepExceptionReportingEnabled(cfg)) return;
+  const jobName = info.jobName?.trim() || "maintenance-orchestrator";
+  capturePluginError(error, {
+    subsystem: "maintenance",
+    operation: info.stepName,
+    phase: "orchestrator-step",
+    tags: {
+      component: "hybrid-memory",
+      job_name: jobName,
+      step_name: info.stepName,
+      tier: info.tier,
+      run_id: info.runId,
+    },
+    contexts: {
+      maintenance: {
+        job_name: jobName,
+        step_name: info.stepName,
+        tier: info.tier,
+        run_id: info.runId,
+      },
+    },
+  });
+}
 
 export type StepTier = "cycle" | "nightly";
 export type StepLlmTier = "none" | "nano" | "maintenance" | "default" | "heavy" | "embed" | "local";
@@ -996,6 +1061,12 @@ export async function runMaintenanceOrchestrator(
             summary: message,
             durationMs: Date.now() - stepStarted,
             ...meta,
+          });
+          reportMaintenanceStepException(cfg, err instanceof Error ? err : new Error(message), {
+            jobName: process.env.HM_JOB,
+            stepName: step.name,
+            runId,
+            tier: step.tier,
           });
         }
         lastWasLlmStep = isLlmProviderStep(step.llmTier);

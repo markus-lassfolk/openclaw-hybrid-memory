@@ -3,6 +3,7 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
+import { hasStepRetryOncePending } from "./cron-guard.js";
 import { MAINTENANCE_STEPS } from "./maintenance-orchestrator.js";
 
 export type OrchestratorStepStatus =
@@ -174,4 +175,106 @@ export function getStaleMaintenanceJobs(
     if (last.started_at < cutoffSec) stale.push(step.name);
   }
   return stale;
+}
+
+// --- Cron-lane run outcome persistence (issue #2231) ---
+//
+// The functions above track individual *orchestrator step* attempts (e.g. "distill", "prune") from
+// inside a single `maintenance-nightly` invocation. Everything below tracks the *cron lane* itself
+// (e.g. "maintenance-nightly", "nightly-doctor-repair") — one row per `maintenance validate-exit`
+// invocation, which every hybrid-mem cron job runs unconditionally at shell exit (see
+// cron-job-bash-harness.ts's `hm_validate` trap). This gives `maintenance status` and friends a
+// durable, local record of "last scheduled run" / "last successful run" per cron job, independent
+// of whether GlitchTip telemetry (errorReporting.consent) is enabled — unlike
+// services/maintenance-failure-reporter.ts's reportMaintenanceFailureIssues, this write is never
+// gated on telemetry consent, since it is local bookkeeping, not external reporting.
+
+/** Mirrors cron-job-bash-harness.ts's own `ledger_status` mapping in `hm_validate` (success -> ok,
+ *  skipped -> skipped, partial -> failed, failed -> failed) so the locally persisted status agrees
+ *  with what the bash harness itself already treats as pass/fail. */
+export function mapMaintenanceCronStatusToRunStatus(
+  maintenanceStatus: "success" | "skipped" | "partial" | "failed",
+): MaintenanceRunStatus {
+  if (maintenanceStatus === "success") return "ran";
+  if (maintenanceStatus === "skipped") return "skipped:quiet";
+  return "failed";
+}
+
+export type MaintenanceCronRetryStatus = "not_applicable" | "retry_pending" | "scheduled_retry";
+
+/**
+ * Derive a coarse "will this be retried" signal for a failed/partial cron-lane run.
+ * - `not_applicable` — the run succeeded or was intentionally skipped; nothing to retry.
+ * - `retry_pending` — at least one failing nested step already has a #2094 forced retry-once
+ *   marker pending (set by `analyze-maintenance-logs --auto-fix`), so it will re-run outside its
+ *   normal cadence guard on the very next orchestrator evaluation.
+ * - `scheduled_retry` — no forced retry-once marker; the failure will only be retried on this
+ *   cron lane's next regular schedule (these are recurring jobs, so there always is one).
+ */
+export function resolveMaintenanceCronRetryStatus(
+  maintenanceStatus: "success" | "skipped" | "partial" | "failed",
+  failingStepNames: string[],
+  openclawDir?: string,
+): MaintenanceCronRetryStatus {
+  if (maintenanceStatus === "success" || maintenanceStatus === "skipped") return "not_applicable";
+  const retryPending = failingStepNames.some((stepName) => hasStepRetryOncePending(stepName, openclawDir));
+  return retryPending ? "retry_pending" : "scheduled_retry";
+}
+
+export interface MaintenanceCronRunOutcomeInput {
+  /** Cron-lane job name, e.g. "maintenance-nightly", "nightly-doctor-repair" (matches HM_JOB / the
+   *  cron job's `name` field — see extractMaintenanceJobName in cron-exit-validator.ts). */
+  jobName: string;
+  maintenanceStatus: "success" | "skipped" | "partial" | "failed";
+  /** Short, templated diagnostic strings only (e.g. "job:step exited non-zero") — never raw
+   *  log/prompt/tool payload. Matches the existing MaintenanceTelemetryIssue.message convention
+   *  already considered safe for external GlitchTip transmission (services/cron-exit-validator.ts). */
+  primaryFailure?: { stepName: string; failureClass: string; message: string };
+  failingStepNames?: string[];
+  openclawDir?: string;
+}
+
+/**
+ * Persist a structured per-cron-lane run outcome: success/failure, phase (the first failing
+ * nested step, if any), error class, timestamp, and retry status (issue #2231). Best-effort and
+ * never gated on telemetry consent — a write failure here must never fail the cron job itself.
+ */
+export function recordMaintenanceCronRunOutcome(
+  db: DatabaseSync | undefined,
+  input: MaintenanceCronRunOutcomeInput,
+): void {
+  if (!db) return;
+  try {
+    const retryStatus = resolveMaintenanceCronRetryStatus(
+      input.maintenanceStatus,
+      input.failingStepNames ?? (input.primaryFailure ? [input.primaryFailure.stepName] : []),
+      input.openclawDir,
+    );
+    insertMaintenanceRun(db, {
+      job: input.jobName,
+      status: mapMaintenanceCronStatusToRunStatus(input.maintenanceStatus),
+      errorSummary: input.primaryFailure?.message,
+      metadata: {
+        kind: "cron-lane-run",
+        maintenanceStatus: input.maintenanceStatus,
+        phase: input.primaryFailure?.stepName,
+        errorClass: input.primaryFailure?.failureClass,
+        retryStatus,
+      },
+    });
+  } catch {
+    // Best-effort — never fail the cron job over a local audit-journal write issue.
+  }
+}
+
+/** Most recent successful cron-lane run for a job (status "ran", i.e. maintenanceStatus="success"). */
+export function getLastSuccessfulCronRun(db: DatabaseSync, jobName: string): MaintenanceRunRow | null {
+  return (
+    (db
+      .prepare(
+        `SELECT id, job, started_at, ended_at, status, items_processed
+         FROM maintenance_runs WHERE job = ? AND status = 'ran' ORDER BY started_at DESC LIMIT 1`,
+      )
+      .get(jobName) as MaintenanceRunRow | undefined) ?? null
+  );
 }

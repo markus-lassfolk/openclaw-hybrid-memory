@@ -12,10 +12,15 @@ import type { VectorDB } from "../backends/vector-db.js";
 import { WAL_ENTRY_SCHEMA_VERSION, type WALEntry, type WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig } from "../config.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
-import { isErrorReporterActive, resolvePendingErrorReportCount } from "../services/error-reporter.js";
+import {
+  initErrorReporter,
+  isErrorReporterActive,
+  resolvePendingErrorReportCount,
+} from "../services/error-reporter.js";
 import { countPinnedFacts } from "../services/fact-lifecycle-verbs.js";
 import { listQuarantinedGoalIds, repairAllQuarantinedGoals, resolveGoalsDir } from "../services/goal-registry.js";
 import { getStaleMaintenanceJobs } from "../services/maintenance-audit-journal.js";
+import { resolveErrorReportQueuePath } from "../services/maintenance-failure-reporter.js";
 import { getRecallSignalsSnapshot } from "../services/recall-signals.js";
 import { getRecallStatsSnapshot } from "../services/recall-timing-stats.js";
 import { runStorageRepairPipeline, runStorageStructuralRepair } from "../services/storage-repair-pipeline.js";
@@ -83,6 +88,49 @@ interface DiagnosticCheck {
   fix?: string;
 }
 
+/**
+ * Initialize the error reporter for this one-shot `doctor` CLI process (issue #2231).
+ *
+ * `doctor --fix --reconcile` is the payload of the `hybrid-mem:nightly-doctor-repair` cron lane
+ * (cli/install/cron-jobs.ts) and runs in its own isolated session/process — nothing else on that
+ * path calls initErrorReporter(), so any capturePluginError() calls made deep inside the
+ * repair/reconcile pipeline (e.g. storage-repair-pipeline.ts) were silent no-ops before this.
+ * Mirrors cli/commands/manage/register-maintenance-orchestrator.ts's
+ * ensureMaintenanceOrchestratorErrorReporter: same errorReporting.enabled && errorReporting.consent
+ * gate, same isErrorReporterActive() idempotency guard, and the same durable on-disk retry queue
+ * convention (resolveErrorReportQueuePath) since this is also a short-lived process with no
+ * next-startup drain to recover an in-flight report.
+ */
+async function ensureDoctorErrorReporterActive(
+  cfg: HybridMemoryConfig,
+  pluginVersion: string | undefined,
+  resolvedSqlitePath: string | undefined,
+): Promise<void> {
+  if (isErrorReporterActive()) return;
+  const { errorReporting } = cfg;
+  if (!errorReporting?.enabled || !errorReporting?.consent || !pluginVersion) return;
+  try {
+    await initErrorReporter(
+      {
+        enabled: errorReporting.enabled,
+        dsn: errorReporting.dsn,
+        mode: errorReporting.mode ?? "community",
+        consent: errorReporting.consent,
+        environment: errorReporting.environment,
+        sampleRate: errorReporting.sampleRate ?? 1.0,
+        maxBreadcrumbs: 10,
+        botId: errorReporting.botId,
+        botName: errorReporting.botName,
+        resolvedIssues: errorReporting.resolvedIssues,
+        pendingQueuePath: resolveErrorReportQueuePath(resolvedSqlitePath),
+      },
+      pluginVersion,
+    );
+  } catch {
+    // Best-effort telemetry setup must never fail doctor itself.
+  }
+}
+
 export function registerDoctorCommand(
   program: Chainable,
   cfg: HybridMemoryConfig,
@@ -93,6 +141,7 @@ export function registerDoctorCommand(
   aliasDb: import("../services/retrieval-aliases.js").AliasDB | null = null,
   embeddings: EmbeddingProvider | null = null,
   runBackup?: (opts?: { backupDir?: string }) => Promise<import("./backup.js").BackupCliResult>,
+  pluginVersion?: string,
 ): void {
   program
     .command("doctor")
@@ -133,6 +182,11 @@ export function registerDoctorCommand(
           reconcileMaxFixes?: string;
           json?: boolean;
         }) => {
+          // Must happen before any check/repair below so capturePluginError() calls made deep in
+          // the repair/reconcile pipeline actually reach GlitchTip instead of silently no-opping
+          // (#2231 — this is the payload of the hybrid-mem:nightly-doctor-repair cron lane).
+          await ensureDoctorErrorReporterActive(cfg, pluginVersion, resolvedSqlitePath);
+
           if (!opts?.json) console.log("\n🏥 Running Hybrid Memory Diagnostics...\n");
 
           // Mirrors cli/verify.ts's parsing exactly: keep reconcileMaxFixes undefined when the flag

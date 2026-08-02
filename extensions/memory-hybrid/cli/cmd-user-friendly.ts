@@ -28,6 +28,8 @@ export interface UserFriendlyContext {
   wal?: WriteAheadLog | null;
   embeddings: EmbeddingProvider;
   resolvedSqlitePath?: string;
+  /** Passed through to registerDoctorCommand so it can activate the error reporter (#2231). */
+  pluginVersion?: string;
   aliasDb?: import("../services/retrieval-aliases.js").AliasDB | null;
   runBackup?: (opts?: { backupDir?: string }) => Promise<import("./backup.js").BackupCliResult>;
   runConfigSet?: (
@@ -78,6 +80,7 @@ export function registerUserFriendlyCommands(mem: Chainable, ctx: UserFriendlyCo
       ctx.aliasDb ?? null,
       ctx.embeddings ?? null,
       ctx.runBackup,
+      ctx.pluginVersion,
     ),
   );
   registerIfMissing(mem, "health", () =>

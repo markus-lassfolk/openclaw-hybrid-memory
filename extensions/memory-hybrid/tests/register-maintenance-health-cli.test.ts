@@ -3,13 +3,47 @@
  * or fail to detect problems, so cron wrappers and CI can gate on the exit code instead of
  * having to scrape stdout for a warning icon.
  */
-import { Command } from "commander";
+
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { FactsDB } from "../backends/facts-db.js";
+import { runFactsMigrations } from "../backends/migrations/facts-migrations.js";
 import { registerMaintenanceHealthCommands } from "../cli/commands/manage/register-maintenance-health.js";
 import type { HybridMemoryConfig } from "../config.js";
+import { recordMaintenanceCronRunOutcome } from "../services/maintenance-audit-journal.js";
+
+function openTestFactsDb(): { db: DatabaseSync; factsDb: FactsDB } {
+  const dir = mkdtempSync(join(tmpdir(), "hm-maint-health-db-"));
+  const db = new DatabaseSync(join(dir, "facts.db"));
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS facts (
+      id TEXT PRIMARY KEY,
+      text TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'other',
+      importance REAL NOT NULL DEFAULT 0.5,
+      entity TEXT,
+      key TEXT,
+      value TEXT,
+      source TEXT NOT NULL DEFAULT 'conversation',
+      created_at INTEGER NOT NULL
+    )
+  `);
+  runFactsMigrations(db);
+  return { db, factsDb: { getRawDb: () => db } as unknown as FactsDB };
+}
+
+/** #2231: `status`/`cron-health` now also monitor nightly-doctor-repair, so a "healthy" cron-store
+ *  fixture must include it alongside maintenance-nightly for exit-code assertions to still hold. */
+const HEALTHY_DOCTOR_REPAIR_JOB = {
+  pluginJobId: "hybrid-mem:nightly-doctor-repair",
+  name: "nightly-doctor-repair",
+  enabled: true,
+  state: { lastRunAtMs: Date.now(), lastStatus: "success" },
+};
 
 describe("maintenance status / cron-health exit codes", () => {
   let homeDir: string;
@@ -56,6 +90,7 @@ describe("maintenance status / cron-health exit codes", () => {
             enabled: true,
             state: { lastRunAtMs: Date.now(), lastStatus: "success" },
           },
+          HEALTHY_DOCTOR_REPAIR_JOB,
         ],
       }),
       "utf-8",
@@ -66,6 +101,59 @@ describe("maintenance status / cron-health exit codes", () => {
     await mem.parseAsync(["maintenance", "status"], { from: "user" });
 
     expect(process.exitCode ?? 0).toBe(0);
+  });
+
+  it("maintenance status includes nightly-doctor-repair as a monitored job (#2231)", async () => {
+    writeFileSync(
+      join(homeDir, ".openclaw", "cron", "jobs.json"),
+      JSON.stringify({
+        jobs: [
+          {
+            pluginJobId: "hybrid-mem:maintenance-nightly",
+            name: "maintenance-nightly",
+            enabled: true,
+            state: { lastRunAtMs: Date.now(), lastStatus: "success" },
+          },
+          HEALTHY_DOCTOR_REPAIR_JOB,
+        ],
+      }),
+      "utf-8",
+    );
+    let jsonOut = "";
+    vi.spyOn(console, "log").mockImplementation((arg: unknown) => {
+      jsonOut = String(arg);
+    });
+    const mem = makeProgram();
+
+    await mem.parseAsync(["maintenance", "status", "--json"], { from: "user" });
+
+    const parsed = JSON.parse(jsonOut) as { jobs: Array<{ name: string; lastSuccessfulRunAt: string | null }> };
+    const doctorRepair = parsed.jobs.find((j) => j.name === "nightly-doctor-repair");
+    expect(doctorRepair).toBeDefined();
+    expect(doctorRepair).toHaveProperty("lastSuccessfulRunAt");
+  });
+
+  it("maintenance status sets process.exitCode=1 when nightly-doctor-repair is missing (#2231)", async () => {
+    writeFileSync(
+      join(homeDir, ".openclaw", "cron", "jobs.json"),
+      JSON.stringify({
+        jobs: [
+          {
+            pluginJobId: "hybrid-mem:maintenance-nightly",
+            name: "maintenance-nightly",
+            enabled: true,
+            state: { lastRunAtMs: Date.now(), lastStatus: "success" },
+          },
+        ],
+      }),
+      "utf-8",
+    );
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const mem = makeProgram();
+
+    await mem.parseAsync(["maintenance", "status"], { from: "user" });
+
+    expect(process.exitCode).toBe(1);
   });
 
   it("cron-health sets process.exitCode=1 when a critical job is missing", async () => {
@@ -99,6 +187,7 @@ describe("maintenance status / cron-health exit codes", () => {
             enabled: true,
             state: { lastRunAtMs: Date.now(), lastStatus: "success" },
           },
+          HEALTHY_DOCTOR_REPAIR_JOB,
         ],
       }),
       "utf-8",
@@ -109,6 +198,29 @@ describe("maintenance status / cron-health exit codes", () => {
     await mem.parseAsync(["maintenance", "cron-health"], { from: "user" });
 
     expect(process.exitCode ?? 0).toBe(0);
+  });
+
+  it("cron-health sets process.exitCode=1 when nightly-doctor-repair is missing (#2231)", async () => {
+    writeFileSync(
+      join(homeDir, ".openclaw", "cron", "jobs.json"),
+      JSON.stringify({
+        jobs: [
+          {
+            pluginJobId: "hybrid-mem:maintenance-nightly",
+            name: "maintenance-nightly",
+            enabled: true,
+            state: { lastRunAtMs: Date.now(), lastStatus: "success" },
+          },
+        ],
+      }),
+      "utf-8",
+    );
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const mem = makeProgram();
+
+    await mem.parseAsync(["maintenance", "cron-health"], { from: "user" });
+
+    expect(process.exitCode).toBe(1);
   });
 });
 
@@ -147,6 +259,7 @@ describe("maintenance status folds in analyze-maintenance-logs strict findings (
             enabled: true,
             state: { lastRunAtMs: Date.now(), lastStatus: "success" },
           },
+          HEALTHY_DOCTOR_REPAIR_JOB,
         ],
       }),
       "utf-8",
@@ -302,5 +415,115 @@ describe("maintenance status surfaces active/stale maintenance step locks (#2031
 
     expect(lines.some((l) => l.includes("Active/stale maintenance step locks"))).toBe(true);
     expect(lines.some((l) => l.includes("step--distill"))).toBe(true);
+  });
+});
+
+describe("maintenance status exposes last-successful-run per job from local audit journal (#2231)", () => {
+  let homeDir: string;
+  let db: DatabaseSync;
+  let factsDb: FactsDB;
+
+  beforeEach(() => {
+    homeDir = mkdtempSync(join(tmpdir(), "hm-maint-health-"));
+    mkdirSync(join(homeDir, ".openclaw", "cron"), { recursive: true });
+    vi.stubEnv("HOME", homeDir);
+    ({ db, factsDb } = openTestFactsDb());
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    process.exitCode = undefined;
+    db.close();
+    rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  function writeHealthyJobs() {
+    writeFileSync(
+      join(homeDir, ".openclaw", "cron", "jobs.json"),
+      JSON.stringify({
+        jobs: [
+          {
+            pluginJobId: "hybrid-mem:maintenance-nightly",
+            name: "maintenance-nightly",
+            enabled: true,
+            state: { lastRunAtMs: Date.now(), lastStatus: "success" },
+          },
+          HEALTHY_DOCTOR_REPAIR_JOB,
+        ],
+      }),
+      "utf-8",
+    );
+  }
+
+  it("reports lastSuccessfulRunAt=null when no cron-lane run has been recorded yet", async () => {
+    writeHealthyJobs();
+    let jsonOut = "";
+    vi.spyOn(console, "log").mockImplementation((arg: unknown) => {
+      jsonOut = String(arg);
+    });
+    const mem = new Command("hybrid-mem");
+    mem.exitOverride();
+    const maintenance = mem.command("maintenance");
+    registerMaintenanceHealthCommands(maintenance, {} as HybridMemoryConfig, factsDb);
+
+    await mem.parseAsync(["maintenance", "status", "--json"], { from: "user" });
+
+    const parsed = JSON.parse(jsonOut) as { jobs: Array<{ name: string; lastSuccessfulRunAt: string | null }> };
+    expect(parsed.jobs.find((j) => j.name === "maintenance-nightly")?.lastSuccessfulRunAt).toBeNull();
+    expect(parsed.jobs.find((j) => j.name === "nightly-doctor-repair")?.lastSuccessfulRunAt).toBeNull();
+  });
+
+  it("surfaces the most recent successful cron-lane run recorded via recordMaintenanceCronRunOutcome", async () => {
+    writeHealthyJobs();
+    recordMaintenanceCronRunOutcome(db, {
+      jobName: "nightly-doctor-repair",
+      maintenanceStatus: "success",
+    });
+
+    let jsonOut = "";
+    vi.spyOn(console, "log").mockImplementation((arg: unknown) => {
+      jsonOut = String(arg);
+    });
+    const mem = new Command("hybrid-mem");
+    mem.exitOverride();
+    const maintenance = mem.command("maintenance");
+    registerMaintenanceHealthCommands(maintenance, {} as HybridMemoryConfig, factsDb);
+
+    await mem.parseAsync(["maintenance", "status", "--json"], { from: "user" });
+
+    const parsed = JSON.parse(jsonOut) as { jobs: Array<{ name: string; lastSuccessfulRunAt: string | null }> };
+    const doctorRepair = parsed.jobs.find((j) => j.name === "nightly-doctor-repair");
+    expect(doctorRepair?.lastSuccessfulRunAt).not.toBeNull();
+    // A failed cron-lane run for a DIFFERENT job must not leak into maintenance-nightly's own field.
+    expect(parsed.jobs.find((j) => j.name === "maintenance-nightly")?.lastSuccessfulRunAt).toBeNull();
+  });
+
+  it("does not surface a failed cron-lane run as a successful one", async () => {
+    writeHealthyJobs();
+    recordMaintenanceCronRunOutcome(db, {
+      jobName: "maintenance-nightly",
+      maintenanceStatus: "failed",
+      primaryFailure: {
+        stepName: "distill",
+        failureClass: "nonzero_exit",
+        message: "maintenance-nightly:distill exited non-zero",
+      },
+      failingStepNames: ["distill"],
+    });
+
+    let jsonOut = "";
+    vi.spyOn(console, "log").mockImplementation((arg: unknown) => {
+      jsonOut = String(arg);
+    });
+    const mem = new Command("hybrid-mem");
+    mem.exitOverride();
+    const maintenance = mem.command("maintenance");
+    registerMaintenanceHealthCommands(maintenance, {} as HybridMemoryConfig, factsDb);
+
+    await mem.parseAsync(["maintenance", "status", "--json"], { from: "user" });
+
+    const parsed = JSON.parse(jsonOut) as { jobs: Array<{ name: string; lastSuccessfulRunAt: string | null }> };
+    expect(parsed.jobs.find((j) => j.name === "maintenance-nightly")?.lastSuccessfulRunAt).toBeNull();
   });
 });
