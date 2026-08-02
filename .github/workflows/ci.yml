@@ -215,7 +215,7 @@ jobs:
           name: coverage-report
           path: extensions/memory-hybrid/coverage/
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 14   # Coverage artifacts auto-expire after 14 days to prevent storage accumulation
 
   dead-code:
     name: Dead Code Analysis (knip)
