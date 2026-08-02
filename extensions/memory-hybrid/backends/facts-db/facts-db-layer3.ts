@@ -103,7 +103,9 @@ import {
   type FtsTriggerProbeResult,
   findSessionFactsForPromotion as findSessionFactsForPromotionImpl,
   freelistSpaceStats as freelistSpaceStatsImpl,
+  type GraphSchemaSnapshot,
   getFtsConsistencySnapshot as getFtsConsistencySnapshotImpl,
+  getGraphSchemaSnapshot as getGraphSchemaSnapshotImpl,
   languageKeywordsCount as languageKeywordsCountImpl,
   listScopedFactIdsPendingPrune as listScopedFactIdsPendingPruneImpl,
   optimizeFts as optimizeFtsImpl,
@@ -163,6 +165,11 @@ export class FactsDB extends FactsDBLayer2 {
   /** Snapshot FTS table/trigger/population consistency for doctor/health checks. */
   getFtsConsistencySnapshot(): FtsConsistencySnapshot {
     return getFtsConsistencySnapshotImpl(this.liveDb);
+  }
+
+  /** Snapshot the memory graph's schema (`memory_links` table/columns/indexes) for audit-health (#2226). */
+  getGraphSchemaSnapshot(): GraphSchemaSnapshot {
+    return getGraphSchemaSnapshotImpl(this.liveDb);
   }
 
   /** Deep savepointed INSERT/UPDATE/DELETE probe to confirm FTS triggers actually fire. */

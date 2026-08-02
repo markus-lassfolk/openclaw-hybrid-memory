@@ -5,6 +5,7 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { GraphSchemaSnapshot } from "../../../backends/facts-db/housekeeping.js";
 import type { GraphConnectedStats } from "../../../backends/facts-db/links.js";
 import type { ProcedurePromotionBlockReason } from "../../../backends/facts-db/procedures.js";
 import { expandGraph, type GraphExpansionStats, resolveGraphHubDegreeCap } from "../../../services/graph-retrieval.js";
@@ -12,6 +13,7 @@ import type { MemoryEntry, ScopeFilter } from "../../../types/memory.js";
 import { nowIso } from "../../../utils/dates.js";
 import { isEntityStopWord } from "../../../utils/entity-stopwords.js";
 import { globalOnlyScopeFilter } from "../../../utils/scope-filter.js";
+import { versionInfo } from "../../../versionInfo.js";
 import { SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER } from "../../cmd-feedback.js";
 import type { ManageBindings } from "./bindings.js";
 /** Max rows sampled for implicit-feedback prefix histogram (#1193); keeps audit bounded on huge pattern tables. */
@@ -272,9 +274,15 @@ export function recordStorageGrowthSample(
   const nowSecReport = Math.floor(Date.now() / 1000);
   const storageBytes = factsDb.estimateStorageBytes?.();
   const activeFacts = factsDb.getCount();
-  const linkCountTotal = raw
-    ? Number((raw.prepare("SELECT COUNT(*) AS c FROM memory_links").get() as { c: number } | undefined)?.c ?? 0)
-    : 0;
+  // #2226: memory_links may be missing on a partially/failed-migrated store — guard with a
+  // sqlite_master existence check rather than letting "no such table" abort growth sampling
+  // (which would otherwise also take down the audit-health report that calls this internally).
+  const hasMemoryLinksTable =
+    raw != null && raw.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_links'`).get() != null;
+  const linkCountTotal =
+    raw && hasMemoryLinksTable
+      ? Number((raw.prepare("SELECT COUNT(*) AS c FROM memory_links").get() as { c: number } | undefined)?.c ?? 0)
+      : 0;
   const sample = {
     recordedAt: nowSecReport,
     sqliteBytes: storageBytes?.sqliteBytes ?? null,
@@ -423,6 +431,15 @@ export function entryMatchesHybridSearchFilters(
 export type AuditHealthReport = {
   schemaVersion: 1;
   generatedAt: string;
+  /**
+   * Installed plugin version (from package.json), so JSON consumers (health-check cron wrappers,
+   * dashboards) can read it straight from this report instead of a separate `--version` call
+   * (#2226 — external health monitors reported `version:unknown` because no report field ever
+   * carried it).
+   */
+  pluginVersion: string;
+  /** SQLite/LanceDB schema version (versionInfo.schemaVersion) — bumped on breaking schema changes. Distinct from `schemaVersion` above, which versions this report's own JSON shape. */
+  dbSchemaVersion: number;
   /** "ok" when no warnings and no generation errors; "partial" when degraded (warnings, timeouts, or non-fatal errors). */
   status: "ok" | "partial" | "failed";
   /** @deprecated Use `status` instead. Kept for backward compatibility. */
@@ -524,6 +541,14 @@ export type AuditHealthReport = {
     expansionProbe: GraphExpansionStats;
   } | null;
   /**
+   * Structural validity of the memory graph's schema (`memory_links` table/columns/indexes).
+   * `null` only when the check could not run at all (no raw SQLite handle or timeout budget
+   * exhausted) — never a stand-in for "unknown is fine". When `ok` is false the same detail is
+   * also pushed into `warnings` (and, for a missing table, `errors`) so `--strict`/`--strict-errors`
+   * and downstream health monitors see it (#2226).
+   */
+  graphSchema: GraphSchemaSnapshot | null;
+  /**
    * Entity enrichment backlog summary (#1806). `null` when the query could not run (timeout/budget).
    * `estimatedRunsRemaining` uses the default enrichment limit of 200 for ETA computation.
    */
@@ -585,6 +610,10 @@ export function buildAuditHealthReport(
   const startedAtMs = options?.startedAtMs ?? Date.now();
   const deadlineMs = options?.deadlineMs;
   const errors: Array<{ section: string; message: string }> = [...(options?.preReportErrors ?? [])];
+  // Declared here (rather than just before its first push() further down) so the graph-schema
+  // check below — which must run before graphHubs/graphHubGuard touch memory_links — can push
+  // into it immediately.
+  const warnings: string[] = [...(options?.preReportWarnings ?? [])];
   const timeoutRecorded = new Set<string>();
   const hasBudget = (section: string): boolean => {
     if (deadlineMs == null || Date.now() <= deadlineMs) return true;
@@ -616,6 +645,52 @@ export function buildAuditHealthReport(
   const procedureTriage = factsDb.triageProcedures({ status: "validated", notPromoted: true, limit: 10_000 });
   const raw = factsDb.getRawDb?.();
 
+  // #2226: structural graph-schema validity check, run early (before any other query touches
+  // memory_links below — graphHubs/graphHubGuard) so a missing table degrades gracefully into a
+  // reported `graphSchema.ok=false` instead of an uncaught "no such table: memory_links" crashing
+  // the whole audit-health run. Missing table -> `errors` (blocks graph traversal/hub-guard
+  // entirely, fails --strict-errors); missing column/index on an otherwise present table ->
+  // `warnings` only (degraded, typically self-heals on the next plugin init since
+  // migrateMemoryLinksTable() runs idempotently on every startup). Never silently swallowed: a
+  // thrown error from the check itself also lands in `errors`, matching the entityEnrichmentBacklog
+  // pattern below.
+  let graphSchema: AuditHealthReport["graphSchema"] = null;
+  if (raw && hasBudget("graphSchema")) {
+    try {
+      const snapshot = factsDb.getGraphSchemaSnapshot();
+      graphSchema = snapshot;
+      if (!snapshot.ok) {
+        const detailParts: string[] = [];
+        if (!snapshot.tableExists) {
+          detailParts.push("memory_links table is missing");
+        } else {
+          if (snapshot.missingColumns.length > 0) {
+            detailParts.push(`missing column(s): ${snapshot.missingColumns.join(", ")}`);
+          }
+          if (snapshot.missingIndexes.length > 0) {
+            detailParts.push(`missing index(es): ${snapshot.missingIndexes.join(", ")}`);
+          }
+        }
+        const message =
+          `Memory graph schema check failed (${detailParts.join("; ")}). Graph traversal, hub-guard ` +
+          "probing, and link decay may be degraded or unavailable. Restart the gateway to re-run pending " +
+          "migrations, or run `openclaw hybrid-mem doctor --fix`.";
+        warnings.push(message);
+        if (!snapshot.tableExists) {
+          errors.push({ section: "graphSchema", message });
+        }
+      }
+    } catch (err) {
+      errors.push({
+        section: "graphSchema",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  // Missing-table case only — a present-but-degraded table (missing column/index) still supports
+  // the queries below, so graphHubs/graphHubGuard stay live and merely reflect the degraded shape.
+  const graphTableUsable = graphSchema?.tableExists !== false;
+
   // #1193: surface per-category drift counts directly so JSON consumers do not need to re-query.
   const unknown: Array<{ category: string; count: number }> = (() => {
     const drift = present.filter((category: string) => !configuredSet.has(category));
@@ -645,7 +720,7 @@ export function buildAuditHealthReport(
   const nowSecForAge = Math.floor(Date.now() / 1000);
   const storeAgeDays = oldestRow?.oldest != null ? Math.max(0, (nowSecForAge - oldestRow.oldest) / 86400) : 0;
   const graphHubs =
-    raw && hasBudget("graphHubs")
+    raw && graphTableUsable && hasBudget("graphHubs")
       ? (
           raw
             .prepare(
@@ -911,7 +986,6 @@ export function buildAuditHealthReport(
     });
   }
 
-  const warnings: string[] = [...(options?.preReportWarnings ?? [])];
   // #1193: gate hot=0/structural=0 warnings on storeAgeDays > 14 to avoid false positives during
   // the first 14 days of a fresh install (no facts have aged into warm/cold yet).
   if (storeAgeDays > 14) {
@@ -1035,7 +1109,7 @@ export function buildAuditHealthReport(
   }
 
   let graphHubGuard: AuditHealthReport["graphHubGuard"] = null;
-  if (raw && hasBudget("graphHubGuard")) {
+  if (raw && graphTableUsable && hasBudget("graphHubGuard")) {
     const probeRow = raw.prepare("SELECT id FROM facts WHERE superseded_at IS NULL LIMIT 1").get() as
       | { id: string }
       | undefined;
@@ -1064,6 +1138,8 @@ export function buildAuditHealthReport(
   return {
     schemaVersion: 1,
     generatedAt: nowIso(),
+    pluginVersion: versionInfo.pluginVersion,
+    dbSchemaVersion: versionInfo.schemaVersion,
     status,
     ok: warnings.length === 0 && errors.length === 0,
     warningCount: warnings.length,
@@ -1117,6 +1193,7 @@ export function buildAuditHealthReport(
     sources,
     implicitFeedbackTrajectorySignals,
     graphHubGuard,
+    graphSchema,
     entityEnrichmentBacklog,
     warnings,
     remediation,
@@ -1132,7 +1209,8 @@ export function printAuditHealthMarkdown(report: AuditHealthReport): void {
   console.log("");
   console.log(`Status: ${report.status}`);
   console.log(`Generated: ${report.generatedAt}`);
-  console.log(`Schema version: ${report.schemaVersion}`);
+  console.log(`Plugin version: ${report.pluginVersion}`);
+  console.log(`Report schema version: ${report.schemaVersion} (DB schema version: ${report.dbSchemaVersion})`);
   console.log(`Active facts: ${report.activeFacts}`);
   console.log(`Store age (days): ${report.storeAgeDays.toFixed(1)}`);
   console.log(`Canonical embeddings: ${report.canonicalEmbeddings}`);
@@ -1218,6 +1296,12 @@ export function printAuditHealthMarkdown(report: AuditHealthReport): void {
     `Implicit-feedback signal noise (30d): paraphraseRatio=${String(report.implicitFeedbackSignalNoise.paraphraseRatio)} days=${Object.keys(report.implicitFeedbackSignalNoise.rowsPerDay30d).length}`,
   );
   console.log(`Implicit-feedback trajectory signals: ${report.implicitFeedbackTrajectorySignals}`);
+  if (report.graphSchema) {
+    const gs = report.graphSchema;
+    console.log(
+      `Graph schema: ${gs.ok ? "ok" : "FAIL"}${gs.ok ? "" : ` (missing columns=${gs.missingColumns.join(",") || "none"}; missing indexes=${gs.missingIndexes.join(",") || "none"}; tableExists=${gs.tableExists})`}`,
+    );
+  }
   if (report.graphHubGuard) {
     const g = report.graphHubGuard;
     console.log(
