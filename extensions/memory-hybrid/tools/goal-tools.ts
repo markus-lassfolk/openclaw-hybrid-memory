@@ -239,6 +239,9 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             },
           };
         try {
+          // Managed child launch is only supported while the host injects this request-scoped
+          // runtime binding. Do not add a process-global fallback here: it would escape host
+          // request authority and make an absent binding look like a completed E2E launch.
           const run = await api.runtime.subagent.run({
             sessionKey: p.session_key,
             message: p.task,
@@ -259,7 +262,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
               content: [
                 {
                   type: "text" as const,
-                  text: "Managed dispatch requires a gateway request-scoped subagent runtime; reservation released.",
+                  text: "Managed dispatch requires the host-provided request-scoped subagent runtime; reservation released. E2E child completion is unverified until the host binding is available.",
                 },
               ],
               details: { error: "subagent_runtime_request_scope_unavailable" },

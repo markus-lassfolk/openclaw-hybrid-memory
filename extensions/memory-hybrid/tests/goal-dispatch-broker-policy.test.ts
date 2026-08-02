@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-type ToolResult = { details?: Record<string, unknown> };
+type ToolResult = { content?: Array<{ text?: string }>; details?: Record<string, unknown> };
 type ToolExecute = (id: string, params: Record<string, unknown>) => Promise<ToolResult>;
 type RegisteredTools = Map<string, { execute: ToolExecute }>;
 import { hybridConfigSchema } from "../config.js";
@@ -182,6 +182,7 @@ describe("goal_dispatch broker policy selection", () => {
     });
   });
 
+  // The plugin must fail closed rather than provide a global fallback when the host request binding is absent.
   it("reports a missing request-scoped runtime binding and releases its reservation", async () => {
     api.runtime.subagent.run = vi.fn(async () => {
       const error = Object.assign(
@@ -198,6 +199,8 @@ describe("goal_dispatch broker policy selection", () => {
       read_only: true,
     });
     expect(result.details).toEqual({ error: "subagent_runtime_request_scope_unavailable" });
+    expect(result.content?.[0]?.text).toContain("host-provided request-scoped subagent runtime");
+    expect(result.content?.[0]?.text).toContain("E2E child completion is unverified");
     const ledger = JSON.parse(
       await (await import("node:fs/promises")).readFile(join(goalsDir, "dispatch-broker", "ledger.json"), "utf8"),
     );
