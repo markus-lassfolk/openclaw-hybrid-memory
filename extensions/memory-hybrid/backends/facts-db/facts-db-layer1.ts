@@ -384,7 +384,14 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     if (this.isPermanentlyClosed()) {
       return { apply: false, examined: 0, changed: 0, hot: 0, warm: 0, cold: 0, structural: 0 };
     }
-    return runCompactionImpl(this.liveDb, opts);
+    // #2233: the permanentClose() guard above only covers a *fully* torn-down store. A plain
+    // (non-permanent) close/reopen cycle — e.g. the native handle going stale between this check
+    // and the retier's queries — leaves closePhase at "open" (isPermanentlyClosed() stays false)
+    // and isn't caught above. Route through runSqliteOp — the same reconnect-and-retry helper
+    // WorkflowStore/EdictStore already use for their DB ops (#968) — so a stale-but-not-torn-down
+    // handle self-heals (reopen + retry once) instead of letting "database connection is not
+    // open" escape from a raw `this.liveDb` access straight into the lifecycle hook.
+    return this.runSqliteOp("runCompaction", () => runCompactionImpl(this.liveDb, opts));
   }
 
   /** Retier facts with optional dry-run support for operator CLI migrations. */
