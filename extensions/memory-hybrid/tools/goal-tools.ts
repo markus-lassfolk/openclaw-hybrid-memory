@@ -122,6 +122,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
         /** Explicit policy declaration. Omitting task_class only selects legacy `managed`; it never bypasses validation. */
         task_class: Type.Optional(Type.String()),
         read_only: Type.Optional(Type.Boolean()),
+        repository: Type.Optional(Type.String({ description: "Canonical owner/repository for write dispatches." })),
         pr_number: Type.Optional(Type.Number()),
         branch: Type.Optional(Type.String()),
         live_remote_head: Type.Optional(Type.String()),
@@ -175,6 +176,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           requestedAgent: agent,
           actualAgent: agent,
           readOnly: typeof p.read_only === "boolean" ? p.read_only : undefined,
+          repository: typeof p.repository === "string" ? p.repository : undefined,
           prNumber: typeof p.pr_number === "number" ? p.pr_number : undefined,
           branch: typeof p.branch === "string" ? p.branch : undefined,
           liveRemoteHead: typeof p.live_remote_head === "string" ? p.live_remote_head : undefined,
@@ -199,7 +201,24 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           maxWallTimeMs: typeof p.budget?.max_wall_time_ms === "number" ? p.budget.max_wall_time_ms : undefined,
         };
         const broker = new GoalDispatchBroker(goalsDir);
-        const record = await broker.reserve({ goalId, targetAgent: agent, runtime, budget, ttlMs: 5 * 60_000 });
+        const canonical = goal.dispatchPolicy?.classes[taskClass]?.canonical;
+        const record = await broker.reserve({
+          goalId,
+          targetAgent: agent,
+          runtime,
+          budget,
+          ttlMs: 5 * 60_000,
+          owner: agent,
+          sessionId: p.session_key,
+          target: canonical
+            ? {
+                repository: canonical.repository,
+                prNumber: canonical.prNumber,
+                branch: canonical.branch,
+                remoteHead: canonical.remoteHead,
+              }
+            : undefined,
+        });
         if (!record)
           return {
             content: [{ type: "text" as const, text: "Dispatch budget exhausted." }],

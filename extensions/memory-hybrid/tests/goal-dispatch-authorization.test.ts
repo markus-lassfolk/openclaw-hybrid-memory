@@ -15,7 +15,12 @@ const policy: GoalDispatchPolicy = {
     implement: {
       allowedAgents: ["implementer-a", "escalator-a"],
       readOnly: false,
-      canonical: { prNumber: 2232, branch: "fix/goal-dispatch-authorization", remoteHead: "abc123" },
+      canonical: {
+        repository: "acme/repo",
+        prNumber: 2232,
+        branch: "fix/goal-dispatch-authorization",
+        remoteHead: "abc123",
+      },
       writeScope: ["extensions/memory-hybrid"],
       forbidNewPr: true,
       forbidNewBranch: true,
@@ -24,7 +29,12 @@ const policy: GoalDispatchPolicy = {
     escalate: {
       allowedAgents: ["escalator-a"],
       readOnly: false,
-      canonical: { prNumber: 2232, branch: "fix/goal-dispatch-authorization", remoteHead: "abc123" },
+      canonical: {
+        repository: "acme/repo",
+        prNumber: 2232,
+        branch: "fix/goal-dispatch-authorization",
+        remoteHead: "abc123",
+      },
       writeScope: ["docs"],
       forbidNewPr: true,
       forbidNewBranch: true,
@@ -36,6 +46,7 @@ const write = (changes: Partial<GoalDispatchRequest> = {}): GoalDispatchRequest 
   requestedAgent: "implementer-a",
   actualAgent: "implementer-a",
   readOnly: false,
+  repository: "acme/repo",
   prNumber: 2232,
   branch: "fix/goal-dispatch-authorization",
   liveRemoteHead: "abc123",

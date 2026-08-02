@@ -11,6 +11,25 @@ export type DispatchBudget = {
   maxDispatchTokens?: number;
   maxWallTimeMs?: number;
 };
+export type CanonicalTarget = {
+  repository: string;
+  prNumber: number;
+  branch: string;
+  remoteHead: string;
+};
+export type ExecutionReceipt = {
+  owner: string;
+  runId: string;
+  sessionId: string;
+  requestedModel: string;
+  resolvedModel: string;
+  modelApplied: boolean;
+  startingHead: string;
+  endingHead: string;
+  outcome: "success" | "failed" | "cancelled";
+  evidence: string[];
+  recordedAt: string;
+};
 export type DispatchRecord = {
   id: string;
   goalId: string;
@@ -22,6 +41,10 @@ export type DispatchRecord = {
   createdAt: string;
   updatedAt: string;
   runId?: string;
+  owner?: string;
+  sessionId?: string;
+  target?: CanonicalTarget;
+  receipt?: ExecutionReceipt;
   reason?: string;
 };
 type Ledger = { dispatches: Record<string, DispatchRecord> };
@@ -47,9 +70,13 @@ export class GoalDispatchBroker {
     runtime: "subagent" | "acp";
     budget: DispatchBudget;
     ttlMs: number;
+    owner?: string;
+    sessionId?: string;
+    target?: CanonicalTarget;
   }): Promise<DispatchRecord | null> {
     return this.withLedger((ledger) => {
       this.expire(ledger);
+      // A goal's canonical target is part of the same locked reservation decision.
       const active = Object.values(ledger.dispatches).filter(
         (x) => x.goalId === input.goalId && ["reserved", "launched"].includes(x.status),
       );
@@ -66,6 +93,9 @@ export class GoalDispatchBroker {
         createdAt: at,
         updatedAt: at,
         expiresAt: new Date(this.now().getTime() + input.ttlMs).toISOString(),
+        owner: input.owner,
+        sessionId: input.sessionId,
+        target: input.target,
       };
       ledger.dispatches[id] = r;
       return r;
@@ -73,6 +103,46 @@ export class GoalDispatchBroker {
   }
   async launch(id: string, runId: string): Promise<boolean> {
     return this.mutate(id, "launched", { runId });
+  }
+  /** Renew only the exact active reservation. Duplicate/stale heartbeats fail closed. */
+  async heartbeat(id: string, owner: string, runId: string, ttlMs: number): Promise<boolean> {
+    return this.withLedger((l) => {
+      this.expire(l);
+      const r = l.dispatches[id];
+      if (!r || !["reserved", "launched"].includes(r.status) || r.owner !== owner || (r.runId && r.runId !== runId))
+        return false;
+      r.runId = runId;
+      r.expiresAt = new Date(this.now().getTime() + ttlMs).toISOString();
+      r.updatedAt = this.now().toISOString();
+      return true;
+    });
+  }
+  /** Receipt is accepted only from the leased owner/run/session with complete evidence. */
+  async recordReceipt(id: string, receipt: ExecutionReceipt): Promise<boolean> {
+    return this.withLedger((l) => {
+      this.expire(l);
+      const r = l.dispatches[id];
+      if (
+        !r ||
+        r.status !== "launched" ||
+        r.owner !== receipt.owner ||
+        r.runId !== receipt.runId ||
+        r.sessionId !== receipt.sessionId
+      )
+        return false;
+      if (
+        !receipt.modelApplied ||
+        !receipt.requestedModel ||
+        !receipt.resolvedModel ||
+        !receipt.startingHead ||
+        !receipt.endingHead ||
+        receipt.evidence.length === 0
+      )
+        return false;
+      r.receipt = { ...receipt, recordedAt: this.now().toISOString() };
+      r.updatedAt = this.now().toISOString();
+      return true;
+    });
   }
   async release(id: string, reason: string): Promise<boolean> {
     return this.mutate(id, "released", { reason });
