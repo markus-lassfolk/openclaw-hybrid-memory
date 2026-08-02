@@ -20,6 +20,7 @@ import {
 import type { Goal, GoalHistoryEntry } from "../services/goal-stewardship-types.js";
 import {
   evaluateGoalDispatch,
+  isValidGoalDispatchPolicy,
   type GoalDispatchPolicy,
   type GoalDispatchRequest,
 } from "../services/goal-dispatch-authorization.js";
@@ -223,6 +224,14 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
                 runtime,
                 session_key: p.session_key,
                 task: p.task,
+                task_class: taskClass,
+                read_only: request.readOnly,
+                pr_number: request.prNumber,
+                branch: request.branch,
+                live_remote_head: request.liveRemoteHead,
+                write_scope: request.writeScope,
+                creates_pr: request.createsPr,
+                creates_branch: request.createsBranch,
                 grant,
                 expires_at: record.expiresAt,
                 budget,
@@ -230,6 +239,9 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             },
           };
         try {
+          // Managed child launch is only supported while the host injects this request-scoped
+          // runtime binding. Do not add a process-global fallback here: it would escape host
+          // request authority and make an absent binding look like a completed E2E launch.
           const run = await api.runtime.subagent.run({
             sessionKey: p.session_key,
             message: p.task,
@@ -243,6 +255,18 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           };
         } catch (err) {
           await broker.release(record.id, "launch_failed");
+          const errorCode =
+            err && typeof err === "object" && "code" in err && typeof err.code === "string" ? err.code : undefined;
+          if (errorCode === "OPENCLAW_SUBAGENT_RUNTIME_REQUEST_SCOPE")
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: "Managed dispatch requires the host-provided request-scoped subagent runtime; reservation released. E2E child completion is unverified until the host binding is available.",
+                },
+              ],
+              details: { error: "subagent_runtime_request_scope_unavailable" },
+            };
           return {
             content: [{ type: "text" as const, text: "Managed dispatch launch failed; reservation released." }],
             details: { error: "launch_failed" },
@@ -810,6 +834,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
         description: Type.Optional(Type.String()),
         acceptance_criteria: Type.Optional(Type.Array(Type.String())),
         priority: Type.Optional(stringEnum(PRIORITIES as unknown as readonly string[])),
+        dispatch_policy: Type.Optional(Type.Any({ description: "Replacement machine-readable dispatch policy." })),
         note: Type.Optional(Type.String()),
         confirmed: Type.Optional(
           Type.Boolean({ description: "Required when updating acceptance_criteria after clarity refinement." }),
@@ -825,6 +850,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             description?: string;
             acceptance_criteria?: string[];
             priority?: (typeof PRIORITIES)[number];
+            dispatch_policy?: unknown;
             note?: string;
             confirmed?: boolean;
           };
@@ -834,6 +860,14 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             return {
               content: [{ type: "text", text: `Goal ${goal.label} is already ${goal.status}.` }],
               details: { error: "terminal" },
+            };
+          }
+          if (p.dispatch_policy !== undefined && !isValidGoalDispatchPolicy(p.dispatch_policy)) {
+            return {
+              content: [
+                { type: "text", text: "dispatch_policy must be a version 1 policy with at least one valid class." },
+              ],
+              details: { error: "invalid_dispatch_policy" },
             };
           }
           if (p.acceptance_criteria !== undefined) {
@@ -854,6 +888,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           if (p.description !== undefined) staticPatch.description = p.description;
           if (p.acceptance_criteria !== undefined) staticPatch.acceptanceCriteria = p.acceptance_criteria;
           if (p.priority !== undefined) staticPatch.priority = p.priority;
+          if (p.dispatch_policy !== undefined) staticPatch.dispatchPolicy = p.dispatch_policy;
           const ts = nowIso();
           // Unlike goal_assess/goal_complete/goal_abandon, goal_update never re-checked terminal
           // status against the goal re-read inside updateGoal's lock — only against the pre-lock

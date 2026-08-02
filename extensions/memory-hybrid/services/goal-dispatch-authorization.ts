@@ -66,9 +66,11 @@ function validClassPolicy(value: unknown): value is GoalDispatchClassPolicy {
 }
 
 /** Pure validator: callers must persist its result before spawning. */
-function isValidPolicy(policy: GoalDispatchPolicy | undefined): policy is GoalDispatchPolicy {
-  if (!policy || policy.version !== 1 || !policy.classes || typeof policy.classes !== "object") return false;
-  const classes = Object.entries(policy.classes);
+export function isValidGoalDispatchPolicy(policy: unknown): policy is GoalDispatchPolicy {
+  if (!policy || typeof policy !== "object") return false;
+  const candidate = policy as Record<string, unknown>;
+  if (candidate.version !== 1 || !candidate.classes || typeof candidate.classes !== "object") return false;
+  const classes = Object.entries(candidate.classes);
   return classes.length > 0 && classes.every(([name, entry]) => name.trim().length > 0 && validClassPolicy(entry));
 }
 
@@ -76,7 +78,7 @@ export function evaluateGoalDispatch(
   policy: GoalDispatchPolicy | undefined,
   request: GoalDispatchRequest,
 ): GoalDispatchPreflight {
-  if (!isValidPolicy(policy)) return fail(request, "dispatch policy missing or invalid");
+  if (!isValidGoalDispatchPolicy(policy)) return fail(request, "dispatch policy missing or invalid");
   const classPolicy = policy.classes[request.taskClass];
   if (!classPolicy) return fail(request, "task class is not defined by goal policy");
   if (!request.requestedAgent || request.requestedAgent !== request.actualAgent)
