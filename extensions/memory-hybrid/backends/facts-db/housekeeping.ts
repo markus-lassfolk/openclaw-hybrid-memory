@@ -187,6 +187,84 @@ export function getFtsConsistencySnapshot(db: DatabaseSync): FtsConsistencySnaps
   };
 }
 
+/**
+ * Columns `memory_links` (the memory graph's edge table) must have for graph traversal
+ * (getConnectedFactIds/expandGraph), decay, and the hub-guard probe to function correctly.
+ * Kept in sync with `migrateMemoryLinksTable()` in backends/migrations/facts-migrations.ts —
+ * `strength_updated_at` was added there as an additive column (link-decay anchor); if a future
+ * migration adds another column it belongs here too.
+ */
+const EXPECTED_GRAPH_LINK_COLUMNS = [
+  "id",
+  "source_fact_id",
+  "target_fact_id",
+  "link_type",
+  "strength",
+  "created_at",
+  "strength_updated_at",
+] as const;
+
+/** Indexes `migrateMemoryLinksTable()` creates on `memory_links`; missing ones degrade graph query performance. */
+const EXPECTED_GRAPH_LINK_INDEXES = [
+  "idx_links_source",
+  "idx_links_target",
+  "idx_links_type",
+  "idx_links_source_type",
+] as const;
+
+export type GraphSchemaSnapshot = {
+  /** True when `memory_links` (the graph's edge table) exists at all. */
+  tableExists: boolean;
+  presentColumns: string[];
+  missingColumns: string[];
+  presentIndexes: string[];
+  missingIndexes: string[];
+  /** True when the table exists with every expected column and index present. */
+  ok: boolean;
+};
+
+/**
+ * Structural consistency check for the memory graph's schema — mirrors
+ * {@link getFtsConsistencySnapshot}'s "does the expected shape actually exist" approach, but for
+ * `memory_links` rather than `facts_fts`. Surfaced by `audit health` as `report.graphSchema`
+ * (#2226) so a missing table/column after a partial/failed migration is reported instead of
+ * silently degrading graph traversal and hub-guard probing.
+ */
+export function getGraphSchemaSnapshot(db: DatabaseSync): GraphSchemaSnapshot {
+  const tableRow = db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_links'`).get();
+  const tableExists = !!tableRow;
+
+  if (!tableExists) {
+    return {
+      tableExists,
+      presentColumns: [],
+      missingColumns: [...EXPECTED_GRAPH_LINK_COLUMNS],
+      presentIndexes: [],
+      missingIndexes: [...EXPECTED_GRAPH_LINK_INDEXES],
+      ok: false,
+    };
+  }
+
+  const columnRows = db.prepare("PRAGMA table_info(memory_links)").all() as Array<{ name: string }>;
+  const presentColumnSet = new Set(columnRows.map((c) => c.name));
+  const presentColumns = EXPECTED_GRAPH_LINK_COLUMNS.filter((name) => presentColumnSet.has(name));
+  const missingColumns = EXPECTED_GRAPH_LINK_COLUMNS.filter((name) => !presentColumnSet.has(name));
+
+  const indexRows = db.prepare("PRAGMA index_list(memory_links)").all() as Array<{ name: string }>;
+  const presentIndexSet = new Set(indexRows.map((i) => i.name));
+  const presentIndexes = EXPECTED_GRAPH_LINK_INDEXES.filter((name) => presentIndexSet.has(name));
+  const missingIndexes = EXPECTED_GRAPH_LINK_INDEXES.filter((name) => !presentIndexSet.has(name));
+
+  return {
+    tableExists,
+    presentColumns,
+    missingColumns,
+    presentIndexes,
+    missingIndexes,
+    ok: missingColumns.length === 0 && missingIndexes.length === 0,
+  };
+}
+
 export function runFtsTriggerProbe(db: DatabaseSync): FtsTriggerProbeResult {
   const savepoint = `hm_fts_probe_${randomUUID().replace(/-/g, "")}`;
   const probeId = randomUUID();

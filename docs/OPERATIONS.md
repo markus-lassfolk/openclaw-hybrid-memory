@@ -435,6 +435,19 @@ fi
 
 `scripts/gateway-watchdog-cron.sh` in this repo already follows this pattern (see its `gateway_healthy()` function) — copy it rather than re-deriving liveness from `systemctl`. If you still want the service manager's view for diagnostics, log it as separate metadata (e.g. `service_manager_state=...`) alongside the probe result — never let it override the probe as the health verdict ([#2142](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2142)).
 
+#### Reading plugin version and graph schema health from `audit health --json`, not a separate probe
+
+Don't reimplement plugin-version resolution or memory-graph schema validation in the wrapper — `openclaw hybrid-mem audit health --json` (or its `graph health` alias) already reports both, as of the fix for [#2226](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2226):
+
+- `.pluginVersion` — the installed plugin version. Read this instead of shelling out to a separate `--version` call or grepping `package.json`.
+- `.graphSchema.ok` — `true` when the memory graph's edge table (`memory_links`) has every column and index the current plugin version expects; `false` when it doesn't (e.g. a partial/failed migration). When `false`, `.graphSchema.tableExists` / `.graphSchema.missingColumns` / `.graphSchema.missingIndexes` say exactly what's wrong. A `false` result is also pushed into `.warnings` (always) and `.errors` (when the table itself is missing) — `--strict` / `--strict-errors` exit non-zero in that case, and the plugin reports the failure to its own error-reporting pipeline (GlitchTip, when configured) instead of only living in the JSON.
+
+```bash
+report=$(openclaw hybrid-mem audit health --strict --json)
+version=$(echo "$report" | python3 -c 'import json,sys; print(json.load(sys.stdin)["pluginVersion"])')
+graph_schema_ok=$(echo "$report" | python3 -c 'import json,sys; print(json.load(sys.stdin)["graphSchema"]["ok"])')
+```
+
 ---
 
 ## Related docs

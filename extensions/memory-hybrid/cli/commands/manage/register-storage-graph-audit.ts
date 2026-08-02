@@ -267,6 +267,24 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
           lastReembedProgress,
         },
       );
+      // #2226: a false/degraded graph-schema check previously never reached GlitchTip or a
+      // non-zero exit code on its own (only report.warnings/report.errors, which a caller has to
+      // remember to inspect) — health-check cron wrappers polling exit code alone saw nothing.
+      // Report it the same way every other structural failure in this handler does.
+      if (report.graphSchema && !report.graphSchema.ok) {
+        capturePluginError(
+          new Error(
+            `Memory graph schema check failed: tableExists=${report.graphSchema.tableExists}, ` +
+              `missingColumns=[${report.graphSchema.missingColumns.join(",")}], ` +
+              `missingIndexes=[${report.graphSchema.missingIndexes.join(",")}]`,
+          ),
+          {
+            operation: "audit-health-graph-schema",
+            subsystem: "storage-graph-audit",
+            severity: report.graphSchema.tableExists ? "warning" : "error",
+          },
+        );
+      }
       const strict = opts?.strict === true || opts?.strictErrors === true;
       const strictErrorsOnly = opts?.strictErrors === true && opts?.strict !== true;
       const exitInfo = buildAuditHealthExitInfo({
