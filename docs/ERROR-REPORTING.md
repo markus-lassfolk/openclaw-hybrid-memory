@@ -533,6 +533,14 @@ If you're auditing this feature for security/privacy compliance, verify:
 2. Add try/catch blocks to handle expected errors gracefully
 3. Use rate limiting in GlitchTip/Sentry
 
+### `Failed to get next batch from stream: lance error: Not found: ....lance` never shows up in GlitchTip, even though `openclaw hybrid-mem verify` warns about it
+
+**Cause:** This is the LanceDB semantic-query-cache "missing fragment" read-stream error (GlitchTip #34 / issue #2213, recurred as #2227) — a stale version manifest for the `semantic_query_cache.lance` table still references a data fragment file no longer on disk. `services/error-reporter/noisy-errors.ts` intentionally drops this exact message from GlitchTip on every occurrence (`shouldDropNoisyError` / `isLanceMissingFragmentError`), because `backends/vector-db/vector-db-class.ts` self-heals it automatically: on the first occurrence it calls `checkoutLatest()` to re-resolve the table handle to the latest version manifest (which, per this failure's own diagnosis, does not reference the missing fragment), falling back to a full drop+recreate rebuild if `checkoutLatest()` itself fails — rate-limited so a persistently broken manifest is repaired once per cooldown window rather than on every cache lookup/store call.
+
+**Impact while self-healing:** cache lookups/stores fail silently and fall back to a direct (uncached) vector search — slower, but no data loss (the semantic query cache is a pure performance optimization, not source-of-truth data).
+
+**How to check it happened:** `openclaw hybrid-mem verify` reports a warning ("Semantic query cache self-heal triggered N time(s)...") whenever the self-heal path has run, and fires a single, deduplicated `subsystem=vector operation=semantic-query-cache-integrity` GlitchTip alert via `services/vector-backend-observability.ts`'s `reportSemanticQueryCacheIntegrityIssue()` — this is the intended way to observe the condition, not the per-call raw LanceDB error.
+
 ---
 
 ## References

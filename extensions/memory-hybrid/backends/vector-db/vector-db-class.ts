@@ -10,11 +10,13 @@ import * as lancedb from "@lancedb/lancedb";
 import type { DecayClass, MemoryCategory } from "../../config.js";
 import { withEmbedWriteLock } from "../../services/embeddings/shared.js";
 import { capturePluginError } from "../../services/error-reporter.js";
+import { isLanceMissingFragmentError } from "../../services/error-reporter/noisy-errors.js";
 import type { SearchResult } from "../../types/memory.js";
 import {
   LANCE_NO_VECTOR_COL_MSG,
   LANCE_VECTOR_SEARCH_MAX_LIMIT,
   VECTORDB_COUNT_TIMEOUT_MS,
+  VECTORDB_FRAGMENT_RECOVERY_COOLDOWN_MS,
   VECTORDB_GET_VECTORS_TIMEOUT_MS,
   VECTORDB_INIT_MAX_RETRIES,
   VECTORDB_INIT_RETRY_DELAY_MS,
@@ -157,6 +159,31 @@ export class VectorDB {
     lastFilterKey: null,
     lastRemovedRows: 0,
     lastPrunedAtEpochMs: null,
+  };
+  /**
+   * Tracks the LanceDB "missing fragment" read-stream failure on the semantic query cache table
+   * (GlitchTip #34 / issue #2213, recurred as #2227: a stale version manifest still references a
+   * data fragment file that is absent from disk). Used to rate-limit self-heal attempts
+   * (checkoutLatest()/rebuild — see attemptSemanticCacheFragmentRecovery()) and to surface a
+   * health-check signal (services/vector-backend-observability.ts) since the per-call error itself
+   * is intentionally filtered out of GlitchTip as noisy/expected (services/error-reporter/noisy-errors.ts).
+   */
+  private semanticCacheFragmentErrorState: {
+    /** Total occurrences observed since this VectorDB instance was constructed. */
+    occurrences: number;
+    firstAtEpochMs: number | null;
+    lastAtEpochMs: number | null;
+    /** Epoch ms of the last self-heal attempt, for cooldown rate-limiting. */
+    lastRecoveryAttemptEpochMs: number | null;
+    lastRecoveryAction: "checkout" | "rebuild" | null;
+    lastRecoverySucceeded: boolean | null;
+  } = {
+    occurrences: 0,
+    firstAtEpochMs: null,
+    lastAtEpochMs: null,
+    lastRecoveryAttemptEpochMs: null,
+    lastRecoveryAction: null,
+    lastRecoverySucceeded: null,
   };
   /** Last successful optimize() run result for observability surfaces. */
   private lastOptimizeTelemetry: {
@@ -664,6 +691,75 @@ export class VectorDB {
 
   private isKnownVectorSchemaError(err: unknown): boolean {
     return err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG);
+  }
+
+  /**
+   * Self-heal for the LanceDB "missing fragment" read-stream error on the semantic query cache
+   * table (GlitchTip #34 / issue #2213, recurred as #2227). Called from getSemanticQueryCacheMatch()
+   * and storeSemanticQueryCache()'s catch blocks when isLanceMissingFragmentError() matches.
+   *
+   * Issue #2213's original fix only serialized the cache rebuild against concurrent readers/writers
+   * (a real but different race) and classified the error as noisy so it stopped reaching GlitchTip.
+   * Neither change helps when the *current* table handle is genuinely stuck resolving a stale
+   * version manifest that references a fragment file no longer on disk — every call fails the same
+   * way, forever, just silently. This method instead tries to recover:
+   *
+   *  1. `checkoutLatest()` — cheap, in-place, non-destructive. Per #2227's root-cause analysis,
+   *     newer table versions do not reference the missing fragment, so re-resolving the handle to
+   *     the latest version manifest is expected to fix the common case without losing any rows.
+   *  2. If that itself throws (e.g. no readable manifest at all), fall back to the existing
+   *     drop+recreate rebuildSemanticQueryCacheTable() repair path used for schema errors. This
+   *     loses cached rows, but the semantic query cache is a pure performance optimization, never
+   *     source-of-truth data, so an empty cache is an acceptable cost for restoring availability.
+   *
+   * Rate-limited via VECTORDB_FRAGMENT_RECOVERY_COOLDOWN_MS so a persistently broken manifest
+   * triggers one repair attempt per cooldown window rather than one per cache lookup/store call.
+   */
+  private async attemptSemanticCacheFragmentRecovery(err: unknown): Promise<void> {
+    const state = this.semanticCacheFragmentErrorState;
+    const now = Date.now();
+    state.occurrences += 1;
+    if (state.firstAtEpochMs === null) state.firstAtEpochMs = now;
+    state.lastAtEpochMs = now;
+
+    if (
+      state.lastRecoveryAttemptEpochMs !== null &&
+      now - state.lastRecoveryAttemptEpochMs < VECTORDB_FRAGMENT_RECOVERY_COOLDOWN_MS
+    ) {
+      // A repair attempt already ran within the cooldown window — skip hammering
+      // checkoutLatest()/rebuild on every call while the table is (still) broken.
+      return;
+    }
+    state.lastRecoveryAttemptEpochMs = now;
+
+    const table = this.semanticQueryCacheTable;
+    if (!table) return;
+
+    try {
+      await table.checkoutLatest();
+      state.lastRecoveryAction = "checkout";
+      state.lastRecoverySucceeded = true;
+      this.logWarn(
+        `memory-hybrid: semantic query cache self-heal: checked out latest table version after a ` +
+          `missing-fragment read error (${state.occurrences} occurrence(s) so far): ${err}`,
+      );
+      return;
+    } catch (checkoutErr) {
+      this.logWarn(
+        `memory-hybrid: semantic query cache checkoutLatest() self-heal failed (${checkoutErr}); ` +
+          "falling back to full rebuild.",
+      );
+    }
+
+    try {
+      await this.rebuildSemanticQueryCacheTable(`missing-fragment read error (self-heal): ${String(err)}`);
+      state.lastRecoveryAction = "rebuild";
+      state.lastRecoverySucceeded = true;
+    } catch (rebuildErr) {
+      state.lastRecoveryAction = "rebuild";
+      state.lastRecoverySucceeded = false;
+      this.logWarn(`memory-hybrid: semantic query cache rebuild self-heal also failed: ${rebuildErr}`);
+    }
   }
 
   /**
@@ -1335,6 +1431,13 @@ export class VectorDB {
         } catch (repairErr) {
           this.logWarn(`memory-hybrid: semantic query cache repair failed: ${repairErr}`);
         }
+      } else if (isLanceMissingFragmentError(err)) {
+        // GlitchTip #34 / issue #2213, recurred as #2227: this message is intentionally dropped
+        // by shouldDropNoisyError() (never reaches GlitchTip on its own), so unlike the branch
+        // below we don't call capturePluginError here — instead trigger self-heal. Persistence of
+        // this condition is surfaced separately via getSemanticCacheFragmentErrorTelemetry() /
+        // services/vector-backend-observability.ts's health check, not per-call reporting.
+        await this.attemptSemanticCacheFragmentRecovery(err);
       } else {
         capturePluginError(err as Error, {
           operation: "semantic-query-cache-lookup",
@@ -1387,6 +1490,10 @@ export class VectorDB {
         } catch (repairErr) {
           this.logWarn(`memory-hybrid: semantic query cache repair failed: ${repairErr}`);
         }
+      } else if (isLanceMissingFragmentError(err)) {
+        // See the matching branch in getSemanticQueryCacheMatch() above for why this triggers
+        // self-heal instead of capturePluginError (GlitchTip #34 / #2213, recurred as #2227).
+        await this.attemptSemanticCacheFragmentRecovery(err);
       } else {
         capturePluginError(err as Error, {
           operation: "semantic-query-cache-store",
@@ -2313,6 +2420,24 @@ export class VectorDB {
       lastRemovedRows: this.semanticQueryCachePruneTelemetry.lastRemovedRows,
       lastPrunedAtEpochMs: this.semanticQueryCachePruneTelemetry.lastPrunedAtEpochMs,
     };
+  }
+
+  /**
+   * Semantic query cache "missing fragment" read-stream error telemetry (GlitchTip #34 / issue
+   * #2213, recurred as #2227). `occurrences` stays 0 for a healthy cache; a non-zero count with
+   * `lastRecoverySucceeded: false` (or a recent `lastAtEpochMs` after a self-heal attempt) means
+   * self-heal has not been able to fully clear the condition and it's worth alerting an operator —
+   * see services/vector-backend-observability.ts's health check, which surfaces exactly this.
+   */
+  getSemanticCacheFragmentErrorTelemetry(): {
+    occurrences: number;
+    firstAtEpochMs: number | null;
+    lastAtEpochMs: number | null;
+    lastRecoveryAttemptEpochMs: number | null;
+    lastRecoveryAction: "checkout" | "rebuild" | null;
+    lastRecoverySucceeded: boolean | null;
+  } {
+    return { ...this.semanticCacheFragmentErrorState };
   }
 
   /**

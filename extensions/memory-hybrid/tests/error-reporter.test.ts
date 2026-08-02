@@ -869,6 +869,43 @@ describe("Error Reporter", () => {
       expect(shouldDropNoisyError(new Error("Access denied to file /tmp/test.txt"))).toBe(false);
     });
   });
+
+  describe("isLanceMissingFragmentError (GlitchTip #34 / issue #2213, recurred as #2227)", () => {
+    it("matches the LanceDB missing-fragment read-stream error message", async () => {
+      const { isLanceMissingFragmentError } = await import("../services/error-reporter.js");
+
+      expect(
+        isLanceMissingFragmentError(
+          new Error(
+            "Failed to get next batch from stream: lance error: Not found: /home/user/.openclaw/memory/lance/" +
+              "semantic_query_cache.lance/data/12345678-abcd-4ef0-9abc-1234567890ab.lance, path not found",
+          ),
+        ),
+      ).toBe(true);
+      expect(isLanceMissingFragmentError(new Error("Failed to get next batch from stream"))).toBe(true);
+      expect(isLanceMissingFragmentError(new Error("lance error: Not found: some/other/path.lance"))).toBe(true);
+    });
+
+    it("does not match unrelated errors", async () => {
+      const { isLanceMissingFragmentError } = await import("../services/error-reporter.js");
+
+      expect(isLanceMissingFragmentError(new Error("ECONNREFUSED"))).toBe(false);
+      expect(isLanceMissingFragmentError(new TypeError("Cannot read properties of undefined"))).toBe(false);
+      expect(isLanceMissingFragmentError(new Error("No vector column found"))).toBe(false);
+      expect(isLanceMissingFragmentError(undefined)).toBe(false);
+      expect(isLanceMissingFragmentError("not an error")).toBe(false);
+    });
+
+    it("classifies every case shouldDropNoisyError treats as this signature identically (they share the same detection regex by design)", async () => {
+      const { isLanceMissingFragmentError, shouldDropNoisyError } = await import("../services/error-reporter.js");
+
+      const err = new Error(
+        "Failed to get next batch from stream: lance error: Not found: .../data/frag.lance, path not found",
+      );
+      expect(isLanceMissingFragmentError(err)).toBe(true);
+      expect(shouldDropNoisyError(err)).toBe(true);
+    });
+  });
 });
 
 describe("UnconfiguredProviderError suppression", () => {

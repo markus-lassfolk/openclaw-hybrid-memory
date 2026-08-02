@@ -2,6 +2,21 @@ import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync } from "
 import { join, resolve } from "node:path";
 import type { VectorDB } from "../backends/vector-db.js";
 import { nowIso } from "../utils/dates.js";
+import { capturePluginError } from "./error-reporter.js";
+
+/**
+ * Semantic query cache "missing fragment" read-stream error telemetry shape, shared by
+ * `VectorDB.getSemanticCacheFragmentErrorTelemetry()`, the observability snapshot, and the
+ * integrity check below (GlitchTip #34 / issue #2213, recurred as #2227).
+ */
+export type SemanticCacheFragmentErrorTelemetry = {
+  occurrences: number;
+  firstAtEpochMs: number | null;
+  lastAtEpochMs: number | null;
+  lastRecoveryAttemptEpochMs: number | null;
+  lastRecoveryAction: "checkout" | "rebuild" | null;
+  lastRecoverySucceeded: boolean | null;
+};
 
 type ProcStatusSnapshot = {
   vmRssKb: number | null;
@@ -72,6 +87,12 @@ export type VectorBackendObservability = {
       lastRemovedRows: number;
       lastPrunedAtEpochMs: number | null;
     } | null;
+    /**
+     * LanceDB "missing fragment" read-stream error telemetry on the semantic query cache table
+     * (GlitchTip #34 / issue #2213, recurred as #2227). `occurrences: 0` means healthy. See
+     * `evaluateSemanticQueryCacheIntegrity` / `reportSemanticQueryCacheIntegrityIssue` below.
+     */
+    cacheFragmentErrors: SemanticCacheFragmentErrorTelemetry | null;
     lastOptimize: {
       ranAtEpochMs: number | null;
       compacted: number;
@@ -253,6 +274,7 @@ export async function collectVectorBackendObservability(opts: {
       lastRemovedRows: number;
       lastPrunedAtEpochMs: number | null;
     };
+    getSemanticCacheFragmentErrorTelemetry?: () => SemanticCacheFragmentErrorTelemetry;
     getLastOptimizeTelemetry?: () => {
       ranAtEpochMs: number | null;
       compacted: number;
@@ -284,6 +306,7 @@ export async function collectVectorBackendObservability(opts: {
   const cacheSize = basePath ? measurePathBytes(cachePath) : { bytes: null, scannedEntries: 0, truncated: false };
   const totalSizeBytes = opts.lanceBytes ?? null;
   const cacheTelemetry = vectorDbWithObs.getSemanticQueryCacheTelemetry?.() ?? null;
+  const cacheFragmentErrorTelemetry = vectorDbWithObs.getSemanticCacheFragmentErrorTelemetry?.() ?? null;
 
   return {
     capturedAt: nowIso(),
@@ -316,6 +339,7 @@ export async function collectVectorBackendObservability(opts: {
               lastRemovedRows: cacheTelemetry.lastRemovedRows,
               lastPrunedAtEpochMs: cacheTelemetry.lastPrunedAtEpochMs,
             },
+      cacheFragmentErrors: cacheFragmentErrorTelemetry,
       lastOptimize: vectorDbWithObs.getLastOptimizeTelemetry?.() ?? null,
       bounds: vectorDbWithObs.getRuntimeBounds?.() ?? null,
     },
@@ -344,4 +368,68 @@ export async function collectVectorBackendObservability(opts: {
         : [],
     },
   };
+}
+
+export type SemanticCacheIntegrityStatus = SemanticCacheFragmentErrorTelemetry & {
+  /** True when no missing-fragment error has been observed since this VectorDB instance started. */
+  healthy: boolean;
+};
+
+const EMPTY_FRAGMENT_ERROR_TELEMETRY: SemanticCacheFragmentErrorTelemetry = {
+  occurrences: 0,
+  firstAtEpochMs: null,
+  lastAtEpochMs: null,
+  lastRecoveryAttemptEpochMs: null,
+  lastRecoveryAction: null,
+  lastRecoverySucceeded: null,
+};
+
+/**
+ * Reads the semantic query cache's "missing fragment" self-heal telemetry (GlitchTip #34 / issue
+ * #2213, recurred as #2227) off a VectorDB instance without side effects. `healthy` is true only
+ * when no occurrence has been observed at all — a self-heal that *succeeded* still shows
+ * `occurrences > 0` (informational: the table was repaired) but is reported as `healthy: true` via
+ * `lastRecoverySucceeded`.
+ */
+export function evaluateSemanticQueryCacheIntegrity(vectorDb: VectorDB): SemanticCacheIntegrityStatus {
+  const vectorDbWithTelemetry = vectorDb as unknown as {
+    getSemanticCacheFragmentErrorTelemetry?: () => SemanticCacheFragmentErrorTelemetry;
+  };
+  const telemetry = vectorDbWithTelemetry.getSemanticCacheFragmentErrorTelemetry?.() ?? EMPTY_FRAGMENT_ERROR_TELEMETRY;
+  return {
+    ...telemetry,
+    healthy: telemetry.occurrences === 0 || telemetry.lastRecoverySucceeded === true,
+  };
+}
+
+/**
+ * Health check for remediation idea #4 from issue #2227: fire a single, deduplicated GlitchTip
+ * alert when the semantic query cache has had to run its "missing fragment" self-heal path, since
+ * the underlying per-call error is intentionally dropped as noisy
+ * (services/error-reporter/noisy-errors.ts) and would otherwise never reach an operator. Intended
+ * to be called from a periodic surface (maintenance/health cron, `openclaw hybrid-mem verify`) —
+ * capturePluginError's own fingerprint-based dedupe keeps repeated calls from spamming GlitchTip.
+ *
+ * A no-op (no report, `healthy: true`) when the cache has never hit this error class.
+ */
+export function reportSemanticQueryCacheIntegrityIssue(vectorDb: VectorDB): SemanticCacheIntegrityStatus {
+  const status = evaluateSemanticQueryCacheIntegrity(vectorDb);
+  if (status.occurrences === 0) return status;
+
+  const first = status.firstAtEpochMs ? new Date(status.firstAtEpochMs).toISOString() : "unknown";
+  const last = status.lastAtEpochMs ? new Date(status.lastAtEpochMs).toISOString() : "unknown";
+  capturePluginError(
+    new Error(
+      `Semantic query cache hit the LanceDB "missing fragment" read-stream error ${status.occurrences} ` +
+        `time(s) (first=${first}, last=${last}). Last self-heal action=${status.lastRecoveryAction ?? "none"} ` +
+        `succeeded=${status.lastRecoverySucceeded ?? "unknown"}.`,
+    ),
+    {
+      operation: "semantic-query-cache-integrity",
+      subsystem: "vector",
+      severity: status.healthy ? "warning" : "error",
+      fingerprint: ["semantic-query-cache-integrity"],
+    },
+  );
+  return status;
 }

@@ -128,6 +128,14 @@ export const LANCE_NO_VECTOR_COL_MSG = "No vector column found";
 /** Timeout (ms) for vectorDB reader drain. */
 export const VECTORDB_READER_DRAIN_TIMEOUT_MS = 30_000;
 
+/**
+ * Rate limit (ms) between semantic query cache self-heal attempts (checkoutLatest()/rebuild)
+ * after the LanceDB "missing fragment" read-stream error (GlitchTip #34 / issue #2213, recurred
+ * as #2227). Without this, a persistently broken version manifest would trigger a repair attempt
+ * on every single cache lookup/store call instead of self-healing once and backing off.
+ */
+export const VECTORDB_FRAGMENT_RECOVERY_COOLDOWN_MS = 60_000;
+
 /** Timeout (ms) for VectorDB initialization (connect + table open). */
 export const VECTORDB_INIT_TIMEOUT_MS = 60_000;
 
