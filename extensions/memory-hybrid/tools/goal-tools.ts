@@ -252,6 +252,18 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           };
         } catch (err) {
           await broker.release(record.id, "launch_failed");
+          const errorCode =
+            err && typeof err === "object" && "code" in err && typeof err.code === "string" ? err.code : undefined;
+          if (errorCode === "OPENCLAW_SUBAGENT_RUNTIME_REQUEST_SCOPE")
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: "Managed dispatch requires a gateway request-scoped subagent runtime; reservation released.",
+                },
+              ],
+              details: { error: "subagent_runtime_request_scope_unavailable" },
+            };
           return {
             content: [{ type: "text" as const, text: "Managed dispatch launch failed; reservation released." }],
             details: { error: "launch_failed" },

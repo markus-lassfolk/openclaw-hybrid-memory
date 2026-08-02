@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 type ToolResult = { details?: Record<string, unknown> };
 type ToolExecute = (id: string, params: Record<string, unknown>) => Promise<ToolResult>;
+type RegisteredTools = Map<string, { execute: ToolExecute }>;
 import { hybridConfigSchema } from "../config.js";
 import { createGoal } from "../services/goal-registry.js";
 import type { GoalDispatchPolicy } from "../services/goal-dispatch-authorization.js";
@@ -39,6 +40,11 @@ describe("goal_dispatch broker policy selection", () => {
   let workspaceRoot: string;
   let goalsDir: string;
   let dispatch: ToolExecute;
+  let tools: RegisteredTools;
+  let api: {
+    registerTool(definition: { name: string; execute: ToolExecute }): void;
+    runtime: { subagent: { run: typeof run } };
+  };
   const run = vi.fn(async () => ({ runId: "run-1" }));
 
   beforeEach(async () => {
@@ -49,8 +55,8 @@ describe("goal_dispatch broker policy selection", () => {
       embedding: { apiKey: "sk-test-key-that-is-long-enough-to-pass", model: "text-embedding-3-small" },
       goalStewardship: { enabled: true, goalsDir: "state/goals" },
     });
-    const tools = new Map<string, { execute: ToolExecute }>();
-    const api = {
+    tools = new Map<string, { execute: ToolExecute }>();
+    api = {
       registerTool(definition: { name: string; execute: ToolExecute }) {
         tools.set(definition.name, { execute: definition.execute });
       },
@@ -94,10 +100,10 @@ describe("goal_dispatch broker policy selection", () => {
       defaults,
     );
   }
-  const base = (goalId: string, agent = "governance-reader") => ({
+  const base = (goalId: string, agent = "governance-reader", runtime: "subagent" | "acp" = "acp") => ({
     goal_id: goalId,
     agent_id: agent,
-    runtime: "acp",
+    runtime,
     task: "read",
     session_key: "session",
   });
@@ -152,5 +158,62 @@ describe("goal_dispatch broker policy selection", () => {
     expect(allowed.details?.ok).toBe(true);
     const denied = await dispatch("test", base(g.id, "legacy-reader"));
     expect(denied.details).toMatchObject({ error: "dispatch_policy_denied", task_class: "managed" });
+  });
+
+  it("launches an authorized managed request through the injected request-scoped runtime and records it", async () => {
+    const g = await goal();
+    const result = await dispatch("test", {
+      ...base(g.id, "legacy-reader", "subagent"),
+      read_only: true,
+    });
+    expect(run).toHaveBeenCalledWith({
+      sessionKey: "session",
+      message: "read",
+      idempotencyKey: expect.any(String),
+      deliver: false,
+    });
+    expect(result.details).toMatchObject({ ok: true, run_id: "run-1" });
+    const ledger = JSON.parse(
+      await (await import("node:fs/promises")).readFile(join(goalsDir, "dispatch-broker", "ledger.json"), "utf8"),
+    );
+    expect(ledger.dispatches[result.details?.dispatch_id as string]).toMatchObject({
+      status: "launched",
+      runId: "run-1",
+    });
+  });
+
+  it("reports a missing request-scoped runtime binding and releases its reservation", async () => {
+    api.runtime.subagent.run = vi.fn(async () => {
+      const error = Object.assign(
+        new Error("Plugin runtime subagent methods are only available during a gateway request."),
+        {
+          code: "OPENCLAW_SUBAGENT_RUNTIME_REQUEST_SCOPE",
+        },
+      );
+      throw error;
+    });
+    const g = await goal();
+    const result = await dispatch("test", {
+      ...base(g.id, "legacy-reader", "subagent"),
+      read_only: true,
+    });
+    expect(result.details).toEqual({ error: "subagent_runtime_request_scope_unavailable" });
+    const ledger = JSON.parse(
+      await (await import("node:fs/promises")).readFile(join(goalsDir, "dispatch-broker", "ledger.json"), "utf8"),
+    );
+    expect(Object.values(ledger.dispatches)).toContainEqual(
+      expect.objectContaining({ status: "released", reason: "launch_failed" }),
+    );
+  });
+
+  it("never invokes the runtime when policy denies the request", async () => {
+    const g = await goal();
+    const result = await dispatch("test", {
+      ...base(g.id, "writer", "subagent"),
+      task_class: "governance_readonly",
+      read_only: true,
+    });
+    expect(result.details?.error).toBe("dispatch_policy_denied");
+    expect(run).not.toHaveBeenCalled();
   });
 });
