@@ -215,3 +215,110 @@ describe("UnconfiguredProviderError guard with mocked fetch", () => {
     vi.useRealTimers();
   });
 });
+
+describe("Outdated-release telemetry policy (#2228)", () => {
+  beforeAll(() => {
+    // The preceding describe block's afterAll() calls vi.unstubAllGlobals(), which would
+    // detach `fetch` from `mockFetch` before these tests run — re-stub it here.
+    vi.stubGlobal("fetch", mockFetch);
+  });
+
+  beforeEach(() => {
+    mockFetch.mockClear();
+    setEnv("OPENCLAW_NODE_NAME", undefined);
+  });
+
+  afterAll(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("still reports a new/unmapped error when the installed release is behind the latest published version", async () => {
+    const { initErrorReporter, capturePluginError, flushErrorReporter, resetErrorDedupForTests } = await import(
+      "../services/error-reporter.js"
+    );
+    resetErrorDedupForTests();
+
+    // Simulate an outdated install: this reporter is only ever told its own version — being
+    // "behind latest" is a property plugin-service.ts detects separately (npm/GitHub lookup)
+    // and, per #2228, no longer feeds back into muting the reporter.
+    await initErrorReporter(
+      {
+        enabled: true,
+        consent: true,
+        mode: "community",
+        dsn: "https://testguardkey@example.com/1",
+        maxBreadcrumbs: 0,
+        sampleRate: 1.0,
+      },
+      "2026.7.226", // outdated plugin version (latest published was 2026.7.228 in the issue)
+    );
+
+    const eventId = capturePluginError(new Error("brand new failure, not previously seen"), {
+      operation: "test-outdated-still-reports",
+    });
+    expect(eventId).toEqual(expect.any(String));
+
+    await flushErrorReporter(500);
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [, requestInit] = mockFetch.mock.calls[0];
+    const payload = JSON.parse(String(requestInit?.body ?? "{}"));
+    // Every event retains a release/plugin-version tag for GlitchTip filtering and grouping.
+    expect(payload.release).toBe("openclaw-hybrid-memory@2026.7.226");
+  });
+
+  it("still drops a fingerprint that resolvedIssues marks fixed in a later release (existing noise control, unaffected)", async () => {
+    const { initErrorReporter, capturePluginError, flushErrorReporter, resetErrorDedupForTests } = await import(
+      "../services/error-reporter.js"
+    );
+    resetErrorDedupForTests();
+
+    await initErrorReporter(
+      {
+        enabled: true,
+        consent: true,
+        mode: "community",
+        dsn: "https://testguardkey@example.com/1",
+        maxBreadcrumbs: 0,
+        sampleRate: 1.0,
+        resolvedIssues: { "Error:Known flaky timeout": "2026.7.228" },
+      },
+      "2026.7.226", // outdated, and the reporting fingerprint was fixed in 2026.7.228
+    );
+
+    capturePluginError(new Error("Known flaky timeout"), { operation: "test-resolved-issue-still-dropped" });
+    await flushErrorReporter(500);
+
+    // Fingerprint-scoped suppression (shouldDropForResolvedIssue) still applies — this is the
+    // narrow mechanism the issue asks to keep, unlike the removed release-wide mute.
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("reports an unrelated error from the same outdated release even when resolvedIssues has an entry for a different fingerprint", async () => {
+    const { initErrorReporter, capturePluginError, flushErrorReporter, resetErrorDedupForTests } = await import(
+      "../services/error-reporter.js"
+    );
+    resetErrorDedupForTests();
+
+    await initErrorReporter(
+      {
+        enabled: true,
+        consent: true,
+        mode: "community",
+        dsn: "https://testguardkey@example.com/1",
+        maxBreadcrumbs: 0,
+        sampleRate: 1.0,
+        resolvedIssues: { "Error:Known flaky timeout": "2026.7.228" },
+      },
+      "2026.7.226",
+    );
+
+    const eventId = capturePluginError(new Error("totally unrelated failure"), {
+      operation: "test-unrelated-error-not-suppressed",
+    });
+    expect(eventId).toEqual(expect.any(String));
+
+    await flushErrorReporter(500);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});

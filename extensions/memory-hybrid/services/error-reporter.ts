@@ -669,7 +669,6 @@ let initialized = false;
 let logger: any = console; // Default fallback to console
 const errorDedup = new Map<string, number>(); // Rate limiting: fingerprint -> timestamp
 const CHRONIC_FINGERPRINT_DEDUPE_MS = 24 * 60 * 60 * 1000;
-let telemetryMuteReason: string | null = null;
 
 /** Test-only: clear in-memory rate-limit state between cases. */
 export function resetErrorDedupForTests(): void {
@@ -678,14 +677,6 @@ export function resetErrorDedupForTests(): void {
 
 function buildFingerprintKey(fingerprint: string[]): string {
   return fingerprint.map((part) => scrubString(String(part))).join(":");
-}
-
-export function setErrorReporterMuted(muted: boolean, reason?: string): void {
-  telemetryMuteReason = muted ? (reason ?? "muted") : null;
-}
-
-export function getErrorReporterMuteReason(): string | null {
-  return telemetryMuteReason;
 }
 
 function resolveNodeName(env: NodeJS.ProcessEnv = process.env): string | undefined {
@@ -1123,7 +1114,6 @@ export function capturePluginError(
   },
 ): string | undefined {
   if (shouldDropNoisyError(error)) return undefined;
-  if (telemetryMuteReason) return undefined;
 
   if (!initialized || !reporter) {
     return undefined;
@@ -1226,9 +1216,6 @@ export function testErrorReporter(): { ok: boolean; error?: string } {
  * Capture a test error to verify reporting works
  */
 export function captureTestError(): string | null {
-  if (telemetryMuteReason) {
-    return null;
-  }
   if (!initialized || !reporter) {
     return null;
   }

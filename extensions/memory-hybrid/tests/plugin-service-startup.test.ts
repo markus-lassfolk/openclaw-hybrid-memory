@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hybridConfigSchema } from "../config.js";
 import { _testing } from "../index.js";
-import { capturePluginError, getErrorReporterMuteReason, setErrorReporterMuted } from "../services/error-reporter.js";
+import { capturePluginError } from "../services/error-reporter.js";
 import * as errorReporter from "../services/error-reporter.js";
 import * as eventLoopHealth from "../utils/event-loop-health.js";
 import { type PluginServiceContext, createPluginService } from "../setup/plugin-service.js";
@@ -178,7 +178,6 @@ describe("createPluginService startup — version check wiring", () => {
   });
 
   afterEach(() => {
-    setErrorReporterMuted(false);
     vi.unstubAllGlobals();
     clearTimers(timers);
     rmSync(tmpDir, { recursive: true, force: true });
@@ -244,7 +243,7 @@ describe("createPluginService startup — version check wiring", () => {
     (ctx.vectorDb as InstanceType<typeof VectorDB>).close();
   });
 
-  it("mutes telemetry and warns when the published plugin version is newer", async () => {
+  it("keeps telemetry active (release-tagged) and warns when the published plugin version is newer (#2228)", async () => {
     const api = makeMockApi(MIN_OPENCLAW_VERSION);
     // Must stay numerically above package.json plugin version so the "outdated" path still fires after each release bump.
     const publishedNewer = "2099.1.1";
@@ -256,6 +255,7 @@ describe("createPluginService startup — version check wiring", () => {
       if (new URL(url).hostname === "api.github.com") {
         return new Response(JSON.stringify({ tag_name: `v${publishedNewer}` }), { status: 200 });
       }
+      // Any other host (the GlitchTip store endpoint) — simulate a successful delivery.
       return new Response("", { status: 200 });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -267,9 +267,15 @@ describe("createPluginService startup — version check wiring", () => {
     await service.start();
     await service._getVersionCheckPromise();
 
-    expect(getErrorReporterMuteReason()).toContain(`outdated-plugin:${publishedNewer}`);
-    expect(capturePluginError(new Error("should stay local"), { operation: "startup-version-check" })).toBeUndefined();
+    // Being outdated must NOT globally mute telemetry (#2228) — a new/unmapped error reported
+    // while the plugin is behind the latest published release should still get an event ID
+    // (i.e. still reach the reporter), carrying a release/plugin-version tag for GlitchTip.
+    const eventId = capturePluginError(new Error("new unmapped error while outdated"), {
+      operation: "startup-version-check",
+    });
+    expect(eventId).toEqual(expect.any(String));
 
+    // The log-only "update available" nudge is untouched and still fires.
     const warnCalls = api.logger.warn.mock.calls.map((c: unknown[]) => c[0] as string);
     expect(warnCalls.some((msg) => msg.includes("update available") && msg.includes(publishedNewer))).toBe(true);
 

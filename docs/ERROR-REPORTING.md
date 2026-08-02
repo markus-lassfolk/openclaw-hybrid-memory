@@ -64,6 +64,7 @@ You can also switch to a **self-hosted** GlitchTip or Sentry instance by setting
 | `sampleRate` | number | No | `1.0` | Sample rate (0.0–1.0). 1.0 = report all errors |
 | `botId` | string | No | — | **Optional.** Stable identifier for this bot instance (for example a UUID like `550e8400-e29b-41d4-a716-446655440000` or a human-readable ID such as `agent-706`). Sent as `agent_id` / `bot_id` tags so GlitchTip can **group and filter errors by agent**. Omit to not tag by agent. If unset, the plugin uses OpenClaw's runtime context (`api.context.agentId`) when available. |
 | `botName` | string | No | — | **Optional.** Friendly name for this bot. Sent as `agent_name` / `bot_name` tags so reports show a readable name in GlitchTip. Max 64 characters. |
+| `resolvedIssues` | object (map) | No | — | **Optional.** Map of `"<ErrorType>:<message-prefix>"` fingerprint → the plugin version that fixed it. Events matching the fingerprint whose `release` is older than the fix version are dropped. This is the mechanism for suppressing noise from a specific known-fixed bug — see [Outdated releases still report telemetry](#outdated-releases-still-report-telemetry-2228). |
 
 At plugin init the reporter applies `server_name` plus `node`, `agent_id`, `agent_name`, `bot_id`, and `bot_name` tags. `server_name` / `node` resolve from `OPENCLAW_NODE_NAME` when set. Example filters: `node:Maeve`, `agent_name:Doris`.
 
@@ -173,6 +174,54 @@ Omit either or both if you do not need them.
 - ❌ Device identifiers beyond the configured node label (the reporter sends only `server_name` / `node`, not full device metadata)
 
 **Note on “user identity”:** the plugin does not set a Sentry user, but if an upstream host process ever provides `event.user`, the reporter **scrubs and forwards only** `user.id` and `user.username` (to support GlitchTip "Users Affected"). No emails/IPs are ever sent.
+
+---
+
+## Outdated releases still report telemetry (#2228)
+
+Every event carries a `release` tag — `openclaw-hybrid-memory@<plugin-version>` (e.g. `openclaw-hybrid-memory@2026.7.226`) — regardless of whether that version is the latest one published. **Being behind the latest release does not silence error reporting.**
+
+An earlier version of the plugin muted *all* telemetry from an install the moment it noticed a newer version had been published. That global mute has been removed: it was silencing operationally valuable production failures on exactly the hosts most likely to need attention — outdated ones (see [#2228](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2228)).
+
+What still happens when your install is behind the latest published version:
+
+- **Telemetry keeps flowing.** New/unmapped errors from an outdated install are still sent to GlitchTip, tagged with the installed plugin's `release` and (when configured) `agent_id`/`bot_id`/`node`.
+- **The update nudge is unchanged.** A log-only "update available" message (`errorReporting.updateNudge`) still appears periodically in your OpenClaw gateway logs. It only logs locally — it never affects what is sent to GlitchTip.
+- **Known-fixed noise is still filtered**, but only per-fingerprint via `errorReporting.resolvedIssues` (below), never by muting an entire release wholesale.
+
+### Filtering/grouping stale-release noise in GlitchTip
+
+Since every event's `release` tag identifies the exact plugin version that produced it, use GlitchTip's own filtering/alerting instead of relying on the plugin to mute anything:
+
+- **Filter a saved search or alert policy** on `release:openclaw-hybrid-memory@<version>` to view, or silence notifications for, events from one specific version.
+- **Group the issue list by `release`** to see whether a spike in errors is concentrated on old, already-updated versions versus the current one.
+- **Combine with `agent_id` / `bot_id` / `node`** tags to scope down to "which hosts on old versions are still failing".
+
+### Suppressing a specific known-fixed error (`resolvedIssues`)
+
+If a specific bug is fixed in a later release and you don't want continued reports of it from hosts still running an older version, add it to `errorReporting.resolvedIssues` — a map from error fingerprint (`"<ErrorType>:<message-prefix>"`, matching GlitchTip's own grouping key) to the version it was fixed in:
+
+```json
+{
+  "plugins": {
+    "openclaw-hybrid-memory": {
+      "errorReporting": {
+        "resolvedIssues": {
+          "TypeError:Cannot read properties of null": "2026.3.110"
+        }
+      }
+    }
+  }
+}
+```
+
+Or via the CLI:
+
+```bash
+openclaw hybrid-mem config-set errorReporting.resolvedIssues '{"TypeError:Cannot read properties of null":"2026.3.110"}'
+```
+
+An event is dropped **only** when its own fingerprint matches an entry *and* its `release` version is older than the fix version listed for that fingerprint. Every other error from that same outdated release — including ones nobody has triaged yet — is still reported. This is intentionally narrow: it suppresses one specific, already-understood bug rather than an entire release's worth of telemetry.
 
 ---
 
