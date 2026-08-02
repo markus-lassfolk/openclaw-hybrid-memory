@@ -72,7 +72,7 @@ export function registerMaintenanceGroup(mem: Chainable, b: ManageBindings, ctx:
     cfg: ctx.cfg,
     versionInfo: ctx.versionInfo,
     resolvedSqlitePath: ctx.resolvedSqlitePath,
-    journalDb: b.factsDb.getRawDb(),
+    journalDb: typeof b.factsDb.getRawDb === "function" ? b.factsDb.getRawDb() : undefined,
   });
   registerReconcileCronLedgers(groupedCmds);
   registerGraphLinkEnrichmentCommand(groupedCmds, b);
@@ -107,7 +107,7 @@ export function registerMaintenanceGroup(mem: Chainable, b: ManageBindings, ctx:
       cfg: ctx.cfg,
       versionInfo: ctx.versionInfo,
       resolvedSqlitePath: ctx.resolvedSqlitePath,
-      journalDb: b.factsDb.getRawDb(),
+      journalDb: typeof b.factsDb.getRawDb === "function" ? b.factsDb.getRawDb() : undefined,
     },
   );
   registerReconcileCronLedgers(
