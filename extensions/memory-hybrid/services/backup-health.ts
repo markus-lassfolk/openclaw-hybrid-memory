@@ -194,10 +194,7 @@ export type BackupOutcomeInput =
  * failure/alert bookkeeping — Issue #2230's "a later successful backup clears/supersedes the
  * stale failure state" requirement.
  */
-export function recordBackupOutcome(
-  stateFilePath: string,
-  outcome: BackupOutcomeInput,
-): BackupStateFile {
+export function recordBackupOutcome(stateFilePath: string, outcome: BackupOutcomeInput): BackupStateFile {
   const previous = readBackupStateFile(stateFilePath);
   const next: BackupStateFile = outcome.ok
     ? {
@@ -231,7 +228,9 @@ export function recordBackupOutcome(
 }
 
 function formatBackupAlertMessage(health: BackupHealthStatus): string {
-  const lines = [`hybrid-mem backup health: ${health.status.toUpperCase()}${health.reasonCategory ? ` (${health.reasonCategory})` : ""}`];
+  const lines = [
+    `hybrid-mem backup health: ${health.status.toUpperCase()}${health.reasonCategory ? ` (${health.reasonCategory})` : ""}`,
+  ];
   lines.push(
     health.lastSuccessAt
       ? `Last verified success: ${health.lastSuccessAt} (${health.ageSinceLastSuccessHours?.toFixed(1) ?? "?"}h ago)`

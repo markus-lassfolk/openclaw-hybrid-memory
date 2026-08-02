@@ -469,7 +469,11 @@ describe("backup", () => {
       writeFileSync(brokenLancePath, "not a directory");
 
       for (let i = 0; i < 3; i++) {
-        const result = await runBackup({ resolvedSqlitePath: sqlitePath, resolvedLancePath: brokenLancePath, backupDir });
+        const result = await runBackup({
+          resolvedSqlitePath: sqlitePath,
+          resolvedLancePath: brokenLancePath,
+          backupDir,
+        });
         expect(result.ok).toBe(false);
       }
       const entries = existsSync(backupDir) ? readdirSync(backupDir) : [];

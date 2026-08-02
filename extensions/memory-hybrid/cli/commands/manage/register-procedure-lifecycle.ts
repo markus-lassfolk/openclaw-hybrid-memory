@@ -631,14 +631,17 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
         console.log(`# Backup status (${root})`);
         console.log("");
         console.log(`Completed snapshots: ${status.completedCount} (retained by policy: ${status.retainedCount})`);
-        console.log(`Stale/partial artifacts: ${status.stalePartialCount} (partial=${status.partialCount}, orphaned=${status.orphanedCount})`);
+        console.log(
+          `Stale/partial artifacts: ${status.stalePartialCount} (partial=${status.partialCount}, orphaned=${status.orphanedCount})`,
+        );
         console.log(`Total bytes (completed): ${formatBytes(status.totalBytes)}`);
         if (status.newest) console.log(`Newest: ${status.newest.name} (${formatBytes(status.newest.bytes)})`);
         if (status.oldest) console.log(`Oldest: ${status.oldest.name} (${formatBytes(status.oldest.bytes)})`);
         console.log("");
         console.log(`Health: ${health.status}${health.reasonCategory ? ` (${health.reasonCategory})` : ""}`);
         console.log(`Last verified success: ${health.lastSuccessAt ?? "never"}`);
-        if (health.lastFailureAt) console.log(`Last failure: ${health.lastFailureAt} (consecutive: ${health.consecutiveFailures})`);
+        if (health.lastFailureAt)
+          console.log(`Last failure: ${health.lastFailureAt} (consecutive: ${health.consecutiveFailures})`);
         if (health.ageSinceLastSuccessHours !== null) {
           console.log(`Age since last success: ${health.ageSinceLastSuccessHours.toFixed(1)}h`);
         }
