@@ -1792,8 +1792,11 @@ See [ERROR-REPORTING.md](ERROR-REPORTING.md) for full privacy and audit details.
 | `sampleRate` | `1.0` | Sampling rate (0.0–1.0) |
 | `botId` | *(unset)* | Optional identifier tag (string) for grouping errors by agent (`agent_id` / `bot_id`) |
 | `botName` | *(unset)* | Optional friendly name tag for grouping errors by agent (`agent_name` / `bot_name`) |
+| `resolvedIssues` | *(unset)* | Optional map of error fingerprint → the version it was fixed in; drops events matching that fingerprint from releases older than the fix. See [ERROR-REPORTING.md § Outdated releases still report telemetry](ERROR-REPORTING.md#outdated-releases-still-report-telemetry-2228) |
 
 The reporter also sets `server_name` and a `node` tag automatically from `OPENCLAW_NODE_NAME` when present.
+
+Every event is tagged with `release` (`openclaw-hybrid-memory@<plugin-version>`) whether or not that version is the latest published one — the plugin does **not** mute telemetry just because it is running an outdated release; see [ERROR-REPORTING.md § Outdated releases still report telemetry](ERROR-REPORTING.md#outdated-releases-still-report-telemetry-2228) for how to filter/group stale-release noise in GlitchTip instead.
 
 ---
 

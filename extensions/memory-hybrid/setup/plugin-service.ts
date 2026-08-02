@@ -36,7 +36,6 @@ import {
   getPendingErrorReportCount,
   initErrorReporter,
   isErrorReporterActive,
-  setErrorReporterMuted,
 } from "../services/error-reporter.js";
 import { resolveGoalsDir, runGoalHealthCheck } from "../services/goal-stewardship.js";
 import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
@@ -335,7 +334,9 @@ export function createPluginService(ctx: PluginServiceContext) {
         isPluginOutdated(versionInfo.pluginVersion, cachedVersionCheck.latestVersion) &&
         isVersionCheckCacheFresh(cachedVersionCheck, cfg.errorReporting.updateNudge.cacheTtlHours)
       ) {
-        setErrorReporterMuted(true, `outdated-plugin:${cachedVersionCheck.latestVersion}`);
+        // Note: being outdated no longer mutes telemetry (#2228) — it only drives the log-only
+        // update nudge below. Outdated instances keep reporting sanitized errors, tagged with
+        // `release` (plugin version), so stale-release noise can be filtered/grouped in GlitchTip.
         const nextCachedVersionCheck = maybeLogOutdatedVersionNudge(
           versionInfo.pluginVersion,
           cachedVersionCheck,
@@ -352,8 +353,6 @@ export function createPluginService(ctx: PluginServiceContext) {
           }
           cachedVersionCheck = nextCachedVersionCheck;
         }
-      } else {
-        setErrorReporterMuted(false);
       }
 
       // ========================================================================
@@ -400,13 +399,6 @@ export function createPluginService(ctx: PluginServiceContext) {
         try {
           const latestPublished = await fetchLatestPublishedVersion();
           if (!latestPublished.latestVersion || !latestPublished.source) {
-            if (
-              cachedVersionCheck &&
-              isPluginOutdated(versionInfo.pluginVersion, cachedVersionCheck.latestVersion) &&
-              isVersionCheckCacheFresh(cachedVersionCheck, cfg.errorReporting.updateNudge.cacheTtlHours)
-            ) {
-              setErrorReporterMuted(true, `outdated-plugin:${cachedVersionCheck.latestVersion}`);
-            }
             return;
           }
 
@@ -420,15 +412,12 @@ export function createPluginService(ctx: PluginServiceContext) {
           if (shuttingDown) return;
 
           if (isPluginOutdated(versionInfo.pluginVersion, latestPublished.latestVersion)) {
-            setErrorReporterMuted(true, `outdated-plugin:${latestPublished.latestVersion}`);
             cacheEntry = maybeLogOutdatedVersionNudge(
               versionInfo.pluginVersion,
               cacheEntry,
               cfg.errorReporting.updateNudge,
               api.logger,
             );
-          } else {
-            setErrorReporterMuted(false);
           }
 
           if (shuttingDown) return;
@@ -445,13 +434,6 @@ export function createPluginService(ctx: PluginServiceContext) {
           api.logger.debug?.(
             `memory-hybrid: latest-version check failed: ${err instanceof Error ? err.message : String(err)}`,
           );
-          if (
-            cachedVersionCheck &&
-            isPluginOutdated(versionInfo.pluginVersion, cachedVersionCheck.latestVersion) &&
-            isVersionCheckCacheFresh(cachedVersionCheck, cfg.errorReporting.updateNudge.cacheTtlHours)
-          ) {
-            setErrorReporterMuted(true, `outdated-plugin:${cachedVersionCheck.latestVersion}`);
-          }
         }
       })();
 
