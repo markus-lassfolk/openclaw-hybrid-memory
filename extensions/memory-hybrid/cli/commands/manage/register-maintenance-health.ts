@@ -5,8 +5,10 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import type { FactsDB } from "../../../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../../../config.js";
 import { formatStepLockDetail, listActiveStepLocks } from "../../../services/cron-guard.js";
+import { getLastSuccessfulCronRun } from "../../../services/maintenance-audit-journal.js";
 import {
   collectMaintenanceInventory,
   jobMatchesPluginJobId,
@@ -24,7 +26,24 @@ import { type Chainable, relativeTime, withExit } from "../../shared.js";
 /** Lookback window for the log-health check folded into `maintenance status` (#2033). */
 const STATUS_LOG_HEALTH_SINCE = "24h";
 
-export function registerMaintenanceHealthCommands(maintenance: Chainable, cfg: HybridMemoryConfig): void {
+/** Best-effort last-successful-cron-lane-run lookup (#2231) — returns null on any DB/lookup issue
+ *  (missing factsDb binding in older callers/tests, closed store, pre-migration DB) so this can
+ *  never turn a health check into a hard failure. */
+function tryGetLastSuccessfulRunAt(factsDb: FactsDB | undefined, jobLabel: string): string | null {
+  if (!factsDb) return null;
+  try {
+    const row = getLastSuccessfulCronRun(factsDb.getRawDb(), jobLabel);
+    return row ? formatTimestampUtcFromMs(row.started_at * 1000) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function registerMaintenanceHealthCommands(
+  maintenance: Chainable,
+  cfg: HybridMemoryConfig,
+  factsDb?: FactsDB,
+): void {
   maintenance
     .command("inventory")
     .description("List host-crontab and gateway-cron maintenance jobs in one report.")
@@ -77,34 +96,51 @@ export function registerMaintenanceHealthCommands(maintenance: Chainable, cfg: H
           lastRunAt: string | null;
           nextRunAt: string | null;
           lastStatus: string | null;
+          /** Most recent locally-persisted successful cron-lane run (issue #2231), independent of
+           *  whether OpenClaw's own cron-store `lastStatus` reflects hybrid-memory's own validation
+           *  verdict. Null when no successful run has been recorded yet (or factsDb is unavailable). */
+          lastSuccessfulRunAt: string | null;
           isStale: boolean;
           isMissing: boolean;
           configuredSchedule: string;
           issue?: string;
         };
 
+        // `nightly-doctor-repair` is never superseded by consolidatedCronJobs mode (see
+        // cli/install/cron-jobs.ts's `supersededByOrchestrator: false`) — it always runs on its own
+        // schedule alongside whichever nightly maintenance job is selected below, so it's included
+        // unconditionally (#2231 — this is one of the two cron lanes named in the originating
+        // incident report).
         const jobsOfInterest: Array<{
           id: string;
           label: string;
           scheduleExpr: string;
           staleMs: number;
-        }> = useConsolidatedCron
-          ? [
-              {
-                id: "hybrid-mem:maintenance-nightly",
-                label: "maintenance-nightly",
-                scheduleExpr: nightlyCronExpr,
-                staleMs: staleThresholdMs,
-              },
-            ]
-          : [
-              {
-                id: "hybrid-mem:nightly-distill",
-                label: "nightly-memory-sweep (legacy)",
-                scheduleExpr: nightlyCronExpr,
-                staleMs: staleThresholdMs,
-              },
-            ];
+        }> = [
+          ...(useConsolidatedCron
+            ? [
+                {
+                  id: "hybrid-mem:maintenance-nightly",
+                  label: "maintenance-nightly",
+                  scheduleExpr: nightlyCronExpr,
+                  staleMs: staleThresholdMs,
+                },
+              ]
+            : [
+                {
+                  id: "hybrid-mem:nightly-distill",
+                  label: "nightly-memory-sweep (legacy)",
+                  scheduleExpr: nightlyCronExpr,
+                  staleMs: staleThresholdMs,
+                },
+              ]),
+          {
+            id: "hybrid-mem:nightly-doctor-repair",
+            label: "nightly-doctor-repair",
+            scheduleExpr: "15 3 * * *",
+            staleMs: staleThresholdMs,
+          },
+        ];
 
         const results: JobStatus[] = [];
 
@@ -134,6 +170,7 @@ export function registerMaintenanceHealthCommands(maintenance: Chainable, cfg: H
               lastRunAt: null,
               nextRunAt: null,
               lastStatus: null,
+              lastSuccessfulRunAt: tryGetLastSuccessfulRunAt(factsDb, wanted.label),
               isStale: false,
               isMissing: true,
               configuredSchedule: wanted.scheduleExpr,
@@ -179,6 +216,7 @@ export function registerMaintenanceHealthCommands(maintenance: Chainable, cfg: H
             lastRunAt: lastRunAtMs != null ? formatTimestampUtcFromMs(lastRunAtMs) : null,
             nextRunAt: nextRunAtMs != null ? formatTimestampUtcFromMs(nextRunAtMs) : null,
             lastStatus,
+            lastSuccessfulRunAt: tryGetLastSuccessfulRunAt(factsDb, wanted.label),
             isStale,
             isMissing: false,
             configuredSchedule: wanted.scheduleExpr,
@@ -246,6 +284,12 @@ export function registerMaintenanceHealthCommands(maintenance: Chainable, cfg: H
           const timing = [lastRun, nextRun].filter(Boolean).join("  ");
           console.log(
             `${icon} ${r.name.padEnd(32)} ${r.isMissing ? "MISSING" : r.enabled ? "enabled " : "disabled"} ${timing}`,
+          );
+          // Last locally-confirmed successful run (#2231) — distinct from `lastRunAt`/`lastStatus`
+          // above, which only reflect OpenClaw's own cron-store bookkeeping of the most recent
+          // firing (which may itself have failed) and carry no history beyond that single snapshot.
+          console.log(
+            `   └─ last successful run: ${r.lastSuccessfulRunAt ? relativeTime(new Date(r.lastSuccessfulRunAt).getTime()) : "none recorded"}`,
           );
           if (r.issue) {
             console.log(`   └─ ${r.issue}`);
@@ -316,7 +360,13 @@ export function registerMaintenanceHealthCommands(maintenance: Chainable, cfg: H
         const openclawDir = join(homedir(), ".openclaw");
         const staleThresholdMs = (cfg.maintenance?.cronReliability?.staleThresholdHours ?? 28) * 60 * 60 * 1000;
         const useConsolidatedCron = cfg.maintenance?.orchestrator?.consolidatedCronJobs !== false;
-        const criticalJobs = useConsolidatedCron ? ["hybrid-mem:maintenance-nightly"] : ["hybrid-mem:nightly-distill"];
+        // nightly-doctor-repair is always included (#2231) — it is never superseded by
+        // consolidatedCronJobs mode (cli/install/cron-jobs.ts's `supersededByOrchestrator: false`)
+        // and was one of the two cron lanes named in the originating incident report.
+        const criticalJobs = [
+          useConsolidatedCron ? "hybrid-mem:maintenance-nightly" : "hybrid-mem:nightly-distill",
+          "hybrid-mem:nightly-doctor-repair",
+        ];
 
         let cronStore: { jobs?: unknown[] } = { jobs: [] };
         try {

@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HybridMemoryConfig } from "../config.js";
 import {
   acquireStepLock,
@@ -723,5 +723,156 @@ describe("maintenance-orchestrator", () => {
     );
     expect(pruneCalls).toBe(1);
     expect(result.steps[0]?.summary).toContain("pruned=3");
+  });
+});
+
+describe("maintenance-orchestrator nested cron-lane exception capture (#2231)", () => {
+  let openclawDir: string;
+  const origHmJob = process.env.HM_JOB;
+
+  afterEach(() => {
+    if (openclawDir) rmSync(openclawDir, { recursive: true, force: true });
+    if (origHmJob === undefined) delete process.env.HM_JOB;
+    else process.env.HM_JOB = origHmJob;
+    vi.restoreAllMocks();
+  });
+
+  function reportingEnabledCfg(): HybridMemoryConfig {
+    return {
+      maintenance: {
+        orchestrator: { rateLimitMaxRetries: 2, llmCooldownBetweenStepsMs: 0 },
+        failureReporting: { enabled: true },
+      },
+      errorReporting: { enabled: true, consent: true },
+    } as HybridMemoryConfig;
+  }
+
+  it("captures a thrown step exception via capturePluginError, tagged with job/step/tier", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    process.env.HM_JOB = "maintenance-nightly";
+    const errorReporterModule = await import("../services/error-reporter.js");
+    const captureSpy = vi.spyOn(errorReporterModule, "capturePluginError").mockReturnValue(undefined);
+
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "distill",
+        async () => {
+          throw new Error("Invalid 'tools': array too long. Expected maximum length 128, got 141");
+        },
+      ],
+    ]);
+
+    await runMaintenanceOrchestrator(
+      { cfg: reportingEnabledCfg(), runners, openclawDir },
+      { tiers: ["nightly"], force: true, verbose: false, include: ["distill"] },
+    );
+
+    expect(captureSpy).toHaveBeenCalledTimes(1);
+    const [error, context] = captureSpy.mock.calls[0]!;
+    expect(error.message).toContain("tools': array too long");
+    expect(context.subsystem).toBe("maintenance");
+    expect(context.phase).toBe("orchestrator-step");
+    expect(context.tags?.job_name).toBe("maintenance-nightly");
+    expect(context.tags?.step_name).toBe("distill");
+    expect(context.tags?.tier).toBe("nightly");
+  });
+
+  it("falls back to a generic job_name when HM_JOB is unset (manual CLI invocation)", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    delete process.env.HM_JOB;
+    const errorReporterModule = await import("../services/error-reporter.js");
+    const captureSpy = vi.spyOn(errorReporterModule, "capturePluginError").mockReturnValue(undefined);
+
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "prune",
+        async () => {
+          throw new Error("boom");
+        },
+      ],
+    ]);
+
+    await runMaintenanceOrchestrator(
+      { cfg: reportingEnabledCfg(), runners, openclawDir },
+      { tiers: ["cycle"], force: true, verbose: false, include: ["prune"] },
+    );
+
+    expect(captureSpy).toHaveBeenCalledTimes(1);
+    expect(captureSpy.mock.calls[0]![1].tags?.job_name).toBe("maintenance-orchestrator");
+  });
+
+  it("does not capture when errorReporting is disabled", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const errorReporterModule = await import("../services/error-reporter.js");
+    const captureSpy = vi.spyOn(errorReporterModule, "capturePluginError").mockReturnValue(undefined);
+
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "prune",
+        async () => {
+          throw new Error("boom");
+        },
+      ],
+    ]);
+
+    await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["cycle"], force: true, verbose: false, include: ["prune"] },
+    );
+
+    expect(captureSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not capture when maintenance.failureReporting.enabled is false", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const errorReporterModule = await import("../services/error-reporter.js");
+    const captureSpy = vi.spyOn(errorReporterModule, "capturePluginError").mockReturnValue(undefined);
+
+    const cfg = {
+      maintenance: {
+        orchestrator: { rateLimitMaxRetries: 2, llmCooldownBetweenStepsMs: 0 },
+        failureReporting: { enabled: false },
+      },
+      errorReporting: { enabled: true, consent: true },
+    } as HybridMemoryConfig;
+
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "prune",
+        async () => {
+          throw new Error("boom");
+        },
+      ],
+    ]);
+
+    await runMaintenanceOrchestrator(
+      { cfg, runners, openclawDir },
+      { tiers: ["cycle"], force: true, verbose: false, include: ["prune"] },
+    );
+
+    expect(captureSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not capture a rate-limited step failure (matches chat.ts's own 429 non-reporting convention)", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const errorReporterModule = await import("../services/error-reporter.js");
+    const captureSpy = vi.spyOn(errorReporterModule, "capturePluginError").mockReturnValue(undefined);
+
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "distill",
+        async () => {
+          const err = new Error("429 Too Many Requests");
+          throw err;
+        },
+      ],
+    ]);
+
+    await runMaintenanceOrchestrator(
+      { cfg: reportingEnabledCfg(), runners, openclawDir },
+      { tiers: ["nightly"], force: true, verbose: false, include: ["distill"] },
+    );
+
+    expect(captureSpy).not.toHaveBeenCalled();
   });
 });

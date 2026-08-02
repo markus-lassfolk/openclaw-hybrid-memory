@@ -738,6 +738,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       runMine: async (path: string) => {
         await executeMineCommand(path, {}, ctx.factsDb, ctx.vectorDb, ctx.embeddings);
       },
+      pluginVersion: ctx.versionInfo.pluginVersion,
     };
     registerUserFriendlyCommands(mem, userFriendlyContext);
   } catch (err) {

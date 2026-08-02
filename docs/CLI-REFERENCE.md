@@ -355,6 +355,8 @@ Checks that need human judgement or aren't safely repairable from inside the run
 
 `openclaw hybrid-mem doctor --fix --reconcile` runs nightly by default via the `hybrid-mem:nightly-doctor-repair` cron job (see [Maintenance cron jobs](#maintenance-cron-jobs) below) — existing installs pick it up the next time `install` or `verify --fix` runs.
 
+**Scheduled-run health (issue [#2231](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/2231)):** `openclaw hybrid-mem maintenance status` and `maintenance cron-health` monitor `hybrid-mem:nightly-doctor-repair` alongside `hybrid-mem:maintenance-nightly` — a missing/stale/failed doctor-repair run is now reported (and fails `cron-health`'s exit code) the same way the nightly maintenance job already was. `maintenance status`/`--json` also reports `lastSuccessfulRunAt` per job: a locally persisted (SQLite `maintenance_runs`) record of the most recent run each cron lane's `maintenance validate-exit` step actually validated as successful, independent of whether GlitchTip error-reporting telemetry is enabled — distinct from `lastRunAt`/`lastStatus`, which only reflect OpenClaw's own cron-store snapshot of the most recent firing (which may itself have failed, and carries no history).
+
 ---
 
 ## JSON output contract (scripting)

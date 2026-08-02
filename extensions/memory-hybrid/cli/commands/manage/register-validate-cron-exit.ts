@@ -6,14 +6,17 @@
  */
 
 import { writeFileSync } from "node:fs";
+import type { DatabaseSync } from "node:sqlite";
 import type { HybridMemoryConfig } from "../../../config.js";
 import {
   type ExitValidationResult,
+  extractMaintenanceJobName,
   generateCronStatusReport,
   resolveValidateCronExitCode,
   validateFromSummaryJson,
   validateMaintenanceExecution,
 } from "../../../services/cron-exit-validator.js";
+import { recordMaintenanceCronRunOutcome } from "../../../services/maintenance-audit-journal.js";
 import { reportMaintenanceFailureIssues } from "../../../services/maintenance-failure-reporter.js";
 import { type Chainable, withExit } from "../../shared.js";
 
@@ -23,6 +26,13 @@ export interface ValidateCronExitContext {
   logger?: Pick<Console, "debug" | "info" | "warn">;
   /** Enables a durable on-disk retry queue for reportMaintenanceFailureIssues (see there for why). */
   resolvedSqlitePath?: string;
+  /**
+   * Enables local, telemetry-consent-independent persistence of this run's structured outcome
+   * (issue #2231) — one `maintenance_runs` row per cron-lane invocation, success or failure, so
+   * `maintenance status` can report last-scheduled-run / last-successful-run per job even when
+   * error reporting is disabled or unreachable.
+   */
+  journalDb?: DatabaseSync;
 }
 
 export function registerValidateCronExit(hybrid: Chainable, context?: ValidateCronExitContext): void {
@@ -80,6 +90,26 @@ export function registerValidateCronExit(hybrid: Chainable, context?: ValidateCr
             console.log(generateCronStatusReport(result));
           } else {
             printValidationResult(result);
+          }
+
+          // Local structured outcome persistence (#2231) — unconditional on telemetry consent, so
+          // `maintenance status` has a durable last-scheduled/last-successful-run record per cron
+          // lane even when GlitchTip reporting is disabled or unreachable. Runs before the
+          // telemetry call below so a reporting failure can never suppress this local write.
+          if (context?.journalDb) {
+            const primaryIssue = result.reportableIssues[0];
+            recordMaintenanceCronRunOutcome(context.journalDb, {
+              jobName: extractMaintenanceJobName(opts.exitPath || opts.logPath),
+              maintenanceStatus: result.maintenanceStatus,
+              primaryFailure: primaryIssue
+                ? {
+                    stepName: primaryIssue.stepName,
+                    failureClass: primaryIssue.failureClass,
+                    message: primaryIssue.message,
+                  }
+                : undefined,
+              failingStepNames: result.reportableIssues.map((issue) => issue.stepName),
+            });
           }
 
           // Best-effort telemetry runs after output so one-shot cron validation still

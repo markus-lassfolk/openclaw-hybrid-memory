@@ -490,7 +490,11 @@ function appendDreamPipelineLedgerFailures(
   return merged;
 }
 
-function extractMaintenanceJobName(path: string | undefined): string {
+/** Derive the cron-lane job name (e.g. "maintenance-nightly", "nightly-doctor-repair") from an
+ *  HM_EXIT/HM_LOG path basename. Exported so callers outside this file (e.g. register-validate-
+ *  cron-exit.ts, for #2231's structured per-cron-lane run persistence) can derive the same job
+ *  identity without re-implementing the suffix-stripping rules. */
+export function extractMaintenanceJobName(path: string | undefined): string {
   if (!path) return "unknown-job";
   const file = basename(path);
   const withoutExitSuffix = file.replace(/\.exit\.txt$/, "").replace(/\.log$/, "");

@@ -59,7 +59,7 @@ const MAINTENANCE_FLAT_PATHS: Record<string, string> = {
 export function registerMaintenanceGroup(mem: Chainable, b: ManageBindings, ctx: ManageContext): void {
   const maintenance = createCommandGroup(mem, "maintenance", "Cron, backfill, and operational health (Issue #281)");
 
-  registerMaintenanceHealthCommands(maintenance, b.cfg);
+  registerMaintenanceHealthCommands(maintenance, b.cfg, b.factsDb);
   registerMaintenanceOrchestratorCommands(maintenance, b);
   registerMaintenanceRunCommands(maintenance);
   registerSensorSweepCommand(mem, b);
@@ -72,6 +72,7 @@ export function registerMaintenanceGroup(mem: Chainable, b: ManageBindings, ctx:
     cfg: ctx.cfg,
     versionInfo: ctx.versionInfo,
     resolvedSqlitePath: ctx.resolvedSqlitePath,
+    journalDb: typeof b.factsDb.getRawDb === "function" ? b.factsDb.getRawDb() : undefined,
   });
   registerReconcileCronLedgers(groupedCmds);
   registerGraphLinkEnrichmentCommand(groupedCmds, b);
@@ -102,7 +103,12 @@ export function registerMaintenanceGroup(mem: Chainable, b: ManageBindings, ctx:
   );
   registerValidateCronExit(
     wrapChainableWithDeprecated(mem, { "validate-cron-exit": MAINTENANCE_FLAT_PATHS["validate-cron-exit"]! }),
-    { cfg: ctx.cfg, versionInfo: ctx.versionInfo, resolvedSqlitePath: ctx.resolvedSqlitePath },
+    {
+      cfg: ctx.cfg,
+      versionInfo: ctx.versionInfo,
+      resolvedSqlitePath: ctx.resolvedSqlitePath,
+      journalDb: typeof b.factsDb.getRawDb === "function" ? b.factsDb.getRawDb() : undefined,
+    },
   );
   registerReconcileCronLedgers(
     wrapChainableWithDeprecated(mem, { "reconcile-cron-ledgers": MAINTENANCE_FLAT_PATHS["reconcile-cron-ledgers"]! }),
