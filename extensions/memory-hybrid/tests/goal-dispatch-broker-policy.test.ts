@@ -104,8 +104,23 @@ describe("goal_dispatch broker policy selection", () => {
 
   it("accepts an explicitly declared allowed non-managed read-only class", async () => {
     const g = await goal();
-    const result = await dispatch("test", { ...base(g.id), task_class: "governance_readonly", read_only: true });
+    const result = await dispatch("test", {
+      ...base(g.id),
+      task_class: "governance_readonly",
+      read_only: true,
+      branch: "supplied-branch",
+      write_scope: ["supplied/scope"],
+      creates_pr: false,
+      creates_branch: false,
+    });
     expect(result.details).toMatchObject({ ok: true, launched: false });
+    expect(result.details?.dispatch_request).toMatchObject({
+      task_class: "governance_readonly",
+      branch: "supplied-branch",
+      write_scope: ["supplied/scope"],
+      creates_pr: false,
+      creates_branch: false,
+    });
   });
 
   it("denies an undeclared class, wrong agent, read/write mismatch, and out-of-scope write", async () => {

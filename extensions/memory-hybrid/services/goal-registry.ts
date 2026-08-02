@@ -717,6 +717,7 @@ export type GoalUpdatePatch = Partial<
     | "humanEscalationSummary"
     | "escalationKind"
     | "lastMechanicalCheck"
+    | "dispatchPolicy"
   >
 >;
 
