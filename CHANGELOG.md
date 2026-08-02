@@ -36,6 +36,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.8.1] - 2026-08-02
+
+### Fixed
+
+- Goal-dispatch authorization now fails closed: direct managed dispatch is denied unless the requester has an explicit, matching authorization policy. The core dispatch bridge and broker apply the policy consistently and emit audit-safe denial context.
+
+### Release metadata
+
+- Bumps `openclaw-hybrid-memory` and the lockstep standalone installer to `2026.8.1`. `package.json` remains the source of truth; derived plugin and installer version metadata are synchronized by `scripts/sync-plugin-version.cjs`.
+
 ## [2026.7.228] - 2026-07-29
 
 ### Fixed
