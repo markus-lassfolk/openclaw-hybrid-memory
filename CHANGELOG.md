@@ -36,6 +36,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2026.8.2] - 2026-08-03
+
+### Fixed
+
+- Goal dispatch now rejects terminal (completed/abandoned) goals at every dispatch boundary — request parsing, the broker reservation lock, and immediately before launch — closing a race where a stale cron wake or a concurrent `goal_complete`/`goal_abandon` could still dispatch work against an already-terminated goal. The broker reservation now accepts a lock-time dispatchability predicate so the terminal-state check is re-validated while the reservation is committed, not only when the request was first parsed.
+
+### Release metadata
+
+- Bumps `openclaw-hybrid-memory` and the lockstep standalone installer to `2026.8.2`. `package.json` remains the source of truth; derived plugin and installer version metadata are synchronized by `scripts/sync-plugin-version.cjs`.
+
 ## [2026.8.1] - 2026-08-02
 
 ### Fixed
