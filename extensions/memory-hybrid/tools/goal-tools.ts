@@ -164,7 +164,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
         if (isTerminalStatus(goal.status)) return terminalDispatchResult(goal.status);
         const isStillDispatchable = async () => {
           const fresh = await readGoal(goalsDir, goalId);
-          return fresh?.id === goalId && !isTerminalStatus(fresh.status);
+          return !!fresh && fresh.id === goalId && !isTerminalStatus(fresh.status);
         };
         const agent = typeof p.agent_id === "string" ? p.agent_id.trim() : "";
         const runtime = p.runtime;
