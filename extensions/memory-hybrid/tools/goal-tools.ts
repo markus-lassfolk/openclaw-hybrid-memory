@@ -38,7 +38,7 @@ import {
   terminateGoal,
   updateGoal,
 } from "../services/goal-stewardship.js";
-import { listGoals } from "../services/goal-registry.js";
+import { listGoals, readGoal } from "../services/goal-registry.js";
 import { verifyGoalMechanically } from "../services/goal-health.js";
 import { runActiveTaskCheckpoint } from "../services/active-task-checkpoint.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
@@ -150,11 +150,22 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             details: { error: "canonical_goal_id_required" },
           };
         const goal = await resolveGoalId(goalsDir, goalId);
-        if (!goal || goal.id !== goalId || isTerminalStatus(goal.status))
+        if (!goal || goal.id !== goalId)
           return {
             content: [{ type: "text" as const, text: "Active canonical goal not found." }],
             details: { error: "goal_not_found" },
           };
+        // A completed/abandoned goal may still have an enabled cron job or a queued wake.
+        // Make terminal state a hard dispatch boundary, not merely a controller convention.
+        const terminalDispatchResult = (status: string) => ({
+          content: [{ type: "text" as const, text: `Goal dispatch rejected: goal is terminal (${status}).` }],
+          details: { error: "goal_terminal", goal_id: goalId, status },
+        });
+        if (isTerminalStatus(goal.status)) return terminalDispatchResult(goal.status);
+        const isStillDispatchable = async () => {
+          const fresh = await readGoal(goalsDir, goalId);
+          return fresh?.id === goalId && !isTerminalStatus(fresh.status);
+        };
         const agent = typeof p.agent_id === "string" ? p.agent_id.trim() : "";
         const runtime = p.runtime;
         if (
@@ -193,6 +204,14 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             content: [{ type: "text" as const, text: `Dispatch denied by goal policy: ${preflight.reason}.` }],
             details: { error: "dispatch_policy_denied", policy_reason: preflight.reason, task_class: taskClass },
           };
+        // Repeat the check after policy evaluation: goal termination can race a stale wake.
+        const beforeReserve = await readGoal(goalsDir, goalId);
+        if (!beforeReserve || beforeReserve.id !== goalId)
+          return {
+            content: [{ type: "text" as const, text: "Active canonical goal not found." }],
+            details: { error: "goal_not_found" },
+          };
+        if (isTerminalStatus(beforeReserve.status)) return terminalDispatchResult(beforeReserve.status);
         const budget = {
           maxDispatches: typeof p.budget?.max_dispatches === "number" ? p.budget.max_dispatches : undefined,
           maxTotalTokens: typeof p.budget?.max_total_tokens === "number" ? p.budget.max_total_tokens : undefined,
@@ -210,6 +229,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           ttlMs: 5 * 60_000,
           owner: agent,
           sessionId: p.session_key,
+          isDispatchable: isStillDispatchable,
           target: canonical
             ? {
                 repository: canonical.repository,
@@ -219,11 +239,25 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
               }
             : undefined,
         });
-        if (!record)
+        if (!record) {
+          // The broker's lock-time predicate may have observed a terminal transition after
+          // the pre-reservation read. Re-read so stale wakes report a terminal rejection,
+          // rather than misleadingly blaming the dispatch budget.
+          const afterReserve = await readGoal(goalsDir, goalId);
+          if (afterReserve && afterReserve.id === goalId && isTerminalStatus(afterReserve.status))
+            return terminalDispatchResult(afterReserve.status);
           return {
             content: [{ type: "text" as const, text: "Dispatch budget exhausted." }],
             details: { error: "budget_exhausted" },
           };
+        }
+        // The reservation may have been created just before a terminal transition. Do not
+        // hand a stale ACP launcher grant to a cron wake, and do not launch a subagent.
+        const beforeLaunch = await readGoal(goalsDir, goalId);
+        if (!beforeLaunch || beforeLaunch.id !== goalId || isTerminalStatus(beforeLaunch.status)) {
+          await broker.release(record.id, "goal_terminal_before_launch");
+          return terminalDispatchResult(beforeLaunch?.status ?? "missing");
+        }
         const grant = broker.token(record);
         if (runtime === "acp")
           return {

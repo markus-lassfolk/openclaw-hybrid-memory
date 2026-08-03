@@ -73,9 +73,15 @@ export class GoalDispatchBroker {
     owner?: string;
     sessionId?: string;
     target?: CanonicalTarget;
+    /** Re-validate mutable goal state while the reservation is being committed. */
+    isDispatchable?: () => Promise<boolean>;
   }): Promise<DispatchRecord | null> {
-    return this.withLedger((ledger) => {
+    return this.withLedger(async (ledger) => {
       this.expire(ledger);
+      // The caller supplies the authoritative goal-state read. This check belongs at the
+      // reservation boundary (rather than only at request parsing) because a stale timer or
+      // concurrent goal_complete/goal_abandon may race a previously validated dispatch.
+      if (input.isDispatchable && !(await input.isDispatchable())) return null;
       // A goal's canonical target is part of the same locked reservation decision.
       const active = Object.values(ledger.dispatches).filter(
         (x) => x.goalId === input.goalId && ["reserved", "launched"].includes(x.status),

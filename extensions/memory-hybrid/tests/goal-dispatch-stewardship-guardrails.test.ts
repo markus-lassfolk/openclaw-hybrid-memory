@@ -65,6 +65,23 @@ describe("target stewardship guardrails", () => {
       ).allowed,
     ).toBe(true);
   });
+  it("rejects a stale wake at the broker reservation boundary", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "broker-terminal-"));
+    try {
+      const broker = new GoalDispatchBroker(dir);
+      const reserved = await broker.reserve({
+        goalId: "terminal-goal",
+        targetAgent: "writer",
+        runtime: "subagent",
+        budget: {},
+        ttlMs: 1_000,
+        isDispatchable: async () => false,
+      });
+      expect(reserved).toBeNull();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
   it("uses owner/run/session leases and rejects stale or wrong receipts", async () => {
     const dir = await mkdtemp(join(tmpdir(), "broker-"));
     try {

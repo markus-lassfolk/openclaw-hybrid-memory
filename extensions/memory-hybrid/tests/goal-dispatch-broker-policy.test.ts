@@ -8,7 +8,7 @@ type ToolResult = { content?: Array<{ text?: string }>; details?: Record<string,
 type ToolExecute = (id: string, params: Record<string, unknown>) => Promise<ToolResult>;
 type RegisteredTools = Map<string, { execute: ToolExecute }>;
 import { hybridConfigSchema } from "../config.js";
-import { createGoal } from "../services/goal-registry.js";
+import { createGoal, terminateGoal } from "../services/goal-registry.js";
 import type { GoalDispatchPolicy } from "../services/goal-dispatch-authorization.js";
 import { registerGoalTools } from "../tools/goal-tools.js";
 import { buildToolScopeFilter } from "../utils/scope-filter.js";
@@ -209,6 +209,23 @@ describe("goal_dispatch broker policy selection", () => {
       expect.objectContaining({ status: "released", reason: "launch_failed" }),
     );
   });
+
+  it.each(["completed", "abandoned"] as const)(
+    "rejects a stale wake for a %s goal without launching",
+    async (status) => {
+      const g = await goal();
+      await terminateGoal(goalsDir, g.id, status, "terminal before stale wake", "user");
+
+      const result = await dispatch("stale-wake", {
+        ...base(g.id, "legacy-reader", "subagent"),
+        read_only: true,
+      });
+
+      expect(result.details).toMatchObject({ error: "goal_terminal", goal_id: g.id, status });
+      expect(run).not.toHaveBeenCalled();
+      expect((await import("node:fs")).existsSync(join(goalsDir, "dispatch-broker", "ledger.json"))).toBe(false);
+    },
+  );
 
   it("never invokes the runtime when policy denies the request", async () => {
     const g = await goal();
