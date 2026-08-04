@@ -204,11 +204,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
         // mismatch, out-of-scope write) reports that specific reason rather than the coarser
         // goal-level HITL state. Bounded read-only/advisory dispatches stay permitted on a
         // HITL-pending goal; only a policy-authorized write is held for human authorization.
-        if (
-          request.readOnly !== true &&
-          preflight.allowed &&
-          (goal.prereqStatus === "hitl" || goal.phase === "hitl")
-        )
+        if (request.readOnly !== true && preflight.allowed && (goal.prereqStatus === "hitl" || goal.phase === "hitl"))
           return {
             content: [
               {
