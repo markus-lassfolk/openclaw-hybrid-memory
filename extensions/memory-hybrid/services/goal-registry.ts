@@ -19,6 +19,7 @@ import type {
   GoalStatus,
 } from "./goal-stewardship-types.js";
 import { nowIso } from "../utils/dates.js";
+import { evaluateGoalPrerequisites, validateMaxIterations } from "./goal-preflight.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
 import { yieldEventLoop } from "../utils/event-loop-yield.js";
 
@@ -344,6 +345,17 @@ function normalizeGoalJson(g: Goal): Goal {
     humanEscalationSummary: g.humanEscalationSummary ?? null,
     escalationKind: g.escalationKind ?? null,
     lastMechanicalCheck: g.lastMechanicalCheck ?? null,
+    phase: g.phase ?? "implementation",
+    iteration: typeof g.iteration === "number" && Number.isSafeInteger(g.iteration) ? g.iteration : 0,
+    maxIterations:
+      typeof g.maxIterations === "number" && Number.isSafeInteger(g.maxIterations) && g.maxIterations > 0
+        ? g.maxIterations
+        : 20,
+    prereqStatus: g.prereqStatus ?? "ready",
+    prereqReasons: Array.isArray(g.prereqReasons) ? g.prereqReasons : [],
+    nextAction: typeof g.nextAction === "string" ? g.nextAction : null,
+    evidence: typeof g.evidence === "string" ? g.evidence : null,
+    blockerFingerprint: typeof g.blockerFingerprint === "string" ? g.blockerFingerprint : null,
   };
 }
 
@@ -612,6 +624,9 @@ export async function createGoal(
       throw new Error(`A goal with label "${input.label}" already exists (status: ${existing.status})`);
     }
 
+    const maxIterations = validateMaxIterations(input.maxIterations);
+    if (maxIterations === undefined) throw new Error("maxIterations must be a finite integer between 1 and 100");
+    const preflight = evaluateGoalPrerequisites(input);
     const id = randomUUID();
     const ts = nowIso();
     const draft: Goal = {
@@ -621,7 +636,20 @@ export async function createGoal(
       acceptanceCriteria: input.acceptanceCriteria.map((c) => c.trim()).filter(Boolean),
       verification: input.verification,
       dispatchPolicy: input.dispatchPolicy,
-      status: "active",
+      phase: preflight.status === "hitl" ? "hitl" : preflight.phase,
+      iteration: 0,
+      maxIterations,
+      prereqStatus: preflight.status,
+      prereqReasons: preflight.reasons,
+      nextAction:
+        preflight.status === "hitl"
+          ? "Human clarification/authorization required"
+          : preflight.phase === "discovery"
+            ? "Run authorized discovery as iteration 1"
+            : "Begin authorized implementation",
+      evidence: null,
+      blockerFingerprint: null,
+      status: preflight.status === "hitl" ? "blocked" : "active",
       priority: input.priority ?? defaults.priority,
       createdAt: ts,
       lastAssessedAt: null,
@@ -718,6 +746,14 @@ export type GoalUpdatePatch = Partial<
     | "escalationKind"
     | "lastMechanicalCheck"
     | "dispatchPolicy"
+    | "phase"
+    | "iteration"
+    | "maxIterations"
+    | "prereqStatus"
+    | "prereqReasons"
+    | "nextAction"
+    | "evidence"
+    | "blockerFingerprint"
   >
 >;
 
