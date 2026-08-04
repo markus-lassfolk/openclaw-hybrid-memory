@@ -61,3 +61,15 @@ post-start checks pass. If activation or post-start validation fails, perform
 one controlled restore of that retained installation, restart once, and leave
 dispatch authorization at `audit` or `disabled`. Stop and investigate after
 that restore: do not retry swaps or restart/rollback in a loop.
+
+## Governed stewardship-limit updates
+
+Do **not** edit protected Gateway configuration paths. A local administrator can use the narrowly scoped, auditable operator command instead:
+
+```bash
+openclaw hybrid-mem stewardship-set globalLimits.maxActiveGoals 6 \
+  --approve --actor "ops@example" --reason "Increase approved concurrent-goal capacity" \
+  --request-id "change-2026-08-04-goal-capacity"
+```
+
+Use `--dry-run` to validate and inspect the old/new value without writing. The command accepts only `globalLimits.maxActiveGoals` and `globalLimits.maxDispatchesPerHour`, both positive safe integers; all other fields fail closed. It requires explicit `--approve`, an actor and a reason, atomically replaces only the plugin config while preserving unrelated Gateway config, serializes updates with a lock, and appends a JSONL audit record beside `openclaw.json` (`stewardship-settings-audit.jsonl`). Reusing a successful `--request-id` is idempotent. Restart the Gateway after a non-dry-run update.
