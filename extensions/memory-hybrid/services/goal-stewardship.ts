@@ -26,6 +26,8 @@ export * from "./goal-subagent.js";
 export * from "./goal-stewardship-heartbeat.js";
 export * from "./goal-active-task-mirror.js";
 export * from "./goal-circuit-breaker.js";
+export * from "./goal-continuation.js";
+export * from "./goal-preflight.js";
 
 const globalDispatchTimestamps: number[] = [];
 const GLOBAL_RATE_LIMIT_FILENAME = "_global_dispatch_rate_limit.json";

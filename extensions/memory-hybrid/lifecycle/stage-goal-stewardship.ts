@@ -18,6 +18,8 @@ import {
   isGoalStewardshipInjectionEnabled,
   listActiveGoals,
   resolveGoalsDir,
+  reconcileGoalContinuation,
+  buildContinuationDirective,
 } from "../services/goal-stewardship.js";
 import {
   buildMultiGoalStewardshipPrepend,
@@ -133,6 +135,20 @@ export function registerGoalStewardshipInjection(
             return { prependContext: prepend };
           }
 
+          // Controller reconciliation is persisted before prompt construction. It survives a
+          // gateway restart and fences duplicate heartbeat pulses by decision fingerprint.
+          const continuationDirectives: string[] = [];
+          for (const goal of goals) {
+            const decision = await reconcileGoalContinuation(goalsDir, goal.id);
+            if (decision) {
+              const fresh = await (await import("../services/goal-registry.js")).readGoal(goalsDir, goal.id);
+              if (fresh) {
+                const directive = buildContinuationDirective(fresh, decision);
+                if (directive) continuationDirectives.push(directive);
+              }
+            }
+          }
+
           let triageHeavy = heuristicNeedsHeavyAttention(goals);
           if (gs.llmTriageOnHeartbeat && ctx.openai) {
             const summary = goals
@@ -164,7 +180,10 @@ export function registerGoalStewardshipInjection(
           api.logger?.info?.(
             `memory-hybrid: goal stewardship bundle (${built.goalsIncluded.length} goal(s), heavyHint=${built.suggestHeavy})`,
           );
-          const prepend = applyPrependBudget(ctx.prependBudgetRef, built.prepend);
+          const continuationBlock = continuationDirectives.length
+            ? `\n<goal-continuation>\n${continuationDirectives.join("\n")}\n</goal-continuation>`
+            : "";
+          const prepend = applyPrependBudget(ctx.prependBudgetRef, `${built.prepend}${continuationBlock}`);
           if (!prepend) return undefined;
           return { prependContext: prepend };
         } catch (err) {

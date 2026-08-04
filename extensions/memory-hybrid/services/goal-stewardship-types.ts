@@ -35,7 +35,8 @@ export type GoalPulseOutcome = "done" | "blocked" | "dispatched" | "executed" | 
 export type GoalHistoryActor = "watchdog" | "steward" | "agent" | "user";
 
 /** Set when the goal is blocked by automated escalation (circuit breaker vs subagent failure). */
-export type GoalEscalationKind = "circuit_breaker";
+export type GoalEscalationKind = "circuit_breaker" | "iteration_exhausted";
+export type GoalPhase = "discovery" | "implementation" | "verification" | "hitl";
 
 export interface GoalHistoryEntry {
   timestamp: string;
@@ -47,6 +48,14 @@ export interface GoalHistoryEntry {
 export interface Goal {
   /** Optional machine-enforced subagent dispatch authorization. Missing means no write dispatch. */
   dispatchPolicy?: import("./goal-dispatch-authorization.js").GoalDispatchPolicy;
+  phase: GoalPhase;
+  iteration: number;
+  maxIterations: number;
+  prereqStatus: "ready" | "discovery_required" | "hitl";
+  prereqReasons: string[];
+  nextAction: string | null;
+  evidence: string | null;
+  blockerFingerprint: string | null;
   id: string;
   label: string;
   description: string;
@@ -97,6 +106,7 @@ export interface CreateGoalInput {
   verification?: GoalVerification;
   maxDispatches?: number;
   maxAssessments?: number;
+  maxIterations?: number;
   cooldownMinutes?: number;
   escalateAfterFailures?: number;
   dispatchPolicy?: import("./goal-dispatch-authorization.js").GoalDispatchPolicy;

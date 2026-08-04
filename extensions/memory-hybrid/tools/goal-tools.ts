@@ -43,6 +43,7 @@ import { verifyGoalMechanically } from "../services/goal-health.js";
 import { runActiveTaskCheckpoint } from "../services/active-task-checkpoint.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import { formatGoalClarityRejection, validateGoalRegisterClarity } from "../services/goal-register-validation.js";
+import { validateMaxIterations } from "../services/goal-preflight.js";
 import { guardAgainstWrapperArgsDropped } from "../services/tool-args-guard.js";
 import { formatDateUtc, nowIso, nowSec } from "../utils/dates.js";
 import { globalOnlyScopeFilter, scopeFieldsFromFilter } from "../utils/scope-filter.js";
@@ -199,6 +200,20 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           createsBranch: typeof p.creates_branch === "boolean" ? p.creates_branch : undefined,
         };
         const preflight = evaluateGoalDispatch(goal.dispatchPolicy, request);
+        // A request that policy would deny anyway (undeclared class, wrong agent, read/write
+        // mismatch, out-of-scope write) reports that specific reason rather than the coarser
+        // goal-level HITL state. Bounded read-only/advisory dispatches stay permitted on a
+        // HITL-pending goal; only a policy-authorized write is held for human authorization.
+        if (request.readOnly !== true && preflight.allowed && (goal.prereqStatus === "hitl" || goal.phase === "hitl"))
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Goal dispatch requires HITL: ${goal.prereqReasons.join("; ") || "prerequisites unresolved"}.`,
+              },
+            ],
+            details: { error: "goal_prerequisites_unresolved" },
+          };
         if (!preflight.allowed)
           return {
             content: [{ type: "text" as const, text: `Dispatch denied by goal policy: ${preflight.reason}.` }],
@@ -212,6 +227,50 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             details: { error: "goal_not_found" },
           };
         if (isTerminalStatus(beforeReserve.status)) return terminalDispatchResult(beforeReserve.status);
+        // Atomically claim an iteration before reserving a launch. Duplicate pulses and restarts
+        // therefore cannot consume the same iteration or silently run past the bound.
+        let iterationRejected = false;
+        let claimedIteration = 0;
+        const iterated = await updateGoal(
+          goalsDir,
+          goalId,
+          (fresh) => {
+            if (fresh.iteration >= fresh.maxIterations) {
+              iterationRejected = true;
+              return {
+                status: "blocked",
+                phase: "hitl",
+                escalationKind: "iteration_exhausted",
+                humanEscalationSummary: `Iteration budget exhausted (${fresh.iteration}/${fresh.maxIterations}); human decision required.`,
+                nextAction: "Human decides whether to extend scope/budget",
+                lastOutcome: "iteration budget exhausted",
+              };
+            }
+            claimedIteration = fresh.iteration + 1;
+            return {
+              iteration: claimedIteration,
+              phase: fresh.phase === "discovery" ? "discovery" : "implementation",
+              nextAction: `Dispatch iteration ${claimedIteration}`,
+              blockerFingerprint: null,
+            };
+          },
+          (_fresh, _patch) => ({
+            timestamp: nowIso(),
+            action: iterationRejected ? "iteration-exhausted" : "iteration-claimed",
+            detail: iterationRejected ? "HITL escalation" : `iteration ${claimedIteration}`,
+            actor: "steward",
+          }),
+        );
+        if (iterationRejected)
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Goal dispatch refused: iteration budget exhausted (${iterated.iteration}/${iterated.maxIterations}); HITL required.`,
+              },
+            ],
+            details: { error: "iteration_exhausted", goal: iterated },
+          };
         const budget = {
           maxDispatches: typeof p.budget?.max_dispatches === "number" ? p.budget.max_dispatches : undefined,
           maxTotalTokens: typeof p.budget?.max_total_tokens === "number" ? p.budget.max_total_tokens : undefined,
@@ -354,7 +413,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           }
           const lines = goals.map(
             (g) =>
-              `- [${g.priority}] ${g.label} (${g.status}, id: ${g.id}) — criteria: ${g.acceptanceCriteria.length}, blockers: ${g.currentBlockers.length}`,
+              `- [${g.priority}] ${g.label} (${g.status}, ${g.phase} ${g.iteration}/${g.maxIterations}, prereq: ${g.prereqStatus}, id: ${g.id}) — next: ${g.nextAction ?? "none"}`,
           );
           return {
             content: [
@@ -440,6 +499,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
         verification_target: Type.Optional(Type.String()),
         max_dispatches: Type.Optional(Type.Number()),
         max_assessments: Type.Optional(Type.Number()),
+        max_iterations: Type.Optional(Type.Number({ description: "Finite integer 1..100; defaults to 20." })),
         cooldown_minutes: Type.Optional(Type.Number()),
         confirmed: Type.Optional(
           Type.Boolean({
@@ -483,6 +543,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             verification_target?: string;
             max_dispatches?: number;
             max_assessments?: number;
+            max_iterations?: number;
             cooldown_minutes?: number;
             confirmed?: boolean;
             task_entity?: string;
@@ -491,6 +552,11 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             dispatch_policy?: GoalDispatchPolicy;
           };
           const effectivePriority = p.priority ?? defaults.priority;
+          if (validateMaxIterations(p.max_iterations) === undefined)
+            return {
+              content: [{ type: "text", text: "max_iterations must be a finite integer between 1 and 100." }],
+              details: { error: "invalid_max_iterations" },
+            };
           const clarity = validateGoalRegisterClarity({
             label: p.label,
             description: p.description,
@@ -537,6 +603,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
               verification,
               maxDispatches: p.max_dispatches,
               maxAssessments: p.max_assessments,
+              maxIterations: p.max_iterations,
               cooldownMinutes: p.cooldown_minutes,
               dispatchPolicy: p.dispatch_policy,
             },
