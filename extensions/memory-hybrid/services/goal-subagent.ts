@@ -262,6 +262,9 @@ export async function updateGoalOnSubagentEnd(
           lastOutcome: lastOutcome ?? "All linked tasks completed — verify goal",
         };
       }
+      // Failed workers are deliberately returned to active controller ownership. A blocked
+      // status used to hide the goal behind cooldown/prompt-only stewardship and stranded PR repairs.
+      if (!info.success) return { linkedTasks, consecutiveFailures, status: "active", lastOutcome };
       return { linkedTasks, consecutiveFailures, lastOutcome };
     },
     (fresh, resolvedPatch) => {
