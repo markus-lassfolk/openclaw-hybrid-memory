@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { appendFile, mkdir } from "node:fs/promises";
 import { GoalDispatchBroker } from "../services/goal-dispatch-broker.js";
 import { join } from "node:path";
@@ -119,7 +120,10 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
         agent_id: Type.String(),
         runtime: Type.Union([Type.Literal("subagent"), Type.Literal("acp")]),
         task: Type.String(),
-        session_key: Type.String(),
+        session_key: Type.String({
+          description:
+            "Caller correlation only; ignored for managed child routing. The broker creates a fresh target-agent child session.",
+        }),
         /** Explicit policy declaration. Omitting task_class only selects legacy `managed`; it never bypasses validation. */
         task_class: Type.Optional(Type.String()),
         read_only: Type.Optional(Type.Boolean()),
@@ -279,6 +283,12 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           maxWallTimeMs: typeof p.budget?.max_wall_time_ms === "number" ? p.budget.max_wall_time_ms : undefined,
         };
         const broker = new GoalDispatchBroker(goalsDir);
+        // The public plugin runtime selects the executing agent from the canonical session
+        // key, not an `agentId` parameter. Never use caller-controlled `session_key` here:
+        // it can name another agent (or `agent:main:main`) and would silently redirect work.
+        // Match core sessions_spawn's format exactly and create a one-shot child for the
+        // policy-authorized target agent.
+        const childSessionKey = `agent:${agent}:subagent:${randomUUID()}`;
         const canonical = goal.dispatchPolicy?.classes[taskClass]?.canonical;
         const record = await broker.reserve({
           goalId,
@@ -287,7 +297,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           budget,
           ttlMs: 5 * 60_000,
           owner: agent,
-          sessionId: p.session_key,
+          sessionId: childSessionKey,
           isDispatchable: isStillDispatchable,
           target: canonical
             ? {
@@ -334,7 +344,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
                 goal_id: goalId,
                 target_agent: agent,
                 runtime,
-                session_key: p.session_key,
+                session_key: childSessionKey,
                 task: p.task,
                 task_class: taskClass,
                 read_only: request.readOnly,
@@ -355,15 +365,36 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           // runtime binding. Do not add a process-global fallback here: it would escape host
           // request authority and make an absent binding look like a completed E2E launch.
           const run = await api.runtime.subagent.run({
-            sessionKey: p.session_key,
+            sessionKey: childSessionKey,
             message: p.task,
             idempotencyKey: record.id,
             deliver: false,
           });
-          await broker.launch(record.id, run.runId);
+          // `runId` is the supported runtime's acceptance receipt. Do not turn a
+          // reservation into a launched record for an empty/malformed response.
+          const runId = typeof run?.runId === "string" ? run.runId.trim() : "";
+          if (!runId) {
+            await broker.release(record.id, "launch_unaccepted");
+            return {
+              content: [{ type: "text" as const, text: "Managed dispatch was not accepted; reservation released." }],
+              details: { error: "launch_unaccepted" },
+            };
+          }
+          const launched = await broker.launch(record.id, runId);
+          if (!launched)
+            return {
+              content: [{ type: "text" as const, text: "Managed dispatch was accepted but broker recording failed." }],
+              details: { error: "launch_recording_failed", run_id: runId },
+            };
           return {
-            content: [{ type: "text" as const, text: `Managed goal dispatch launched (${run.runId}).` }],
-            details: { ok: true, dispatch_id: record.id, run_id: run.runId, grant_expires_at: record.expiresAt },
+            content: [{ type: "text" as const, text: `Managed goal dispatch launched (${runId}).` }],
+            details: {
+              ok: true,
+              dispatch_id: record.id,
+              run_id: runId,
+              session_key: childSessionKey,
+              grant_expires_at: record.expiresAt,
+            },
           };
         } catch (err) {
           await broker.release(record.id, "launch_failed");

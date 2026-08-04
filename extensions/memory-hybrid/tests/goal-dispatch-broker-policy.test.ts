@@ -168,12 +168,18 @@ describe("goal_dispatch broker policy selection", () => {
       read_only: true,
     });
     expect(run).toHaveBeenCalledWith({
-      sessionKey: "session",
+      sessionKey: expect.stringMatching(/^agent:legacy-reader:subagent:[0-9a-f-]{36}$/),
       message: "read",
       idempotencyKey: expect.any(String),
       deliver: false,
     });
-    expect(result.details).toMatchObject({ ok: true, run_id: "run-1" });
+    expect(result.details).toMatchObject({
+      ok: true,
+      run_id: "run-1",
+      session_key: expect.stringMatching(/^agent:legacy-reader:subagent:[0-9a-f-]{36}$/),
+    });
+    const runtimeParams = run.mock.calls[0]?.[0] as { sessionKey: string } | undefined;
+    expect(runtimeParams?.sessionKey).toBe(result.details?.session_key);
     const ledger = JSON.parse(
       await (await import("node:fs/promises")).readFile(join(goalsDir, "dispatch-broker", "ledger.json"), "utf8"),
     );
@@ -181,6 +187,48 @@ describe("goal_dispatch broker policy selection", () => {
       status: "launched",
       runId: "run-1",
     });
+  });
+
+  it("creates a target-agent child and ignores an untrusted caller session key", async () => {
+    const g = await goal();
+    const result = await dispatch("test", {
+      ...base(g.id, "legacy-reader", "subagent"),
+      session_key: "agent:main:main",
+      read_only: true,
+    });
+
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionKey: expect.stringMatching(/^agent:legacy-reader:subagent:[0-9a-f-]{36}$/),
+      }),
+    );
+    expect(result.details?.session_key).not.toBe("agent:main:main");
+    const ledger = JSON.parse(
+      await (await import("node:fs/promises")).readFile(join(goalsDir, "dispatch-broker", "ledger.json"), "utf8"),
+    );
+    expect(ledger.dispatches[result.details?.dispatch_id as string]).toMatchObject({
+      targetAgent: "legacy-reader",
+      sessionId: result.details?.session_key,
+      status: "launched",
+      runId: "run-1",
+    });
+  });
+
+  it("releases instead of recording a launch when the runtime returns no accepted run id", async () => {
+    api.runtime.subagent.run = vi.fn(async () => ({}) as { runId: string });
+    const g = await goal();
+    const result = await dispatch("test", {
+      ...base(g.id, "legacy-reader", "subagent"),
+      read_only: true,
+    });
+
+    expect(result.details).toEqual({ error: "launch_unaccepted" });
+    const ledger = JSON.parse(
+      await (await import("node:fs/promises")).readFile(join(goalsDir, "dispatch-broker", "ledger.json"), "utf8"),
+    );
+    expect(Object.values(ledger.dispatches)).toContainEqual(
+      expect.objectContaining({ status: "released", reason: "launch_unaccepted" }),
+    );
   });
 
   // The plugin must fail closed rather than provide a global fallback when the host request binding is absent.
