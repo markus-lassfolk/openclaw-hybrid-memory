@@ -199,7 +199,16 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           createsPr: typeof p.creates_pr === "boolean" ? p.creates_pr : undefined,
           createsBranch: typeof p.creates_branch === "boolean" ? p.creates_branch : undefined,
         };
-        if (goal.prereqStatus === "hitl" || goal.phase === "hitl")
+        const preflight = evaluateGoalDispatch(goal.dispatchPolicy, request);
+        // A request that policy would deny anyway (undeclared class, wrong agent, read/write
+        // mismatch, out-of-scope write) reports that specific reason rather than the coarser
+        // goal-level HITL state. Bounded read-only/advisory dispatches stay permitted on a
+        // HITL-pending goal; only a policy-authorized write is held for human authorization.
+        if (
+          request.readOnly !== true &&
+          preflight.allowed &&
+          (goal.prereqStatus === "hitl" || goal.phase === "hitl")
+        )
           return {
             content: [
               {
@@ -209,7 +218,6 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             ],
             details: { error: "goal_prerequisites_unresolved" },
           };
-        const preflight = evaluateGoalDispatch(goal.dispatchPolicy, request);
         if (!preflight.allowed)
           return {
             content: [{ type: "text" as const, text: `Dispatch denied by goal policy: ${preflight.reason}.` }],

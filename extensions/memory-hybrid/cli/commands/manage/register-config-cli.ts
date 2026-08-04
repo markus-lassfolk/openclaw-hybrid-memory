@@ -111,18 +111,43 @@ export function registerManageConfigCli(mem: Chainable, b: ManageBindings): void
     }),
   );
 
-  mem.command("stewardship-set <key> <value>")
-    .description("Approved administrator update for an allowlisted stewardship limit; requires --approve, --actor, and --reason")
+  mem
+    .command("stewardship-set <key> <value>")
+    .description(
+      "Approved administrator update for an allowlisted stewardship limit; requires --approve, --actor, and --reason",
+    )
     .requiredOption("--approve", "explicit administrative approval")
     .requiredOption("--actor <actor>", "responsible administrator identity")
     .requiredOption("--reason <reason>", "change rationale for the audit record")
     .option("--dry-run", "validate and show the change without writing")
     .option("--request-id <id>", "idempotency key for retry-safe invocation")
-    .action(withExit(async (key: string, value: string, opts: { approve?: boolean; actor: string; reason: string; dryRun?: boolean; requestId?: string }) => {
-      const res = runStewardshipSettingsForCli({ key, value, actor: opts.actor, reason: opts.reason, approved: opts.approve === true, dryRun: opts.dryRun, requestId: opts.requestId });
-      if (res.ok) console.log(`${res.dryRun ? "[dry-run] " : ""}${res.changed ? "Updated" : "No change"}: goalStewardship.${key} ${res.oldValue} -> ${res.newValue}. Audit: ${res.auditPath}`);
-      else { console.error(`Error: ${res.error}`); process.exitCode = 1; }
-    }));
+    .action(
+      withExit(
+        async (
+          key: string,
+          value: string,
+          opts: { approve?: boolean; actor: string; reason: string; dryRun?: boolean; requestId?: string },
+        ) => {
+          const res = runStewardshipSettingsForCli({
+            key,
+            value,
+            actor: opts.actor,
+            reason: opts.reason,
+            approved: opts.approve === true,
+            dryRun: opts.dryRun,
+            requestId: opts.requestId,
+          });
+          if (res.ok)
+            console.log(
+              `${res.dryRun ? "[dry-run] " : ""}${res.changed ? "Updated" : "No change"}: goalStewardship.${key} ${res.oldValue} -> ${res.newValue}. Audit: ${res.auditPath}`,
+            );
+          else {
+            console.error(`Error: ${res.error}`);
+            process.exitCode = 1;
+          }
+        },
+      ),
+    );
 
   const helpCommand = (mem as Command).commands.find((command) => command.name() === "help");
   const configSetHelpRegistrar = helpCommand ?? mem;

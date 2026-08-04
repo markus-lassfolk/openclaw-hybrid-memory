@@ -23,19 +23,34 @@ export function decideGoalContinuation(g: Goal): GoalContinuationDecision {
     return { kind: "terminal", reason: `goal is ${g.status}`, fingerprint: `terminal:${g.status}` };
   if (g.humanEscalationSummary || g.escalationKind)
     return { kind: "hitl", reason: "circuit breaker requires human unblock", fingerprint: "hitl:circuit-breaker" };
-  if (activeTask(g)) return { kind: "wait", reason: "authorized worker is still active", fingerprint: "wait:worker-active" };
+  if (activeTask(g))
+    return { kind: "wait", reason: "authorized worker is still active", fingerprint: "wait:worker-active" };
   const failed = g.linkedTasks.filter((t) => /^(failed|error)$/i.test(t.status));
   if (failed.length) {
-    const details = failed.map((t) => `${t.label}:${t.dispatchFailureReason ?? "worker failed"}`).sort().join("|");
+    const details = failed
+      .map((t) => `${t.label}:${t.dispatchFailureReason ?? "worker failed"}`)
+      .sort()
+      .join("|");
     return { kind: "repair", reason: `worker/check failure: ${details}`, fingerprint: `repair:${details}` };
   }
   if (g.status === "verifying")
-    return { kind: "verify", reason: "work ended; inspect live PR head, checks, review threads, and diff", fingerprint: "verify:live-pr" };
-  return { kind: "diagnose", reason: "no active authorized worker; inspect live state before dispatch", fingerprint: "diagnose:no-worker" };
+    return {
+      kind: "verify",
+      reason: "work ended; inspect live PR head, checks, review threads, and diff",
+      fingerprint: "verify:live-pr",
+    };
+  return {
+    kind: "diagnose",
+    reason: "no active authorized worker; inspect live state before dispatch",
+    fingerprint: "diagnose:no-worker",
+  };
 }
 
 /** Persist a decision exactly once per fingerprint.  This is the durable duplicate-pulse fence. */
-export async function reconcileGoalContinuation(goalsDir: string, goalId: string): Promise<GoalContinuationDecision | null> {
+export async function reconcileGoalContinuation(
+  goalsDir: string,
+  goalId: string,
+): Promise<GoalContinuationDecision | null> {
   const current = await readGoal(goalsDir, goalId);
   if (!current) return null;
   const decision = decideGoalContinuation(current);
@@ -53,7 +68,9 @@ export async function reconcileGoalContinuation(goalsDir: string, goalId: string
       const next = decideGoalContinuation(fresh);
       const already = [...fresh.history].reverse().find((h) => h.action === "continuation-decision")?.detail;
       const detail = `${next.kind}|${next.fingerprint}|${next.reason}`;
-      return already === detail ? [] : { timestamp: nowIso(), action: "continuation-decision", detail, actor: "watchdog" };
+      return already === detail
+        ? []
+        : { timestamp: nowIso(), action: "continuation-decision", detail, actor: "watchdog" };
     },
   );
   return decision;
@@ -61,8 +78,10 @@ export async function reconcileGoalContinuation(goalsDir: string, goalId: string
 
 export function buildContinuationDirective(goal: Goal, decision: GoalContinuationDecision): string | null {
   if (!["diagnose", "repair", "verify"].includes(decision.kind)) return null;
-  const canonical = goal.dispatchPolicy && Object.values(goal.dispatchPolicy.classes).find((c) => !c.readOnly)?.canonical;
-  if (!canonical) return `Continuation ${decision.kind}: ${decision.reason}. No canonical authorized target exists; request HITL instead of creating a branch or PR.`;
+  const canonical =
+    goal.dispatchPolicy && Object.values(goal.dispatchPolicy.classes).find((c) => !c.readOnly)?.canonical;
+  if (!canonical)
+    return `Continuation ${decision.kind}: ${decision.reason}. No canonical authorized target exists; request HITL instead of creating a branch or PR.`;
   return [
     `Continuation required (${decision.kind}): ${decision.reason}.`,
     `Live-check ${canonical.repository}#${canonical.prNumber} branch ${canonical.branch}: head, checks, review threads, and substantive diff.`,
