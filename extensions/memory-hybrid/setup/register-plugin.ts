@@ -757,10 +757,13 @@ async function runDeferredFullTeardownActivation(params: {
       return;
     }
 
+    // A donor that has not drained can still close shared SQLite/LanceDB resources after this
+    // generation opens them. Fail closed rather than racing a delayed terminal close against
+    // replacement work (maintenance, lifecycle sync, and workboard all use these handles).
     if (!drained) {
-      logApi.logger.warn?.(
-        `memory-hybrid: donor generation ${donorGeneration} teardown still pending after ${TEARDOWN_WAIT_MS}ms; ` +
-          `opening fresh databases anyway (prior teardown continues on its own chain) [generation=${registrationGeneration}]`,
+      throw new Error(
+        `memory-hybrid: donor generation ${donorGeneration} teardown did not drain before database activation ` +
+          `(waitedMs=${TEARDOWN_WAIT_MS}, generation=${registrationGeneration})`,
       );
     }
 
