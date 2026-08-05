@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { appendFile, mkdir } from "node:fs/promises";
 import { GoalDispatchBroker } from "../services/goal-dispatch-broker.js";
 import { join } from "node:path";
@@ -22,6 +23,7 @@ import type { Goal, GoalHistoryEntry } from "../services/goal-stewardship-types.
 import {
   evaluateGoalDispatch,
   isValidGoalDispatchPolicy,
+  legacyGoalDispatchPolicyRemediation,
   type GoalDispatchPolicy,
   type GoalDispatchRequest,
 } from "../services/goal-dispatch-authorization.js";
@@ -1058,7 +1060,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             };
           }
           const patchValue = <T>(snake: T | undefined, camel: T | undefined, field: string): T | undefined => {
-            if (snake !== undefined && camel !== undefined && JSON.stringify(snake) !== JSON.stringify(camel))
+            if (snake !== undefined && camel !== undefined && !isDeepStrictEqual(snake, camel))
               throw new Error(`${field} and its camel-case alias conflict`);
             return snake ?? camel;
           };
@@ -1067,11 +1069,18 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           const lastOutcome = patchValue(p.last_outcome, p.lastOutcome, "last_outcome");
           const linkedTasks = patchValue(p.linked_tasks, p.linkedTasks, "linked_tasks");
           if (dispatchPolicy !== undefined && !isValidGoalDispatchPolicy(dispatchPolicy)) {
+            const remediation = legacyGoalDispatchPolicyRemediation(dispatchPolicy);
             return {
               content: [
-                { type: "text", text: "dispatch_policy must be a version 1 policy with at least one valid class." },
+                {
+                  type: "text",
+                  text: remediation ?? "dispatch_policy must be a version 1 policy with at least one valid class.",
+                },
               ],
-              details: { error: "invalid_dispatch_policy" },
+              details: {
+                error: remediation ? "legacy_dispatch_policy_requires_repository" : "invalid_dispatch_policy",
+                remediation,
+              },
             };
           }
           if (p.acceptance_criteria !== undefined) {

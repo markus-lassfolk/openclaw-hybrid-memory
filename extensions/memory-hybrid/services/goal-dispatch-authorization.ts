@@ -69,6 +69,37 @@ function validClassPolicy(value: unknown): value is GoalDispatchClassPolicy {
 }
 
 /** Pure validator: callers must persist its result before spawning. */
+/**
+ * Detect the pre-repository v1 write-policy shape persisted by older releases.
+ * It intentionally is not accepted as a write authorization: a PR number and branch
+ * are not globally unique, so guessing a repository would weaken the canonical target
+ * binding. Callers can preserve the goal and replace the policy with a current v1
+ * policy containing canonical.repository.
+ */
+export function legacyGoalDispatchPolicyRemediation(policy: unknown): string | null {
+  if (!policy || typeof policy !== "object") return null;
+  const candidate = policy as Record<string, unknown>;
+  if (candidate.version !== 1 || !candidate.classes || typeof candidate.classes !== "object") return null;
+  const legacyClasses = Object.entries(candidate.classes).filter(([, entry]) => {
+    if (!entry || typeof entry !== "object") return false;
+    const classPolicy = entry as Record<string, unknown>;
+    if (classPolicy.readOnly !== false || !classPolicy.canonical || typeof classPolicy.canonical !== "object")
+      return false;
+    const canonical = classPolicy.canonical as Record<string, unknown>;
+    return (
+      canonical.repository === undefined &&
+      Number.isSafeInteger(canonical.prNumber) &&
+      (canonical.prNumber as number) > 0 &&
+      typeof canonical.branch === "string" &&
+      canonical.branch.trim().length > 0 &&
+      typeof canonical.remoteHead === "string" &&
+      canonical.remoteHead.trim().length > 0
+    );
+  });
+  if (legacyClasses.length === 0) return null;
+  return "legacy write dispatch policy is missing canonical.repository; no repository was inferred. Resubmit dispatch_policy with canonical.repository for every write class.";
+}
+
 export function isValidGoalDispatchPolicy(policy: unknown): policy is GoalDispatchPolicy {
   if (!policy || typeof policy !== "object") return false;
   const candidate = policy as Record<string, unknown>;
@@ -81,7 +112,8 @@ export function evaluateGoalDispatch(
   policy: GoalDispatchPolicy | undefined,
   request: GoalDispatchRequest,
 ): GoalDispatchPreflight {
-  if (!isValidGoalDispatchPolicy(policy)) return fail(request, "dispatch policy missing or invalid");
+  if (!isValidGoalDispatchPolicy(policy))
+    return fail(request, legacyGoalDispatchPolicyRemediation(policy) ?? "dispatch policy missing or invalid");
   const classPolicy = policy.classes[request.taskClass];
   if (!classPolicy) return fail(request, "task class is not defined by goal policy");
   if (!request.requestedAgent || request.requestedAgent !== request.actualAgent)

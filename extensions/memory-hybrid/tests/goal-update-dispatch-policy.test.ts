@@ -1,11 +1,11 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { hybridConfigSchema } from "../config.js";
 import { createGoal, readGoal, terminateGoal } from "../services/goal-registry.js";
-import type { GoalDispatchPolicy } from "../services/goal-dispatch-authorization.js";
+import { evaluateGoalDispatch, type GoalDispatchPolicy } from "../services/goal-dispatch-authorization.js";
 import { registerGoalTools } from "../tools/goal-tools.js";
 import { buildToolScopeFilter } from "../utils/scope-filter.js";
 
@@ -88,6 +88,66 @@ describe("goal_update dispatch_policy", () => {
     expect((await update("test", { goal_id: g.id, dispatch_policy: policy })).details).toMatchObject({
       error: "terminal",
     });
+    expect((await readGoal(goalsDir, g.id))?.dispatchPolicy).toBeUndefined();
+  });
+  it("preserves a legacy persisted policy, denies its write dispatch with remediation, and safely replaces it", async () => {
+    const g = await goal();
+    const legacyPolicy = {
+      version: 1,
+      classes: {
+        writer: {
+          allowedAgents: ["writer"],
+          readOnly: false,
+          canonical: { prNumber: 2252, branch: "fix/goal", remoteHead: "abc123" },
+          writeScope: ["extensions/memory-hybrid"],
+          forbidNewPr: true,
+          forbidNewBranch: true,
+        },
+      },
+    };
+    await writeFile(join(goalsDir, `${g.id}.json`), JSON.stringify({ ...g, dispatchPolicy: legacyPolicy }, null, 2));
+    const loaded = await readGoal(goalsDir, g.id);
+    expect(loaded?.dispatchPolicy).toEqual(legacyPolicy);
+    expect(
+      evaluateGoalDispatch(loaded?.dispatchPolicy, {
+        taskClass: "writer",
+        requestedAgent: "writer",
+        actualAgent: "writer",
+        readOnly: false,
+      }).reason,
+    ).toContain("missing canonical.repository");
+
+    const replacement: GoalDispatchPolicy = {
+      version: 1,
+      classes: {
+        writer: {
+          ...legacyPolicy.classes.writer,
+          canonical: { ...legacyPolicy.classes.writer.canonical, repository: "owner/repository" },
+        },
+      },
+    };
+    const result = await update("test", { goal_id: g.id, dispatch_policy: replacement });
+    expect(result.details?.goal).toMatchObject({ dispatchPolicy: replacement });
+    expect((await readGoal(goalsDir, g.id))?.dispatchPolicy).toEqual(replacement);
+  });
+
+  it("returns non-destructive remediation for a legacy write policy submitted to goal_update", async () => {
+    const g = await goal();
+    const legacyPolicy = {
+      version: 1,
+      classes: {
+        writer: {
+          allowedAgents: ["writer"],
+          readOnly: false,
+          canonical: { prNumber: 2252, branch: "fix/goal", remoteHead: "abc123" },
+          writeScope: ["extensions/memory-hybrid"],
+          forbidNewPr: true,
+          forbidNewBranch: true,
+        },
+      },
+    };
+    const result = await update("test", { goal_id: g.id, dispatch_policy: legacyPolicy });
+    expect(result.details).toMatchObject({ error: "legacy_dispatch_policy_requires_repository" });
     expect((await readGoal(goalsDir, g.id))?.dispatchPolicy).toBeUndefined();
   });
 });
@@ -189,5 +249,45 @@ describe("goal_update complete persisted patch", () => {
       evidence: null,
       linkedTasks,
     });
+  });
+  it("accepts matching snake aliases, rejects conflicting aliases, and preserves unrelated goal fields", async () => {
+    const g = await createGoal(
+      goalsDir,
+      { label: "snake-operational", description: "original", acceptanceCriteria: ["criterion"] },
+      defaults,
+    );
+    const linkedTasks = [
+      {
+        label: "worker",
+        sessionKey: "session",
+        status: "done",
+        linkedAt: "2026-08-05T00:00:00.000Z",
+        updatedAt: "2026-08-05T00:01:00.000Z",
+      },
+    ];
+    const result = await update("test", {
+      goal_id: g.id,
+      next_action: "retry safely",
+      nextAction: "retry safely",
+      last_outcome: "checked",
+      lastOutcome: "checked",
+      linked_tasks: linkedTasks,
+      linkedTasks: structuredClone(linkedTasks),
+    });
+    expect(result.details?.goal).toMatchObject({
+      nextAction: "retry safely",
+      lastOutcome: "checked",
+      linkedTasks,
+      description: "original",
+      acceptanceCriteria: ["criterion"],
+      priority: g.priority,
+    });
+    const conflict = await update("test", {
+      goal_id: g.id,
+      next_action: "one",
+      nextAction: "two",
+    });
+    expect(conflict.details?.error).toContain("next_action and its camel-case alias conflict");
+    expect((await readGoal(goalsDir, g.id))?.nextAction).toBe("retry safely");
   });
 });
