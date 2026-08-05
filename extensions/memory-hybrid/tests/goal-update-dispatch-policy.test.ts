@@ -91,3 +91,103 @@ describe("goal_update dispatch_policy", () => {
     expect((await readGoal(goalsDir, g.id))?.dispatchPolicy).toBeUndefined();
   });
 });
+
+describe("goal_update complete persisted patch", () => {
+  let workspaceRoot: string;
+  let goalsDir: string;
+  let update: Execute;
+  beforeEach(async () => {
+    workspaceRoot = await mkdtemp(join(tmpdir(), "goal-update-complete-"));
+    goalsDir = join(workspaceRoot, "state", "goals");
+    await mkdir(goalsDir, { recursive: true });
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-that-is-long-enough-to-pass", model: "text-embedding-3-small" },
+      goalStewardship: { enabled: true, goalsDir: "state/goals" },
+    });
+    const tools = new Map<string, { execute: Execute }>();
+    const api = {
+      registerTool(definition: { name: string; execute: Execute }) {
+        tools.set(definition.name, definition);
+      },
+    };
+    registerGoalTools(
+      {
+        cfg,
+        goalsDir,
+        workspaceRoot,
+        resolvedActiveTaskPath: join(workspaceRoot, "ACTIVE-TASKS.md"),
+        factsDb: null,
+        vectorDb: null,
+        embeddings: null,
+        eventLog: null,
+        memoryDir: join(workspaceRoot, "memory"),
+        currentAgentIdRef: { value: null },
+        buildToolScopeFilter,
+      },
+      api as unknown as ClawdbotPluginApi,
+    );
+    update = tools.get("goal_update")!.execute;
+  });
+  afterEach(async () => {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  });
+
+  it("persists camel-case policy and nullable/non-string operational fields through read-back", async () => {
+    const g = await createGoal(
+      goalsDir,
+      { label: "complete-patch", description: "d", acceptanceCriteria: ["a"] },
+      defaults,
+    );
+    const linkedTasks = [
+      {
+        label: "dispatch-worker",
+        sessionKey: null,
+        runId: "run-1",
+        dispatchFailureReason: null,
+        status: "failed",
+        linkedAt: "2026-08-05T00:00:00.000Z",
+        updatedAt: "2026-08-05T00:01:00.000Z",
+      },
+    ];
+    const fullPolicy: GoalDispatchPolicy = {
+      version: 1,
+      classes: {
+        furnace: {
+          allowedAgents: ["furnace"],
+          readOnly: false,
+          canonical: {
+            repository: "markus-lassfolk/openclaw-hybrid-memory",
+            prNumber: 1,
+            branch: "fix/goal",
+            remoteHead: "abc123",
+          },
+          writeScope: ["extensions/memory-hybrid"],
+          forbidNewPr: true,
+          forbidNewBranch: true,
+        },
+      },
+    };
+    const result = await update("test", {
+      goal_id: g.id,
+      dispatchPolicy: fullPolicy,
+      nextAction: null,
+      lastOutcome: "worker failed",
+      evidence: null,
+      linkedTasks,
+    });
+    expect(result.details?.goal).toMatchObject({
+      dispatchPolicy: fullPolicy,
+      nextAction: null,
+      lastOutcome: "worker failed",
+      evidence: null,
+      linkedTasks,
+    });
+    expect(await readGoal(goalsDir, g.id)).toMatchObject({
+      dispatchPolicy: fullPolicy,
+      nextAction: null,
+      lastOutcome: "worker failed",
+      evidence: null,
+      linkedTasks,
+    });
+  });
+});
