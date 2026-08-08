@@ -1021,8 +1021,8 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
               linkedAt: Type.String(),
               updatedAt: Type.String(),
             }),
+            { description: "Alias for linked_tasks." },
           ),
-          { description: "Alias for linked_tasks." },
         ),
         note: Type.Optional(Type.String()),
         confirmed: Type.Optional(
