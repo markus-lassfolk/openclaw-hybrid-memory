@@ -41,11 +41,17 @@ describe("goal_dispatch broker policy selection", () => {
   let goalsDir: string;
   let dispatch: ToolExecute;
   let tools: RegisteredTools;
+  type SubagentRunParams = {
+    sessionKey: string;
+    message: string;
+    idempotencyKey: string;
+    deliver: boolean;
+  };
   let api: {
     registerTool(definition: { name: string; execute: ToolExecute }): void;
     runtime: { subagent: { run: typeof run } };
   };
-  const run = vi.fn(async () => ({ runId: "run-1" }));
+  const run = vi.fn(async (_params: SubagentRunParams) => ({ runId: "run-1" }));
 
   beforeEach(async () => {
     workspaceRoot = await mkdtemp(join(tmpdir(), "goal-dispatch-broker-"));
