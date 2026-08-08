@@ -8,6 +8,12 @@ The broker uses a JSON ledger protected by `mkdir` locking and atomic rename. It
 
 For **native** work, `goal_dispatch` can launch through `api.runtime.subagent.run` only when the host supplies that runtime **for the active gateway request**. This request-scoped binding is a supported-runtime prerequisite, not a plugin capability that can be recreated globally. If it is unavailable, the plugin fails closed, releases the reservation, and reports that E2E child completion is unverified; hybrid-memory must not add a global/process fallback. The public `subagent_ended` hook settles native launches where a run id is provided; expiry releases abandoned reservations. The currently public plugin runtime exposes no ACP launcher. ACP requests are reserved but returned as a redacted `dispatch_request` for a trusted host launcher to validate, launch and reconcile. The plugin does not claim a tool-only ACP launch.
 
+### Native routing contract
+
+`agent_id` is the authoritative policy-checked target. For each dispatch, the broker generates one opaque child key in OpenClaw's native format: `agent:<agent_id>:subagent:<uuid>`. The caller-supplied `session_key` is retained only as required request/correlation input and is **never** used to route native or ACP work. This prevents a request from redirecting an allowed target (for example `furnace-m3`) to `agent:main:main`.
+
+The broker stores that generated child key as the reservation session id and passes it to `api.runtime.subagent.run`. A dispatch is marked `launched` only after the runtime returns a non-empty `runId`; an absent/malformed acceptance result releases the reservation as `launch_unaccepted`. The returned dispatch details include the generated child key and accepted run id for trusted reconciliation; treat both as opaque and do not accept them back from untrusted callers.
+
 ## Direct-spawn migration and enforcement
 
 `goalStewardship.dispatchAuthorization.mode` is `disabled` by default, preserving existing behavior.
