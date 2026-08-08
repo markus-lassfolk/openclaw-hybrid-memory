@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { appendFile, mkdir } from "node:fs/promises";
 import { GoalDispatchBroker } from "../services/goal-dispatch-broker.js";
 import { join } from "node:path";
@@ -22,6 +23,7 @@ import type { Goal, GoalHistoryEntry } from "../services/goal-stewardship-types.
 import {
   evaluateGoalDispatch,
   isValidGoalDispatchPolicy,
+  legacyGoalDispatchPolicyRemediation,
   type GoalDispatchPolicy,
   type GoalDispatchRequest,
 } from "../services/goal-dispatch-authorization.js";
@@ -986,6 +988,42 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
         acceptance_criteria: Type.Optional(Type.Array(Type.String())),
         priority: Type.Optional(stringEnum(PRIORITIES as unknown as readonly string[])),
         dispatch_policy: Type.Optional(Type.Any({ description: "Replacement machine-readable dispatch policy." })),
+        // Camel-case aliases preserve compatibility with goal JSON field names used by direct callers.
+        dispatchPolicy: Type.Optional(Type.Any({ description: "Alias for dispatch_policy." })),
+        next_action: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        nextAction: Type.Optional(Type.Union([Type.String(), Type.Null()], { description: "Alias for next_action." })),
+        last_outcome: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        lastOutcome: Type.Optional(
+          Type.Union([Type.String(), Type.Null()], { description: "Alias for last_outcome." }),
+        ),
+        evidence: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        linked_tasks: Type.Optional(
+          Type.Array(
+            Type.Object({
+              label: Type.String(),
+              sessionKey: Type.Union([Type.String(), Type.Null()]),
+              runId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+              dispatchFailureReason: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+              status: Type.String(),
+              linkedAt: Type.String(),
+              updatedAt: Type.String(),
+            }),
+          ),
+        ),
+        linkedTasks: Type.Optional(
+          Type.Array(
+            Type.Object({
+              label: Type.String(),
+              sessionKey: Type.Union([Type.String(), Type.Null()]),
+              runId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+              dispatchFailureReason: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+              status: Type.String(),
+              linkedAt: Type.String(),
+              updatedAt: Type.String(),
+            }),
+            { description: "Alias for linked_tasks." },
+          ),
+        ),
         note: Type.Optional(Type.String()),
         confirmed: Type.Optional(
           Type.Boolean({ description: "Required when updating acceptance_criteria after clarity refinement." }),
@@ -1002,6 +1040,14 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             acceptance_criteria?: string[];
             priority?: (typeof PRIORITIES)[number];
             dispatch_policy?: unknown;
+            dispatchPolicy?: unknown;
+            next_action?: string | null;
+            nextAction?: string | null;
+            last_outcome?: string | null;
+            lastOutcome?: string | null;
+            evidence?: string | null;
+            linked_tasks?: Goal["linkedTasks"];
+            linkedTasks?: Goal["linkedTasks"];
             note?: string;
             confirmed?: boolean;
           };
@@ -1013,12 +1059,28 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
               details: { error: "terminal" },
             };
           }
-          if (p.dispatch_policy !== undefined && !isValidGoalDispatchPolicy(p.dispatch_policy)) {
+          const patchValue = <T>(snake: T | undefined, camel: T | undefined, field: string): T | undefined => {
+            if (snake !== undefined && camel !== undefined && !isDeepStrictEqual(snake, camel))
+              throw new Error(`${field} and its camel-case alias conflict`);
+            return snake ?? camel;
+          };
+          const dispatchPolicy = patchValue(p.dispatch_policy, p.dispatchPolicy, "dispatch_policy");
+          const nextAction = patchValue(p.next_action, p.nextAction, "next_action");
+          const lastOutcome = patchValue(p.last_outcome, p.lastOutcome, "last_outcome");
+          const linkedTasks = patchValue(p.linked_tasks, p.linkedTasks, "linked_tasks");
+          if (dispatchPolicy !== undefined && !isValidGoalDispatchPolicy(dispatchPolicy)) {
+            const remediation = legacyGoalDispatchPolicyRemediation(dispatchPolicy);
             return {
               content: [
-                { type: "text", text: "dispatch_policy must be a version 1 policy with at least one valid class." },
+                {
+                  type: "text",
+                  text: remediation ?? "dispatch_policy must be a version 1 policy with at least one valid class.",
+                },
               ],
-              details: { error: "invalid_dispatch_policy" },
+              details: {
+                error: remediation ? "legacy_dispatch_policy_requires_repository" : "invalid_dispatch_policy",
+                remediation,
+              },
             };
           }
           if (p.acceptance_criteria !== undefined) {
@@ -1039,7 +1101,11 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           if (p.description !== undefined) staticPatch.description = p.description;
           if (p.acceptance_criteria !== undefined) staticPatch.acceptanceCriteria = p.acceptance_criteria;
           if (p.priority !== undefined) staticPatch.priority = p.priority;
-          if (p.dispatch_policy !== undefined) staticPatch.dispatchPolicy = p.dispatch_policy;
+          if (dispatchPolicy !== undefined) staticPatch.dispatchPolicy = dispatchPolicy;
+          if (nextAction !== undefined) staticPatch.nextAction = nextAction;
+          if (lastOutcome !== undefined) staticPatch.lastOutcome = lastOutcome;
+          if (p.evidence !== undefined) staticPatch.evidence = p.evidence;
+          if (linkedTasks !== undefined) staticPatch.linkedTasks = linkedTasks;
           const ts = nowIso();
           // Unlike goal_assess/goal_complete/goal_abandon, goal_update never re-checked terminal
           // status against the goal re-read inside updateGoal's lock — only against the pre-lock
