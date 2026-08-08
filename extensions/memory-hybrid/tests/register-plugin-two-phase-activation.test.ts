@@ -124,11 +124,11 @@ describe("two-phase reload activation (#2181)", () => {
     expect(getActivationState()?.phase).toBe("ready");
   });
 
-  it("never throws 'reload teardown did not drain before opening new databases'", async () => {
+  it("fails closed when donor teardown does not drain before replacement databases open", async () => {
     const cfg = () => getFullStackConfig(tmpDir);
     registerFullPlugin(api, cfg());
 
-    // Leave a never-resolving teardown on the donor generation; Phase B must still recover.
+    // Do not open a replacement on the same paths while this donor may still close them.
     schedulePluginTeardown(
       async () => {
         await new Promise(() => {
@@ -142,9 +142,11 @@ describe("two-phase reload activation (#2181)", () => {
     const activation = getActivationState();
     expect(activation?.phase).toBe("activating");
 
-    // Phase B opens fresh after the bounded async wait — must become ready, not fail register.
     const ready = await awaitActivationReady(activation!.generation, 20_000);
-    expect(ready).toBe(true);
+    expect(ready).toBe(false);
+    expect(getActivationState()?.phase).toBe("failed");
+    expect(getActivationState()?.error).toContain("teardown did not drain before database activation");
+    expect(runtimeRef.value).toBeNull();
     resetReloadTeardownChainForTests();
   });
 });
